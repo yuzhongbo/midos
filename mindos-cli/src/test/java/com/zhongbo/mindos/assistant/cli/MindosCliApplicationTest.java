@@ -1,0 +1,1466 @@
+package com.zhongbo.mindos.assistant.cli;
+
+import com.sun.net.httpserver.HttpServer;
+import org.junit.jupiter.api.Test;
+import picocli.CommandLine;
+
+import java.io.ByteArrayOutputStream;
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
+import java.io.PrintWriter;
+import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.concurrent.atomic.AtomicReference;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+class MindosCliApplicationTest {
+
+    @Test
+    void shouldEnterInteractiveModeByDefault() {
+        CommandOutputResult result = executeInteractiveWithOut("/exit\n");
+
+        assertEquals(0, result.exitCode());
+        String console = result.stdout();
+        assertTrue(console.contains("MindOS 对话模式"));
+        assertTrue(console.contains("/help"));
+        assertTrue(console.contains("已退出对话模式"));
+    }
+
+    @Test
+    void shouldShowHelpAndExitZero() {
+        CommandOutputResult result = executeWithOut("--help");
+
+        assertEquals(0, result.exitCode());
+        String help = result.stdout();
+        assertTrue(help.contains("chat"));
+        assertTrue(help.contains("init"));
+        assertTrue(help.contains("profile"));
+        assertTrue(help.contains("memory"));
+    }
+
+    @Test
+    void shouldShowProfileSubcommandHelp() {
+        CommandOutputResult result = executeWithOut("profile", "--help");
+
+        assertEquals(0, result.exitCode());
+        String help = result.stdout();
+        assertTrue(help.contains("show"));
+        assertTrue(help.contains("set"));
+        assertTrue(help.contains("reset"));
+    }
+
+    @Test
+    void shouldInitializeProfileFile() throws IOException {
+        Path tempDir = Files.createTempDirectory("mindos-cli-test-");
+        Path configPath = tempDir.resolve("profile.properties");
+
+        CommandLine commandLine = new CommandLine(new MindosCliApplication());
+        int exitCode = commandLine.execute(
+                "init",
+                "--name", "BoAssistant",
+                "--role", "coding-partner",
+                "--style", "concise",
+                "--language", "zh-CN",
+                "--timezone", "Asia/Shanghai",
+                "--config", configPath.toString()
+        );
+
+        String profileContent = Files.readString(configPath, StandardCharsets.UTF_8);
+        assertEquals(0, exitCode);
+        assertTrue(profileContent.contains("assistant.name=BoAssistant"));
+        assertTrue(profileContent.contains("assistant.role=coding-partner"));
+    }
+
+    @Test
+    void shouldShowInitializedProfile() throws IOException {
+        Path tempDir = Files.createTempDirectory("mindos-cli-profile-");
+        Path configPath = tempDir.resolve("profile.properties");
+
+        CommandLine commandLine = new CommandLine(new MindosCliApplication());
+        int initExitCode = commandLine.execute(
+                "init",
+                "--name", "BoAssistant",
+                "--role", "coding-partner",
+                "--style", "concise",
+                "--language", "zh-CN",
+                "--timezone", "Asia/Shanghai",
+                "--config", configPath.toString()
+        );
+
+        int showExitCode = commandLine.execute(
+                "profile", "show", "--config", configPath.toString()
+        );
+
+        AssistantProfile profile = new AssistantProfileStore().load(configPath);
+        assertEquals(0, initExitCode);
+        assertEquals(0, showExitCode);
+        assertEquals("BoAssistant", profile.assistantName());
+        assertEquals("coding-partner", profile.role());
+    }
+
+    @Test
+    void shouldSetAndResetProfile() throws IOException {
+        Path tempDir = Files.createTempDirectory("mindos-cli-profile-set-");
+        Path configPath = tempDir.resolve("profile.properties");
+
+        CommandLine commandLine = new CommandLine(new MindosCliApplication());
+        int initExitCode = commandLine.execute(
+                "init",
+                "--name", "BoAssistant",
+                "--role", "coding-partner",
+                "--style", "concise",
+                "--language", "zh-CN",
+                "--timezone", "Asia/Shanghai",
+                "--config", configPath.toString()
+        );
+
+        int setExitCode = commandLine.execute(
+                "profile", "set",
+                "--style", "detailed",
+                "--timezone", "UTC",
+                "--config", configPath.toString()
+        );
+
+        AssistantProfile updated = new AssistantProfileStore().load(configPath);
+        assertEquals(0, initExitCode);
+        assertEquals(0, setExitCode);
+        assertEquals("detailed", updated.style());
+        assertEquals("UTC", updated.timezone());
+        assertEquals("BoAssistant", updated.assistantName());
+
+        int resetExitCode = commandLine.execute(
+                "profile", "reset",
+                "--config", configPath.toString()
+        );
+
+        AssistantProfile reset = new AssistantProfileStore().load(configPath);
+        assertEquals(0, resetExitCode);
+        assertEquals(AssistantProfileStore.DEFAULT_ASSISTANT_NAME, reset.assistantName());
+        assertEquals(AssistantProfileStore.DEFAULT_ROLE, reset.role());
+        assertEquals(AssistantProfileStore.DEFAULT_STYLE, reset.style());
+        assertEquals(AssistantProfileStore.DEFAULT_LANGUAGE, reset.language());
+        assertEquals(AssistantProfileStore.DEFAULT_TIMEZONE, reset.timezone());
+    }
+
+    @Test
+    void shouldRunChatCommandAgainstFakeServer() throws IOException {
+        AtomicReference<String> requestBodyRef = new AtomicReference<>("");
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/chat", exchange -> {
+            requestBodyRef.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            byte[] response = "{\"reply\":\"hello from fake server\",\"channel\":\"echo\"}"
+                    .getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+
+        try {
+            server.start();
+            int port = server.getAddress().getPort();
+
+            CommandLine commandLine = new CommandLine(new MindosCliApplication());
+            ByteArrayOutputStream output = new ByteArrayOutputStream();
+            commandLine.setOut(new PrintWriter(output, true));
+
+            int exitCode = commandLine.execute(
+                    "chat",
+                    "--user", "cli-user",
+                    "--message", "echo hello",
+                    "--server", "http://127.0.0.1:" + port
+            );
+
+            String requestBody = requestBodyRef.get();
+
+            assertEquals(0, exitCode);
+            assertTrue(requestBody.contains("\"userId\":\"cli-user\""));
+            assertTrue(requestBody.contains("\"message\":\"echo hello\""));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void shouldSendMessageInInteractiveModeAgainstFakeServer() throws IOException {
+        AtomicReference<String> requestBodyRef = new AtomicReference<>("");
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/chat", exchange -> {
+            requestBodyRef.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            byte[] response = "{\"reply\":\"interactive hello\",\"channel\":\"echo\"}"
+                    .getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+
+        try {
+            server.start();
+            int port = server.getAddress().getPort();
+
+            CommandOutputResult result = executeInteractiveWithOut(
+                    "echo hello\n/exit\n",
+                    "--server", "http://127.0.0.1:" + port,
+                    "--user", "cli-user"
+            );
+
+            assertEquals(0, result.exitCode());
+            String console = result.stdout();
+            assertTrue(requestBodyRef.get().contains("\"message\":\"echo hello\""));
+            assertTrue(console.contains("助手[echo] interactive hello"));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void shouldManageProfileInsideInteractiveMode() throws IOException {
+        Path tempDir = Files.createTempDirectory("mindos-cli-interactive-profile-");
+        Path configPath = tempDir.resolve("profile.properties");
+
+        CommandOutputResult result = executeInteractiveWithOut(
+                "/profile set --name BoAssistant --role coding-partner --style detailed --language zh-CN --timezone UTC --llm-provider openai\n"
+                        + "/profile show\n"
+                        + "/exit\n",
+                "--profile-config", configPath.toString()
+        );
+
+        AssistantProfile profile = new AssistantProfileStore().load(configPath);
+        String console = result.stdout();
+
+        assertEquals(0, result.exitCode());
+        assertEquals("BoAssistant", profile.assistantName());
+        assertEquals("coding-partner", profile.role());
+        assertEquals("detailed", profile.style());
+        assertEquals("UTC", profile.timezone());
+        assertEquals("openai", profile.llmProvider());
+        assertTrue(console.contains("本地 profile 已更新"));
+        assertTrue(console.contains("assistant=BoAssistant"));
+        assertTrue(console.contains("llm.provider=openai"));
+    }
+
+    @Test
+    void shouldGuideProfileEditingInsideInteractiveMode() throws IOException {
+        Path tempDir = Files.createTempDirectory("mindos-cli-interactive-profile-guided-");
+        Path configPath = tempDir.resolve("profile.properties");
+        new AssistantProfileStore().save(configPath, new AssistantProfile(
+                "MindOS Assistant",
+                "personal-assistant",
+                "concise",
+                "zh-CN",
+                "Asia/Shanghai",
+                ""
+        ));
+
+        CommandOutputResult result = executeInteractiveWithOut(
+                "/profile set\n"
+                        + "BoAssistant\n"
+                        + "coding-partner\n"
+                        + "detailed\n"
+                        + "zh-CN\n"
+                        + "UTC\n"
+                        + "openai\n"
+                        + "/exit\n",
+                "--profile-config", configPath.toString()
+        );
+
+        AssistantProfile profile = new AssistantProfileStore().load(configPath);
+        String console = result.stdout();
+
+        assertEquals(0, result.exitCode());
+        assertEquals("BoAssistant", profile.assistantName());
+        assertEquals("coding-partner", profile.role());
+        assertEquals("detailed", profile.style());
+        assertEquals("UTC", profile.timezone());
+        assertEquals("openai", profile.llmProvider());
+        assertTrue(console.contains("name [当前=MindOS Assistant]"));
+        assertTrue(console.contains("llm-provider [当前=]"));
+    }
+
+    @Test
+    void shouldHandleSessionCommandsInsideInteractiveMode() throws IOException {
+        AtomicReference<String> requestBodyRef = new AtomicReference<>("");
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/chat", exchange -> {
+            requestBodyRef.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            byte[] response = "{\"reply\":\"session hello\",\"channel\":\"echo\"}"
+                    .getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+
+        try {
+            server.start();
+            int port = server.getAddress().getPort();
+
+            CommandOutputResult result = executeInteractiveWithOut(
+                    "/provider local\n"
+                            + "/session\n"
+                            + "/unknown\n"
+                            + "echo hello\n"
+                            + "/exit\n",
+                    "--server", "http://127.0.0.1:" + port,
+                    "--user", "cli-user"
+            );
+
+            String console = result.stdout();
+            assertEquals(0, result.exitCode());
+            assertTrue(console.contains("已设置当前会话 llm.provider=local"));
+            assertTrue(console.contains("user=cli-user"));
+            assertTrue(console.contains("llm.provider=local"));
+            assertTrue(console.contains("未知命令：/unknown"));
+            assertTrue(console.contains("助手[echo] session hello"));
+            assertTrue(requestBodyRef.get().contains("\"message\":\"echo hello\""));
+            assertFalse(requestBodyRef.get().contains("unknown"));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void shouldShowHistoryAndRetryInsideInteractiveMode() throws IOException {
+        AtomicReference<String> chatRequestBodyRef = new AtomicReference<>("");
+        AtomicReference<String> historyRequestUriRef = new AtomicReference<>("");
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/chat", exchange -> {
+            chatRequestBodyRef.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            byte[] response = "{\"reply\":\"retry hello\",\"channel\":\"echo\"}"
+                    .getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+        server.createContext("/api/chat", exchange -> {
+            historyRequestUriRef.set(exchange.getRequestURI().toString());
+            byte[] response = ("[" +
+                    "{\"role\":\"user\",\"content\":\"previous question\",\"createdAt\":\"2026-03-13T00:00:00Z\"}," +
+                    "{\"role\":\"assistant\",\"content\":\"previous answer\",\"createdAt\":\"2026-03-13T00:00:01Z\"}" +
+                    "]").getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+
+        try {
+            server.start();
+            int port = server.getAddress().getPort();
+
+            CommandOutputResult result = executeInteractiveWithOut(
+                    "echo hello\n"
+                            + "/history --limit 1\n"
+                            + "/retry\n"
+                            + "/exit\n",
+                    "--server", "http://127.0.0.1:" + port,
+                    "--user", "cli-user"
+            );
+
+            String console = result.stdout();
+            assertEquals(0, result.exitCode());
+            assertTrue(historyRequestUriRef.get().contains("/api/chat/cli-user/history"));
+            assertTrue(console.contains("最近 1 条服务端历史"));
+            assertTrue(console.contains("assistant: previous answer"));
+            assertTrue(console.contains("已重试上一条消息：echo hello"));
+            assertTrue(chatRequestBodyRef.get().contains("\"message\":\"echo hello\""));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void shouldClearLocalStateInsideInteractiveMode() {
+        CommandOutputResult result = executeInteractiveWithOut(
+                "/clear\n"
+                        + "/session\n"
+                        + "/exit\n"
+        );
+
+        String console = result.stdout();
+        assertEquals(0, result.exitCode());
+        assertTrue(console.contains("已清空当前窗口本地状态"));
+        assertTrue(console.contains("local.turns=0"));
+    }
+
+    @Test
+    void shouldPullMemoryInsideInteractiveMode() throws IOException {
+        AtomicReference<String> requestUriRef = new AtomicReference<>("");
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/api/memory/cli-user/sync", exchange -> {
+            requestUriRef.set(exchange.getRequestURI().toString());
+            String responseBody = "{" +
+                    "\"cursor\":9," +
+                    "\"acceptedCount\":0," +
+                    "\"skippedCount\":0," +
+                    "\"episodic\":[{\"role\":\"user\",\"content\":\"hi\",\"createdAt\":\"2026-03-13T00:00:00Z\"}]," +
+                    "\"semantic\":[]," +
+                    "\"procedural\":[]" +
+                    "}";
+            byte[] response = responseBody.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+
+        try {
+            server.start();
+            int port = server.getAddress().getPort();
+
+            CommandOutputResult result = executeInteractiveWithOut(
+                    "/memory pull --since 0 --limit 50\n"
+                            + "/exit\n",
+                    "--server", "http://127.0.0.1:" + port,
+                    "--user", "cli-user"
+            );
+
+            String console = result.stdout();
+            assertEquals(0, result.exitCode());
+            assertTrue(requestUriRef.get().contains("since=0"));
+            assertTrue(requestUriRef.get().contains("limit=50"));
+            assertTrue(console.contains("memory.cursor=9"));
+            assertTrue(console.contains("memory.episodic=1"));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void shouldPushMemoryInteractivelyInsideSingleWindow() throws IOException {
+        AtomicReference<String> requestBodyRef = new AtomicReference<>("");
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/api/memory/cli-user/sync", exchange -> {
+            requestBodyRef.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            String responseBody = "{" +
+                    "\"cursor\":12," +
+                    "\"acceptedCount\":1," +
+                    "\"skippedCount\":0," +
+                    "\"episodic\":[]," +
+                    "\"semantic\":[{\"text\":\"Java 偏好\",\"embedding\":[],\"createdAt\":\"2026-03-14T00:00:00Z\"}]," +
+                    "\"procedural\":[]" +
+                    "}";
+            byte[] response = responseBody.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+
+        try {
+            server.start();
+            int port = server.getAddress().getPort();
+
+            CommandOutputResult result = executeInteractiveWithOut(
+                    "/memory push --limit 50\n"
+                            + "\n"
+                            + "semantic\n"
+                            + "Java 偏好\n"
+                            + "n\n"
+                            + "y\n"
+                            + "/exit\n",
+                    "--server", "http://127.0.0.1:" + port,
+                    "--user", "cli-user"
+            );
+
+            String console = result.stdout();
+            assertEquals(0, result.exitCode());
+            assertTrue(console.contains("进入 memory push 交互模式"));
+            assertTrue(console.contains("记忆推送预览"));
+            assertTrue(console.contains("memory.accepted=1"));
+            assertTrue(requestBodyRef.get().contains("\"semantic\":[{"));
+            assertTrue(requestBodyRef.get().contains("Java 偏好"));
+            assertTrue(requestBodyRef.get().contains("\"eventId\":\"cli-cli-user-"));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void shouldManageSkillsInsideInteractiveMode() throws IOException {
+        AtomicReference<String> bodyRef = new AtomicReference<>("");
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/api/skills", exchange -> {
+            bodyRef.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            String path = exchange.getRequestURI().getPath();
+            String method = exchange.getRequestMethod();
+            String responseBody;
+            if ("GET".equals(method) && "/api/skills".equals(path)) {
+                responseBody = "[" +
+                        "{\"name\":\"echo\",\"description\":\"Echo skill\"}," +
+                        "{\"name\":\"mcp.docs.searchDocs\",\"description\":\"Search docs\"}" +
+                        "]";
+            } else if ("POST".equals(method) && "/api/skills/reload".equals(path)) {
+                responseBody = "{\"reloaded\":1,\"status\":\"ok\"}";
+            } else if ("POST".equals(method) && "/api/skills/reload-mcp".equals(path)) {
+                responseBody = "{\"reloaded\":2,\"status\":\"ok\"}";
+            } else if ("POST".equals(method) && "/api/skills/load-mcp".equals(path)) {
+                responseBody = "{\"loaded\":2,\"alias\":\"docs\",\"status\":\"ok\"}";
+            } else if ("POST".equals(method) && "/api/skills/load-jar".equals(path)) {
+                responseBody = "{\"loaded\":1,\"url\":\"https://example.com/skill-weather.jar\",\"status\":\"ok\"}";
+            } else {
+                responseBody = "{\"status\":\"unknown\"}";
+            }
+            byte[] response = responseBody.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+
+        try {
+            server.start();
+            int port = server.getAddress().getPort();
+
+            CommandOutputResult result = executeInteractiveWithOut(
+                    "/skills\n"
+                            + "/skill reload\n"
+                            + "/skill reload-mcp\n"
+                            + "/skill load-mcp --alias docs --url http://localhost:8081/mcp\n"
+                            + "y\n"
+                            + "/skill load-jar --url https://example.com/skill-weather.jar\n"
+                            + "y\n"
+                            + "/exit\n",
+                    "--server", "http://127.0.0.1:" + port
+            );
+
+            String console = result.stdout();
+            assertEquals(0, result.exitCode());
+            assertTrue(console.contains("当前已注册技能（2）"));
+            assertTrue(console.contains("echo :: Echo skill"));
+            assertTrue(console.contains("自定义技能已重载：reloaded=1"));
+            assertTrue(console.contains("MCP 技能已重载：reloaded=2"));
+            assertTrue(console.contains("MCP server 已加载：alias=docs, loaded=2, status=ok"));
+            assertTrue(console.contains("外部 skill JAR 已加载：url=https://example.com/skill-weather.jar, loaded=1, status=ok"));
+            assertTrue(bodyRef.get().contains("https://example.com/skill-weather.jar") || bodyRef.get().contains("\"alias\":\"docs\""));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void shouldMapNaturalLanguageToSkillListCommandInsideInteractiveMode() throws IOException {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/api/skills", exchange -> {
+            String responseBody = "[{\"name\":\"echo\",\"description\":\"Echo skill\"}]";
+            byte[] response = responseBody.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+
+        try {
+            server.start();
+            int port = server.getAddress().getPort();
+
+            CommandOutputResult result = executeInteractiveWithOut(
+                    "我有哪些技能\n"
+                            + "/exit\n",
+                    "--server", "http://127.0.0.1:" + port,
+                    "--user", "cli-user"
+            );
+
+            String console = result.stdout();
+            assertEquals(0, result.exitCode());
+            assertTrue(console.contains("已识别自然语言指令 -> /skills"));
+            assertTrue(console.contains("当前已注册技能（1）"));
+            assertTrue(console.contains("echo :: Echo skill"));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void shouldAskConfirmationForSensitiveNaturalLanguageCommand() throws IOException {
+        AtomicReference<String> requestBodyRef = new AtomicReference<>("");
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/api/skills/load-jar", exchange -> {
+            requestBodyRef.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            byte[] response = "{\"loaded\":1,\"status\":\"ok\"}".getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+
+        try {
+            server.start();
+            int port = server.getAddress().getPort();
+
+            CommandOutputResult result = executeInteractiveWithOut(
+                    "请帮我加载jar https://example.com/skill-weather.jar\n"
+                            + "n\n"
+                            + "/exit\n",
+                    "--server", "http://127.0.0.1:" + port,
+                    "--user", "cli-user"
+            );
+
+            String console = result.stdout();
+            assertEquals(0, result.exitCode());
+            assertTrue(console.contains("已识别自然语言指令 -> /skill load-jar --url https://example.com/skill-weather.jar"));
+            assertTrue(console.contains("该命令可能影响安全或配置，确认执行吗？"));
+            assertTrue(console.contains("已取消执行：/skill load-jar --url https://example.com/skill-weather.jar"));
+            assertTrue(requestBodyRef.get().isBlank());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void shouldRunMemoryPullInBackgroundWithoutBlockingChat() throws IOException {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/api/memory/cli-user/sync", exchange -> {
+            try {
+                Thread.sleep(200L);
+            } catch (InterruptedException ignored) {
+                Thread.currentThread().interrupt();
+            }
+            String responseBody = "{" +
+                    "\"cursor\":9," +
+                    "\"acceptedCount\":0," +
+                    "\"skippedCount\":0," +
+                    "\"episodic\":[]," +
+                    "\"semantic\":[]," +
+                    "\"procedural\":[]" +
+                    "}";
+            byte[] response = responseBody.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+        server.createContext("/chat", exchange -> {
+            byte[] response = "{\"reply\":\"hello\",\"channel\":\"echo\"}".getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+
+        try {
+            server.start();
+            int port = server.getAddress().getPort();
+
+            CommandOutputResult result = executeInteractiveWithOut(
+                    "帮我拉取记忆\n"
+                            + "echo hello\n"
+                            + "/exit\n",
+                    "--server", "http://127.0.0.1:" + port,
+                    "--user", "cli-user"
+            );
+
+            String console = result.stdout();
+            assertEquals(0, result.exitCode());
+            assertTrue(console.contains("已识别自然语言指令 -> /memory pull"));
+            assertTrue(console.contains("memory pull 已在后台执行"));
+            assertTrue(console.contains("助手[echo] hello"));
+            assertTrue(console.contains("memory.cursor=9"));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void shouldMapNaturalLanguageToParameterizedMemoryAndHistoryCommands() throws IOException {
+        AtomicReference<String> memoryRequestUriRef = new AtomicReference<>("");
+        AtomicReference<String> historyRequestUriRef = new AtomicReference<>("");
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/api/memory/cli-user/sync", exchange -> {
+            memoryRequestUriRef.set(exchange.getRequestURI().toString());
+            String responseBody = "{" +
+                    "\"cursor\":99," +
+                    "\"acceptedCount\":0," +
+                    "\"skippedCount\":0," +
+                    "\"episodic\":[]," +
+                    "\"semantic\":[]," +
+                    "\"procedural\":[]" +
+                    "}";
+            byte[] response = responseBody.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+        server.createContext("/api/chat/cli-user/history", exchange -> {
+            historyRequestUriRef.set(exchange.getRequestURI().toString());
+            String responseBody = "[{\"role\":\"user\",\"content\":\"hello\",\"createdAt\":\"2026-03-14T00:00:00Z\"}]";
+            byte[] response = responseBody.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+
+        try {
+            server.start();
+            int port = server.getAddress().getPort();
+
+            CommandOutputResult result = executeInteractiveWithOut(
+                    "帮我从 12 开始拉取最近 30 条记忆\n"
+                            + "查看最近 5 条历史\n"
+                            + "/exit\n",
+                    "--server", "http://127.0.0.1:" + port,
+                    "--user", "cli-user"
+            );
+
+            String console = result.stdout();
+            assertEquals(0, result.exitCode());
+            assertTrue(console.contains("已识别自然语言指令 -> /memory pull --since 12 --limit 30"));
+            assertTrue(console.contains("已识别自然语言指令 -> /history --limit 5"));
+            assertTrue(memoryRequestUriRef.get().contains("since=12"));
+            assertTrue(memoryRequestUriRef.get().contains("limit=30"));
+            assertTrue(historyRequestUriRef.get().contains("/api/chat/cli-user/history"));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void shouldMapNaturalLanguageToProfileSetWithMultipleFields() throws IOException {
+        Path tempDir = Files.createTempDirectory("mindos-cli-nl-profile-");
+        Path configPath = tempDir.resolve("profile.properties");
+        new AssistantProfileStore().save(configPath, new AssistantProfileStore().defaultProfile());
+
+        CommandOutputResult result = executeInteractiveWithOut(
+                "把名字改成 Nova，角色换成 architect，风格设成 concise，语言改成 en-US，时区换成 UTC\n"
+                        + "/exit\n",
+                "--profile-config", configPath.toString()
+        );
+
+        AssistantProfile profile = new AssistantProfileStore().load(configPath);
+        String console = result.stdout();
+        assertEquals(0, result.exitCode());
+        assertTrue(console.contains("已识别自然语言指令 -> /profile set --name Nova --role architect --style concise --language en-US --timezone UTC"));
+        assertEquals("Nova", profile.assistantName());
+        assertEquals("architect", profile.role());
+        assertEquals("concise", profile.style());
+        assertEquals("en-US", profile.language());
+        assertEquals("UTC", profile.timezone());
+    }
+
+    @Test
+    void shouldMapNaturalLanguageToLoadMcpWithDerivedAlias() throws IOException {
+        AtomicReference<String> requestBodyRef = new AtomicReference<>("");
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/api/skills/load-mcp", exchange -> {
+            requestBodyRef.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            byte[] response = "{\"loaded\":1,\"alias\":\"example\",\"status\":\"ok\"}".getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+
+        try {
+            server.start();
+            int port = server.getAddress().getPort();
+
+            CommandOutputResult result = executeInteractiveWithOut(
+                    "请帮我接入mcp https://example.com/mcp\n"
+                            + "y\n"
+                            + "/exit\n",
+                    "--server", "http://127.0.0.1:" + port,
+                    "--user", "cli-user"
+            );
+
+            String console = result.stdout();
+            assertEquals(0, result.exitCode());
+            assertTrue(console.contains("已识别自然语言指令 -> /skill load-mcp --alias example --url https://example.com/mcp"));
+            assertTrue(console.contains("该命令可能影响安全或配置，确认执行吗？"));
+            assertTrue(requestBodyRef.get().contains("\"alias\":\"example\""));
+            assertTrue(requestBodyRef.get().contains("\"url\":\"https://example.com/mcp\""));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void shouldMapNaturalLanguageToUserAndServerCommands() {
+        CommandOutputResult result = executeInteractiveWithOut(
+                "把用户改为 dev-user\n"
+                        + "把服务地址换成 http://localhost:18080\n"
+                        + "y\n"
+                        + "查看会话信息\n"
+                        + "/exit\n"
+        );
+
+        String console = result.stdout();
+        assertEquals(0, result.exitCode());
+        assertTrue(console.contains("已识别自然语言指令 -> /user dev-user"));
+        assertTrue(console.contains("已切换 user=dev-user"));
+        assertTrue(console.contains("已识别自然语言指令 -> /server http://localhost:18080"));
+        assertTrue(console.contains("该命令可能影响安全或配置，确认执行吗？"));
+        assertTrue(console.contains("已切换 server=http://localhost:18080"));
+        assertTrue(console.contains("user=dev-user"));
+        assertTrue(console.contains("server=http://localhost:18080"));
+    }
+
+    @Test
+    void shouldMapNaturalLanguageToProviderCommand() {
+        CommandOutputResult result = executeInteractiveWithOut(
+                "把模型切换到 openai\n"
+                        + "查看会话信息\n"
+                        + "取消模型覆盖\n"
+                        + "查看会话信息\n"
+                        + "/exit\n"
+        );
+
+        String console = result.stdout();
+        assertEquals(0, result.exitCode());
+        assertTrue(console.contains("已识别自然语言指令 -> /provider openai"));
+        assertTrue(console.contains("已设置当前会话 llm.provider=openai"));
+        assertTrue(console.contains("已识别自然语言指令 -> /provider default"));
+        assertTrue(console.contains("已清除当前会话 provider 覆盖"));
+    }
+
+    @Test
+    void shouldMapNaturalLanguageToMcpLoadWithAliasPhrase() throws IOException {
+        AtomicReference<String> requestBodyRef = new AtomicReference<>("");
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/api/skills/load-mcp", exchange -> {
+            requestBodyRef.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            byte[] response = "{\"loaded\":1,\"alias\":\"docs-cn\",\"status\":\"ok\"}".getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+
+        try {
+            server.start();
+            int port = server.getAddress().getPort();
+
+            CommandOutputResult result = executeInteractiveWithOut(
+                    "请接入mcp https://docs.example.com/mcp，简称 docs-cn\n"
+                            + "y\n"
+                            + "/exit\n",
+                    "--server", "http://127.0.0.1:" + port,
+                    "--user", "cli-user"
+            );
+
+            String console = result.stdout();
+            assertEquals(0, result.exitCode());
+            assertTrue(console.contains("已识别自然语言指令 -> /skill load-mcp --alias docs-cn --url https://docs.example.com/mcp"));
+            assertTrue(requestBodyRef.get().contains("\"alias\":\"docs-cn\""));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void shouldMapNaturalLanguageToHistoryWithImplicitLimit() throws IOException {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/api/chat/local-user/history", exchange -> {
+            String responseBody = "[{\"role\":\"user\",\"content\":\"hello\",\"createdAt\":\"2026-03-14T00:00:00Z\"}]";
+            byte[] response = responseBody.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+
+        try {
+            server.start();
+            int port = server.getAddress().getPort();
+
+            CommandOutputResult result = executeInteractiveWithOut(
+                    "给我看几条历史\n"
+                            + "/exit\n",
+                    "--server", "http://127.0.0.1:" + port,
+                    "--user", "local-user"
+            );
+
+            String console = result.stdout();
+            assertEquals(0, result.exitCode());
+            assertTrue(console.contains("已识别自然语言指令 -> /history --limit 10"));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void shouldParseMemoryPullCountWhenSinceAndLimitAreBothInSentence() throws IOException {
+        AtomicReference<String> requestUriRef = new AtomicReference<>("");
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/api/memory/local-user/sync", exchange -> {
+            requestUriRef.set(exchange.getRequestURI().toString());
+            String responseBody = "{" +
+                    "\"cursor\":15," +
+                    "\"acceptedCount\":0," +
+                    "\"skippedCount\":0," +
+                    "\"episodic\":[]," +
+                    "\"semantic\":[]," +
+                    "\"procedural\":[]" +
+                    "}";
+            byte[] response = responseBody.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+
+        try {
+            server.start();
+            int port = server.getAddress().getPort();
+
+            CommandOutputResult result = executeInteractiveWithOut(
+                    "从 12 开始拉取 30 条记忆\n"
+                            + "/exit\n",
+                    "--server", "http://127.0.0.1:" + port,
+                    "--user", "local-user"
+            );
+
+            String console = result.stdout();
+            assertEquals(0, result.exitCode());
+            assertTrue(console.contains("已识别自然语言指令 -> /memory pull --since 12 --limit 30"));
+            assertTrue(requestUriRef.get().contains("since=12"));
+            assertTrue(requestUriRef.get().contains("limit=30"));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void shouldParseChineseNumberForHistoryAndMemoryPush() {
+        CommandOutputResult result = executeInteractiveWithOut(
+                "查看最近十条历史\n"
+                        + "帮我保存二十条记忆\n"
+                        + "cancel\n"
+                        + "/exit\n"
+        );
+
+        String console = result.stdout();
+        assertEquals(0, result.exitCode());
+        assertTrue(console.contains("已识别自然语言指令 -> /history --limit 10"));
+        assertTrue(console.contains("已识别自然语言指令 -> /memory push --limit 20"));
+    }
+
+    @Test
+    void shouldParseServerHostPortWithoutSchemeFromNaturalLanguage() {
+        CommandOutputResult result = executeInteractiveWithOut(
+                "把服务端地址改成 localhost:19090\n"
+                        + "y\n"
+                        + "查看会话信息\n"
+                        + "/exit\n"
+        );
+
+        String console = result.stdout();
+        assertEquals(0, result.exitCode());
+        assertTrue(console.contains("已识别自然语言指令 -> /server http://localhost:19090"));
+        assertTrue(console.contains("server=http://localhost:19090"));
+    }
+
+    @Test
+    void shouldRejectPublicHttpServerSwitchInsideInteractiveMode() {
+        CommandOutputResult result = executeInteractiveWithOut(
+                "/server http://example.com:8080\n"
+                        + "/session\n"
+                        + "/exit\n"
+        );
+
+        String console = result.stdout();
+        assertEquals(0, result.exitCode());
+        assertTrue(console.contains("server URL 不符合安全策略"));
+        assertFalse(console.contains("确认执行吗"));
+        assertTrue(console.contains("server=http://localhost:8080"));
+    }
+
+    @Test
+    void shouldRejectPublicHttpJarLoadInsideInteractiveMode() throws IOException {
+        AtomicReference<String> requestBodyRef = new AtomicReference<>("");
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/api/skills/load-jar", exchange -> {
+            requestBodyRef.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            byte[] response = "{\"loaded\":1,\"status\":\"ok\"}".getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+
+        try {
+            server.start();
+            int port = server.getAddress().getPort();
+
+            CommandOutputResult result = executeInteractiveWithOut(
+                    "/skill load-jar --url http://example.com/skill.jar\n"
+                            + "/exit\n",
+                    "--server", "http://127.0.0.1:" + port
+            );
+
+            String console = result.stdout();
+            assertEquals(0, result.exitCode());
+            assertTrue(console.contains("url URL 不符合安全策略"));
+            assertTrue(requestBodyRef.get().isBlank());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void shouldAllowPrivateHttpMcpLoadInsideInteractiveMode() throws IOException {
+        AtomicReference<String> requestBodyRef = new AtomicReference<>("");
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/api/skills/load-mcp", exchange -> {
+            requestBodyRef.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            byte[] response = "{\"loaded\":1,\"alias\":\"docs\",\"status\":\"ok\"}".getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+
+        try {
+            server.start();
+            int port = server.getAddress().getPort();
+
+            CommandOutputResult result = executeInteractiveWithOut(
+                    "/skill load-mcp --alias docs --url http://127.0.0.1:8081/mcp\n"
+                            + "y\n"
+                            + "/exit\n",
+                    "--server", "http://127.0.0.1:" + port
+            );
+
+            String console = result.stdout();
+            assertEquals(0, result.exitCode());
+            assertTrue(console.contains("该命令可能影响安全或配置，确认执行吗？"));
+            assertTrue(console.contains("MCP server 已加载"));
+            assertTrue(requestBodyRef.get().contains("\"alias\":\"docs\""));
+            assertTrue(requestBodyRef.get().contains("\"url\":\"http://127.0.0.1:8081/mcp\""));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void shouldParseChineseHundredNumberForHistoryAndMemoryPull() throws IOException {
+        AtomicReference<String> requestUriRef = new AtomicReference<>("");
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/api/chat/local-user/history", exchange -> {
+            byte[] response = "[]".getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+        server.createContext("/api/memory/local-user/sync", exchange -> {
+            requestUriRef.set(exchange.getRequestURI().toString());
+            String responseBody = "{" +
+                    "\"cursor\":7," +
+                    "\"acceptedCount\":0," +
+                    "\"skippedCount\":0," +
+                    "\"episodic\":[]," +
+                    "\"semantic\":[]," +
+                    "\"procedural\":[]" +
+                    "}";
+            byte[] response = responseBody.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+
+        try {
+            server.start();
+            int port = server.getAddress().getPort();
+
+            CommandOutputResult result = executeInteractiveWithOut(
+                    "查看最近一百条历史\n"
+                            + "从 3 开始拉一百二十条记忆\n"
+                            + "/exit\n",
+                    "--server", "http://127.0.0.1:" + port,
+                    "--user", "local-user"
+            );
+
+            String console = result.stdout();
+            assertEquals(0, result.exitCode());
+            assertTrue(console.contains("已识别自然语言指令 -> /history --limit 100"));
+            assertTrue(requestUriRef.get().contains("since=3"));
+            assertTrue(requestUriRef.get().contains("limit=120"));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void shouldParseChineseThousandNumbersForHistoryAndMemoryPull() throws IOException {
+        AtomicReference<String> requestUriRef = new AtomicReference<>("");
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/api/chat/local-user/history", exchange -> {
+            byte[] response = "[]".getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+        server.createContext("/api/memory/local-user/sync", exchange -> {
+            requestUriRef.set(exchange.getRequestURI().toString());
+            String responseBody = "{" +
+                    "\"cursor\":7," +
+                    "\"acceptedCount\":0," +
+                    "\"skippedCount\":0," +
+                    "\"episodic\":[]," +
+                    "\"semantic\":[]," +
+                    "\"procedural\":[]" +
+                    "}";
+            byte[] response = responseBody.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+
+        try {
+            server.start();
+            int port = server.getAddress().getPort();
+
+            CommandOutputResult result = executeInteractiveWithOut(
+                    "查看最近一千二百条历史\n"
+                            + "从 3 开始拉一千零二十条记忆\n"
+                            + "/exit\n",
+                    "--server", "http://127.0.0.1:" + port,
+                    "--user", "local-user"
+            );
+
+            String console = result.stdout();
+            assertEquals(0, result.exitCode());
+            assertTrue(console.contains("已识别自然语言指令 -> /history --limit 1200"));
+            assertTrue(requestUriRef.get().contains("since=3"));
+            assertTrue(requestUriRef.get().contains("limit=1020"));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void shouldMapColloquialPullWithoutMemoryKeyword() throws IOException {
+        AtomicReference<String> requestUriRef = new AtomicReference<>("");
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/api/memory/local-user/sync", exchange -> {
+            requestUriRef.set(exchange.getRequestURI().toString());
+            String responseBody = "{" +
+                    "\"cursor\":8," +
+                    "\"acceptedCount\":0," +
+                    "\"skippedCount\":0," +
+                    "\"episodic\":[]," +
+                    "\"semantic\":[]," +
+                    "\"procedural\":[]" +
+                    "}";
+            byte[] response = responseBody.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+
+        try {
+            server.start();
+            int port = server.getAddress().getPort();
+
+            CommandOutputResult result = executeInteractiveWithOut(
+                    "从 2 开始拉三十条\n"
+                            + "/exit\n",
+                    "--server", "http://127.0.0.1:" + port,
+                    "--user", "local-user"
+            );
+
+            String console = result.stdout();
+            assertEquals(0, result.exitCode());
+            assertTrue(console.contains("已识别自然语言指令 -> /memory pull --since 2 --limit 30"));
+            assertTrue(requestUriRef.get().contains("since=2"));
+            assertTrue(requestUriRef.get().contains("limit=30"));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void shouldUseLastProfileFieldWhenRepeatedInNaturalLanguage() throws IOException {
+        Path tempDir = Files.createTempDirectory("mindos-cli-profile-repeat-");
+        Path configPath = tempDir.resolve("profile.properties");
+        new AssistantProfileStore().save(configPath, new AssistantProfileStore().defaultProfile());
+
+        CommandOutputResult result = executeInteractiveWithOut(
+                "把名字改为 Alpha，名字改为 Beta\n"
+                        + "/exit\n",
+                "--profile-config", configPath.toString()
+        );
+
+        AssistantProfile profile = new AssistantProfileStore().load(configPath);
+        String console = result.stdout();
+        assertEquals(0, result.exitCode());
+        assertTrue(console.contains("已识别自然语言指令 -> /profile set --name Beta"));
+        assertEquals("Beta", profile.assistantName());
+    }
+
+    @Test
+    void shouldMapNaturalLanguageToMemoryPushLimit() {
+        CommandOutputResult result = executeInteractiveWithOut(
+                "帮我保存 20 条记忆\n"
+                        + "cancel\n"
+                        + "/exit\n"
+        );
+
+        String console = result.stdout();
+        assertEquals(0, result.exitCode());
+        assertTrue(console.contains("已识别自然语言指令 -> /memory push --limit 20"));
+        assertTrue(console.contains("进入 memory push 交互模式"));
+        assertTrue(console.contains("已取消 memory push。当前未提交任何记忆。"));
+    }
+
+    @Test
+    void shouldReturnNonZeroWhenServerReturnsStructuredError() throws IOException {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/chat", exchange -> {
+            byte[] response = "{\"code\":\"INVALID_SKILL_DSL\",\"message\":\"Missing skill\"}"
+                    .getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(400, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+
+        try {
+            server.start();
+            int port = server.getAddress().getPort();
+
+            CommandExecutionResult result = executeWithErr(
+                    "chat",
+                    "--user", "cli-user",
+                    "--message", "{bad-json}",
+                    "--server", "http://127.0.0.1:" + port
+            );
+
+            assertNonZeroWithErrContains(result, "Missing skill");
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void shouldShowMemorySubcommandHelp() {
+        CommandOutputResult result = executeWithOut("memory", "--help");
+
+        assertEquals(0, result.exitCode());
+        String help = result.stdout();
+        assertTrue(help.contains("pull"));
+        assertTrue(help.contains("push"));
+    }
+
+    @Test
+    void shouldPullMemoryFromServer() throws IOException {
+        AtomicReference<String> requestUriRef = new AtomicReference<>("");
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/api/memory/cli-user/sync", exchange -> {
+            requestUriRef.set(exchange.getRequestURI().toString());
+            String responseBody = "{" +
+                    "\"cursor\":9," +
+                    "\"acceptedCount\":0," +
+                    "\"skippedCount\":0," +
+                    "\"episodic\":[{\"role\":\"user\",\"content\":\"hi\",\"createdAt\":\"2026-03-13T00:00:00Z\"}]," +
+                    "\"semantic\":[]," +
+                    "\"procedural\":[]" +
+                    "}";
+            byte[] response = responseBody.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+
+        try {
+            server.start();
+            int port = server.getAddress().getPort();
+
+            CommandOutputResult result = executeWithOut(
+                    "memory", "pull",
+                    "--user", "cli-user",
+                    "--since", "0",
+                    "--limit", "50",
+                    "--server", "http://127.0.0.1:" + port
+            );
+
+            assertEquals(0, result.exitCode());
+            assertTrue(requestUriRef.get().contains("since=0"));
+            assertTrue(requestUriRef.get().contains("limit=50"));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void shouldPushMemoryToServer() throws IOException {
+        AtomicReference<String> requestBodyRef = new AtomicReference<>("");
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/api/memory/cli-user/sync", exchange -> {
+            requestBodyRef.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            byte[] response = ("{" +
+                    "\"cursor\":12," +
+                    "\"acceptedCount\":3," +
+                    "\"skippedCount\":0," +
+                    "\"episodic\":[]," +
+                    "\"semantic\":[]," +
+                    "\"procedural\":[]" +
+                    "}").getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+
+        Path tempDir = Files.createTempDirectory("mindos-cli-memory-push-");
+        Path payload = tempDir.resolve("payload.json");
+        Files.writeString(payload,
+                "{" +
+                        "\"eventId\":\"evt-1\"," +
+                        "\"episodic\":[{\"role\":\"user\",\"content\":\"hello\",\"createdAt\":\"2026-03-13T00:00:00Z\"}]," +
+                        "\"semantic\":[]," +
+                        "\"procedural\":[]" +
+                        "}",
+                StandardCharsets.UTF_8);
+
+        try {
+            server.start();
+            int port = server.getAddress().getPort();
+
+            CommandOutputResult result = executeWithOut(
+                    "memory", "push",
+                    "--user", "cli-user",
+                    "--file", payload.toString(),
+                    "--limit", "50",
+                    "--server", "http://127.0.0.1:" + port
+            );
+
+            assertEquals(0, result.exitCode());
+            assertFalse(requestBodyRef.get().isBlank());
+            assertTrue(requestBodyRef.get().contains("evt-1"));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void shouldReturnNonZeroWhenMemoryPushReturnsStructuredError() throws IOException {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/api/memory/cli-user/sync", exchange -> {
+            byte[] response = "{\"code\":\"INVALID_MEMORY_SYNC\",\"message\":\"Bad payload\"}"
+                    .getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(400, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+
+        Path tempDir = Files.createTempDirectory("mindos-cli-memory-push-error-");
+        Path payload = tempDir.resolve("payload.json");
+        Files.writeString(payload,
+                "{\"eventId\":\"evt-1\",\"episodic\":[],\"semantic\":[],\"procedural\":[]}",
+                StandardCharsets.UTF_8);
+
+        try {
+            server.start();
+            int port = server.getAddress().getPort();
+
+            CommandExecutionResult result = executeWithErr(
+                    "memory", "push",
+                    "--user", "cli-user",
+                    "--file", payload.toString(),
+                    "--server", "http://127.0.0.1:" + port
+            );
+
+            assertNonZeroWithErrContains(result, "Bad payload");
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void shouldReturnNonZeroWhenChatServerIsPublicHttp() {
+        CommandExecutionResult result = executeWithErr(
+                "chat",
+                "--message", "hello",
+                "--server", "http://example.com:8080"
+        );
+
+        assertNonZeroWithErrContains(result, "server URL 不符合安全策略");
+    }
+
+    @Test
+    void shouldReturnNonZeroWhenMemoryPullServerIsPublicHttp() {
+        CommandExecutionResult result = executeWithErr(
+                "memory", "pull",
+                "--server", "http://example.com:8080"
+        );
+
+        assertNonZeroWithErrContains(result, "server URL 不符合安全策略");
+    }
+
+    @Test
+    void shouldReturnNonZeroWhenMemoryPushServerIsPublicHttp() throws IOException {
+        Path tempDir = Files.createTempDirectory("mindos-cli-memory-push-public-http-");
+        Path payload = tempDir.resolve("payload.json");
+        Files.writeString(payload,
+                "{\"eventId\":\"evt-1\",\"episodic\":[],\"semantic\":[],\"procedural\":[]}",
+                StandardCharsets.UTF_8);
+
+        CommandExecutionResult result = executeWithErr(
+                "memory", "push",
+                "--file", payload.toString(),
+                "--server", "http://example.com:8080"
+        );
+
+        assertNonZeroWithErrContains(result, "server URL 不符合安全策略");
+    }
+
+    private CommandExecutionResult executeWithErr(String... args) {
+        CommandLine commandLine = new CommandLine(new MindosCliApplication());
+        ByteArrayOutputStream errOutput = new ByteArrayOutputStream();
+        commandLine.setErr(new PrintWriter(errOutput, true));
+        int exitCode = commandLine.execute(args);
+        return new CommandExecutionResult(exitCode, errOutput.toString(StandardCharsets.UTF_8));
+    }
+
+    private CommandOutputResult executeWithOut(String... args) {
+        CommandLine commandLine = new CommandLine(new MindosCliApplication());
+        ByteArrayOutputStream outOutput = new ByteArrayOutputStream();
+        commandLine.setOut(new PrintWriter(outOutput, true));
+        int exitCode = commandLine.execute(args);
+        return new CommandOutputResult(exitCode, outOutput.toString(StandardCharsets.UTF_8));
+    }
+
+    private CommandOutputResult executeInteractiveWithOut(String input, String... args) {
+        CommandLine commandLine = new CommandLine(new MindosCliApplication());
+        ByteArrayOutputStream outOutput = new ByteArrayOutputStream();
+        commandLine.setOut(new PrintWriter(outOutput, true));
+
+        java.io.InputStream originalIn = System.in;
+        try {
+            System.setIn(new ByteArrayInputStream(input.getBytes(StandardCharsets.UTF_8)));
+            int exitCode = commandLine.execute(args);
+            return new CommandOutputResult(exitCode, outOutput.toString(StandardCharsets.UTF_8));
+        } finally {
+            System.setIn(originalIn);
+        }
+    }
+
+    private void assertNonZeroWithErrContains(CommandExecutionResult result, String expectedMessage) {
+        assertTrue(result.exitCode() != 0);
+        assertTrue(result.stderr().contains(expectedMessage));
+    }
+
+    private record CommandExecutionResult(int exitCode, String stderr) {
+    }
+
+    private record CommandOutputResult(int exitCode, String stdout) {
+    }
+
+}
+

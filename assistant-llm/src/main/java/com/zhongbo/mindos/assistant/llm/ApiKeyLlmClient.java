@@ -1,0 +1,265 @@
+package com.zhongbo.mindos.assistant.llm;
+
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.zhongbo.mindos.assistant.common.LlmClient;
+import com.zhongbo.mindos.assistant.common.dsl.SkillDSL;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Component;
+
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
+@Component
+public class ApiKeyLlmClient implements LlmClient {
+
+    private final String provider;
+    private final String endpoint;
+    private final String globalApiKey;
+    private final Map<String, String> providerEndpoints;
+    private final Map<String, String> providerApiKeys;
+    private final Map<String, String> userApiKeys;
+    private final UserApiKeyService userApiKeyService;
+    private final int maxRetries;
+    private final long retryDelayMs;
+    private final ObjectMapper objectMapper = new ObjectMapper();
+
+    public ApiKeyLlmClient(@Value("${mindos.llm.provider:openai}") String provider,
+                           @Value("${mindos.llm.endpoint:https://api.example.com/v1/chat/completions}") String endpoint,
+                           @Value("${mindos.llm.api-key:}") String globalApiKey,
+                           @Value("${mindos.llm.provider-endpoints:}") String providerEndpoints,
+                           @Value("${mindos.llm.provider-keys:}") String providerKeys,
+                           @Value("${mindos.llm.user-keys:}") String userKeys,
+                           @Value("${mindos.llm.retry.max-attempts:3}") int maxRetries,
+                           @Value("${mindos.llm.retry.delay-ms:300}") long retryDelayMs,
+                           UserApiKeyService userApiKeyService) {
+        this.provider = provider;
+        this.endpoint = endpoint;
+        this.globalApiKey = globalApiKey;
+        this.providerEndpoints = parseProviderConfig(providerEndpoints);
+        this.providerApiKeys = parseProviderConfig(providerKeys);
+        this.userApiKeys = parseUserKeys(userKeys);
+        this.maxRetries = Math.max(1, maxRetries);
+        this.retryDelayMs = Math.max(0L, retryDelayMs);
+        this.userApiKeyService = userApiKeyService;
+    }
+
+    @Override
+    public String generateResponse(String prompt, Map<String, Object> context) {
+        if (prompt == null || prompt.isBlank()) {
+            return "[LLM error] Prompt cannot be empty.";
+        }
+
+        String selectedProvider = resolveProvider(context);
+        String selectedEndpoint = resolveEndpoint(selectedProvider);
+        String apiKey = resolveApiKey(context, selectedProvider);
+        if (apiKey == null || apiKey.isBlank()) {
+            return "[LLM stub] No API key resolved. Configure mindos.llm.api-key, mindos.llm.provider-keys, or mindos.llm.user-keys.";
+        }
+
+        RuntimeException lastError = null;
+        for (int attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+                return callProvider(selectedProvider, selectedEndpoint, prompt, context, apiKey);
+            } catch (RuntimeException ex) {
+                lastError = ex;
+                if (attempt < maxRetries) {
+                    sleepBeforeRetry();
+                }
+            }
+        }
+
+        String reason = lastError == null ? "unknown" : lastError.getMessage();
+        return "[LLM error] Failed after " + maxRetries + " attempt(s): " + reason;
+    }
+
+    @Override
+    public SkillDSL parseSkillCall(String userInput) {
+        if (userInput == null || userInput.isBlank()) {
+            return null;
+        }
+
+        String trimmed = userInput.trim();
+        if (trimmed.startsWith("{")) {
+            try {
+                Map<String, Object> payload = objectMapper.readValue(trimmed, new TypeReference<>() {
+                });
+                Object skill = payload.get("skill");
+                if (!(skill instanceof String skillName) || skillName.isBlank()) {
+                    return null;
+                }
+                Map<String, Object> input = asObjectMap(payload.get("input"));
+                Map<String, Object> metadata = asObjectMap(payload.get("metadata"));
+                Map<String, Object> context = asObjectMap(payload.get("context"));
+                return new SkillDSL(skillName, input, List.of(), metadata, context);
+            } catch (JsonProcessingException ignored) {
+                return null;
+            }
+        }
+
+        if (trimmed.startsWith("skill:")) {
+            String[] tokens = trimmed.split("\\s+");
+            if (tokens.length == 0) {
+                return null;
+            }
+            String skillName = tokens[0].substring("skill:".length()).trim();
+            if (skillName.isBlank()) {
+                return null;
+            }
+
+            Map<String, Object> input = new LinkedHashMap<>();
+            for (int i = 1; i < tokens.length; i++) {
+                int separator = tokens[i].indexOf('=');
+                if (separator > 0 && separator < tokens[i].length() - 1) {
+                    input.put(tokens[i].substring(0, separator), tokens[i].substring(separator + 1));
+                }
+            }
+            return new SkillDSL(skillName, input, List.of(), Map.of(), Map.of());
+        }
+
+        return null;
+    }
+
+    private String callProvider(String providerName,
+                                String endpointValue,
+                                String prompt,
+                                Map<String, Object> context,
+                                String apiKey) {
+        String normalized = normalizeProvider(providerName);
+        if (normalized.contains("openai")) {
+            return "[LLM openai] skeleton call to " + endpointValue + " with apiKey=" + mask(apiKey) + ": " + prompt;
+        }
+        if (normalized.contains("local") || normalized.contains("llama") || normalized.contains("mpt")) {
+            return "[LLM local] skeleton call to " + endpointValue + " with apiKey=" + mask(apiKey) + ": " + prompt;
+        }
+
+        String userId = context == null ? "unknown" : String.valueOf(context.getOrDefault("userId", "unknown"));
+        return "[LLM " + providerName + "] skeleton response for user " + userId + ": " + prompt;
+    }
+
+    private String resolveApiKey(Map<String, Object> context, String providerName) {
+        if (context != null) {
+            Object explicitKey = context.get("apiKey");
+            if (explicitKey instanceof String key && !key.isBlank()) {
+                return key;
+            }
+
+            Object userId = context.get("userId");
+            if (userId != null) {
+                String userIdValue = String.valueOf(userId);
+                String dbKey = userApiKeyService.resolveDecryptedApiKey(userIdValue).orElse(null);
+                if (dbKey != null && !dbKey.isBlank()) {
+                    return dbKey;
+                }
+
+                String perUser = userApiKeys.get(userIdValue);
+                if (perUser != null && !perUser.isBlank()) {
+                    return perUser;
+                }
+            }
+        }
+
+        String providerKey = providerApiKeys.get(normalizeProvider(providerName));
+        if (providerKey != null && !providerKey.isBlank()) {
+            return providerKey;
+        }
+
+        return globalApiKey;
+    }
+
+    private String resolveProvider(Map<String, Object> context) {
+        if (context != null) {
+            Object requestedProvider = context.get("llmProvider");
+            if (requestedProvider instanceof String providerValue && !providerValue.isBlank()) {
+                return providerValue.trim();
+            }
+        }
+        return provider;
+    }
+
+    private String resolveEndpoint(String providerName) {
+        String configured = providerEndpoints.get(normalizeProvider(providerName));
+        if (configured != null && !configured.isBlank()) {
+            return configured;
+        }
+        return endpoint;
+    }
+
+    private Map<String, String> parseUserKeys(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return Map.of();
+        }
+
+        // Format: userA:keyA,userB:keyB
+        Map<String, String> parsed = new LinkedHashMap<>();
+        String[] entries = raw.split(",");
+        for (String entry : entries) {
+            int separator = entry.indexOf(':');
+            if (separator > 0 && separator < entry.length() - 1) {
+                String userId = entry.substring(0, separator).trim();
+                String key = entry.substring(separator + 1).trim();
+                if (!userId.isBlank() && !key.isBlank()) {
+                    parsed.put(userId, key);
+                }
+            }
+        }
+        return Map.copyOf(parsed);
+    }
+
+    private Map<String, String> parseProviderConfig(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return Map.of();
+        }
+
+        // Format: providerA:valueA,providerB:valueB
+        Map<String, String> parsed = new LinkedHashMap<>();
+        String[] entries = raw.split(",");
+        for (String entry : entries) {
+            int separator = entry.indexOf(':');
+            if (separator > 0 && separator < entry.length() - 1) {
+                String providerName = normalizeProvider(entry.substring(0, separator));
+                String value = entry.substring(separator + 1).trim();
+                if (!providerName.isBlank() && !value.isBlank()) {
+                    parsed.put(providerName, value);
+                }
+            }
+        }
+        return Map.copyOf(parsed);
+    }
+
+    private String normalizeProvider(String value) {
+        if (value == null || value.isBlank()) {
+            return "openai";
+        }
+        return value.trim().toLowerCase();
+    }
+
+    private Map<String, Object> asObjectMap(Object value) {
+        if (!(value instanceof Map<?, ?> rawMap)) {
+            return Map.of();
+        }
+        Map<String, Object> mapped = new LinkedHashMap<>();
+        rawMap.forEach((key, item) -> mapped.put(String.valueOf(key), item));
+        return Map.copyOf(mapped);
+    }
+
+    private void sleepBeforeRetry() {
+        if (retryDelayMs <= 0) {
+            return;
+        }
+        try {
+            Thread.sleep(retryDelayMs);
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    private String mask(String apiKey) {
+        if (apiKey == null || apiKey.length() < 6) {
+            return "***";
+        }
+        return apiKey.substring(0, 3) + "***" + apiKey.substring(apiKey.length() - 2);
+    }
+}
