@@ -19,6 +19,7 @@ This repository is a lightweight, single-user personal AI assistant backend. Opt
   - `assistant-sdk`: Java SDK for client-side server calls
   - `mindos-cli`: Picocli command-line client using `assistant-sdk`; default entrypoint opens an interactive chat session and slash commands handle common session/profile/memory actions in one window
 - Runtime flow: `/chat` (backward compatible with `/api/chat`) -> dispatcher -> (DSL/skill engine or LLM fallback) -> memory updates.
+- IM integration flow (optional): `/api/im/feishu/events`, `/api/im/dingtalk/events`, `/api/im/wechat/events` -> dispatcher chat route -> platform text response.
 - Multi-terminal memory flow: `/api/memory/{userId}/sync` with cursor-based pull (`GET`) and idempotent push (`POST eventId`).
 - Memory compression planning flow: `/api/memory/{userId}/style` (`GET`/`POST`) + `/api/memory/{userId}/compress-plan` (`POST`) for gradual compression with per-user style profile.
 
@@ -95,6 +96,7 @@ This repository is a lightweight, single-user personal AI assistant backend. Opt
 - 排障时可通过 `--show-routing-details` 显示路由细节（`--pure-nl` 保留兼容）。
 - 也可在会话中直接说“打开排障模式/关闭排障模式”切换显示细节，无需记忆参数。
 - `/help` 默认给自然语言操作提示；技术命令与参数放在 `/help full`。
+- memory 也支持自然语言入口：如“查看我的记忆风格”“按我的风格压缩这段记忆：...”。
 
 #### 教学规划自然语言触发
 - 支持直接在 CLI 对话窗口输入如：

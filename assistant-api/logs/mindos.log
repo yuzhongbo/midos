@@ -189,3 +189,517 @@
 2026-03-17T19:08:54.601+08:00  INFO 19396 --- [MindOS] [main] c.z.m.a.api.MindOsApplicationTests       : No active profile set, falling back to 1 default profile: "default"
 2026-03-17T19:08:54.787+08:00  INFO 19396 --- [MindOS] [main] c.z.m.a.skill.loader.CustomSkillLoader   : CustomSkillLoader: mindos.skills.custom-dir not set, skipping custom skill loading.
 2026-03-17T19:08:54.835+08:00  INFO 19396 --- [MindOS] [main] c.z.m.a.api.MindOsApplicationTests       : Started MindOsApplicationTests in 0.253 seconds (process running for 4.851)
+2026-03-17T19:19:23.006+08:00  INFO 20170 --- [MindOS] [main] c.z.m.a.api.MemorySyncControllerTest     : Starting MemorySyncControllerTest using Java 17.0.15 with PID 20170 (started by yuzhongbo in /Users/yuzhongbo/workspace/projects/MindOS/assistant-api)
+2026-03-17T19:19:23.008+08:00  INFO 20170 --- [MindOS] [main] c.z.m.a.api.MemorySyncControllerTest     : No active profile set, falling back to 1 default profile: "default"
+2026-03-17T19:19:23.724+08:00  INFO 20170 --- [MindOS] [main] c.z.m.a.skill.loader.CustomSkillLoader   : CustomSkillLoader: mindos.skills.custom-dir not set, skipping custom skill loading.
+2026-03-17T19:19:24.428+08:00  INFO 20170 --- [MindOS] [main] o.s.b.t.m.w.SpringBootMockServletContext : Initializing Spring TestDispatcherServlet ''
+2026-03-17T19:19:24.429+08:00  INFO 20170 --- [MindOS] [main] o.s.t.web.servlet.TestDispatcherServlet  : Initializing Servlet ''
+2026-03-17T19:19:24.430+08:00  INFO 20170 --- [MindOS] [main] o.s.t.web.servlet.TestDispatcherServlet  : Completed initialization in 0 ms
+2026-03-17T19:19:24.458+08:00  INFO 20170 --- [MindOS] [main] c.z.m.a.api.MemorySyncControllerTest     : Started MemorySyncControllerTest in 1.714 seconds (process running for 2.64)
+2026-03-17T19:19:25.709+08:00  INFO 20170 --- [MindOS] [main] t.c.s.AnnotationConfigContextLoaderUtils : Could not detect default configuration classes for test class [com.zhongbo.mindos.assistant.api.im.ImWebhookControllerTest]: ImWebhookControllerTest does not declare any static, non-private, non-final, nested classes annotated with @Configuration.
+2026-03-17T19:19:25.727+08:00  INFO 20170 --- [MindOS] [main] .b.t.c.SpringBootTestContextBootstrapper : Found @SpringBootConfiguration com.zhongbo.mindos.assistant.api.MindOsApplication for test class com.zhongbo.mindos.assistant.api.im.ImWebhookControllerTest
+2026-03-17T19:19:25.765+08:00  INFO 20170 --- [MindOS] [main] c.z.m.a.api.im.ImWebhookControllerTest   : Starting ImWebhookControllerTest using Java 17.0.15 with PID 20170 (started by yuzhongbo in /Users/yuzhongbo/workspace/projects/MindOS/assistant-api)
+2026-03-17T19:19:25.767+08:00  INFO 20170 --- [MindOS] [main] c.z.m.a.api.im.ImWebhookControllerTest   : No active profile set, falling back to 1 default profile: "default"
+2026-03-17T19:19:26.030+08:00  INFO 20170 --- [MindOS] [main] c.z.m.a.skill.loader.CustomSkillLoader   : CustomSkillLoader: mindos.skills.custom-dir not set, skipping custom skill loading.
+2026-03-17T19:19:26.158+08:00  INFO 20170 --- [MindOS] [main] o.s.b.t.m.w.SpringBootMockServletContext : Initializing Spring TestDispatcherServlet ''
+2026-03-17T19:19:26.159+08:00  INFO 20170 --- [MindOS] [main] o.s.t.web.servlet.TestDispatcherServlet  : Initializing Servlet ''
+2026-03-17T19:19:26.159+08:00  INFO 20170 --- [MindOS] [main] o.s.t.web.servlet.TestDispatcherServlet  : Completed initialization in 0 ms
+2026-03-17T19:19:26.167+08:00  INFO 20170 --- [MindOS] [main] c.z.m.a.api.im.ImWebhookControllerTest   : Started ImWebhookControllerTest in 0.433 seconds (process running for 4.349)
+2026-03-17T19:19:26.222+08:00  INFO 20170 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher input: userId=im:wechat:fromUser, input=echo wechat
+2026-03-17T19:19:26.225+08:00  INFO 20170 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher route=rule, userId=im:wechat:fromUser, skill=echo
+2026-03-17T19:19:26.232+08:00  INFO 20170 --- [MindOS] [pool-4-thread-1] c.z.mindos.assistant.skill.SkillEngine   : Skill execution started: skill=echo, userId=im:wechat:fromUser, parameters={text=wechat}, startTime=2026-03-17T11:19:26.228539Z
+2026-03-17T19:19:26.237+08:00  INFO 20170 --- [MindOS] [pool-4-thread-1] c.z.mindos.assistant.skill.SkillEngine   : Skill execution finished: skill=echo, userId=im:wechat:fromUser, parameters={text=wechat}, startTime=2026-03-17T11:19:26.228539Z, endTime=2026-03-17T11:19:26.232792Z, durationMs=4, success=true
+2026-03-17T19:19:26.241+08:00  INFO 20170 --- [MindOS] [pool-4-thread-1] c.z.m.a.dispatcher.DispatcherService     : Dispatcher output: userId=im:wechat:fromUser, channel=echo, output=wechat, durationMs=15
+2026-03-17T19:19:26.262+08:00  INFO 20170 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher input: userId=im:dingtalk:ding-user, input=echo hi
+2026-03-17T19:19:26.263+08:00  INFO 20170 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher route=rule, userId=im:dingtalk:ding-user, skill=echo
+2026-03-17T19:19:26.264+08:00  INFO 20170 --- [MindOS] [pool-4-thread-2] c.z.mindos.assistant.skill.SkillEngine   : Skill execution started: skill=echo, userId=im:dingtalk:ding-user, parameters={text=hi}, startTime=2026-03-17T11:19:26.263955Z
+2026-03-17T19:19:26.264+08:00  INFO 20170 --- [MindOS] [pool-4-thread-2] c.z.mindos.assistant.skill.SkillEngine   : Skill execution finished: skill=echo, userId=im:dingtalk:ding-user, parameters={text=hi}, startTime=2026-03-17T11:19:26.263955Z, endTime=2026-03-17T11:19:26.264496Z, durationMs=0, success=true
+2026-03-17T19:19:26.265+08:00  INFO 20170 --- [MindOS] [pool-4-thread-2] c.z.m.a.dispatcher.DispatcherService     : Dispatcher output: userId=im:dingtalk:ding-user, channel=echo, output=hi, durationMs=3
+2026-03-17T19:19:26.291+08:00  INFO 20170 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher input: userId=im:feishu:ou_123, input=echo hello
+2026-03-17T19:19:26.291+08:00  INFO 20170 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher route=rule, userId=im:feishu:ou_123, skill=echo
+2026-03-17T19:19:26.292+08:00  INFO 20170 --- [MindOS] [pool-4-thread-3] c.z.mindos.assistant.skill.SkillEngine   : Skill execution started: skill=echo, userId=im:feishu:ou_123, parameters={text=hello}, startTime=2026-03-17T11:19:26.292248Z
+2026-03-17T19:19:26.292+08:00  INFO 20170 --- [MindOS] [pool-4-thread-3] c.z.mindos.assistant.skill.SkillEngine   : Skill execution finished: skill=echo, userId=im:feishu:ou_123, parameters={text=hello}, startTime=2026-03-17T11:19:26.292248Z, endTime=2026-03-17T11:19:26.292552Z, durationMs=0, success=true
+2026-03-17T19:19:26.293+08:00  INFO 20170 --- [MindOS] [pool-4-thread-3] c.z.m.a.dispatcher.DispatcherService     : Dispatcher output: userId=im:feishu:ou_123, channel=echo, output=hello, durationMs=2
+2026-03-17T19:19:46.868+08:00  INFO 20362 --- [MindOS] [main] c.z.m.assistant.api.SkillControllerTest  : Starting SkillControllerTest using Java 17.0.15 with PID 20362 (started by yuzhongbo in /Users/yuzhongbo/workspace/projects/MindOS/assistant-api)
+2026-03-17T19:19:46.869+08:00  INFO 20362 --- [MindOS] [main] c.z.m.assistant.api.SkillControllerTest  : No active profile set, falling back to 1 default profile: "default"
+2026-03-17T19:19:47.903+08:00  INFO 20362 --- [MindOS] [main] c.z.m.a.skill.loader.CustomSkillLoader   : CustomSkillLoader: mindos.skills.custom-dir not set, skipping custom skill loading.
+2026-03-17T19:19:48.493+08:00  INFO 20362 --- [MindOS] [main] o.s.b.t.m.w.SpringBootMockServletContext : Initializing Spring TestDispatcherServlet ''
+2026-03-17T19:19:48.494+08:00  INFO 20362 --- [MindOS] [main] o.s.t.web.servlet.TestDispatcherServlet  : Initializing Servlet ''
+2026-03-17T19:19:48.495+08:00  INFO 20362 --- [MindOS] [main] o.s.t.web.servlet.TestDispatcherServlet  : Completed initialization in 1 ms
+2026-03-17T19:19:48.519+08:00  INFO 20362 --- [MindOS] [main] c.z.m.assistant.api.SkillControllerTest  : Started SkillControllerTest in 1.826 seconds (process running for 2.628)
+2026-03-17T19:19:49.525+08:00  INFO 20362 --- [MindOS] [main] t.c.s.AnnotationConfigContextLoaderUtils : Could not detect default configuration classes for test class [com.zhongbo.mindos.assistant.api.MemorySyncControllerTest]: MemorySyncControllerTest does not declare any static, non-private, non-final, nested classes annotated with @Configuration.
+2026-03-17T19:19:49.529+08:00  INFO 20362 --- [MindOS] [main] .b.t.c.SpringBootTestContextBootstrapper : Found @SpringBootConfiguration com.zhongbo.mindos.assistant.api.MindOsApplication for test class com.zhongbo.mindos.assistant.api.MemorySyncControllerTest
+2026-03-17T19:19:49.634+08:00  INFO 20362 --- [MindOS] [main] .b.t.c.SpringBootTestContextBootstrapper : Found @SpringBootConfiguration com.zhongbo.mindos.assistant.api.MindOsApplication for test class com.zhongbo.mindos.assistant.api.ChatControllerTest
+2026-03-17T19:19:49.647+08:00  INFO 20362 --- [MindOS] [main] c.z.m.assistant.api.ChatControllerTest   : Starting ChatControllerTest using Java 17.0.15 with PID 20362 (started by yuzhongbo in /Users/yuzhongbo/workspace/projects/MindOS/assistant-api)
+2026-03-17T19:19:49.648+08:00  INFO 20362 --- [MindOS] [main] c.z.m.assistant.api.ChatControllerTest   : No active profile set, falling back to 1 default profile: "default"
+2026-03-17T19:19:49.770+08:00  INFO 20362 --- [MindOS] [main] c.z.m.a.skill.loader.CustomSkillLoader   : CustomSkillLoader: mindos.skills.custom-dir not set, skipping custom skill loading.
+2026-03-17T19:19:49.827+08:00  INFO 20362 --- [MindOS] [main] o.s.b.t.m.w.SpringBootMockServletContext : Initializing Spring TestDispatcherServlet ''
+2026-03-17T19:19:49.827+08:00  INFO 20362 --- [MindOS] [main] o.s.t.web.servlet.TestDispatcherServlet  : Initializing Servlet ''
+2026-03-17T19:19:49.827+08:00  INFO 20362 --- [MindOS] [main] o.s.t.web.servlet.TestDispatcherServlet  : Completed initialization in 0 ms
+2026-03-17T19:19:49.832+08:00  INFO 20362 --- [MindOS] [main] c.z.m.assistant.api.ChatControllerTest   : Started ChatControllerTest in 0.195 seconds (process running for 3.941)
+2026-03-17T19:19:49.836+08:00  INFO 20362 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher input: userId=code-habit-user, input=generate code for order entity
+2026-03-17T19:19:49.839+08:00  INFO 20362 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher route=rule, userId=code-habit-user, skill=code.generate
+2026-03-17T19:19:49.841+08:00  INFO 20362 --- [MindOS] [pool-4-thread-1] c.z.mindos.assistant.skill.SkillEngine   : Skill execution started: skill=code.generate, userId=code-habit-user, parameters={task=generate code for order entity}, startTime=2026-03-17T11:19:49.840031Z
+2026-03-17T19:19:49.844+08:00  INFO 20362 --- [MindOS] [pool-4-thread-1] c.z.mindos.assistant.skill.SkillEngine   : Skill execution finished: skill=code.generate, userId=code-habit-user, parameters={task=generate code for order entity}, startTime=2026-03-17T11:19:49.840031Z, endTime=2026-03-17T11:19:49.842076Z, durationMs=2, success=true
+2026-03-17T19:19:49.846+08:00  INFO 20362 --- [MindOS] [pool-4-thread-1] c.z.m.a.dispatcher.DispatcherService     : Dispatcher output: userId=code-habit-user, channel=code.generate, output=[code.generate] Placeholder generated code for task: generate code for order entity, durationMs=8
+2026-03-17T19:19:49.849+08:00  INFO 20362 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher input: userId=code-habit-user, input=继续按之前方式
+2026-03-17T19:19:49.851+08:00  INFO 20362 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher route=memory-habit, userId=code-habit-user, skill=code.generate
+2026-03-17T19:19:49.852+08:00  INFO 20362 --- [MindOS] [pool-4-thread-2] c.z.mindos.assistant.skill.SkillEngine   : Skill execution started: skill=code.generate, userId=code-habit-user, parameters={task=generate code for order entity}, startTime=2026-03-17T11:19:49.852037Z
+2026-03-17T19:19:49.852+08:00  INFO 20362 --- [MindOS] [pool-4-thread-2] c.z.mindos.assistant.skill.SkillEngine   : Skill execution finished: skill=code.generate, userId=code-habit-user, parameters={task=generate code for order entity}, startTime=2026-03-17T11:19:49.852037Z, endTime=2026-03-17T11:19:49.852168Z, durationMs=0, success=true
+2026-03-17T19:19:49.852+08:00  INFO 20362 --- [MindOS] [pool-4-thread-2] c.z.m.a.dispatcher.DispatcherService     : Dispatcher output: userId=code-habit-user, channel=code.generate, output=[自动调度] 已按历史习惯调用 skill: code.generate
+[code.generate] Placeholder generated code for task: generate code for order entity, durationMs=3
+2026-03-17T19:19:49.857+08:00  INFO 20362 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher input: userId=test-user, input=echo hello
+2026-03-17T19:19:49.857+08:00  INFO 20362 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher route=rule, userId=test-user, skill=echo
+2026-03-17T19:19:49.858+08:00  INFO 20362 --- [MindOS] [pool-4-thread-3] c.z.mindos.assistant.skill.SkillEngine   : Skill execution started: skill=echo, userId=test-user, parameters={text=hello}, startTime=2026-03-17T11:19:49.858356Z
+2026-03-17T19:19:49.858+08:00  INFO 20362 --- [MindOS] [pool-4-thread-3] c.z.mindos.assistant.skill.SkillEngine   : Skill execution finished: skill=echo, userId=test-user, parameters={text=hello}, startTime=2026-03-17T11:19:49.858356Z, endTime=2026-03-17T11:19:49.858863Z, durationMs=0, success=true
+2026-03-17T19:19:49.860+08:00  INFO 20362 --- [MindOS] [pool-4-thread-3] c.z.m.a.dispatcher.DispatcherService     : Dispatcher output: userId=test-user, channel=echo, output=hello, durationMs=2
+2026-03-17T19:19:49.870+08:00  INFO 20362 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher input: userId=todo-habit-user, input={"skill":"todo.create","input":{"task":"准备周会汇报","dueDate":"周五"}}
+2026-03-17T19:19:49.876+08:00  INFO 20362 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher route=explicit-dsl, userId=todo-habit-user, skill=todo.create
+2026-03-17T19:19:49.879+08:00  INFO 20362 --- [MindOS] [pool-4-thread-4] c.z.mindos.assistant.skill.SkillEngine   : Skill execution started: skill=todo.create, userId=todo-habit-user, parameters={task=准备周会汇报, dueDate=周五}, startTime=2026-03-17T11:19:49.879356Z
+2026-03-17T19:19:49.880+08:00  INFO 20362 --- [MindOS] [pool-4-thread-4] c.z.mindos.assistant.skill.SkillEngine   : Skill execution finished: skill=todo.create, userId=todo-habit-user, parameters={task=准备周会汇报, dueDate=周五}, startTime=2026-03-17T11:19:49.879356Z, endTime=2026-03-17T11:19:49.880706Z, durationMs=1, success=true
+2026-03-17T19:19:49.881+08:00  INFO 20362 --- [MindOS] [pool-4-thread-4] c.z.m.a.dispatcher.DispatcherService     : Dispatcher output: userId=todo-habit-user, channel=todo.create, output=[todo.create] Placeholder: todo '准备周会汇报' scheduled for 周五., durationMs=10
+2026-03-17T19:19:49.884+08:00  INFO 20362 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher input: userId=todo-habit-user, input=继续按之前方式，截止明天
+2026-03-17T19:19:49.885+08:00  INFO 20362 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher route=memory-habit, userId=todo-habit-user, skill=todo.create
+2026-03-17T19:19:49.886+08:00  INFO 20362 --- [MindOS] [pool-4-thread-1] c.z.mindos.assistant.skill.SkillEngine   : Skill execution started: skill=todo.create, userId=todo-habit-user, parameters={task=准备周会汇报, dueDate=明天}, startTime=2026-03-17T11:19:49.886756Z
+2026-03-17T19:19:49.887+08:00  INFO 20362 --- [MindOS] [pool-4-thread-1] c.z.mindos.assistant.skill.SkillEngine   : Skill execution finished: skill=todo.create, userId=todo-habit-user, parameters={task=准备周会汇报, dueDate=明天}, startTime=2026-03-17T11:19:49.886756Z, endTime=2026-03-17T11:19:49.887014Z, durationMs=0, success=true
+2026-03-17T19:19:49.887+08:00  INFO 20362 --- [MindOS] [pool-4-thread-1] c.z.m.a.dispatcher.DispatcherService     : Dispatcher output: userId=todo-habit-user, channel=todo.create, output=[自动调度] 已按历史习惯调用 skill: todo.create
+[todo.create] Placeholder: todo '准备周会汇报' scheduled for 明天., durationMs=3
+2026-03-17T19:19:49.893+08:00  INFO 20362 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher input: userId=habit-user, input=给我一个数学学习计划，目标是期末提分，六周，每周八小时
+2026-03-17T19:19:49.895+08:00  INFO 20362 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher route=rule, userId=habit-user, skill=teaching.plan
+2026-03-17T19:19:49.896+08:00  INFO 20362 --- [MindOS] [pool-4-thread-2] c.z.mindos.assistant.skill.SkillEngine   : Skill execution started: skill=teaching.plan, userId=habit-user, parameters={topic=数学, goal=期末提分, durationWeeks=6, weeklyHours=8}, startTime=2026-03-17T11:19:49.896031Z
+2026-03-17T19:19:49.899+08:00  INFO 20362 --- [MindOS] [pool-4-thread-2] c.z.mindos.assistant.skill.SkillEngine   : Skill execution finished: skill=teaching.plan, userId=habit-user, parameters={topic=数学, goal=期末提分, durationWeeks=6, weeklyHours=8}, startTime=2026-03-17T11:19:49.896031Z, endTime=2026-03-17T11:19:49.898836Z, durationMs=2, success=true
+2026-03-17T19:19:49.899+08:00  INFO 20362 --- [MindOS] [pool-4-thread-2] c.z.m.a.dispatcher.DispatcherService     : Dispatcher output: userId=habit-user, channel=teaching.plan, output=[教学规划]
+学生ID: habit-user
+主题: 数学
+对象: 未指定
+目标: 期末提分
+周期: 6 周
+每周投入: 8 小时
+薄弱点: 无
+优势项: 无
+学习风格: 无
+约束: 无
+
+规划概览: 以数学为主线，结合薄弱点和学习风格进行分阶段提升。
+
+阶段安排:
+- 第 1-2 周 | 重点: 基础诊断、知识补齐 | 每周: 3 小时 | 里程碑: 完成基础测评并建立错题本
+- 第 3-4 周 | 重点: 专题训练、错题闭环 | 每周: 3 小时 | 里程碑: 专题正确..., durationMs=6
+2026-03-17T19:19:49.903+08:00  INFO 20362 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher input: userId=habit-user, input=继续按之前方式，目标是冲刺提分
+2026-03-17T19:19:49.904+08:00  INFO 20362 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher route=memory-habit, userId=habit-user, skill=teaching.plan
+2026-03-17T19:19:49.905+08:00  INFO 20362 --- [MindOS] [pool-4-thread-3] c.z.mindos.assistant.skill.SkillEngine   : Skill execution started: skill=teaching.plan, userId=habit-user, parameters={goal=冲刺提分, topic=数学, durationWeeks=6, weeklyHours=8}, startTime=2026-03-17T11:19:49.905236Z
+2026-03-17T19:19:49.906+08:00  INFO 20362 --- [MindOS] [pool-4-thread-3] c.z.mindos.assistant.skill.SkillEngine   : Skill execution finished: skill=teaching.plan, userId=habit-user, parameters={goal=冲刺提分, topic=数学, durationWeeks=6, weeklyHours=8}, startTime=2026-03-17T11:19:49.905236Z, endTime=2026-03-17T11:19:49.906014Z, durationMs=0, success=true
+2026-03-17T19:19:49.907+08:00  INFO 20362 --- [MindOS] [pool-4-thread-3] c.z.m.a.dispatcher.DispatcherService     : Dispatcher output: userId=habit-user, channel=teaching.plan, output=[自动调度] 已按历史习惯调用 skill: teaching.plan
+[教学规划]
+学生ID: habit-user
+主题: 数学
+对象: 未指定
+目标: 冲刺提分
+周期: 6 周
+每周投入: 8 小时
+薄弱点: 无
+优势项: 无
+学习风格: 无
+约束: 无
+
+规划概览: 以数学为主线，结合薄弱点和学习风格进行分阶段提升。
+
+阶段安排:
+- 第 1-2 周 | 重点: 基础诊断、知识补齐 | 每周: 3 小时 | 里程碑: 完成基础测评并建立错题本
+- 第 3-4 周 |..., durationMs=4
+2026-03-17T19:19:49.926+08:00  INFO 20362 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher input: userId=test-user, input={"skill":"code.generate","input":{"task":"service"}}
+2026-03-17T19:19:49.928+08:00  INFO 20362 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher route=explicit-dsl, userId=test-user, skill=code.generate
+2026-03-17T19:19:49.928+08:00  INFO 20362 --- [MindOS] [pool-4-thread-4] c.z.mindos.assistant.skill.SkillEngine   : Skill execution started: skill=code.generate, userId=test-user, parameters={task=service}, startTime=2026-03-17T11:19:49.928490Z
+2026-03-17T19:19:49.928+08:00  INFO 20362 --- [MindOS] [pool-4-thread-4] c.z.mindos.assistant.skill.SkillEngine   : Skill execution finished: skill=code.generate, userId=test-user, parameters={task=service}, startTime=2026-03-17T11:19:49.928490Z, endTime=2026-03-17T11:19:49.928778Z, durationMs=0, success=true
+2026-03-17T19:19:49.929+08:00  INFO 20362 --- [MindOS] [pool-4-thread-4] c.z.m.a.dispatcher.DispatcherService     : Dispatcher output: userId=test-user, channel=code.generate, output=[code.generate] Placeholder generated code for task: service, durationMs=2
+2026-03-17T19:19:49.933+08:00  INFO 20362 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher input: userId=test-user, input=给我一个Java学习计划，目标是准备面试，四周，每周六小时，薄弱点函数、概率，学习风格练习优先
+2026-03-17T19:19:49.934+08:00  INFO 20362 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher route=rule, userId=test-user, skill=teaching.plan
+2026-03-17T19:19:49.934+08:00  INFO 20362 --- [MindOS] [pool-4-thread-1] c.z.mindos.assistant.skill.SkillEngine   : Skill execution started: skill=teaching.plan, userId=test-user, parameters={topic=Java, goal=准备面试, durationWeeks=4, weeklyHours=6, weakTopics=[函数, 概率], learningStyle=[练习优先]}, startTime=2026-03-17T11:19:49.934610Z
+2026-03-17T19:19:49.934+08:00  INFO 20362 --- [MindOS] [pool-4-thread-1] c.z.mindos.assistant.skill.SkillEngine   : Skill execution finished: skill=teaching.plan, userId=test-user, parameters={topic=Java, goal=准备面试, durationWeeks=4, weeklyHours=6, weakTopics=[函数, 概率], learningStyle=[练习优先]}, startTime=2026-03-17T11:19:49.934610Z, endTime=2026-03-17T11:19:49.934861Z, durationMs=0, success=true
+2026-03-17T19:19:49.935+08:00  INFO 20362 --- [MindOS] [pool-4-thread-1] c.z.m.a.dispatcher.DispatcherService     : Dispatcher output: userId=test-user, channel=teaching.plan, output=[教学规划]
+学生ID: test-user
+主题: Java
+对象: 未指定
+目标: 准备面试
+周期: 4 周
+每周投入: 6 小时
+薄弱点: 函数、概率
+优势项: 无
+学习风格: 练习优先
+约束: 无
+
+规划概览: 以Java为主线，结合薄弱点和学习风格进行分阶段提升。
+
+阶段安排:
+- 第 1-1 周 | 重点: 基础诊断、知识补齐 | 每周: 2 小时 | 里程碑: 完成基础测评并建立错题本
+- 第 2-2 周 | 重点: 专题训练、错题闭环 | 每周: 2 小时 |..., durationMs=1
+2026-03-17T19:19:49.941+08:00  INFO 20362 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher input: userId=test-user, input=你还可以学习哪些技能？
+2026-03-17T19:19:49.941+08:00  INFO 20362 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher route=meta-help, userId=test-user, channel=skills.help
+2026-03-17T19:19:49.941+08:00  INFO 20362 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher output: userId=test-user, channel=skills.help, output=我目前可以通过 3 种方式扩展/学习新技能：
+1. 自定义 JSON 技能：把 .json 技能定义放到 mindos.skills.custom-dir，然后重载。
+2. MCP 工具技能：配置 mindos.skills.mcp-servers，或运行时接入一个 MCP server。
+3. 外部 JAR 技能：加载实现 Skill SPI 的外部 JAR。
+如果你愿意，也可以先告诉我你想新增什么能力，我可以帮你判断更适合用哪一种方式。, durationMs=0
+2026-03-17T19:19:49.948+08:00  INFO 20362 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher input: userId=test-user, input={"input":{"task":"service"}}
+2026-03-17T19:19:49.954+08:00  INFO 20362 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher input: userId=test-user, input=skill:code.generate task=controller
+2026-03-17T19:19:49.954+08:00  INFO 20362 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher route=explicit-dsl, userId=test-user, skill=code.generate
+2026-03-17T19:19:49.954+08:00  INFO 20362 --- [MindOS] [pool-4-thread-2] c.z.mindos.assistant.skill.SkillEngine   : Skill execution started: skill=code.generate, userId=test-user, parameters={task=controller}, startTime=2026-03-17T11:19:49.954902Z
+2026-03-17T19:19:49.955+08:00  INFO 20362 --- [MindOS] [pool-4-thread-2] c.z.mindos.assistant.skill.SkillEngine   : Skill execution finished: skill=code.generate, userId=test-user, parameters={task=controller}, startTime=2026-03-17T11:19:49.954902Z, endTime=2026-03-17T11:19:49.955008Z, durationMs=0, success=true
+2026-03-17T19:19:49.955+08:00  INFO 20362 --- [MindOS] [pool-4-thread-2] c.z.m.a.dispatcher.DispatcherService     : Dispatcher output: userId=test-user, channel=code.generate, output=[code.generate] Placeholder generated code for task: controller, durationMs=1
+2026-03-17T19:19:49.958+08:00  INFO 20362 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher input: userId=test-user, input=你有哪些技能？
+2026-03-17T19:19:49.959+08:00  INFO 20362 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher route=meta-help, userId=test-user, channel=skills.help
+2026-03-17T19:19:49.959+08:00  INFO 20362 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher output: userId=test-user, channel=skills.help, output=我当前可以直接使用这些技能：
+- code.generate - Generates code from a task description (skeleton placeholder).
+- echo - Echoes back the text after the 'echo' command.
+- file.search - Searches files by path and keyword (skeleton placeholder).
+- mcp.docs.se..., durationMs=1
+2026-03-17T19:19:49.969+08:00  INFO 20362 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher input: userId=test-user, input=search docs for auth guide
+2026-03-17T19:19:49.971+08:00  INFO 20362 --- [MindOS] [pool-4-thread-3] c.z.mindos.assistant.skill.SkillEngine   : Skill execution started: skill=mcp.docs.searchDocs, userId=test-user, parameters={}, startTime=2026-03-17T11:19:49.971022Z
+2026-03-17T19:19:49.971+08:00  INFO 20362 --- [MindOS] [pool-4-thread-3] c.z.mindos.assistant.skill.SkillEngine   : Skill execution finished: skill=mcp.docs.searchDocs, userId=test-user, parameters={}, startTime=2026-03-17T11:19:49.971022Z, endTime=2026-03-17T11:19:49.971708Z, durationMs=0, success=true
+2026-03-17T19:19:49.972+08:00  INFO 20362 --- [MindOS] [pool-4-thread-3] c.z.m.a.dispatcher.DispatcherService     : Dispatcher route=detected-skill, userId=test-user, skill=mcp.docs.searchDocs
+2026-03-17T19:19:49.972+08:00  INFO 20362 --- [MindOS] [pool-4-thread-3] c.z.m.a.dispatcher.DispatcherService     : Dispatcher output: userId=test-user, channel=mcp.docs.searchDocs, output=MCP docs result for search docs for auth guide, durationMs=3
+2026-03-17T19:19:49.980+08:00  INFO 20362 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher input: userId=pref-user, input=给我一个数学学习计划，目标是期末提分，六周，每周八小时
+2026-03-17T19:19:49.980+08:00  INFO 20362 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher route=rule, userId=pref-user, skill=teaching.plan
+2026-03-17T19:19:49.981+08:00  INFO 20362 --- [MindOS] [pool-4-thread-4] c.z.mindos.assistant.skill.SkillEngine   : Skill execution started: skill=teaching.plan, userId=pref-user, parameters={topic=数学, goal=期末提分, durationWeeks=6, weeklyHours=8}, startTime=2026-03-17T11:19:49.981031Z
+2026-03-17T19:19:49.981+08:00  INFO 20362 --- [MindOS] [pool-4-thread-4] c.z.mindos.assistant.skill.SkillEngine   : Skill execution finished: skill=teaching.plan, userId=pref-user, parameters={topic=数学, goal=期末提分, durationWeeks=6, weeklyHours=8}, startTime=2026-03-17T11:19:49.981031Z, endTime=2026-03-17T11:19:49.981313Z, durationMs=0, success=true
+2026-03-17T19:19:49.981+08:00  INFO 20362 --- [MindOS] [pool-4-thread-4] c.z.m.a.dispatcher.DispatcherService     : Dispatcher output: userId=pref-user, channel=teaching.plan, output=[教学规划]
+学生ID: pref-user
+主题: 数学
+对象: 未指定
+目标: 期末提分
+周期: 6 周
+每周投入: 8 小时
+薄弱点: 无
+优势项: 无
+学习风格: 无
+约束: 无
+
+规划概览: 以数学为主线，结合薄弱点和学习风格进行分阶段提升。
+
+阶段安排:
+- 第 1-2 周 | 重点: 基础诊断、知识补齐 | 每周: 3 小时 | 里程碑: 完成基础测评并建立错题本
+- 第 3-4 周 | 重点: 专题训练、错题闭环 | 每周: 3 小时 | 里程碑: 专题正确率..., durationMs=1
+2026-03-17T19:19:49.983+08:00  INFO 20362 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher input: userId=pref-user, input=继续按之前方式
+2026-03-17T19:19:49.984+08:00  INFO 20362 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher route=memory-habit, userId=pref-user, skill=teaching.plan
+2026-03-17T19:19:49.984+08:00  INFO 20362 --- [MindOS] [pool-4-thread-1] c.z.mindos.assistant.skill.SkillEngine   : Skill execution started: skill=teaching.plan, userId=pref-user, parameters={topic=数学, goal=期末提分, durationWeeks=6, weeklyHours=8, gradeOrLevel=高一, learningStyle=[练习优先], constraints=[时区:Asia/Shanghai], resourcePreference=[语言:zh-CN]}, startTime=2026-03-17T11:19:49.984198Z
+2026-03-17T19:19:49.984+08:00  INFO 20362 --- [MindOS] [pool-4-thread-1] c.z.mindos.assistant.skill.SkillEngine   : Skill execution finished: skill=teaching.plan, userId=pref-user, parameters={topic=数学, goal=期末提分, durationWeeks=6, weeklyHours=8, gradeOrLevel=高一, learningStyle=[练习优先], constraints=[时区:Asia/Shanghai], resourcePreference=[语言:zh-CN]}, startTime=2026-03-17T11:19:49.984198Z, endTime=2026-03-17T11:19:49.984445Z, durationMs=0, success=true
+2026-03-17T19:19:49.984+08:00  INFO 20362 --- [MindOS] [pool-4-thread-1] c.z.m.a.dispatcher.DispatcherService     : Dispatcher output: userId=pref-user, channel=teaching.plan, output=[自动调度] 已按历史习惯调用 skill: teaching.plan，并复用用户偏好
+[教学规划]
+学生ID: pref-user
+主题: 数学
+对象: 高一
+目标: 期末提分
+周期: 6 周
+每周投入: 8 小时
+薄弱点: 无
+优势项: 无
+学习风格: 练习优先
+约束: 时区:Asia/Shanghai
+
+规划概览: 以数学为主线，结合薄弱点和学习风格进行分阶段提升。
+
+阶段安排:
+- 第 1-2 周 | 重点: 基础诊断、知识补齐 | 每周: 3 小时 | 里程碑: ..., durationMs=1
+2026-03-17T19:19:49.991+08:00  INFO 20362 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher input: userId=test-user, input=echo compatibility
+2026-03-17T19:19:49.991+08:00  INFO 20362 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher route=rule, userId=test-user, skill=echo
+2026-03-17T19:19:49.991+08:00  INFO 20362 --- [MindOS] [pool-4-thread-2] c.z.mindos.assistant.skill.SkillEngine   : Skill execution started: skill=echo, userId=test-user, parameters={text=compatibility}, startTime=2026-03-17T11:19:49.991669Z
+2026-03-17T19:19:49.991+08:00  INFO 20362 --- [MindOS] [pool-4-thread-2] c.z.mindos.assistant.skill.SkillEngine   : Skill execution finished: skill=echo, userId=test-user, parameters={text=compatibility}, startTime=2026-03-17T11:19:49.991669Z, endTime=2026-03-17T11:19:49.991754Z, durationMs=0, success=true
+2026-03-17T19:19:49.992+08:00  INFO 20362 --- [MindOS] [pool-4-thread-2] c.z.m.a.dispatcher.DispatcherService     : Dispatcher output: userId=test-user, channel=echo, output=compatibility, durationMs=1
+2026-03-17T19:19:50.001+08:00  INFO 20362 --- [MindOS] [main] t.c.s.AnnotationConfigContextLoaderUtils : Could not detect default configuration classes for test class [com.zhongbo.mindos.assistant.api.MindOsApplicationTests]: MindOsApplicationTests does not declare any static, non-private, non-final, nested classes annotated with @Configuration.
+2026-03-17T19:19:50.002+08:00  INFO 20362 --- [MindOS] [main] .b.t.c.SpringBootTestContextBootstrapper : Found @SpringBootConfiguration com.zhongbo.mindos.assistant.api.MindOsApplication for test class com.zhongbo.mindos.assistant.api.MindOsApplicationTests
+2026-03-17T19:19:50.014+08:00  INFO 20362 --- [MindOS] [main] c.z.m.a.api.MindOsApplicationTests       : Starting MindOsApplicationTests using Java 17.0.15 with PID 20362 (started by yuzhongbo in /Users/yuzhongbo/workspace/projects/MindOS/assistant-api)
+2026-03-17T19:19:50.014+08:00  INFO 20362 --- [MindOS] [main] c.z.m.a.api.MindOsApplicationTests       : No active profile set, falling back to 1 default profile: "default"
+2026-03-17T19:19:50.107+08:00  INFO 20362 --- [MindOS] [main] c.z.m.a.skill.loader.CustomSkillLoader   : CustomSkillLoader: mindos.skills.custom-dir not set, skipping custom skill loading.
+2026-03-17T19:19:50.208+08:00  INFO 20362 --- [MindOS] [main] c.z.m.a.api.MindOsApplicationTests       : Started MindOsApplicationTests in 0.204 seconds (process running for 4.317)
+2026-03-17T19:19:50.221+08:00  INFO 20362 --- [MindOS] [main] t.c.s.AnnotationConfigContextLoaderUtils : Could not detect default configuration classes for test class [com.zhongbo.mindos.assistant.api.im.ImWebhookControllerTest]: ImWebhookControllerTest does not declare any static, non-private, non-final, nested classes annotated with @Configuration.
+2026-03-17T19:19:50.236+08:00  INFO 20362 --- [MindOS] [main] .b.t.c.SpringBootTestContextBootstrapper : Found @SpringBootConfiguration com.zhongbo.mindos.assistant.api.MindOsApplication for test class com.zhongbo.mindos.assistant.api.im.ImWebhookControllerTest
+2026-03-17T19:19:50.282+08:00  INFO 20362 --- [MindOS] [main] c.z.m.a.api.im.ImWebhookControllerTest   : Starting ImWebhookControllerTest using Java 17.0.15 with PID 20362 (started by yuzhongbo in /Users/yuzhongbo/workspace/projects/MindOS/assistant-api)
+2026-03-17T19:19:50.283+08:00  INFO 20362 --- [MindOS] [main] c.z.m.a.api.im.ImWebhookControllerTest   : No active profile set, falling back to 1 default profile: "default"
+2026-03-17T19:19:50.529+08:00  INFO 20362 --- [MindOS] [main] c.z.m.a.skill.loader.CustomSkillLoader   : CustomSkillLoader: mindos.skills.custom-dir not set, skipping custom skill loading.
+2026-03-17T19:19:50.660+08:00  INFO 20362 --- [MindOS] [main] o.s.b.t.m.w.SpringBootMockServletContext : Initializing Spring TestDispatcherServlet ''
+2026-03-17T19:19:50.660+08:00  INFO 20362 --- [MindOS] [main] o.s.t.web.servlet.TestDispatcherServlet  : Initializing Servlet ''
+2026-03-17T19:19:50.660+08:00  INFO 20362 --- [MindOS] [main] o.s.t.web.servlet.TestDispatcherServlet  : Completed initialization in 0 ms
+2026-03-17T19:19:50.667+08:00  INFO 20362 --- [MindOS] [main] c.z.m.a.api.im.ImWebhookControllerTest   : Started ImWebhookControllerTest in 0.42 seconds (process running for 4.776)
+2026-03-17T19:19:50.727+08:00  INFO 20362 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher input: userId=im:wechat:fromUser, input=echo wechat
+2026-03-17T19:19:50.728+08:00  INFO 20362 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher route=rule, userId=im:wechat:fromUser, skill=echo
+2026-03-17T19:19:50.729+08:00  INFO 20362 --- [MindOS] [pool-6-thread-1] c.z.mindos.assistant.skill.SkillEngine   : Skill execution started: skill=echo, userId=im:wechat:fromUser, parameters={text=wechat}, startTime=2026-03-17T11:19:50.728957Z
+2026-03-17T19:19:50.729+08:00  INFO 20362 --- [MindOS] [pool-6-thread-1] c.z.mindos.assistant.skill.SkillEngine   : Skill execution finished: skill=echo, userId=im:wechat:fromUser, parameters={text=wechat}, startTime=2026-03-17T11:19:50.728957Z, endTime=2026-03-17T11:19:50.729242Z, durationMs=0, success=true
+2026-03-17T19:19:50.730+08:00  INFO 20362 --- [MindOS] [pool-6-thread-1] c.z.m.a.dispatcher.DispatcherService     : Dispatcher output: userId=im:wechat:fromUser, channel=echo, output=wechat, durationMs=2
+2026-03-17T19:19:50.753+08:00  INFO 20362 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher input: userId=im:dingtalk:ding-user, input=echo hi
+2026-03-17T19:19:50.754+08:00  INFO 20362 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher route=rule, userId=im:dingtalk:ding-user, skill=echo
+2026-03-17T19:19:50.754+08:00  INFO 20362 --- [MindOS] [pool-6-thread-2] c.z.mindos.assistant.skill.SkillEngine   : Skill execution started: skill=echo, userId=im:dingtalk:ding-user, parameters={text=hi}, startTime=2026-03-17T11:19:50.754590Z
+2026-03-17T19:19:50.754+08:00  INFO 20362 --- [MindOS] [pool-6-thread-2] c.z.mindos.assistant.skill.SkillEngine   : Skill execution finished: skill=echo, userId=im:dingtalk:ding-user, parameters={text=hi}, startTime=2026-03-17T11:19:50.754590Z, endTime=2026-03-17T11:19:50.754896Z, durationMs=0, success=true
+2026-03-17T19:19:50.755+08:00  INFO 20362 --- [MindOS] [pool-6-thread-2] c.z.m.a.dispatcher.DispatcherService     : Dispatcher output: userId=im:dingtalk:ding-user, channel=echo, output=hi, durationMs=1
+2026-03-17T19:19:50.776+08:00  INFO 20362 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher input: userId=im:feishu:ou_123, input=echo hello
+2026-03-17T19:19:50.777+08:00  INFO 20362 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher route=rule, userId=im:feishu:ou_123, skill=echo
+2026-03-17T19:19:50.779+08:00  INFO 20362 --- [MindOS] [pool-6-thread-3] c.z.mindos.assistant.skill.SkillEngine   : Skill execution started: skill=echo, userId=im:feishu:ou_123, parameters={text=hello}, startTime=2026-03-17T11:19:50.779255Z
+2026-03-17T19:19:50.779+08:00  INFO 20362 --- [MindOS] [pool-6-thread-3] c.z.mindos.assistant.skill.SkillEngine   : Skill execution finished: skill=echo, userId=im:feishu:ou_123, parameters={text=hello}, startTime=2026-03-17T11:19:50.779255Z, endTime=2026-03-17T11:19:50.779418Z, durationMs=0, success=true
+2026-03-17T19:19:50.780+08:00  INFO 20362 --- [MindOS] [pool-6-thread-3] c.z.m.a.dispatcher.DispatcherService     : Dispatcher output: userId=im:feishu:ou_123, channel=echo, output=hello, durationMs=4
+2026-03-17T19:20:38.744+08:00  INFO 20584 --- [MindOS] [main] c.z.m.a.api.im.ImWebhookControllerTest   : Starting ImWebhookControllerTest using Java 17.0.15 with PID 20584 (started by yuzhongbo in /Users/yuzhongbo/workspace/projects/MindOS/assistant-api)
+2026-03-17T19:20:38.746+08:00  INFO 20584 --- [MindOS] [main] c.z.m.a.api.im.ImWebhookControllerTest   : No active profile set, falling back to 1 default profile: "default"
+2026-03-17T19:20:39.409+08:00  INFO 20584 --- [MindOS] [main] c.z.m.a.skill.loader.CustomSkillLoader   : CustomSkillLoader: mindos.skills.custom-dir not set, skipping custom skill loading.
+2026-03-17T19:20:40.069+08:00  INFO 20584 --- [MindOS] [main] o.s.b.t.m.w.SpringBootMockServletContext : Initializing Spring TestDispatcherServlet ''
+2026-03-17T19:20:40.070+08:00  INFO 20584 --- [MindOS] [main] o.s.t.web.servlet.TestDispatcherServlet  : Initializing Servlet ''
+2026-03-17T19:20:40.071+08:00  INFO 20584 --- [MindOS] [main] o.s.t.web.servlet.TestDispatcherServlet  : Completed initialization in 0 ms
+2026-03-17T19:20:40.092+08:00  INFO 20584 --- [MindOS] [main] c.z.m.a.api.im.ImWebhookControllerTest   : Started ImWebhookControllerTest in 1.54 seconds (process running for 2.438)
+2026-03-17T19:20:41.024+08:00  INFO 20584 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher input: userId=im:wechat:fromUser, input=echo wechat
+2026-03-17T19:20:41.033+08:00  INFO 20584 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher route=rule, userId=im:wechat:fromUser, skill=echo
+2026-03-17T19:20:41.038+08:00  INFO 20584 --- [MindOS] [pool-3-thread-1] c.z.mindos.assistant.skill.SkillEngine   : Skill execution started: skill=echo, userId=im:wechat:fromUser, parameters={text=wechat}, startTime=2026-03-17T11:20:41.034817Z
+2026-03-17T19:20:41.044+08:00  INFO 20584 --- [MindOS] [pool-3-thread-1] c.z.mindos.assistant.skill.SkillEngine   : Skill execution finished: skill=echo, userId=im:wechat:fromUser, parameters={text=wechat}, startTime=2026-03-17T11:20:41.034817Z, endTime=2026-03-17T11:20:41.039761Z, durationMs=4, success=true
+2026-03-17T19:20:41.049+08:00  INFO 20584 --- [MindOS] [pool-3-thread-1] c.z.m.a.dispatcher.DispatcherService     : Dispatcher output: userId=im:wechat:fromUser, channel=echo, output=wechat, durationMs=22
+2026-03-17T19:20:41.133+08:00  INFO 20584 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher input: userId=im:dingtalk:ding-user, input=echo hi
+2026-03-17T19:20:41.133+08:00  INFO 20584 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher route=rule, userId=im:dingtalk:ding-user, skill=echo
+2026-03-17T19:20:41.134+08:00  INFO 20584 --- [MindOS] [pool-3-thread-2] c.z.mindos.assistant.skill.SkillEngine   : Skill execution started: skill=echo, userId=im:dingtalk:ding-user, parameters={text=hi}, startTime=2026-03-17T11:20:41.134168Z
+2026-03-17T19:20:41.134+08:00  INFO 20584 --- [MindOS] [pool-3-thread-2] c.z.mindos.assistant.skill.SkillEngine   : Skill execution finished: skill=echo, userId=im:dingtalk:ding-user, parameters={text=hi}, startTime=2026-03-17T11:20:41.134168Z, endTime=2026-03-17T11:20:41.134561Z, durationMs=0, success=true
+2026-03-17T19:20:41.135+08:00  INFO 20584 --- [MindOS] [pool-3-thread-2] c.z.m.a.dispatcher.DispatcherService     : Dispatcher output: userId=im:dingtalk:ding-user, channel=echo, output=hi, durationMs=2
+2026-03-17T19:20:41.189+08:00  INFO 20584 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher input: userId=im:feishu:ou_123, input=echo hello
+2026-03-17T19:20:41.190+08:00  INFO 20584 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher route=rule, userId=im:feishu:ou_123, skill=echo
+2026-03-17T19:20:41.190+08:00  INFO 20584 --- [MindOS] [pool-3-thread-3] c.z.mindos.assistant.skill.SkillEngine   : Skill execution started: skill=echo, userId=im:feishu:ou_123, parameters={text=hello}, startTime=2026-03-17T11:20:41.190689Z
+2026-03-17T19:20:41.190+08:00  INFO 20584 --- [MindOS] [pool-3-thread-3] c.z.mindos.assistant.skill.SkillEngine   : Skill execution finished: skill=echo, userId=im:feishu:ou_123, parameters={text=hello}, startTime=2026-03-17T11:20:41.190689Z, endTime=2026-03-17T11:20:41.190837Z, durationMs=0, success=true
+2026-03-17T19:20:41.191+08:00  INFO 20584 --- [MindOS] [pool-3-thread-3] c.z.m.a.dispatcher.DispatcherService     : Dispatcher output: userId=im:feishu:ou_123, channel=echo, output=hello, durationMs=1
+2026-03-17T21:25:37.545+08:00  INFO 24557 --- [MindOS] [main] c.z.m.a.api.MemorySyncControllerTest     : Starting MemorySyncControllerTest using Java 17.0.15 with PID 24557 (started by yuzhongbo in /Users/yuzhongbo/workspace/projects/MindOS/assistant-api)
+2026-03-17T21:25:37.546+08:00  INFO 24557 --- [MindOS] [main] c.z.m.a.api.MemorySyncControllerTest     : No active profile set, falling back to 1 default profile: "default"
+2026-03-17T21:25:39.225+08:00  INFO 24557 --- [MindOS] [main] c.z.m.a.skill.loader.CustomSkillLoader   : CustomSkillLoader: mindos.skills.custom-dir not set, skipping custom skill loading.
+2026-03-17T21:25:39.907+08:00  INFO 24557 --- [MindOS] [main] o.s.b.t.m.w.SpringBootMockServletContext : Initializing Spring TestDispatcherServlet ''
+2026-03-17T21:25:39.908+08:00  INFO 24557 --- [MindOS] [main] o.s.t.web.servlet.TestDispatcherServlet  : Initializing Servlet ''
+2026-03-17T21:25:39.909+08:00  INFO 24557 --- [MindOS] [main] o.s.t.web.servlet.TestDispatcherServlet  : Completed initialization in 1 ms
+2026-03-17T21:25:39.941+08:00  INFO 24557 --- [MindOS] [main] c.z.m.a.api.MemorySyncControllerTest     : Started MemorySyncControllerTest in 3.509 seconds (process running for 4.389)
+2026-03-17T21:25:40.832+08:00  INFO 24557 --- [MindOS] [main] t.c.s.AnnotationConfigContextLoaderUtils : Could not detect default configuration classes for test class [com.zhongbo.mindos.assistant.api.im.ImWebhookControllerTest]: ImWebhookControllerTest does not declare any static, non-private, non-final, nested classes annotated with @Configuration.
+2026-03-17T21:25:40.849+08:00  INFO 24557 --- [MindOS] [main] .b.t.c.SpringBootTestContextBootstrapper : Found @SpringBootConfiguration com.zhongbo.mindos.assistant.api.MindOsApplication for test class com.zhongbo.mindos.assistant.api.im.ImWebhookControllerTest
+2026-03-17T21:25:40.884+08:00  INFO 24557 --- [MindOS] [main] c.z.m.a.api.im.ImWebhookControllerTest   : Starting ImWebhookControllerTest using Java 17.0.15 with PID 24557 (started by yuzhongbo in /Users/yuzhongbo/workspace/projects/MindOS/assistant-api)
+2026-03-17T21:25:40.885+08:00  INFO 24557 --- [MindOS] [main] c.z.m.a.api.im.ImWebhookControllerTest   : No active profile set, falling back to 1 default profile: "default"
+2026-03-17T21:25:41.149+08:00  INFO 24557 --- [MindOS] [main] c.z.m.a.skill.loader.CustomSkillLoader   : CustomSkillLoader: mindos.skills.custom-dir not set, skipping custom skill loading.
+2026-03-17T21:25:41.264+08:00  INFO 24557 --- [MindOS] [main] o.s.b.t.m.w.SpringBootMockServletContext : Initializing Spring TestDispatcherServlet ''
+2026-03-17T21:25:41.264+08:00  INFO 24557 --- [MindOS] [main] o.s.t.web.servlet.TestDispatcherServlet  : Initializing Servlet ''
+2026-03-17T21:25:41.264+08:00  INFO 24557 --- [MindOS] [main] o.s.t.web.servlet.TestDispatcherServlet  : Completed initialization in 0 ms
+2026-03-17T21:25:41.276+08:00  INFO 24557 --- [MindOS] [main] c.z.m.a.api.im.ImWebhookControllerTest   : Started ImWebhookControllerTest in 0.424 seconds (process running for 5.723)
+2026-03-17T21:25:41.338+08:00  INFO 24557 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher input: userId=im:wechat:fromUser, input=echo wechat
+2026-03-17T21:25:41.339+08:00  INFO 24557 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher route=rule, userId=im:wechat:fromUser, skill=echo
+2026-03-17T21:25:41.348+08:00  INFO 24557 --- [MindOS] [pool-4-thread-1] c.z.mindos.assistant.skill.SkillEngine   : Skill execution started: skill=echo, userId=im:wechat:fromUser, parameters={text=wechat}, startTime=2026-03-17T13:25:41.343448Z
+2026-03-17T21:25:41.351+08:00  INFO 24557 --- [MindOS] [pool-4-thread-1] c.z.mindos.assistant.skill.SkillEngine   : Skill execution finished: skill=echo, userId=im:wechat:fromUser, parameters={text=wechat}, startTime=2026-03-17T13:25:41.343448Z, endTime=2026-03-17T13:25:41.349212Z, durationMs=5, success=true
+2026-03-17T21:25:41.355+08:00  INFO 24557 --- [MindOS] [pool-4-thread-1] c.z.m.a.dispatcher.DispatcherService     : Dispatcher output: userId=im:wechat:fromUser, channel=echo, output=wechat, durationMs=14
+2026-03-17T21:25:41.390+08:00  INFO 24557 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher input: userId=im:dingtalk:ding-user, input=echo hi
+2026-03-17T21:25:41.390+08:00  INFO 24557 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher route=rule, userId=im:dingtalk:ding-user, skill=echo
+2026-03-17T21:25:41.391+08:00  INFO 24557 --- [MindOS] [pool-4-thread-2] c.z.mindos.assistant.skill.SkillEngine   : Skill execution started: skill=echo, userId=im:dingtalk:ding-user, parameters={text=hi}, startTime=2026-03-17T13:25:41.391097Z
+2026-03-17T21:25:41.391+08:00  INFO 24557 --- [MindOS] [pool-4-thread-2] c.z.mindos.assistant.skill.SkillEngine   : Skill execution finished: skill=echo, userId=im:dingtalk:ding-user, parameters={text=hi}, startTime=2026-03-17T13:25:41.391097Z, endTime=2026-03-17T13:25:41.391537Z, durationMs=0, success=true
+2026-03-17T21:25:41.392+08:00  INFO 24557 --- [MindOS] [pool-4-thread-2] c.z.m.a.dispatcher.DispatcherService     : Dispatcher output: userId=im:dingtalk:ding-user, channel=echo, output=hi, durationMs=1
+2026-03-17T21:25:41.418+08:00  INFO 24557 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher input: userId=im:feishu:ou_123, input=echo hello
+2026-03-17T21:25:41.419+08:00  INFO 24557 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher route=rule, userId=im:feishu:ou_123, skill=echo
+2026-03-17T21:25:41.419+08:00  INFO 24557 --- [MindOS] [pool-4-thread-3] c.z.mindos.assistant.skill.SkillEngine   : Skill execution started: skill=echo, userId=im:feishu:ou_123, parameters={text=hello}, startTime=2026-03-17T13:25:41.419450Z
+2026-03-17T21:25:41.419+08:00  INFO 24557 --- [MindOS] [pool-4-thread-3] c.z.mindos.assistant.skill.SkillEngine   : Skill execution finished: skill=echo, userId=im:feishu:ou_123, parameters={text=hello}, startTime=2026-03-17T13:25:41.419450Z, endTime=2026-03-17T13:25:41.419563Z, durationMs=0, success=true
+2026-03-17T21:25:41.419+08:00  INFO 24557 --- [MindOS] [pool-4-thread-3] c.z.m.a.dispatcher.DispatcherService     : Dispatcher output: userId=im:feishu:ou_123, channel=echo, output=hello, durationMs=1
+2026-03-17T21:25:58.701+08:00  INFO 24750 --- [MindOS] [main] c.z.m.assistant.api.SkillControllerTest  : Starting SkillControllerTest using Java 17.0.15 with PID 24750 (started by yuzhongbo in /Users/yuzhongbo/workspace/projects/MindOS/assistant-api)
+2026-03-17T21:25:58.702+08:00  INFO 24750 --- [MindOS] [main] c.z.m.assistant.api.SkillControllerTest  : No active profile set, falling back to 1 default profile: "default"
+2026-03-17T21:25:59.576+08:00  INFO 24750 --- [MindOS] [main] c.z.m.a.skill.loader.CustomSkillLoader   : CustomSkillLoader: mindos.skills.custom-dir not set, skipping custom skill loading.
+2026-03-17T21:26:00.241+08:00  INFO 24750 --- [MindOS] [main] o.s.b.t.m.w.SpringBootMockServletContext : Initializing Spring TestDispatcherServlet ''
+2026-03-17T21:26:00.242+08:00  INFO 24750 --- [MindOS] [main] o.s.t.web.servlet.TestDispatcherServlet  : Initializing Servlet ''
+2026-03-17T21:26:00.243+08:00  INFO 24750 --- [MindOS] [main] o.s.t.web.servlet.TestDispatcherServlet  : Completed initialization in 0 ms
+2026-03-17T21:26:00.276+08:00  INFO 24750 --- [MindOS] [main] c.z.m.assistant.api.SkillControllerTest  : Started SkillControllerTest in 1.749 seconds (process running for 2.454)
+2026-03-17T21:26:01.379+08:00  INFO 24750 --- [MindOS] [main] t.c.s.AnnotationConfigContextLoaderUtils : Could not detect default configuration classes for test class [com.zhongbo.mindos.assistant.api.MemorySyncControllerTest]: MemorySyncControllerTest does not declare any static, non-private, non-final, nested classes annotated with @Configuration.
+2026-03-17T21:26:01.385+08:00  INFO 24750 --- [MindOS] [main] .b.t.c.SpringBootTestContextBootstrapper : Found @SpringBootConfiguration com.zhongbo.mindos.assistant.api.MindOsApplication for test class com.zhongbo.mindos.assistant.api.MemorySyncControllerTest
+2026-03-17T21:26:01.540+08:00  INFO 24750 --- [MindOS] [main] .b.t.c.SpringBootTestContextBootstrapper : Found @SpringBootConfiguration com.zhongbo.mindos.assistant.api.MindOsApplication for test class com.zhongbo.mindos.assistant.api.ChatControllerTest
+2026-03-17T21:26:01.561+08:00  INFO 24750 --- [MindOS] [main] c.z.m.assistant.api.ChatControllerTest   : Starting ChatControllerTest using Java 17.0.15 with PID 24750 (started by yuzhongbo in /Users/yuzhongbo/workspace/projects/MindOS/assistant-api)
+2026-03-17T21:26:01.561+08:00  INFO 24750 --- [MindOS] [main] c.z.m.assistant.api.ChatControllerTest   : No active profile set, falling back to 1 default profile: "default"
+2026-03-17T21:26:01.715+08:00  INFO 24750 --- [MindOS] [main] c.z.m.a.skill.loader.CustomSkillLoader   : CustomSkillLoader: mindos.skills.custom-dir not set, skipping custom skill loading.
+2026-03-17T21:26:01.791+08:00  INFO 24750 --- [MindOS] [main] o.s.b.t.m.w.SpringBootMockServletContext : Initializing Spring TestDispatcherServlet ''
+2026-03-17T21:26:01.792+08:00  INFO 24750 --- [MindOS] [main] o.s.t.web.servlet.TestDispatcherServlet  : Initializing Servlet ''
+2026-03-17T21:26:01.792+08:00  INFO 24750 --- [MindOS] [main] o.s.t.web.servlet.TestDispatcherServlet  : Completed initialization in 0 ms
+2026-03-17T21:26:01.797+08:00  INFO 24750 --- [MindOS] [main] c.z.m.assistant.api.ChatControllerTest   : Started ChatControllerTest in 0.253 seconds (process running for 3.976)
+2026-03-17T21:26:01.803+08:00  INFO 24750 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher input: userId=code-habit-user, input=generate code for order entity
+2026-03-17T21:26:01.807+08:00  INFO 24750 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher route=rule, userId=code-habit-user, skill=code.generate
+2026-03-17T21:26:01.810+08:00  INFO 24750 --- [MindOS] [pool-4-thread-1] c.z.mindos.assistant.skill.SkillEngine   : Skill execution started: skill=code.generate, userId=code-habit-user, parameters={task=generate code for order entity}, startTime=2026-03-17T13:26:01.808634Z
+2026-03-17T21:26:01.813+08:00  INFO 24750 --- [MindOS] [pool-4-thread-1] c.z.mindos.assistant.skill.SkillEngine   : Skill execution finished: skill=code.generate, userId=code-habit-user, parameters={task=generate code for order entity}, startTime=2026-03-17T13:26:01.808634Z, endTime=2026-03-17T13:26:01.810783Z, durationMs=2, success=true
+2026-03-17T21:26:01.815+08:00  INFO 24750 --- [MindOS] [pool-4-thread-1] c.z.m.a.dispatcher.DispatcherService     : Dispatcher output: userId=code-habit-user, channel=code.generate, output=[code.generate] Placeholder generated code for task: generate code for order entity, durationMs=10
+2026-03-17T21:26:01.818+08:00  INFO 24750 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher input: userId=code-habit-user, input=继续按之前方式
+2026-03-17T21:26:01.821+08:00  INFO 24750 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher route=memory-habit, userId=code-habit-user, skill=code.generate
+2026-03-17T21:26:01.821+08:00  INFO 24750 --- [MindOS] [pool-4-thread-2] c.z.mindos.assistant.skill.SkillEngine   : Skill execution started: skill=code.generate, userId=code-habit-user, parameters={task=generate code for order entity}, startTime=2026-03-17T13:26:01.821734Z
+2026-03-17T21:26:01.821+08:00  INFO 24750 --- [MindOS] [pool-4-thread-2] c.z.mindos.assistant.skill.SkillEngine   : Skill execution finished: skill=code.generate, userId=code-habit-user, parameters={task=generate code for order entity}, startTime=2026-03-17T13:26:01.821734Z, endTime=2026-03-17T13:26:01.821852Z, durationMs=0, success=true
+2026-03-17T21:26:01.822+08:00  INFO 24750 --- [MindOS] [pool-4-thread-2] c.z.m.a.dispatcher.DispatcherService     : Dispatcher output: userId=code-habit-user, channel=code.generate, output=[自动调度] 已按历史习惯调用 skill: code.generate
+[code.generate] Placeholder generated code for task: generate code for order entity, durationMs=3
+2026-03-17T21:26:01.829+08:00  INFO 24750 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher input: userId=test-user, input=echo hello
+2026-03-17T21:26:01.830+08:00  INFO 24750 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher route=rule, userId=test-user, skill=echo
+2026-03-17T21:26:01.830+08:00  INFO 24750 --- [MindOS] [pool-4-thread-3] c.z.mindos.assistant.skill.SkillEngine   : Skill execution started: skill=echo, userId=test-user, parameters={text=hello}, startTime=2026-03-17T13:26:01.830434Z
+2026-03-17T21:26:01.830+08:00  INFO 24750 --- [MindOS] [pool-4-thread-3] c.z.mindos.assistant.skill.SkillEngine   : Skill execution finished: skill=echo, userId=test-user, parameters={text=hello}, startTime=2026-03-17T13:26:01.830434Z, endTime=2026-03-17T13:26:01.830753Z, durationMs=0, success=true
+2026-03-17T21:26:01.831+08:00  INFO 24750 --- [MindOS] [pool-4-thread-3] c.z.m.a.dispatcher.DispatcherService     : Dispatcher output: userId=test-user, channel=echo, output=hello, durationMs=1
+2026-03-17T21:26:01.836+08:00  INFO 24750 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher input: userId=todo-habit-user, input={"skill":"todo.create","input":{"task":"准备周会汇报","dueDate":"周五"}}
+2026-03-17T21:26:01.840+08:00  INFO 24750 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher route=explicit-dsl, userId=todo-habit-user, skill=todo.create
+2026-03-17T21:26:01.841+08:00  INFO 24750 --- [MindOS] [pool-4-thread-4] c.z.mindos.assistant.skill.SkillEngine   : Skill execution started: skill=todo.create, userId=todo-habit-user, parameters={task=准备周会汇报, dueDate=周五}, startTime=2026-03-17T13:26:01.841528Z
+2026-03-17T21:26:01.841+08:00  INFO 24750 --- [MindOS] [pool-4-thread-4] c.z.mindos.assistant.skill.SkillEngine   : Skill execution finished: skill=todo.create, userId=todo-habit-user, parameters={task=准备周会汇报, dueDate=周五}, startTime=2026-03-17T13:26:01.841528Z, endTime=2026-03-17T13:26:01.841833Z, durationMs=0, success=true
+2026-03-17T21:26:01.842+08:00  INFO 24750 --- [MindOS] [pool-4-thread-4] c.z.m.a.dispatcher.DispatcherService     : Dispatcher output: userId=todo-habit-user, channel=todo.create, output=[todo.create] Placeholder: todo '准备周会汇报' scheduled for 周五., durationMs=5
+2026-03-17T21:26:01.843+08:00  INFO 24750 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher input: userId=todo-habit-user, input=继续按之前方式，截止明天
+2026-03-17T21:26:01.844+08:00  INFO 24750 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher route=memory-habit, userId=todo-habit-user, skill=todo.create
+2026-03-17T21:26:01.846+08:00  INFO 24750 --- [MindOS] [pool-4-thread-1] c.z.mindos.assistant.skill.SkillEngine   : Skill execution started: skill=todo.create, userId=todo-habit-user, parameters={task=准备周会汇报, dueDate=明天}, startTime=2026-03-17T13:26:01.845964Z
+2026-03-17T21:26:01.846+08:00  INFO 24750 --- [MindOS] [pool-4-thread-1] c.z.mindos.assistant.skill.SkillEngine   : Skill execution finished: skill=todo.create, userId=todo-habit-user, parameters={task=准备周会汇报, dueDate=明天}, startTime=2026-03-17T13:26:01.845964Z, endTime=2026-03-17T13:26:01.846361Z, durationMs=0, success=true
+2026-03-17T21:26:01.846+08:00  INFO 24750 --- [MindOS] [pool-4-thread-1] c.z.m.a.dispatcher.DispatcherService     : Dispatcher output: userId=todo-habit-user, channel=todo.create, output=[自动调度] 已按历史习惯调用 skill: todo.create
+[todo.create] Placeholder: todo '准备周会汇报' scheduled for 明天., durationMs=3
+2026-03-17T21:26:01.851+08:00  INFO 24750 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher input: userId=habit-user, input=给我一个数学学习计划，目标是期末提分，六周，每周八小时
+2026-03-17T21:26:01.851+08:00  INFO 24750 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher route=rule, userId=habit-user, skill=teaching.plan
+2026-03-17T21:26:01.852+08:00  INFO 24750 --- [MindOS] [pool-4-thread-2] c.z.mindos.assistant.skill.SkillEngine   : Skill execution started: skill=teaching.plan, userId=habit-user, parameters={topic=数学, goal=期末提分, durationWeeks=6, weeklyHours=8}, startTime=2026-03-17T13:26:01.852274Z
+2026-03-17T21:26:01.854+08:00  INFO 24750 --- [MindOS] [pool-4-thread-2] c.z.mindos.assistant.skill.SkillEngine   : Skill execution finished: skill=teaching.plan, userId=habit-user, parameters={topic=数学, goal=期末提分, durationWeeks=6, weeklyHours=8}, startTime=2026-03-17T13:26:01.852274Z, endTime=2026-03-17T13:26:01.854024Z, durationMs=1, success=true
+2026-03-17T21:26:01.855+08:00  INFO 24750 --- [MindOS] [pool-4-thread-2] c.z.m.a.dispatcher.DispatcherService     : Dispatcher output: userId=habit-user, channel=teaching.plan, output=[教学规划]
+学生ID: habit-user
+主题: 数学
+对象: 未指定
+目标: 期末提分
+周期: 6 周
+每周投入: 8 小时
+薄弱点: 无
+优势项: 无
+学习风格: 无
+约束: 无
+
+规划概览: 以数学为主线，结合薄弱点和学习风格进行分阶段提升。
+
+阶段安排:
+- 第 1-2 周 | 重点: 基础诊断、知识补齐 | 每周: 3 小时 | 里程碑: 完成基础测评并建立错题本
+- 第 3-4 周 | 重点: 专题训练、错题闭环 | 每周: 3 小时 | 里程碑: 专题正确..., durationMs=3
+2026-03-17T21:26:01.857+08:00  INFO 24750 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher input: userId=habit-user, input=继续按之前方式，目标是冲刺提分
+2026-03-17T21:26:01.859+08:00  INFO 24750 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher route=memory-habit, userId=habit-user, skill=teaching.plan
+2026-03-17T21:26:01.860+08:00  INFO 24750 --- [MindOS] [pool-4-thread-3] c.z.mindos.assistant.skill.SkillEngine   : Skill execution started: skill=teaching.plan, userId=habit-user, parameters={goal=冲刺提分, topic=数学, durationWeeks=6, weeklyHours=8}, startTime=2026-03-17T13:26:01.860407Z
+2026-03-17T21:26:01.860+08:00  INFO 24750 --- [MindOS] [pool-4-thread-3] c.z.mindos.assistant.skill.SkillEngine   : Skill execution finished: skill=teaching.plan, userId=habit-user, parameters={goal=冲刺提分, topic=数学, durationWeeks=6, weeklyHours=8}, startTime=2026-03-17T13:26:01.860407Z, endTime=2026-03-17T13:26:01.860867Z, durationMs=0, success=true
+2026-03-17T21:26:01.862+08:00  INFO 24750 --- [MindOS] [pool-4-thread-3] c.z.m.a.dispatcher.DispatcherService     : Dispatcher output: userId=habit-user, channel=teaching.plan, output=[自动调度] 已按历史习惯调用 skill: teaching.plan
+[教学规划]
+学生ID: habit-user
+主题: 数学
+对象: 未指定
+目标: 冲刺提分
+周期: 6 周
+每周投入: 8 小时
+薄弱点: 无
+优势项: 无
+学习风格: 无
+约束: 无
+
+规划概览: 以数学为主线，结合薄弱点和学习风格进行分阶段提升。
+
+阶段安排:
+- 第 1-2 周 | 重点: 基础诊断、知识补齐 | 每周: 3 小时 | 里程碑: 完成基础测评并建立错题本
+- 第 3-4 周 |..., durationMs=5
+2026-03-17T21:26:01.871+08:00  INFO 24750 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher input: userId=test-user, input={"skill":"code.generate","input":{"task":"service"}}
+2026-03-17T21:26:01.874+08:00  INFO 24750 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher route=explicit-dsl, userId=test-user, skill=code.generate
+2026-03-17T21:26:01.875+08:00  INFO 24750 --- [MindOS] [pool-4-thread-4] c.z.mindos.assistant.skill.SkillEngine   : Skill execution started: skill=code.generate, userId=test-user, parameters={task=service}, startTime=2026-03-17T13:26:01.875074Z
+2026-03-17T21:26:01.875+08:00  INFO 24750 --- [MindOS] [pool-4-thread-4] c.z.mindos.assistant.skill.SkillEngine   : Skill execution finished: skill=code.generate, userId=test-user, parameters={task=service}, startTime=2026-03-17T13:26:01.875074Z, endTime=2026-03-17T13:26:01.875354Z, durationMs=0, success=true
+2026-03-17T21:26:01.876+08:00  INFO 24750 --- [MindOS] [pool-4-thread-4] c.z.m.a.dispatcher.DispatcherService     : Dispatcher output: userId=test-user, channel=code.generate, output=[code.generate] Placeholder generated code for task: service, durationMs=4
+2026-03-17T21:26:01.881+08:00  INFO 24750 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher input: userId=test-user, input=给我一个Java学习计划，目标是准备面试，四周，每周六小时，薄弱点函数、概率，学习风格练习优先
+2026-03-17T21:26:01.882+08:00  INFO 24750 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher route=rule, userId=test-user, skill=teaching.plan
+2026-03-17T21:26:01.882+08:00  INFO 24750 --- [MindOS] [pool-4-thread-1] c.z.mindos.assistant.skill.SkillEngine   : Skill execution started: skill=teaching.plan, userId=test-user, parameters={topic=Java, goal=准备面试, durationWeeks=4, weeklyHours=6, weakTopics=[函数, 概率], learningStyle=[练习优先]}, startTime=2026-03-17T13:26:01.882269Z
+2026-03-17T21:26:01.883+08:00  INFO 24750 --- [MindOS] [pool-4-thread-1] c.z.mindos.assistant.skill.SkillEngine   : Skill execution finished: skill=teaching.plan, userId=test-user, parameters={topic=Java, goal=准备面试, durationWeeks=4, weeklyHours=6, weakTopics=[函数, 概率], learningStyle=[练习优先]}, startTime=2026-03-17T13:26:01.882269Z, endTime=2026-03-17T13:26:01.882946Z, durationMs=0, success=true
+2026-03-17T21:26:01.883+08:00  INFO 24750 --- [MindOS] [pool-4-thread-1] c.z.m.a.dispatcher.DispatcherService     : Dispatcher output: userId=test-user, channel=teaching.plan, output=[教学规划]
+学生ID: test-user
+主题: Java
+对象: 未指定
+目标: 准备面试
+周期: 4 周
+每周投入: 6 小时
+薄弱点: 函数、概率
+优势项: 无
+学习风格: 练习优先
+约束: 无
+
+规划概览: 以Java为主线，结合薄弱点和学习风格进行分阶段提升。
+
+阶段安排:
+- 第 1-1 周 | 重点: 基础诊断、知识补齐 | 每周: 2 小时 | 里程碑: 完成基础测评并建立错题本
+- 第 2-2 周 | 重点: 专题训练、错题闭环 | 每周: 2 小时 |..., durationMs=2
+2026-03-17T21:26:01.890+08:00  INFO 24750 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher input: userId=test-user, input=你还可以学习哪些技能？
+2026-03-17T21:26:01.891+08:00  INFO 24750 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher route=meta-help, userId=test-user, channel=skills.help
+2026-03-17T21:26:01.891+08:00  INFO 24750 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher output: userId=test-user, channel=skills.help, output=我目前可以通过 3 种方式扩展/学习新技能：
+1. 自定义 JSON 技能：把 .json 技能定义放到 mindos.skills.custom-dir，然后重载。
+2. MCP 工具技能：配置 mindos.skills.mcp-servers，或运行时接入一个 MCP server。
+3. 外部 JAR 技能：加载实现 Skill SPI 的外部 JAR。
+如果你愿意，也可以先告诉我你想新增什么能力，我可以帮你判断更适合用哪一种方式。, durationMs=0
+2026-03-17T21:26:01.899+08:00  INFO 24750 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher input: userId=test-user, input={"input":{"task":"service"}}
+2026-03-17T21:26:01.905+08:00  INFO 24750 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher input: userId=test-user, input=skill:code.generate task=controller
+2026-03-17T21:26:01.906+08:00  INFO 24750 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher route=explicit-dsl, userId=test-user, skill=code.generate
+2026-03-17T21:26:01.907+08:00  INFO 24750 --- [MindOS] [pool-4-thread-2] c.z.mindos.assistant.skill.SkillEngine   : Skill execution started: skill=code.generate, userId=test-user, parameters={task=controller}, startTime=2026-03-17T13:26:01.907105Z
+2026-03-17T21:26:01.907+08:00  INFO 24750 --- [MindOS] [pool-4-thread-2] c.z.mindos.assistant.skill.SkillEngine   : Skill execution finished: skill=code.generate, userId=test-user, parameters={task=controller}, startTime=2026-03-17T13:26:01.907105Z, endTime=2026-03-17T13:26:01.907227Z, durationMs=0, success=true
+2026-03-17T21:26:01.907+08:00  INFO 24750 --- [MindOS] [pool-4-thread-2] c.z.m.a.dispatcher.DispatcherService     : Dispatcher output: userId=test-user, channel=code.generate, output=[code.generate] Placeholder generated code for task: controller, durationMs=1
+2026-03-17T21:26:01.912+08:00  INFO 24750 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher input: userId=test-user, input=你有哪些技能？
+2026-03-17T21:26:01.913+08:00  INFO 24750 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher route=meta-help, userId=test-user, channel=skills.help
+2026-03-17T21:26:01.913+08:00  INFO 24750 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher output: userId=test-user, channel=skills.help, output=我当前可以直接使用这些技能：
+- code.generate - Generates code from a task description (skeleton placeholder).
+- echo - Echoes back the text after the 'echo' command.
+- file.search - Searches files by path and keyword (skeleton placeholder).
+- mcp.docs.se..., durationMs=1
+2026-03-17T21:26:01.917+08:00  INFO 24750 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher input: userId=test-user, input=search docs for auth guide
+2026-03-17T21:26:01.918+08:00  INFO 24750 --- [MindOS] [pool-4-thread-3] c.z.mindos.assistant.skill.SkillEngine   : Skill execution started: skill=mcp.docs.searchDocs, userId=test-user, parameters={}, startTime=2026-03-17T13:26:01.918535Z
+2026-03-17T21:26:01.919+08:00  INFO 24750 --- [MindOS] [pool-4-thread-3] c.z.mindos.assistant.skill.SkillEngine   : Skill execution finished: skill=mcp.docs.searchDocs, userId=test-user, parameters={}, startTime=2026-03-17T13:26:01.918535Z, endTime=2026-03-17T13:26:01.919241Z, durationMs=0, success=true
+2026-03-17T21:26:01.919+08:00  INFO 24750 --- [MindOS] [pool-4-thread-3] c.z.m.a.dispatcher.DispatcherService     : Dispatcher route=detected-skill, userId=test-user, skill=mcp.docs.searchDocs
+2026-03-17T21:26:01.920+08:00  INFO 24750 --- [MindOS] [pool-4-thread-3] c.z.m.a.dispatcher.DispatcherService     : Dispatcher output: userId=test-user, channel=mcp.docs.searchDocs, output=MCP docs result for search docs for auth guide, durationMs=2
+2026-03-17T21:26:01.924+08:00  INFO 24750 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher input: userId=pref-user, input=给我一个数学学习计划，目标是期末提分，六周，每周八小时
+2026-03-17T21:26:01.924+08:00  INFO 24750 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher route=rule, userId=pref-user, skill=teaching.plan
+2026-03-17T21:26:01.925+08:00  INFO 24750 --- [MindOS] [pool-4-thread-4] c.z.mindos.assistant.skill.SkillEngine   : Skill execution started: skill=teaching.plan, userId=pref-user, parameters={topic=数学, goal=期末提分, durationWeeks=6, weeklyHours=8}, startTime=2026-03-17T13:26:01.924946Z
+2026-03-17T21:26:01.925+08:00  INFO 24750 --- [MindOS] [pool-4-thread-4] c.z.mindos.assistant.skill.SkillEngine   : Skill execution finished: skill=teaching.plan, userId=pref-user, parameters={topic=数学, goal=期末提分, durationWeeks=6, weeklyHours=8}, startTime=2026-03-17T13:26:01.924946Z, endTime=2026-03-17T13:26:01.925670Z, durationMs=0, success=true
+2026-03-17T21:26:01.926+08:00  INFO 24750 --- [MindOS] [pool-4-thread-4] c.z.m.a.dispatcher.DispatcherService     : Dispatcher output: userId=pref-user, channel=teaching.plan, output=[教学规划]
+学生ID: pref-user
+主题: 数学
+对象: 未指定
+目标: 期末提分
+周期: 6 周
+每周投入: 8 小时
+薄弱点: 无
+优势项: 无
+学习风格: 无
+约束: 无
+
+规划概览: 以数学为主线，结合薄弱点和学习风格进行分阶段提升。
+
+阶段安排:
+- 第 1-2 周 | 重点: 基础诊断、知识补齐 | 每周: 3 小时 | 里程碑: 完成基础测评并建立错题本
+- 第 3-4 周 | 重点: 专题训练、错题闭环 | 每周: 3 小时 | 里程碑: 专题正确率..., durationMs=1
+2026-03-17T21:26:01.928+08:00  INFO 24750 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher input: userId=pref-user, input=继续按之前方式
+2026-03-17T21:26:01.929+08:00  INFO 24750 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher route=memory-habit, userId=pref-user, skill=teaching.plan
+2026-03-17T21:26:01.929+08:00  INFO 24750 --- [MindOS] [pool-4-thread-1] c.z.mindos.assistant.skill.SkillEngine   : Skill execution started: skill=teaching.plan, userId=pref-user, parameters={topic=数学, goal=期末提分, durationWeeks=6, weeklyHours=8, gradeOrLevel=高一, learningStyle=[练习优先], constraints=[时区:Asia/Shanghai], resourcePreference=[语言:zh-CN]}, startTime=2026-03-17T13:26:01.929532Z
+2026-03-17T21:26:01.930+08:00  INFO 24750 --- [MindOS] [pool-4-thread-1] c.z.mindos.assistant.skill.SkillEngine   : Skill execution finished: skill=teaching.plan, userId=pref-user, parameters={topic=数学, goal=期末提分, durationWeeks=6, weeklyHours=8, gradeOrLevel=高一, learningStyle=[练习优先], constraints=[时区:Asia/Shanghai], resourcePreference=[语言:zh-CN]}, startTime=2026-03-17T13:26:01.929532Z, endTime=2026-03-17T13:26:01.930039Z, durationMs=0, success=true
+2026-03-17T21:26:01.930+08:00  INFO 24750 --- [MindOS] [pool-4-thread-1] c.z.m.a.dispatcher.DispatcherService     : Dispatcher output: userId=pref-user, channel=teaching.plan, output=[自动调度] 已按历史习惯调用 skill: teaching.plan，并复用用户偏好
+[教学规划]
+学生ID: pref-user
+主题: 数学
+对象: 高一
+目标: 期末提分
+周期: 6 周
+每周投入: 8 小时
+薄弱点: 无
+优势项: 无
+学习风格: 练习优先
+约束: 时区:Asia/Shanghai
+
+规划概览: 以数学为主线，结合薄弱点和学习风格进行分阶段提升。
+
+阶段安排:
+- 第 1-2 周 | 重点: 基础诊断、知识补齐 | 每周: 3 小时 | 里程碑: ..., durationMs=2
+2026-03-17T21:26:01.935+08:00  INFO 24750 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher input: userId=test-user, input=echo compatibility
+2026-03-17T21:26:01.936+08:00  INFO 24750 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher route=rule, userId=test-user, skill=echo
+2026-03-17T21:26:01.937+08:00  INFO 24750 --- [MindOS] [pool-4-thread-2] c.z.mindos.assistant.skill.SkillEngine   : Skill execution started: skill=echo, userId=test-user, parameters={text=compatibility}, startTime=2026-03-17T13:26:01.936910Z
+2026-03-17T21:26:01.937+08:00  INFO 24750 --- [MindOS] [pool-4-thread-2] c.z.mindos.assistant.skill.SkillEngine   : Skill execution finished: skill=echo, userId=test-user, parameters={text=compatibility}, startTime=2026-03-17T13:26:01.936910Z, endTime=2026-03-17T13:26:01.937151Z, durationMs=0, success=true
+2026-03-17T21:26:01.938+08:00  INFO 24750 --- [MindOS] [pool-4-thread-2] c.z.m.a.dispatcher.DispatcherService     : Dispatcher output: userId=test-user, channel=echo, output=compatibility, durationMs=2
+2026-03-17T21:26:01.945+08:00  INFO 24750 --- [MindOS] [main] t.c.s.AnnotationConfigContextLoaderUtils : Could not detect default configuration classes for test class [com.zhongbo.mindos.assistant.api.MindOsApplicationTests]: MindOsApplicationTests does not declare any static, non-private, non-final, nested classes annotated with @Configuration.
+2026-03-17T21:26:01.947+08:00  INFO 24750 --- [MindOS] [main] .b.t.c.SpringBootTestContextBootstrapper : Found @SpringBootConfiguration com.zhongbo.mindos.assistant.api.MindOsApplication for test class com.zhongbo.mindos.assistant.api.MindOsApplicationTests
+2026-03-17T21:26:01.966+08:00  INFO 24750 --- [MindOS] [main] c.z.m.a.api.MindOsApplicationTests       : Starting MindOsApplicationTests using Java 17.0.15 with PID 24750 (started by yuzhongbo in /Users/yuzhongbo/workspace/projects/MindOS/assistant-api)
+2026-03-17T21:26:01.966+08:00  INFO 24750 --- [MindOS] [main] c.z.m.a.api.MindOsApplicationTests       : No active profile set, falling back to 1 default profile: "default"
+2026-03-17T21:26:02.070+08:00  INFO 24750 --- [MindOS] [main] c.z.m.a.skill.loader.CustomSkillLoader   : CustomSkillLoader: mindos.skills.custom-dir not set, skipping custom skill loading.
+2026-03-17T21:26:02.118+08:00  INFO 24750 --- [MindOS] [main] c.z.m.a.api.MindOsApplicationTests       : Started MindOsApplicationTests in 0.169 seconds (process running for 4.297)
+2026-03-17T21:26:02.124+08:00  INFO 24750 --- [MindOS] [main] t.c.s.AnnotationConfigContextLoaderUtils : Could not detect default configuration classes for test class [com.zhongbo.mindos.assistant.api.im.ImWebhookControllerTest]: ImWebhookControllerTest does not declare any static, non-private, non-final, nested classes annotated with @Configuration.
+2026-03-17T21:26:02.128+08:00  INFO 24750 --- [MindOS] [main] .b.t.c.SpringBootTestContextBootstrapper : Found @SpringBootConfiguration com.zhongbo.mindos.assistant.api.MindOsApplication for test class com.zhongbo.mindos.assistant.api.im.ImWebhookControllerTest
+2026-03-17T21:26:02.148+08:00  INFO 24750 --- [MindOS] [main] c.z.m.a.api.im.ImWebhookControllerTest   : Starting ImWebhookControllerTest using Java 17.0.15 with PID 24750 (started by yuzhongbo in /Users/yuzhongbo/workspace/projects/MindOS/assistant-api)
+2026-03-17T21:26:02.148+08:00  INFO 24750 --- [MindOS] [main] c.z.m.a.api.im.ImWebhookControllerTest   : No active profile set, falling back to 1 default profile: "default"
+2026-03-17T21:26:02.232+08:00  INFO 24750 --- [MindOS] [main] c.z.m.a.skill.loader.CustomSkillLoader   : CustomSkillLoader: mindos.skills.custom-dir not set, skipping custom skill loading.
+2026-03-17T21:26:02.287+08:00  INFO 24750 --- [MindOS] [main] o.s.b.t.m.w.SpringBootMockServletContext : Initializing Spring TestDispatcherServlet ''
+2026-03-17T21:26:02.288+08:00  INFO 24750 --- [MindOS] [main] o.s.t.web.servlet.TestDispatcherServlet  : Initializing Servlet ''
+2026-03-17T21:26:02.288+08:00  INFO 24750 --- [MindOS] [main] o.s.t.web.servlet.TestDispatcherServlet  : Completed initialization in 0 ms
+2026-03-17T21:26:02.298+08:00  INFO 24750 --- [MindOS] [main] c.z.m.a.api.im.ImWebhookControllerTest   : Started ImWebhookControllerTest in 0.167 seconds (process running for 4.476)
+2026-03-17T21:26:02.350+08:00  INFO 24750 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher input: userId=im:wechat:fromUser, input=echo wechat
+2026-03-17T21:26:02.351+08:00  INFO 24750 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher route=rule, userId=im:wechat:fromUser, skill=echo
+2026-03-17T21:26:02.352+08:00  INFO 24750 --- [MindOS] [pool-6-thread-1] c.z.mindos.assistant.skill.SkillEngine   : Skill execution started: skill=echo, userId=im:wechat:fromUser, parameters={text=wechat}, startTime=2026-03-17T13:26:02.352720Z
+2026-03-17T21:26:02.353+08:00  INFO 24750 --- [MindOS] [pool-6-thread-1] c.z.mindos.assistant.skill.SkillEngine   : Skill execution finished: skill=echo, userId=im:wechat:fromUser, parameters={text=wechat}, startTime=2026-03-17T13:26:02.352720Z, endTime=2026-03-17T13:26:02.353199Z, durationMs=0, success=true
+2026-03-17T21:26:02.353+08:00  INFO 24750 --- [MindOS] [pool-6-thread-1] c.z.m.a.dispatcher.DispatcherService     : Dispatcher output: userId=im:wechat:fromUser, channel=echo, output=wechat, durationMs=3
+2026-03-17T21:26:02.364+08:00  INFO 24750 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher input: userId=im:dingtalk:ding-user, input=echo hi
+2026-03-17T21:26:02.364+08:00  INFO 24750 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher route=rule, userId=im:dingtalk:ding-user, skill=echo
+2026-03-17T21:26:02.366+08:00  INFO 24750 --- [MindOS] [pool-6-thread-2] c.z.mindos.assistant.skill.SkillEngine   : Skill execution started: skill=echo, userId=im:dingtalk:ding-user, parameters={text=hi}, startTime=2026-03-17T13:26:02.366360Z
+2026-03-17T21:26:02.366+08:00  INFO 24750 --- [MindOS] [pool-6-thread-2] c.z.mindos.assistant.skill.SkillEngine   : Skill execution finished: skill=echo, userId=im:dingtalk:ding-user, parameters={text=hi}, startTime=2026-03-17T13:26:02.366360Z, endTime=2026-03-17T13:26:02.366601Z, durationMs=0, success=true
+2026-03-17T21:26:02.366+08:00  INFO 24750 --- [MindOS] [pool-6-thread-2] c.z.m.a.dispatcher.DispatcherService     : Dispatcher output: userId=im:dingtalk:ding-user, channel=echo, output=hi, durationMs=2
+2026-03-17T21:26:02.385+08:00  INFO 24750 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher input: userId=im:feishu:ou_123, input=echo hello
+2026-03-17T21:26:02.385+08:00  INFO 24750 --- [MindOS] [main] c.z.m.a.dispatcher.DispatcherService     : Dispatcher route=rule, userId=im:feishu:ou_123, skill=echo
+2026-03-17T21:26:02.385+08:00  INFO 24750 --- [MindOS] [pool-6-thread-3] c.z.mindos.assistant.skill.SkillEngine   : Skill execution started: skill=echo, userId=im:feishu:ou_123, parameters={text=hello}, startTime=2026-03-17T13:26:02.385838Z
+2026-03-17T21:26:02.385+08:00  INFO 24750 --- [MindOS] [pool-6-thread-3] c.z.mindos.assistant.skill.SkillEngine   : Skill execution finished: skill=echo, userId=im:feishu:ou_123, parameters={text=hello}, startTime=2026-03-17T13:26:02.385838Z, endTime=2026-03-17T13:26:02.385934Z, durationMs=0, success=true
+2026-03-17T21:26:02.386+08:00  INFO 24750 --- [MindOS] [pool-6-thread-3] c.z.m.a.dispatcher.DispatcherService     : Dispatcher output: userId=im:feishu:ou_123, channel=echo, output=hello, durationMs=1

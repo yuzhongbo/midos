@@ -2,6 +2,10 @@ package com.zhongbo.mindos.assistant.cli;
 
 import com.zhongbo.mindos.assistant.common.dto.ChatResponseDto;
 import com.zhongbo.mindos.assistant.common.dto.ConversationTurnDto;
+import com.zhongbo.mindos.assistant.common.dto.MemoryCompressionPlanRequestDto;
+import com.zhongbo.mindos.assistant.common.dto.MemoryCompressionPlanResponseDto;
+import com.zhongbo.mindos.assistant.common.dto.MemoryCompressionStepDto;
+import com.zhongbo.mindos.assistant.common.dto.MemoryStyleProfileDto;
 import com.zhongbo.mindos.assistant.common.dto.MemorySyncRequestDto;
 import com.zhongbo.mindos.assistant.common.dto.MemorySyncResponseDto;
 import com.zhongbo.mindos.assistant.common.dto.ProceduralMemoryEntryDto;
@@ -351,6 +355,9 @@ class InteractiveChatRunner {
         out.println("  /memory pull [--since N] [--limit N]    拉取增量记忆");
         out.println("  /memory push [--limit N]                在窗口内交互式整理并推送记忆");
         out.println("  /memory push --file path [--limit N]    推送记忆 JSON 文件（兼容模式）");
+        out.println("  /memory style show                      查看当前记忆压缩风格");
+        out.println("  /memory style set --style-name 名称     更新记忆压缩风格");
+        out.println("  /memory compress --source 文本          生成逐步记忆压缩规划");
         out.println("  /teach plan [--query 文本]              生成教学规划（自动转 teaching.plan skill）");
         out.println(ANSI.string("@|bold,cyan [Shortcuts]|@"));
         out.println("  自然语言指令示例                          我有哪些技能 / 帮我拉取记忆 / 加载jar https://...");
@@ -389,6 +396,8 @@ class InteractiveChatRunner {
         out.println("记忆同步（自然语言）:");
         out.println("  拉取：直接说“帮我拉取最近 30 条记忆”或“从 12 开始拉取记忆”");
         out.println("  推送：直接说“帮我保存 20 条记忆”或“开始记忆推送”");
+        out.println("  风格：直接说“查看我的记忆风格”或“把记忆风格改成 action，语气 warm”");
+        out.println("  压缩：直接说“按我的风格压缩这段记忆：...”");
         out.println("  如需技术命令格式请看 /help full");
         out.flush();
     }
@@ -755,6 +764,14 @@ class InteractiveChatRunner {
                                         BufferedReader reader,
                                         SessionState sessionState,
                                         ExecutorService backgroundExecutor) {
+        if (input.startsWith("/memory style")) {
+            return handleMemoryStyleCommand(input, out, chatService, reader);
+        }
+
+        if (input.startsWith("/memory compress")) {
+            return handleMemoryCompressCommand(input, out, chatService, reader);
+        }
+
         if (input.startsWith("/memory pull")) {
             Map<String, String> parsed = parseOptionPairs(input.substring("/memory pull".length()).trim());
             long since = parseLong(parsed.get("since"), 0L);
@@ -822,6 +839,88 @@ class InteractiveChatRunner {
         }
 
         return false;
+    }
+
+    private boolean handleMemoryStyleCommand(String input,
+                                             PrintWriter out,
+                                             CliChatService chatService,
+                                             BufferedReader reader) {
+        if ("/memory style".equalsIgnoreCase(input) || "/memory style show".equalsIgnoreCase(input)) {
+            try {
+                printMemoryStyle(out, chatService.getMemoryStyleProfile());
+            } catch (AssistantSdkException ex) {
+                printError(out, "memory style 获取失败(status=" + ex.statusCode() + ", code=" + ex.errorCode() + "): " + ex.getMessage());
+            }
+            return true;
+        }
+
+        if (input.startsWith("/memory style set")) {
+            Map<String, String> parsed = parseOptionPairs(input.substring("/memory style set".length()).trim());
+            String styleName = parsed.get("style-name");
+            String tone = parsed.get("tone");
+            String outputFormat = parsed.get("output-format");
+            if (styleName == null || styleName.isBlank()) {
+                styleName = promptForMemoryValue(out, reader, "记忆风格名称", null, false);
+                if (styleName == null) {
+                    printInfo(out, "已取消记忆风格更新。");
+                    return true;
+                }
+            }
+            if (tone == null) {
+                tone = promptForMemoryValue(out, reader, "语气（可留空）", "", true);
+                if (tone == null) {
+                    printInfo(out, "已取消记忆风格更新。");
+                    return true;
+                }
+            }
+            if (outputFormat == null) {
+                outputFormat = promptForMemoryValue(out, reader, "输出格式（plain/bullet，可留空）", "", true);
+                if (outputFormat == null) {
+                    printInfo(out, "已取消记忆风格更新。");
+                    return true;
+                }
+            }
+            try {
+                MemoryStyleProfileDto response = chatService.updateMemoryStyleProfile(
+                        new MemoryStyleProfileDto(styleName, blankToNull(tone), blankToNull(outputFormat))
+                );
+                printInfo(out, "记忆风格已更新。");
+                printMemoryStyle(out, response);
+            } catch (AssistantSdkException ex) {
+                printError(out, "memory style 更新失败(status=" + ex.statusCode() + ", code=" + ex.errorCode() + "): " + ex.getMessage());
+            }
+            return true;
+        }
+        return false;
+    }
+
+    private boolean handleMemoryCompressCommand(String input,
+                                                PrintWriter out,
+                                                CliChatService chatService,
+                                                BufferedReader reader) {
+        Map<String, String> parsed = parseOptionPairs(input.substring("/memory compress".length()).trim());
+        String source = parsed.get("source");
+        if (source == null || source.isBlank()) {
+            source = promptForMemoryValue(out, reader, "请输入需要压缩的记忆内容", null, false);
+            if (source == null) {
+                printInfo(out, "已取消记忆压缩规划。");
+                return true;
+            }
+        }
+        try {
+            MemoryCompressionPlanResponseDto response = chatService.buildMemoryCompressionPlan(
+                    new MemoryCompressionPlanRequestDto(
+                            source,
+                            blankToNull(parsed.get("style-name")),
+                            blankToNull(parsed.get("tone")),
+                            blankToNull(parsed.get("output-format"))
+                    )
+            );
+            printMemoryCompressionPlan(out, response);
+        } catch (AssistantSdkException ex) {
+            printError(out, "memory compress 失败(status=" + ex.statusCode() + ", code=" + ex.errorCode() + "): " + ex.getMessage());
+        }
+        return true;
     }
 
     private boolean handleInteractiveMemoryPush(PrintWriter out,
@@ -1187,6 +1286,32 @@ class InteractiveChatRunner {
             values.put(currentKey, currentValue.toString().trim());
         }
         return values;
+    }
+
+    private void printMemoryStyle(PrintWriter out, MemoryStyleProfileDto style) {
+        out.println(ANSI.string("@|bold 记忆风格|@"));
+        out.println("style.name=" + nullSafe(style.styleName()));
+        out.println("style.tone=" + nullSafe(style.tone()));
+        out.println("style.outputFormat=" + nullSafe(style.outputFormat()));
+    }
+
+    private void printMemoryCompressionPlan(PrintWriter out, MemoryCompressionPlanResponseDto response) {
+        out.println(ANSI.string("@|bold 记忆压缩规划|@"));
+        printMemoryStyle(out, response.style());
+        for (MemoryCompressionStepDto step : response.steps()) {
+            out.println("- [" + step.stage() + "] " + step.content());
+        }
+    }
+
+    private String blankToNull(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        return value.trim();
+    }
+
+    private String nullSafe(String value) {
+        return value == null ? "" : value;
     }
 
     private void printProfile(PrintWriter out, AssistantProfile profile) {

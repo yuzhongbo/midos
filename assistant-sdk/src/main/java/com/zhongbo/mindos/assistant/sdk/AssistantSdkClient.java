@@ -5,6 +5,9 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.zhongbo.mindos.assistant.common.dto.ChatRequestDto;
 import com.zhongbo.mindos.assistant.common.dto.ChatResponseDto;
 import com.zhongbo.mindos.assistant.common.dto.ConversationTurnDto;
+import com.zhongbo.mindos.assistant.common.dto.MemoryCompressionPlanRequestDto;
+import com.zhongbo.mindos.assistant.common.dto.MemoryCompressionPlanResponseDto;
+import com.zhongbo.mindos.assistant.common.dto.MemoryStyleProfileDto;
 import com.zhongbo.mindos.assistant.common.dto.MemorySyncRequestDto;
 import com.zhongbo.mindos.assistant.common.dto.MemorySyncResponseDto;
 
@@ -87,6 +90,63 @@ public class AssistantSdkClient {
             throw new AssistantSdkException(0, "INTERRUPTED", "MindOS memory sync fetch call interrupted");
         } catch (IOException e) {
             throw new AssistantSdkException(0, "NETWORK_ERROR", "Failed to call MindOS memory sync fetch endpoint");
+        }
+    }
+
+    public MemoryStyleProfileDto getMemoryStyle(String userId) {
+        String encodedUser = encodePathSegment(userId);
+        URI uri = baseUri.resolve("/api/memory/" + encodedUser + "/style");
+
+        try {
+            HttpRequest httpRequest = HttpRequest.newBuilder(uri)
+                    .header("Accept", "application/json")
+                    .GET()
+                    .build();
+            return sendForBody(httpRequest, MemoryStyleProfileDto.class);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new AssistantSdkException(0, "INTERRUPTED", "MindOS memory style fetch call interrupted");
+        } catch (IOException e) {
+            throw new AssistantSdkException(0, "NETWORK_ERROR", "Failed to call MindOS memory style fetch endpoint");
+        }
+    }
+
+    public MemoryStyleProfileDto updateMemoryStyle(String userId, MemoryStyleProfileDto request) {
+        String encodedUser = encodePathSegment(userId);
+        URI uri = baseUri.resolve("/api/memory/" + encodedUser + "/style");
+
+        try {
+            String body = objectMapper.writeValueAsString(request);
+            HttpRequest httpRequest = HttpRequest.newBuilder(uri)
+                    .header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(body))
+                    .build();
+            return sendForBody(httpRequest, MemoryStyleProfileDto.class);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new AssistantSdkException(0, "INTERRUPTED", "MindOS memory style update call interrupted");
+        } catch (IOException e) {
+            throw new AssistantSdkException(0, "NETWORK_ERROR", "Failed to call MindOS memory style update endpoint");
+        }
+    }
+
+    public MemoryCompressionPlanResponseDto buildMemoryCompressionPlan(String userId,
+                                                                       MemoryCompressionPlanRequestDto request) {
+        String encodedUser = encodePathSegment(userId);
+        URI uri = baseUri.resolve("/api/memory/" + encodedUser + "/compress-plan");
+
+        try {
+            String body = objectMapper.writeValueAsString(request);
+            HttpRequest httpRequest = HttpRequest.newBuilder(uri)
+                    .header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(body))
+                    .build();
+            return sendForBody(httpRequest, MemoryCompressionPlanResponseDto.class);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new AssistantSdkException(0, "INTERRUPTED", "MindOS memory compression plan call interrupted");
+        } catch (IOException e) {
+            throw new AssistantSdkException(0, "NETWORK_ERROR", "Failed to call MindOS memory compression plan endpoint");
         }
     }
 

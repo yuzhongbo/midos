@@ -36,6 +36,9 @@ class CommandNluParser {
     private static final Pattern LIMIT_PATTERN = Pattern.compile("(?:limit|限制|最多|最近)\\s*[:：]?\\s*([0-9零一二两三四五六七八九十百千万]+)", Pattern.CASE_INSENSITIVE);
     private static final Pattern COUNT_PATTERN = Pattern.compile("(?:拉取|拉|获取|同步|查看|显示|保存|记录|写入|最近)\\s*([0-9零一二两三四五六七八九十百千万]+)\\s*条", Pattern.CASE_INSENSITIVE);
     private static final Pattern USER_PATTERN = Pattern.compile("(?:用户|user)\\s*(?:改为|设为|设置为|切换到|切到|为|=)?\\s*([a-zA-Z0-9._-]+)", Pattern.CASE_INSENSITIVE);
+    private static final Pattern MEMORY_STYLE_NAME_PATTERN = Pattern.compile("(?:记忆风格|压缩风格|风格)\\s*(?:改成|改为|设为|设置为|用|是|为|=|:)\\s*([^,，。；;\\n]+)", Pattern.CASE_INSENSITIVE);
+    private static final Pattern MEMORY_STYLE_TONE_PATTERN = Pattern.compile("(?:语气|tone)\\s*(?:改成|改为|设为|设置为|用|是|为|=|:)\\s*([^,，。；;\\n]+)", Pattern.CASE_INSENSITIVE);
+    private static final Pattern MEMORY_STYLE_OUTPUT_PATTERN = Pattern.compile("(?:格式|输出格式|output format)\\s*(?:改成|改为|设为|设置为|用|是|为|=|:)\\s*([^,，。；;\\n]+)", Pattern.CASE_INSENSITIVE);
     private static final Pattern PROFILE_NAME_PATTERN = Pattern.compile("(?:名字|名称|assistant\\s*name|name)\\s*(?:改为|改成|换成|设为|设成|设置为|设置成|命名为|叫|是|为|=|:)\\s*([^,，。；;\\n]+)", Pattern.CASE_INSENSITIVE);
     private static final Pattern PROFILE_ROLE_PATTERN = Pattern.compile("(?:角色|role)\\s*(?:改为|改成|换成|设为|设成|设置为|设置成|是|为|=|:)\\s*([^,，。；;\\n]+)", Pattern.CASE_INSENSITIVE);
     private static final Pattern PROFILE_STYLE_PATTERN = Pattern.compile("(?:风格|语气|style)\\s*(?:改为|改成|换成|设为|设成|设置为|设置成|想用|是|为|=|:)\\s*([^,，。；;\\n]+)", Pattern.CASE_INSENSITIVE);
@@ -68,6 +71,16 @@ class CommandNluParser {
         String historyCommand = extractHistoryCommand(normalized);
         if (historyCommand != null) {
             return historyCommand;
+        }
+
+        String memoryStyleCommand = extractMemoryStyleCommand(input, normalized);
+        if (memoryStyleCommand != null) {
+            return memoryStyleCommand;
+        }
+
+        String memoryCompressCommand = extractMemoryCompressCommand(input, normalized);
+        if (memoryCompressCommand != null) {
+            return memoryCompressCommand;
         }
 
         String memoryPullCommand = extractMemoryPullCommand(normalized);
@@ -255,6 +268,58 @@ class CommandNluParser {
             return "/history";
         }
         return "/history --limit " + limit;
+    }
+
+    private String extractMemoryStyleCommand(String input, String normalized) {
+        if (containsAny(normalized, "查看我的记忆风格", "查看记忆风格", "当前记忆风格", "memory style")) {
+            return "/memory style show";
+        }
+        if (!containsAny(normalized, "记忆风格", "压缩风格", "memory style", "style profile")) {
+            return null;
+        }
+        if (!containsAny(normalized, "改", "设", "用", "设置", "更新")) {
+            return null;
+        }
+
+        Map<String, String> options = new LinkedHashMap<>();
+        putMatchedProfileOption(options, "style-name", MEMORY_STYLE_NAME_PATTERN, input);
+        putMatchedProfileOption(options, "tone", MEMORY_STYLE_TONE_PATTERN, input);
+        putMatchedProfileOption(options, "output-format", MEMORY_STYLE_OUTPUT_PATTERN, input);
+        if (options.isEmpty()) {
+            return "/memory style show";
+        }
+        StringBuilder command = new StringBuilder("/memory style set");
+        for (Map.Entry<String, String> entry : options.entrySet()) {
+            command.append(" --").append(entry.getKey()).append(' ').append(entry.getValue());
+        }
+        return command.toString();
+    }
+
+    private String extractMemoryCompressCommand(String input, String normalized) {
+        if (!containsAny(normalized,
+                "压缩这段记忆",
+                "压缩这段内容",
+                "按我的风格压缩",
+                "用我的风格压缩",
+                "memory compress",
+                "compress memory")) {
+            return null;
+        }
+        String source = input == null ? "" : input.trim();
+        source = source.replaceFirst("^(请|帮我|麻烦|请你)", "").trim();
+        source = source.replaceFirst("^(按我的风格|用我的风格)", "").trim();
+        source = source.replaceFirst("^(来)?压缩这段(记忆|内容)[:：]?", "").trim();
+        source = source.replaceFirst("^压缩这段(记忆|内容)[:：]?", "").trim();
+        if (source.isBlank() || source.equals(input.trim())) {
+            int colonIndex = Math.max(source.indexOf('：'), source.indexOf(':'));
+            if (colonIndex >= 0 && colonIndex + 1 < source.length()) {
+                source = source.substring(colonIndex + 1).trim();
+            }
+        }
+        if (source.isBlank() || source.equals(input.trim())) {
+            return "/memory compress";
+        }
+        return "/memory compress --source " + source;
     }
 
     private String extractMemoryPullCommand(String normalized) {

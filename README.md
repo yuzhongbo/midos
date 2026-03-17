@@ -80,6 +80,7 @@ Chat 与记忆操作：
 日常对话与记忆：
 - `帮我从 12 开始拉取最近 30 条记忆` -> `/memory pull --since 12 --limit 30`
 - `从 12 开始拉取 30 条记忆` -> `/memory pull --since 12 --limit 30`
+- `按我的风格压缩这段记忆：明天先整理目标，再拆任务` -> `/memory compress --source ...`
 - `查看最近 5 条历史` / `给我看几条历史` -> `/history --limit 5` / `/history --limit 10`
 - `查看最近十条历史` / `帮我保存二十条记忆` -> `/history --limit 10` / `/memory push --limit 20`
 - `从 2 开始拉三十条` -> `/memory pull --since 2 --limit 30`
@@ -89,6 +90,7 @@ Chat 与记忆操作：
 会话与配置管理：
 - `把用户改为 dev-user` -> `/user dev-user`
 - `把模型切换到 openai` / `取消模型覆盖` -> `/provider openai` / `/provider default`
+- `查看我的记忆风格` / `把记忆风格改成 action，语气 warm，格式 bullet` -> `/memory style show` / `/memory style set ...`
 
 网络与扩展接入（通常用于高级/排障场景）：
 - `把服务地址换成 http://localhost:18080` -> `/server http://localhost:18080`（需确认）
@@ -123,6 +125,9 @@ Chat 与记忆操作：
 /memory push
 /memory push --limit 50
 /memory push --file /tmp/memory-sync.json --limit 50
+/memory style show
+/memory style set --style-name action --tone warm --output-format bullet
+/memory compress --source 这周先整理目标，再拆任务
 /exit
 ```
 
@@ -213,6 +218,7 @@ curl -X POST http://localhost:8080/api/skills/load-mcp \
 - Semantic memory is stored when input starts with `remember `.
 - Memory sync API supports incremental pull via cursor (`since`) for multi-terminal synchronization.
 - Memory compression planning supports gradual stages (`RAW -> CONDENSED -> BRIEF -> STYLED`) with per-user style profile via `POST /api/memory/{userId}/style`, `GET /api/memory/{userId}/style`, and `POST /api/memory/{userId}/compress-plan`.
+- IM webhook integration (disabled by default) supports Feishu/DingTalk/WeChat text chat via `/api/im/feishu/events`, `/api/im/dingtalk/events`, `/api/im/wechat/events`; all platforms can enable signature verification independently in `application.properties`.
 - **Custom skills (JSON)**: drop `.json` files into `mindos.skills.custom-dir`; reload without restart via `POST /api/skills/reload`.
   ```json
   { "name": "greet", "description": "Warm greeting", "triggers": ["greet","hello"], "response": "Hello {{user}}! You said: {{input}}" }

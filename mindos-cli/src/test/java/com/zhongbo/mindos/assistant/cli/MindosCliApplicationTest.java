@@ -1460,6 +1460,125 @@ class MindosCliApplicationTest {
         String help = result.stdout();
         assertTrue(help.contains("pull"));
         assertTrue(help.contains("push"));
+        assertTrue(help.contains("style"));
+        assertTrue(help.contains("compress"));
+    }
+
+    @Test
+    void shouldShowAndSetMemoryStyleAndBuildCompressionPlan() throws IOException {
+        AtomicReference<String> styleRequestBodyRef = new AtomicReference<>("");
+        AtomicReference<String> compressRequestBodyRef = new AtomicReference<>("");
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/api/memory/cli-user/style", exchange -> {
+            if ("GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+                byte[] response = "{\"styleName\":\"concise\",\"tone\":\"direct\",\"outputFormat\":\"plain\"}"
+                        .getBytes(StandardCharsets.UTF_8);
+                exchange.getResponseHeaders().set("Content-Type", "application/json");
+                exchange.sendResponseHeaders(200, response.length);
+                exchange.getResponseBody().write(response);
+                exchange.close();
+                return;
+            }
+            styleRequestBodyRef.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            byte[] response = styleRequestBodyRef.get().getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+        server.createContext("/api/memory/cli-user/compress-plan", exchange -> {
+            compressRequestBodyRef.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            byte[] response = ("{" +
+                    "\"style\":{\"styleName\":\"action\",\"tone\":\"warm\",\"outputFormat\":\"bullet\"}," +
+                    "\"steps\":[{" +
+                    "\"stage\":\"RAW\",\"content\":\"原文\",\"length\":2},{" +
+                    "\"stage\":\"STYLED\",\"content\":\"- 行动项\",\"length\":5}]," +
+                    "\"createdAt\":\"2026-03-17T00:00:00Z\"" +
+                    "}").getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+
+        try {
+            server.start();
+            int port = server.getAddress().getPort();
+
+            CommandOutputResult showResult = executeWithOut(
+                    "memory", "style", "show",
+                    "--user", "cli-user",
+                    "--server", "http://127.0.0.1:" + port
+            );
+            assertEquals(0, showResult.exitCode());
+            assertTrue(showResult.stdout().contains("style.name=concise"));
+
+            CommandOutputResult setResult = executeWithOut(
+                    "memory", "style", "set",
+                    "--user", "cli-user",
+                    "--style-name", "action",
+                    "--tone", "warm",
+                    "--output-format", "bullet",
+                    "--server", "http://127.0.0.1:" + port
+            );
+            assertEquals(0, setResult.exitCode());
+            assertTrue(styleRequestBodyRef.get().contains("\"styleName\":\"action\""));
+            assertTrue(setResult.stdout().contains("style.outputFormat=bullet"));
+
+            CommandOutputResult compressResult = executeWithOut(
+                    "memory", "compress",
+                    "--user", "cli-user",
+                    "--source", "明天先整理目标，再拆任务",
+                    "--server", "http://127.0.0.1:" + port
+            );
+            assertEquals(0, compressResult.exitCode());
+            assertTrue(compressRequestBodyRef.get().contains("\"sourceText\":\"明天先整理目标，再拆任务\""));
+            assertTrue(compressResult.stdout().contains("RAW: 原文"));
+            assertTrue(compressResult.stdout().contains("STYLED: - 行动项"));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void shouldMapNaturalLanguageToMemoryCompressInsideInteractiveMode() throws IOException {
+        AtomicReference<String> requestBodyRef = new AtomicReference<>("");
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/api/memory/cli-user/compress-plan", exchange -> {
+            requestBodyRef.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            byte[] response = ("{" +
+                    "\"style\":{\"styleName\":\"action\",\"tone\":\"warm\",\"outputFormat\":\"bullet\"}," +
+                    "\"steps\":[{" +
+                    "\"stage\":\"RAW\",\"content\":\"明天先整理目标，再拆任务\",\"length\":12},{" +
+                    "\"stage\":\"STYLED\",\"content\":\"- 明天先整理目标\\n- 再拆任务\",\"length\":15}]," +
+                    "\"createdAt\":\"2026-03-17T00:00:00Z\"" +
+                    "}").getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+
+        try {
+            server.start();
+            int port = server.getAddress().getPort();
+
+            CommandOutputResult result = executeInteractiveWithOut(
+                    "按我的风格压缩这段记忆：明天先整理目标，再拆任务\n"
+                            + "/exit\n",
+                    "--server", "http://127.0.0.1:" + port,
+                    "--user", "cli-user"
+            );
+
+            String console = result.stdout();
+            assertEquals(0, result.exitCode());
+            assertTrue(console.contains("已识别自然语言指令 -> /memory compress --source 明天先整理目标，再拆任务"));
+            assertTrue(console.contains("记忆压缩规划"));
+            assertTrue(console.contains("[STYLED] - 明天先整理目标"));
+            assertTrue(requestBodyRef.get().contains("\"sourceText\":\"明天先整理目标，再拆任务\""));
+        } finally {
+            server.stop(0);
+        }
     }
 
     @Test

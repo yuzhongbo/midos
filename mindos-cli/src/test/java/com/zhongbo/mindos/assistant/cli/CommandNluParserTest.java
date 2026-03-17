@@ -38,6 +38,14 @@ class CommandNluParserTest {
     }
 
     @Test
+    void shouldMapNaturalLanguageToMemoryCompressionAndStyleCommands() {
+        assertEquals("/memory compress --source 明天先整理目标，再拆任务",
+                parser.resolveNaturalLanguageCommand("按我的风格压缩这段记忆：明天先整理目标，再拆任务"));
+        assertEquals("/memory style show",
+                parser.resolveNaturalLanguageCommand("查看我的记忆风格"));
+    }
+
+    @Test
     void shouldNotTreatSinceCursorAsLimit() {
         assertEquals("/memory pull --since 3",
                 parser.resolveNaturalLanguageCommand("从 3 开始拉取记忆"));

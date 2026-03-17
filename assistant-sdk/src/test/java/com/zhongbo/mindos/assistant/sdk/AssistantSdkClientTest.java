@@ -2,7 +2,9 @@ package com.zhongbo.mindos.assistant.sdk;
 
 import com.sun.net.httpserver.HttpServer;
 import com.zhongbo.mindos.assistant.common.dto.ConversationTurnDto;
+import com.zhongbo.mindos.assistant.common.dto.MemoryCompressionPlanRequestDto;
 import com.zhongbo.mindos.assistant.common.dto.MemorySyncRequestDto;
+import com.zhongbo.mindos.assistant.common.dto.MemoryStyleProfileDto;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
@@ -115,6 +117,58 @@ class AssistantSdkClientTest {
         }
 
         throw new AssertionError("Expected AssistantSdkException to be thrown");
+    }
+
+    @Test
+    void shouldFetchUpdateStyleAndBuildCompressionPlan() throws IOException {
+        AtomicReference<String> pathRef = new AtomicReference<>("");
+        AtomicReference<String> bodyRef = new AtomicReference<>("");
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/api/memory", exchange -> {
+            pathRef.set(exchange.getRequestURI().toString());
+            bodyRef.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            byte[] response;
+            if ("GET".equalsIgnoreCase(exchange.getRequestMethod()) && pathRef.get().endsWith("/style")) {
+                response = "{\"styleName\":\"action\",\"tone\":\"warm\",\"outputFormat\":\"bullet\"}"
+                        .getBytes(StandardCharsets.UTF_8);
+            } else if (pathRef.get().endsWith("/style")) {
+                response = bodyRef.get().getBytes(StandardCharsets.UTF_8);
+            } else {
+                response = ("{" +
+                        "\"style\":{\"styleName\":\"action\",\"tone\":\"warm\",\"outputFormat\":\"bullet\"}," +
+                        "\"steps\":[{" +
+                        "\"stage\":\"RAW\",\"content\":\"原文\",\"length\":2},{" +
+                        "\"stage\":\"CONDENSED\",\"content\":\"压缩\",\"length\":2}]," +
+                        "\"createdAt\":\"2026-03-17T00:00:00Z\"" +
+                        "}").getBytes(StandardCharsets.UTF_8);
+            }
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+
+        try {
+            server.start();
+            AssistantSdkClient client = new AssistantSdkClient(URI.create("http://127.0.0.1:" + server.getAddress().getPort()));
+
+            MemoryStyleProfileDto style = client.getMemoryStyle("user a+b");
+            assertEquals("action", style.styleName());
+            assertTrue(pathRef.get().contains("/api/memory/user+a%2Bb/style"));
+
+            MemoryStyleProfileDto updated = client.updateMemoryStyle("user a+b",
+                    new MemoryStyleProfileDto("coach", "calm", "plain"));
+            assertEquals("coach", updated.styleName());
+            assertTrue(bodyRef.get().contains("\"styleName\":\"coach\""));
+
+            var plan = client.buildMemoryCompressionPlan("user a+b",
+                    new MemoryCompressionPlanRequestDto("原始记忆", null, null, null));
+            assertTrue(pathRef.get().contains("/api/memory/user+a%2Bb/compress-plan"));
+            assertEquals("action", plan.style().styleName());
+            assertEquals(2, plan.steps().size());
+        } finally {
+            server.stop(0);
+        }
     }
 
     @Test

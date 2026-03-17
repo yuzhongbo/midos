@@ -5,6 +5,9 @@ import com.zhongbo.mindos.assistant.common.dto.AssistantProfileDto;
 import com.zhongbo.mindos.assistant.common.dto.ChatRequestDto;
 import com.zhongbo.mindos.assistant.common.dto.ChatResponseDto;
 import com.zhongbo.mindos.assistant.common.dto.ConversationTurnDto;
+import com.zhongbo.mindos.assistant.common.dto.MemoryCompressionPlanRequestDto;
+import com.zhongbo.mindos.assistant.common.dto.MemoryCompressionPlanResponseDto;
+import com.zhongbo.mindos.assistant.common.dto.MemoryStyleProfileDto;
 import com.zhongbo.mindos.assistant.common.dto.MemorySyncRequestDto;
 import com.zhongbo.mindos.assistant.common.dto.MemorySyncResponseDto;
 import com.zhongbo.mindos.assistant.sdk.AssistantSdkClient;
@@ -48,6 +51,21 @@ class CliChatService {
     MemorySyncResponseDto pushMemory(MemorySyncRequestDto request, int limit) {
         AssistantSdkClient client = new AssistantSdkClient(java.net.URI.create(server));
         return client.applyMemorySync(userId, request, limit);
+    }
+
+    MemoryStyleProfileDto getMemoryStyleProfile() {
+        AssistantSdkClient client = new AssistantSdkClient(java.net.URI.create(server));
+        return client.getMemoryStyle(userId);
+    }
+
+    MemoryStyleProfileDto updateMemoryStyleProfile(MemoryStyleProfileDto request) {
+        AssistantSdkClient client = new AssistantSdkClient(java.net.URI.create(server));
+        return client.updateMemoryStyle(userId, request);
+    }
+
+    MemoryCompressionPlanResponseDto buildMemoryCompressionPlan(MemoryCompressionPlanRequestDto request) {
+        AssistantSdkClient client = new AssistantSdkClient(java.net.URI.create(server));
+        return client.buildMemoryCompressionPlan(userId, request);
     }
 
     List<ConversationTurnDto> fetchConversationHistory() {

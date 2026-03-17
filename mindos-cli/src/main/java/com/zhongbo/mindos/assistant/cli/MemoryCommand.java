@@ -8,14 +8,16 @@ import picocli.CommandLine;
         description = "Synchronize memory with MindOS server",
         subcommands = {
                 MemoryPullCommand.class,
-                MemoryPushCommand.class
+                MemoryPushCommand.class,
+                MemoryStyleCommand.class,
+                MemoryCompressCommand.class
         }
 )
 public class MemoryCommand implements Runnable {
 
     @Override
     public void run() {
-        System.out.println("Use 'mindos memory pull|push' to synchronize memory.");
+        System.out.println("Use 'mindos memory pull|push|style|compress' to manage memory.");
     }
 }
 
