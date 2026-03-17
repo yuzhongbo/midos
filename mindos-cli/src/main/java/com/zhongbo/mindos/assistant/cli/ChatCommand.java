@@ -30,6 +30,18 @@ public class ChatCommand implements Runnable {
             description = "Override LLM provider for this request (e.g. openai, local)")
     private String llmProvider;
 
+    @CommandLine.Option(names = {"--theme"}, defaultValue = "cyber",
+            description = "Interactive UI theme: cyber or classic")
+    private String theme;
+
+    @CommandLine.Option(names = {"--pure-nl"}, defaultValue = "true",
+            description = "Use pure natural-language chat view (default: enabled)")
+    private boolean pureNaturalLanguage;
+
+    @CommandLine.Option(names = {"--show-routing-details"}, defaultValue = "false",
+            description = "Show skill/channel/routing details for troubleshooting")
+    private boolean showRoutingDetails;
+
     @CommandLine.Spec
     private CommandLine.Model.CommandSpec spec;
 
@@ -42,7 +54,9 @@ public class ChatCommand implements Runnable {
             throw new CommandLine.ParameterException(spec.commandLine(), ex.getMessage(), ex);
         }
         if (interactive || message == null || message.isBlank()) {
-            new InteractiveChatRunner().run(System.in, spec.commandLine().getOut(), chatService);
+            InteractiveChatRunner.UiTheme uiTheme = InteractiveChatRunner.UiTheme.fromValue(theme);
+            boolean routingDetailsVisible = showRoutingDetails || !pureNaturalLanguage;
+            new InteractiveChatRunner(uiTheme, routingDetailsVisible).run(System.in, spec.commandLine().getOut(), chatService);
             return;
         }
 
@@ -58,5 +72,3 @@ public class ChatCommand implements Runnable {
         }
     }
 }
-
-

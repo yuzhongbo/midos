@@ -3,7 +3,9 @@ package com.zhongbo.mindos.assistant.cli;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class CommandNluParserTest {
 
@@ -21,6 +23,18 @@ class CommandNluParserTest {
     void shouldSupportColloquialPullWithoutMemoryKeyword() {
         assertEquals("/memory pull --since 2 --limit 30",
                 parser.resolveNaturalLanguageCommand("从 2 开始拉三十条"));
+    }
+
+    @Test
+    void shouldMapContinuationHabitPhraseToRetry() {
+        assertEquals("/retry", parser.resolveNaturalLanguageCommand("继续上次的方式"));
+    }
+
+    @Test
+    void shouldMapNaturalLanguageToRoutingModeCommands() {
+        assertEquals("/routing on", parser.resolveNaturalLanguageCommand("打开排障模式"));
+        assertEquals("/routing off", parser.resolveNaturalLanguageCommand("关闭路由细节"));
+        assertEquals("/routing", parser.resolveNaturalLanguageCommand("查看排障模式状态"));
     }
 
     @Test
@@ -76,6 +90,39 @@ class CommandNluParserTest {
     void shouldTrimTrailingPunctuationFromUrls() {
         assertEquals("/skill load-jar --url https://example.com/skill.jar",
                 parser.resolveNaturalLanguageCommand("请加载jar https://example.com/skill.jar。"));
+    }
+
+    @Test
+    void shouldMapNaturalLanguageToTeachingPlanCommand() {
+        String command = parser.resolveNaturalLanguageCommand("给学生 stu-1 做一个数学学习计划，目标是期末提分，六周，每周八小时");
+        assertEquals("/teach plan --query 给学生 stu-1 做一个数学学习计划，目标是期末提分，六周，每周八小时", command);
+    }
+
+    @Test
+    void shouldExtractTeachingPlanPayloadFromQuery() {
+        var payload = parser.parseTeachingPlanInput("给学生 stu-1 做一个数学学习计划，目标是期末提分，六周，每周八小时，薄弱点函数、概率，学习风格练习优先");
+        assertEquals("stu-1", payload.get("studentId"));
+        assertEquals("数学", payload.get("topic"));
+        assertEquals("期末提分", payload.get("goal"));
+        assertEquals(6, payload.get("durationWeeks"));
+        assertEquals(8, payload.get("weeklyHours"));
+        assertEquals(java.util.List.of("函数", "概率"), payload.get("weakTopics"));
+        assertEquals(java.util.List.of("练习优先"), payload.get("learningStyle"));
+    }
+
+    @Test
+    void shouldMarkLowConfidenceForVagueTeachingPlanIntent() {
+        CommandNluParser.NaturalLanguageResolution resolution = parser.resolveNaturalLanguage("学习计划");
+        assertEquals("/teach plan --query 学习计划", resolution.command());
+        assertTrue(resolution.isLowConfidence());
+    }
+
+    @Test
+    void shouldMarkHighConfidenceForDetailedTeachingPlanIntent() {
+        CommandNluParser.NaturalLanguageResolution resolution = parser.resolveNaturalLanguage(
+                "给学生 stu-1 做一个数学学习计划，目标是期末提分，六周，每周八小时");
+        assertEquals("/teach plan --query 给学生 stu-1 做一个数学学习计划，目标是期末提分，六周，每周八小时", resolution.command());
+        assertFalse(resolution.isLowConfidence());
     }
 }
 

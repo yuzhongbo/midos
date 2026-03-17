@@ -17,7 +17,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-@SpringBootTest
+@SpringBootTest(properties = "mindos.dispatcher.preference-reuse.enabled=true")
 @AutoConfigureMockMvc
 class ChatControllerTest {
 
@@ -106,6 +106,91 @@ class ChatControllerTest {
                 .andExpect(jsonPath("$.reply").value(org.hamcrest.Matchers.containsString("JSON")))
                 .andExpect(jsonPath("$.reply").value(org.hamcrest.Matchers.containsString("MCP")))
                 .andExpect(jsonPath("$.reply").value(org.hamcrest.Matchers.containsString("JAR")));
+    }
+
+    @Test
+    void shouldRouteTeachingPlanRequestToTeachingPlanSkill() throws Exception {
+        mockMvc.perform(post("/chat")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"userId\":\"test-user\",\"message\":\"给我一个Java学习计划，目标是准备面试，四周，每周六小时，薄弱点函数、概率，学习风格练习优先\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.channel").value("teaching.plan"))
+                .andExpect(jsonPath("$.reply").value(org.hamcrest.Matchers.containsString("学生ID: test-user")))
+                .andExpect(jsonPath("$.reply").value(org.hamcrest.Matchers.containsString("主题: Java")))
+                .andExpect(jsonPath("$.reply").value(org.hamcrest.Matchers.containsString("目标: 准备面试")))
+                .andExpect(jsonPath("$.reply").value(org.hamcrest.Matchers.containsString("周期: 4 周")))
+                .andExpect(jsonPath("$.reply").value(org.hamcrest.Matchers.containsString("每周投入: 6 小时")))
+                .andExpect(jsonPath("$.reply").value(org.hamcrest.Matchers.containsString("薄弱点: 函数、概率")))
+                .andExpect(jsonPath("$.reply").value(org.hamcrest.Matchers.containsString("学习风格: 练习优先")));
+    }
+
+    @Test
+    void shouldAutoRouteContinuationDialogueByHabitForTeachingPlan() throws Exception {
+        mockMvc.perform(post("/chat")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"userId\":\"habit-user\",\"message\":\"给我一个数学学习计划，目标是期末提分，六周，每周八小时\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.channel").value("teaching.plan"));
+
+        mockMvc.perform(post("/chat")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"userId\":\"habit-user\",\"message\":\"继续按之前方式，目标是冲刺提分\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.channel").value("teaching.plan"))
+                .andExpect(jsonPath("$.reply").value(org.hamcrest.Matchers.containsString("主题: 数学")))
+                .andExpect(jsonPath("$.reply").value(org.hamcrest.Matchers.containsString("目标: 冲刺提分")));
+    }
+
+    @Test
+    void shouldMergeProfilePreferencesWhenContinuationAutoRoutesTeachingPlan() throws Exception {
+        String profileJson = "{\"assistantName\":\"MindOS\",\"role\":\"高一\",\"style\":\"练习优先\",\"language\":\"zh-CN\",\"timezone\":\"Asia/Shanghai\"}";
+
+        mockMvc.perform(post("/chat")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"userId\":\"pref-user\",\"message\":\"给我一个数学学习计划，目标是期末提分，六周，每周八小时\",\"profile\":" + profileJson + "}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.channel").value("teaching.plan"));
+
+        mockMvc.perform(post("/chat")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"userId\":\"pref-user\",\"message\":\"继续按之前方式\",\"profile\":" + profileJson + "}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.channel").value("teaching.plan"))
+                .andExpect(jsonPath("$.reply").value(org.hamcrest.Matchers.containsString("对象: 高一")))
+                .andExpect(jsonPath("$.reply").value(org.hamcrest.Matchers.containsString("学习风格: 练习优先")))
+                .andExpect(jsonPath("$.reply").value(org.hamcrest.Matchers.containsString("约束: 时区:Asia/Shanghai")));
+    }
+
+    @Test
+    void shouldAutoRouteContinuationToCodeGenerateWithHabitHint() throws Exception {
+        mockMvc.perform(post("/chat")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"userId\":\"code-habit-user\",\"message\":\"generate code for order entity\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.channel").value("code.generate"));
+
+        mockMvc.perform(post("/chat")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"userId\":\"code-habit-user\",\"message\":\"继续按之前方式\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.channel").value("code.generate"))
+                .andExpect(jsonPath("$.reply").value(org.hamcrest.Matchers.containsString("[自动调度] 已按历史习惯调用 skill: code.generate")));
+    }
+
+    @Test
+    void shouldAutoRouteContinuationToTodoCreateWithHabitHint() throws Exception {
+        mockMvc.perform(post("/chat")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"userId\":\"todo-habit-user\",\"message\":\"{\\\"skill\\\":\\\"todo.create\\\",\\\"input\\\":{\\\"task\\\":\\\"准备周会汇报\\\",\\\"dueDate\\\":\\\"周五\\\"}}\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.channel").value("todo.create"));
+
+        mockMvc.perform(post("/chat")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"userId\":\"todo-habit-user\",\"message\":\"继续按之前方式，截止明天\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.channel").value("todo.create"))
+                .andExpect(jsonPath("$.reply").value(org.hamcrest.Matchers.containsString("[自动调度] 已按历史习惯调用 skill: todo.create")));
     }
 
     @TestConfiguration

@@ -32,6 +32,17 @@ class MindosCliApplicationTest {
     }
 
     @Test
+    void shouldSupportHelpAndExitShortcutsInInteractiveMode() {
+        CommandOutputResult result = executeInteractiveWithOut("/h\n:q\n");
+
+        assertEquals(0, result.exitCode());
+        String console = result.stdout();
+        assertTrue(console.contains("自然语言使用指南:"));
+        assertTrue(console.contains("如需查看技术命令与参数：输入 /help full"));
+        assertTrue(console.contains("已退出对话模式"));
+    }
+
+    @Test
     void shouldShowHelpAndExitZero() {
         CommandOutputResult result = executeWithOut("--help");
 
@@ -304,7 +315,7 @@ class MindosCliApplicationTest {
             CommandOutputResult result = executeInteractiveWithOut(
                     "/provider local\n"
                             + "/session\n"
-                            + "/unknown\n"
+                            + "/histroy\n"
                             + "echo hello\n"
                             + "/exit\n",
                     "--server", "http://127.0.0.1:" + port,
@@ -316,10 +327,11 @@ class MindosCliApplicationTest {
             assertTrue(console.contains("已设置当前会话 llm.provider=local"));
             assertTrue(console.contains("user=cli-user"));
             assertTrue(console.contains("llm.provider=local"));
-            assertTrue(console.contains("未知命令：/unknown"));
+            assertTrue(console.contains("未知命令：/histroy"));
+            assertTrue(console.contains("你可能想输入 /history"));
             assertTrue(console.contains("助手[echo] session hello"));
             assertTrue(requestBodyRef.get().contains("\"message\":\"echo hello\""));
-            assertFalse(requestBodyRef.get().contains("unknown"));
+            assertFalse(requestBodyRef.get().contains("histroy"));
         } finally {
             server.stop(0);
         }
@@ -388,6 +400,20 @@ class MindosCliApplicationTest {
         assertEquals(0, result.exitCode());
         assertTrue(console.contains("已清空当前窗口本地状态"));
         assertTrue(console.contains("local.turns=0"));
+    }
+
+    @Test
+    void shouldSwitchThemeInsideInteractiveMode() {
+        CommandOutputResult result = executeInteractiveWithOut(
+                "/theme classic\n"
+                        + "/theme\n"
+                        + "/exit\n"
+        );
+
+        String console = result.stdout();
+        assertEquals(0, result.exitCode());
+        assertTrue(console.contains("已切换主题: classic"));
+        assertTrue(console.contains("当前主题: classic"));
     }
 
     @Test
@@ -573,6 +599,187 @@ class MindosCliApplicationTest {
             assertTrue(console.contains("已识别自然语言指令 -> /skills"));
             assertTrue(console.contains("当前已注册技能（1）"));
             assertTrue(console.contains("echo :: Echo skill"));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void shouldHideNaturalLanguageRoutingHintByDefault() throws IOException {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/api/skills", exchange -> {
+            byte[] response = "[{\"name\":\"echo\",\"description\":\"Echo skill\"}]"
+                    .getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+
+        try {
+            server.start();
+            int port = server.getAddress().getPort();
+
+            CommandOutputResult result = executeInteractiveWithOutDefault(
+                    "我有哪些技能\n"
+                            + "/exit\n",
+                    "--server", "http://127.0.0.1:" + port,
+                    "--user", "cli-user"
+            );
+
+            String console = result.stdout();
+            assertEquals(0, result.exitCode());
+            assertFalse(console.contains("已识别自然语言指令 -> /skills"));
+            assertTrue(console.contains("当前已注册技能（1）"));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void shouldShowNaturalLanguageRoutingHintWhenShowRoutingDetailsEnabled() throws IOException {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/api/skills", exchange -> {
+            byte[] response = "[{\"name\":\"echo\",\"description\":\"Echo skill\"}]"
+                    .getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+
+        try {
+            server.start();
+            int port = server.getAddress().getPort();
+
+            CommandOutputResult result = executeInteractiveWithOutDefault(
+                    "我有哪些技能\n"
+                            + "/exit\n",
+                    "--server", "http://127.0.0.1:" + port,
+                    "--user", "cli-user",
+                    "--show-routing-details"
+            );
+
+            String console = result.stdout();
+            assertEquals(0, result.exitCode());
+            assertTrue(console.contains("已识别自然语言指令 -> /skills"));
+            assertTrue(console.contains("当前已注册技能（1）"));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void shouldToggleRoutingDetailsViaNaturalLanguageInSession() throws IOException {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/api/skills", exchange -> {
+            byte[] response = "[{\"name\":\"echo\",\"description\":\"Echo skill\"}]"
+                    .getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+
+        try {
+            server.start();
+            int port = server.getAddress().getPort();
+
+            CommandOutputResult result = executeInteractiveWithOutDefault(
+                    "打开排障模式\n"
+                            + "我有哪些技能\n"
+                            + "关闭排障模式\n"
+                            + "我有哪些技能\n"
+                            + "/exit\n",
+                    "--server", "http://127.0.0.1:" + port,
+                    "--user", "cli-user"
+            );
+
+            String console = result.stdout();
+            assertEquals(0, result.exitCode());
+            assertTrue(console.contains("已切换为排障视图"));
+            assertTrue(console.contains("已切换为自然语言视图"));
+            assertEquals(1, countOccurrences(console, "已识别自然语言指令 -> /skills"));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void shouldMapNaturalLanguageToTeachingPlanDslInsideInteractiveMode() throws IOException {
+        AtomicReference<String> requestBodyRef = new AtomicReference<>("");
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/chat", exchange -> {
+            requestBodyRef.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            byte[] response = "{\"reply\":\"plan ok\",\"channel\":\"teaching.plan\"}".getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+
+        try {
+            server.start();
+            int port = server.getAddress().getPort();
+
+            CommandOutputResult result = executeInteractiveWithOut(
+                    "给学生 stu-1 做一个数学学习计划，目标是期末提分，六周，每周八小时，薄弱点函数、概率，学习风格练习优先\n"
+                            + "/exit\n",
+                    "--server", "http://127.0.0.1:" + port,
+                    "--user", "cli-user"
+            );
+
+            String console = result.stdout();
+            assertEquals(0, result.exitCode());
+            assertTrue(console.contains("已识别自然语言指令 -> /teach plan --query"));
+            assertTrue(console.contains("助手[teaching.plan] plan ok"));
+
+            String requestBody = requestBodyRef.get();
+            assertTrue(requestBody.contains("\\\"skill\\\":\\\"teaching.plan\\\""));
+            assertTrue(requestBody.contains("\\\"studentId\\\":\\\"stu-1\\\""));
+            assertTrue(requestBody.contains("\\\"topic\\\":\\\"数学\\\""));
+            assertTrue(requestBody.contains("\\\"durationWeeks\\\":6"));
+            assertTrue(requestBody.contains("\\\"weeklyHours\\\":8"));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void shouldFallbackToChatWhenLowConfidenceNaturalLanguageCommandIsDeclined() throws IOException {
+        AtomicReference<String> requestBodyRef = new AtomicReference<>("");
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/chat", exchange -> {
+            requestBodyRef.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            byte[] response = "{\"reply\":\"chat fallback\",\"channel\":\"echo\"}".getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+
+        try {
+            server.start();
+            int port = server.getAddress().getPort();
+
+            CommandOutputResult result = executeInteractiveWithOut(
+                    "学习计划\n"
+                            + "n\n"
+                            + "/exit\n",
+                    "--server", "http://127.0.0.1:" + port,
+                    "--user", "cli-user"
+            );
+
+            String console = result.stdout();
+            assertEquals(0, result.exitCode());
+            assertTrue(console.contains("已识别自然语言指令 -> /teach plan --query 学习计划"));
+            assertTrue(console.contains("该自然语言识别置信度较低，是否按该命令执行？"));
+            assertTrue(console.contains("已取消命令执行，改为普通对话输入。"));
+            assertTrue(console.contains("助手[echo] chat fallback"));
+
+            String requestBody = requestBodyRef.get();
+            assertTrue(requestBody.contains("\"message\":\"学习计划\""));
+            assertFalse(requestBody.contains("\\\"skill\\\":\\\"teaching.plan\\\""));
         } finally {
             server.stop(0);
         }
@@ -1437,6 +1644,13 @@ class MindosCliApplicationTest {
     }
 
     private CommandOutputResult executeInteractiveWithOut(String input, String... args) {
+        String[] mergedArgs = new String[args.length + 1];
+        System.arraycopy(args, 0, mergedArgs, 0, args.length);
+        mergedArgs[args.length] = "--show-routing-details";
+        return executeInteractiveWithOutDefault(input, mergedArgs);
+    }
+
+    private CommandOutputResult executeInteractiveWithOutDefault(String input, String... args) {
         CommandLine commandLine = new CommandLine(new MindosCliApplication());
         ByteArrayOutputStream outOutput = new ByteArrayOutputStream();
         commandLine.setOut(new PrintWriter(outOutput, true));
@@ -1454,6 +1668,22 @@ class MindosCliApplicationTest {
     private void assertNonZeroWithErrContains(CommandExecutionResult result, String expectedMessage) {
         assertTrue(result.exitCode() != 0);
         assertTrue(result.stderr().contains(expectedMessage));
+    }
+
+    private int countOccurrences(String text, String target) {
+        if (text == null || text.isBlank() || target == null || target.isBlank()) {
+            return 0;
+        }
+        int count = 0;
+        int fromIndex = 0;
+        while (true) {
+            int next = text.indexOf(target, fromIndex);
+            if (next < 0) {
+                return count;
+            }
+            count++;
+            fromIndex = next + target.length();
+        }
     }
 
     private record CommandExecutionResult(int exitCode, String stderr) {

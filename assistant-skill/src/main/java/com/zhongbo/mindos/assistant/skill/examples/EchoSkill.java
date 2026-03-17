@@ -1,12 +1,29 @@
 package com.zhongbo.mindos.assistant.skill.examples;
 
+import com.zhongbo.mindos.assistant.common.LlmClient;
 import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.skill.Skill;
 import org.springframework.stereotype.Component;
 
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+
 @Component
 public class EchoSkill implements Skill {
+    private static final Logger LOGGER = Logger.getLogger(EchoSkill.class.getName());
+    private final LlmClient llmClient;
+
+    public EchoSkill(LlmClient llmClient) {
+        this.llmClient = llmClient;
+    }
+
+    // 兼容无参构造（测试/反射）
+    public EchoSkill() {
+        this(null);
+    }
 
     @Override
     public String name() {
@@ -25,10 +42,29 @@ public class EchoSkill implements Skill {
 
     @Override
     public SkillResult run(SkillContext context) {
-        if (context.input() == null || context.input().length() <= "echo ".length()) {
+        String input = context.input();
+        if (input == null || input.length() <= "echo ".length()) {
             return SkillResult.failure(name(), "Usage: echo <text>");
         }
-        String output = context.input().substring("echo ".length());
+        if (llmClient != null) {
+            try {
+                String prompt = "你是一个智能回声助手，请智能地复述或扩展用户输入内容，仅输出文本。输入：" + input.substring("echo ".length());
+                String llmReply = llmClient.generateResponse(prompt, buildLlmContext(context));
+                if (llmReply != null && !llmReply.isBlank()) {
+                    return SkillResult.success(name(), llmReply.trim());
+                }
+            } catch (Exception ex) {
+                LOGGER.log(Level.WARNING, "LLM call failed for echo skill, fallback to local output", ex);
+            }
+        }
+        String output = input.substring("echo ".length());
         return SkillResult.success(name(), output);
+    }
+
+    private Map<String, Object> buildLlmContext(SkillContext context) {
+        Map<String, Object> llmContext = new LinkedHashMap<>();
+        llmContext.put("userId", context.userId() == null ? "" : context.userId());
+        llmContext.put("channel", name());
+        return llmContext;
     }
 }

@@ -24,27 +24,84 @@ MindOS is a lightweight, single-user personal AI assistant backend built with Ja
 ```
 
 ## CLI quick try
+
+### 新手快速上手（3 分钟，自然语言，推荐）
+
+如果你不熟悉命令行，先做下面 3 步：
+
 ```bash
 ./mvnw -q -pl mindos-cli -am test
 ./mvnw -q -pl mindos-cli -am package
-./mvnw -q -pl mindos-cli -am exec:java -Dexec.mainClass=com.zhongbo.mindos.assistant.cli.MindosCliApplication -Dexec.args="--help"
 ./mvnw -q -pl mindos-cli -am exec:java -Dexec.mainClass=com.zhongbo.mindos.assistant.cli.MindosCliApplication
+```
+
+进入会话后，直接用自然语言输入即可（不需要记参数）：
+- `我有哪些技能`
+- `帮我拉取最近 30 条记忆`
+- `给学生 stu-1 做数学学习计划，六周，每周八小时`
+- `打开排障模式` / `关闭排障模式`
+
+看不懂技术命令也没关系：默认使用自然语言即可；只有排障时才需要 `/help full`。
+
+### 高级参数化启动（可选）
+
+基础启动与显示：
+
+```bash
+./mvnw -q -pl mindos-cli -am exec:java -Dexec.mainClass=com.zhongbo.mindos.assistant.cli.MindosCliApplication -Dexec.args="--help"
 ./mvnw -q -pl mindos-cli -am exec:java -Dexec.mainClass=com.zhongbo.mindos.assistant.cli.MindosCliApplication -Dexec.args="--server http://localhost:8080 --user local-user"
+./mvnw -q -pl mindos-cli -am exec:java -Dexec.mainClass=com.zhongbo.mindos.assistant.cli.MindosCliApplication -Dexec.args="--theme cyber"
+./mvnw -q -pl mindos-cli -am exec:java -Dexec.mainClass=com.zhongbo.mindos.assistant.cli.MindosCliApplication -Dexec.args="--show-routing-details --theme cyber"
+```
+
+Profile 管理：
+
+```bash
 ./mvnw -q -pl mindos-cli -am exec:java -Dexec.mainClass=com.zhongbo.mindos.assistant.cli.MindosCliApplication -Dexec.args="init --name BoAssistant --role coding-partner --style concise --language zh-CN --timezone Asia/Shanghai"
 ./mvnw -q -pl mindos-cli -am exec:java -Dexec.mainClass=com.zhongbo.mindos.assistant.cli.MindosCliApplication -Dexec.args="profile show"
 ./mvnw -q -pl mindos-cli -am exec:java -Dexec.mainClass=com.zhongbo.mindos.assistant.cli.MindosCliApplication -Dexec.args="profile set --style detailed --timezone UTC"
 ./mvnw -q -pl mindos-cli -am exec:java -Dexec.mainClass=com.zhongbo.mindos.assistant.cli.MindosCliApplication -Dexec.args="profile set --llm-provider openai"
 ./mvnw -q -pl mindos-cli -am exec:java -Dexec.mainClass=com.zhongbo.mindos.assistant.cli.MindosCliApplication -Dexec.args="profile reset"
+```
+
+Chat 与记忆操作：
+
+```bash
 ./mvnw -q -pl mindos-cli -am exec:java -Dexec.mainClass=com.zhongbo.mindos.assistant.cli.MindosCliApplication -Dexec.args="chat --user local-user --message 'echo hello' --server http://localhost:8080"
 ./mvnw -q -pl mindos-cli -am exec:java -Dexec.mainClass=com.zhongbo.mindos.assistant.cli.MindosCliApplication -Dexec.args="chat --interactive --server http://localhost:8080"
 ./mvnw -q -pl mindos-cli -am exec:java -Dexec.mainClass=com.zhongbo.mindos.assistant.cli.MindosCliApplication -Dexec.args="memory pull --user local-user --since 0 --limit 100 --server http://localhost:8080"
 ./mvnw -q -pl mindos-cli -am exec:java -Dexec.mainClass=com.zhongbo.mindos.assistant.cli.MindosCliApplication -Dexec.args="memory push --user local-user --file /tmp/memory-sync.json --limit 100 --server http://localhost:8080"
 ```
 
-交互模式内置命令：
+### 更多自然语言示例（可选）
+
+上面的“新手快速上手”已经覆盖高频用法；这里补充更多自然语言到系统动作的映射示例：
+
+日常对话与记忆：
+- `帮我从 12 开始拉取最近 30 条记忆` -> `/memory pull --since 12 --limit 30`
+- `从 12 开始拉取 30 条记忆` -> `/memory pull --since 12 --limit 30`
+- `查看最近 5 条历史` / `给我看几条历史` -> `/history --limit 5` / `/history --limit 10`
+- `查看最近十条历史` / `帮我保存二十条记忆` -> `/history --limit 10` / `/memory push --limit 20`
+- `从 2 开始拉三十条` -> `/memory pull --since 2 --limit 30`
+- `查看最近一千二百条历史` / `从 3 开始拉一千零二十条记忆` -> `/history --limit 1200` / `/memory pull --since 3 --limit 1020`
+- `查看最近一万二千条历史` / `从 3 开始拉一万零二十条记忆` -> `/history --limit 12000` / `/memory pull --since 3 --limit 10020`
+
+会话与配置管理：
+- `把用户改为 dev-user` -> `/user dev-user`
+- `把模型切换到 openai` / `取消模型覆盖` -> `/provider openai` / `/provider default`
+
+网络与扩展接入（通常用于高级/排障场景）：
+- `把服务地址换成 http://localhost:18080` -> `/server http://localhost:18080`（需确认）
+- `把服务端地址改成 localhost:19090` -> `/server http://localhost:19090`（自动补全协议，需确认）
+- `请接入mcp https://docs.example.com/mcp，简称 docs-cn` -> `/skill load-mcp --alias docs-cn --url ...`（需确认）
+
+### 高级/排障命令速查（可选）
+
+仅在排障或高级场景使用；平时建议直接自然语言输入。
 
 ```text
 /help
+/help full
 /session
 /user <userId>
 /server <url>
@@ -69,23 +126,9 @@ MindOS is a lightweight, single-user personal AI assistant backend built with Ja
 /exit
 ```
 
-`/memory push` 现在支持在一个聊天窗口内逐步录入记忆：可直接输入 `semantic / episodic / procedural`（也支持 `语义 / 对话 / 流程`），完成后会先显示预览，再提交给服务端；服务端会自动做文本规范化、语义记忆去重、embedding 压缩与更偏近期/相关性的检索整理。
+CLI 默认是自然聊天视图：只看对话结果，不展示 skill/channel/路由等技术细节；需要排障时，直接说“打开排障模式/关闭排障模式”即可切换（`--show-routing-details` 与 `--pure-nl` 仍保留兼容）。
 
-交互模式下，现有 slash 命令也支持自然语言触发（例如：`我有哪些技能`、`帮我拉取记忆`、`请加载jar https://...`）。对高风险操作（如重置 profile、加载外部 JAR/MCP、切换 server）会在对话中二次确认。`/memory pull` 与 `/memory push` 会在后台异步执行，不阻塞继续聊天。
-
-参数化自然语言示例：
-- `帮我从 12 开始拉取最近 30 条记忆` -> `/memory pull --since 12 --limit 30`
-- `从 12 开始拉取 30 条记忆` -> `/memory pull --since 12 --limit 30`
-- `查看最近 5 条历史` / `给我看几条历史` -> `/history --limit 5` / `/history --limit 10`
-- `查看最近十条历史` / `帮我保存二十条记忆` -> `/history --limit 10` / `/memory push --limit 20`
-- `从 2 开始拉三十条` -> `/memory pull --since 2 --limit 30`
-- `查看最近一千二百条历史` / `从 3 开始拉一千零二十条记忆` -> `/history --limit 1200` / `/memory pull --since 3 --limit 1020`
-- `查看最近一万二千条历史` / `从 3 开始拉一万零二十条记忆` -> `/history --limit 12000` / `/memory pull --since 3 --limit 10020`
-- `把用户改为 dev-user` -> `/user dev-user`
-- `把服务地址换成 http://localhost:18080` -> `/server http://localhost:18080`（需确认）
-- `把服务端地址改成 localhost:19090` -> `/server http://localhost:19090`（自动补全协议，需确认）
-- `把模型切换到 openai` / `取消模型覆盖` -> `/provider openai` / `/provider default`
-- `请接入mcp https://docs.example.com/mcp，简称 docs-cn` -> `/skill load-mcp --alias docs-cn --url ...`（需确认）
+`/help` 默认给自然语言操作提示，`/help full` 提供完整技术命令。交互模式中高风险操作（重置 profile、加载外部 JAR/MCP、切换 server）会二次确认；`/memory pull` 与 `/memory push` 后台异步执行，不阻塞聊天。`/memory push` 支持在窗口内逐步录入 `semantic / episodic / procedural`（或 `语义 / 对话 / 流程`），并在提交前预览，服务端会做规范化、去重与检索优化。
 
 `memory push` payload example (`/tmp/memory-sync.json`):
 ```json
@@ -100,6 +143,8 @@ MindOS is a lightweight, single-user personal AI assistant backend built with Ja
 ```
 
 ## Sample requests
+
+Chat requests:
 ```bash
 curl -X POST http://localhost:8080/chat \
   -H 'Content-Type: application/json' \
@@ -118,7 +163,10 @@ curl -X POST http://localhost:8080/chat \
   -d '{"userId":"local-user","message":"你还可以学习哪些技能？"}'
 
 curl http://localhost:8080/api/chat/local-user/history
+```
 
+Memory sync requests:
+```bash
 curl -X POST http://localhost:8080/api/memory/local-user/sync \
   -H 'Content-Type: application/json' \
   -d '{
@@ -128,7 +176,10 @@ curl -X POST http://localhost:8080/api/memory/local-user/sync \
   }'
 
 curl "http://localhost:8080/api/memory/local-user/sync?since=0&limit=100"
+```
 
+Skill management requests:
+```bash
 curl http://localhost:8080/api/skills
 
 curl -X POST http://localhost:8080/api/skills/reload

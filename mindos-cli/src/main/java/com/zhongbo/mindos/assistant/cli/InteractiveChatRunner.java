@@ -32,9 +32,42 @@ import java.util.concurrent.TimeUnit;
 
 class InteractiveChatRunner {
 
+    private static final List<String> COMMAND_CATALOG = List.of(
+            "/help", "/session", "/user", "/server", "/provider", "/history",
+            "/retry", "/clear", "/skills", "/skill", "/profile", "/memory",
+            "/teach", "/theme", "/routing", "/exit", "/quit"
+    );
+
+    enum UiTheme {
+        CYBER,
+        CLASSIC;
+
+        static UiTheme fromValue(String raw) {
+            if (raw == null || raw.isBlank()) {
+                return CYBER;
+            }
+            return "classic".equalsIgnoreCase(raw.trim()) ? CLASSIC : CYBER;
+        }
+    }
+
     private static final CommandLine.Help.Ansi ANSI = CommandLine.Help.Ansi.AUTO;
     private static final DateTimeFormatter TIME_FORMATTER = DateTimeFormatter.ISO_INSTANT;
     private final CommandNluParser commandNluParser = new CommandNluParser();
+    private UiTheme uiTheme;
+    private boolean showRoutingDetails;
+
+    InteractiveChatRunner() {
+        this(UiTheme.CYBER, true);
+    }
+
+    InteractiveChatRunner(UiTheme uiTheme) {
+        this(uiTheme, true);
+    }
+
+    InteractiveChatRunner(UiTheme uiTheme, boolean showRoutingDetails) {
+        this.uiTheme = uiTheme == null ? UiTheme.CYBER : uiTheme;
+        this.showRoutingDetails = showRoutingDetails;
+    }
 
     void run(InputStream inputStream, PrintWriter out, CliChatService chatService) {
         SessionState sessionState = new SessionState();
@@ -47,6 +80,7 @@ class InteractiveChatRunner {
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream, StandardCharsets.UTF_8))) {
             while (true) {
                 drainCompletedTasks(out, chatService, sessionState);
+                printStatusBar(out, chatService, sessionState);
                 out.print(renderPrompt(chatService));
                 out.flush();
 
@@ -58,18 +92,18 @@ class InteractiveChatRunner {
                     return;
                 }
 
-                String input = line.trim();
+                String input = normalizeInteractiveInput(line);
                 if (input.isEmpty()) {
                     continue;
                 }
-                if ("/exit".equalsIgnoreCase(input) || "/quit".equalsIgnoreCase(input)) {
+                if (isExitCommand(input)) {
                     awaitPendingTasks(out, chatService, sessionState);
                     out.println("已退出对话模式。再见！");
                     out.flush();
                     return;
                 }
-                if ("/help".equalsIgnoreCase(input)) {
-                    printHelp(out);
+                if (isHelpCommand(input)) {
+                    printHelp(out, input);
                     continue;
                 }
                 if ("/session".equalsIgnoreCase(input)) {
@@ -88,14 +122,36 @@ class InteractiveChatRunner {
                     if (handleSlashCommand(input, out, chatService, reader, sessionState, backgroundExecutor)) {
                         continue;
                     }
-                    printInfo(out, "未知命令：" + input + "，输入 /help 查看帮助。");
+                    List<String> suggestions = suggestSlashCommands(input, 3);
+                    if (suggestions.isEmpty()) {
+                        printInfo(out, "未知命令：" + input + "，输入 /help 查看帮助。");
+                    } else {
+                        printInfo(out,
+                                "未知命令：" + input + "，输入 /help 查看帮助。你可能想输入 " + suggestions.get(0)
+                                        + "。候选: " + String.join(" ", suggestions));
+                    }
                     out.flush();
                     continue;
                 }
 
-                String naturalLanguageCommand = resolveNaturalLanguageCommand(input);
+                CommandNluParser.NaturalLanguageResolution resolution = resolveNaturalLanguage(input);
+                String naturalLanguageCommand = resolution.command();
                 if (naturalLanguageCommand != null) {
-                    printInfo(out, "已识别自然语言指令 -> " + naturalLanguageCommand);
+                    if (showRoutingDetails) {
+                        printAutoDispatchHint(out, naturalLanguageCommand);
+                    }
+                    if (resolution.isLowConfidence()) {
+                        Boolean confirmed = promptYesNo(out,
+                                reader,
+                                "该自然语言识别置信度较低，是否按该命令执行？",
+                                false);
+                        if (confirmed == null || !confirmed) {
+                            printInfo(out, "已取消命令执行，改为普通对话输入。");
+                            naturalLanguageCommand = null;
+                        }
+                    }
+                }
+                if (naturalLanguageCommand != null) {
                     String securityError = validateSensitiveCommand(naturalLanguageCommand);
                     if (securityError != null) {
                         printError(out, securityError);
@@ -231,8 +287,12 @@ class InteractiveChatRunner {
 
     private void printWelcome(PrintWriter out, CliChatService chatService, SessionState sessionState) {
         out.println(ANSI.string("@|bold,cyan ==== MindOS 对话模式 ====|@"));
+        if (uiTheme == UiTheme.CYBER) {
+            out.println(ANSI.string("@|faint [Neural Console] low-latency command + chat cockpit|@"));
+            out.println(ANSI.string("@|faint ----------------------------------------------------|@"));
+        }
         printSession(out, chatService, sessionState);
-        out.println(ANSI.string("@|faint 输入 /help 查看帮助，输入 /exit 或 /quit 退出。|@"));
+        out.println(ANSI.string("@|faint 输入 /help 查看帮助（快捷键：/h /?），输入 /exit、/quit 或 :q 退出。|@"));
         out.println();
         out.flush();
     }
@@ -247,8 +307,27 @@ class InteractiveChatRunner {
         out.println("local.turns=" + sessionState.localTurns.size());
     }
 
-    private void printHelp(PrintWriter out) {
+    private void printHelp(PrintWriter out, String rawInput) {
+        String normalized = rawInput == null ? "/help" : rawInput.trim().toLowerCase();
+        if (normalized.startsWith("/help teach")) {
+            printTeachHelp(out);
+            return;
+        }
+        if (normalized.startsWith("/help memory")) {
+            printMemoryHelp(out);
+            return;
+        }
+        if (normalized.startsWith("/help skill")) {
+            printSkillHelp(out);
+            return;
+        }
+        if (!normalized.startsWith("/help full")) {
+            printQuickHelp(out);
+            return;
+        }
+
         out.println("可用命令:");
+        out.println(ANSI.string("@|bold,cyan [Session]|@"));
         out.println("  /help                                   查看帮助");
         out.println("  /session                                查看当前会话信息");
         out.println("  /user <userId>                          切换当前用户");
@@ -257,12 +336,14 @@ class InteractiveChatRunner {
         out.println("  /history [--limit N]                    查看当前用户的服务端会话历史");
         out.println("  /retry                                  重试最近一条用户消息");
         out.println("  /clear                                  清空当前窗口本地状态并重新显示头部");
+        out.println(ANSI.string("@|bold,cyan [Skills]|@"));
         out.println("  /skills                                 查看当前已注册技能");
         out.println("  /skill list                             查看当前已注册技能");
         out.println("  /skill reload                           重载本地自定义技能");
         out.println("  /skill reload-mcp                       重载已配置 MCP 技能");
         out.println("  /skill load-mcp --alias docs --url ...  动态加载一个 MCP server");
         out.println("  /skill load-jar --url ...               动态加载一个外部 skill JAR");
+        out.println(ANSI.string("@|bold,cyan [Profile + Memory]|@"));
         out.println("  /profile show                           查看本地 profile");
         out.println("  /profile set [--field value ...]        更新本地 profile（无参时逐项引导）");
         out.println("         支持: --name --role --style --language --timezone --llm-provider");
@@ -270,10 +351,54 @@ class InteractiveChatRunner {
         out.println("  /memory pull [--since N] [--limit N]    拉取增量记忆");
         out.println("  /memory push [--limit N]                在窗口内交互式整理并推送记忆");
         out.println("  /memory push --file path [--limit N]    推送记忆 JSON 文件（兼容模式）");
+        out.println("  /teach plan [--query 文本]              生成教学规划（自动转 teaching.plan skill）");
+        out.println(ANSI.string("@|bold,cyan [Shortcuts]|@"));
         out.println("  自然语言指令示例                          我有哪些技能 / 帮我拉取记忆 / 加载jar https://...");
         out.println("  重要命令会二次确认                        例如重置配置、加载外部技能、切换 server");
+        out.println("  /h 或 /?                                 快速查看帮助");
+        out.println("  :q                                       快速退出对话模式");
+        out.println("  /theme [cyber|classic]                  切换界面主题（默认 cyber）");
+        out.println("  /routing [on|off]                       打开/关闭路由细节显示（排障模式）");
+        out.println("  /help full                              查看完整帮助");
+        out.println("  /help teach|memory|skill                查看场景化帮助");
+        out.println(ANSI.string("@|bold,cyan [Exit]|@"));
         out.println("  /exit                                   退出对话模式");
         out.println("  /quit                                   退出对话模式");
+        out.flush();
+    }
+
+    private void printQuickHelp(PrintWriter out) {
+        out.println("自然语言使用指南:");
+        out.println("  你可以直接说：我有哪些技能 / 帮我拉取记忆 / 给学生做学习计划");
+        out.println("  你可以直接说：打开排障模式 / 关闭排障模式");
+        out.println("  你可以直接说：查看会话信息 / 重试刚才那条 / 清空窗口");
+        out.println("  你可以直接说：退出 / 结束");
+        out.println("  如需查看技术命令与参数：输入 /help full");
+        out.println("  场景化帮助：/help teach  /help memory  /help skill");
+        out.flush();
+    }
+
+    private void printTeachHelp(PrintWriter out) {
+        out.println("教学规划（自然语言）:");
+        out.println("  直接说需求即可，例如：给学生 stu-1 做数学学习计划，六周，每周八小时，目标是期末提分");
+        out.println("  不需要手动写参数；如需技术命令格式请看 /help full");
+        out.flush();
+    }
+
+    private void printMemoryHelp(PrintWriter out) {
+        out.println("记忆同步（自然语言）:");
+        out.println("  拉取：直接说“帮我拉取最近 30 条记忆”或“从 12 开始拉取记忆”");
+        out.println("  推送：直接说“帮我保存 20 条记忆”或“开始记忆推送”");
+        out.println("  如需技术命令格式请看 /help full");
+        out.flush();
+    }
+
+    private void printSkillHelp(PrintWriter out) {
+        out.println("技能管理（自然语言）:");
+        out.println("  查看技能：直接说“我有哪些技能”");
+        out.println("  刷新技能：直接说“重载技能”或“重载 mcp”");
+        out.println("  接入扩展：直接说“请接入 mcp https://...，简称 docs”或“请加载 jar https://...”");
+        out.println("  如需技术命令格式请看 /help full");
         out.flush();
     }
 
@@ -337,11 +462,59 @@ class InteractiveChatRunner {
             return handleProfileCommand(input, out, chatService, reader);
         }
 
+        if (input.startsWith("/teach")) {
+            return handleTeachCommand(input, out, chatService, reader, sessionState);
+        }
+
         if (input.startsWith("/memory")) {
             return handleMemoryCommand(input, out, chatService, reader, sessionState, backgroundExecutor);
         }
 
+        if (input.startsWith("/theme")) {
+            return handleThemeCommand(input, out);
+        }
+
+        if (input.startsWith("/routing") || input.startsWith("/debug")) {
+            return handleRoutingCommand(input, out);
+        }
+
         return false;
+    }
+
+    private boolean handleRoutingCommand(String input, PrintWriter out) {
+        String argument;
+        if (input.startsWith("/debug")) {
+            argument = input.substring("/debug".length()).trim();
+        } else {
+            argument = input.substring("/routing".length()).trim();
+        }
+        if (argument.isBlank() || "show".equalsIgnoreCase(argument)) {
+            printInfo(out, "当前模式: " + (showRoutingDetails ? "排障视图（显示路由细节）" : "自然语言视图（隐藏路由细节）"));
+            return true;
+        }
+        if ("on".equalsIgnoreCase(argument) || "true".equalsIgnoreCase(argument)) {
+            showRoutingDetails = true;
+            printInfo(out, "已切换为排障视图：将显示路由与技能细节。");
+            return true;
+        }
+        if ("off".equalsIgnoreCase(argument) || "false".equalsIgnoreCase(argument)) {
+            showRoutingDetails = false;
+            printInfo(out, "已切换为自然语言视图：仅显示对话结果。");
+            return true;
+        }
+        printError(out, "用法: /routing [on|off]");
+        return true;
+    }
+
+    private boolean handleThemeCommand(String input, PrintWriter out) {
+        String argument = input.substring("/theme".length()).trim();
+        if (argument.isBlank()) {
+            printInfo(out, "当前主题: " + uiTheme.name().toLowerCase());
+            return true;
+        }
+        uiTheme = UiTheme.fromValue(argument);
+        printInfo(out, "已切换主题: " + uiTheme.name().toLowerCase());
+        return true;
     }
 
     private boolean handleProviderCommand(String input, PrintWriter out, CliChatService chatService) {
@@ -357,6 +530,42 @@ class InteractiveChatRunner {
         }
         chatService.setSessionLlmProvider(argument);
         printInfo(out, "已设置当前会话 llm.provider=" + chatService.resolvedLlmProvider());
+        return true;
+    }
+
+    private boolean handleTeachCommand(String input,
+                                       PrintWriter out,
+                                       CliChatService chatService,
+                                       BufferedReader reader,
+                                       SessionState sessionState) {
+        if (!input.startsWith("/teach plan")) {
+            return false;
+        }
+
+        Map<String, String> parsed = parseOptionPairs(input.substring("/teach plan".length()).trim());
+        String query = parsed.get("query");
+        if (query == null || query.isBlank()) {
+            query = promptForMemoryValue(out, reader, "请输入教学规划需求", null, false);
+            if (query == null || query.isBlank()) {
+                printInfo(out, "已取消教学规划生成。");
+                return true;
+            }
+        }
+
+        Map<String, Object> payload = new LinkedHashMap<>(commandNluParser.parseTeachingPlanInput(query));
+        payload.putIfAbsent("topic", query.trim());
+        String dslMessage = buildSkillDslJson("teaching.plan", payload);
+
+        try {
+            ChatResponseDto response = chatService.sendMessage(dslMessage);
+            sessionState.lastUserMessage = query;
+            sessionState.localTurns.add("你> " + query + " (teaching-plan)");
+            sessionState.localTurns.add("助手[" + response.channel() + "]> " + response.reply());
+            printAssistantReply(out, response);
+        } catch (AssistantSdkException ex) {
+            printError(out, "teaching.plan 执行失败(status=" + ex.statusCode()
+                    + ", code=" + ex.errorCode() + "): " + ex.getMessage());
+        }
         return true;
     }
 
@@ -842,8 +1051,114 @@ class InteractiveChatRunner {
         return value == null ? "user" : value.trim().replaceAll("[^a-zA-Z0-9._-]+", "-");
     }
 
-    private String resolveNaturalLanguageCommand(String input) {
-        return commandNluParser.resolveNaturalLanguageCommand(input);
+    private CommandNluParser.NaturalLanguageResolution resolveNaturalLanguage(String input) {
+        return commandNluParser.resolveNaturalLanguage(input);
+    }
+
+    private String normalizeInteractiveInput(String rawInput) {
+        if (rawInput == null) {
+            return "";
+        }
+        String normalized = rawInput.trim();
+        if (normalized.isEmpty()) {
+            return normalized;
+        }
+        if (normalized.startsWith("／")) {
+            normalized = '/' + normalized.substring(1);
+        }
+        if ("?".equals(normalized) || "？".equals(normalized)
+                || "/h".equalsIgnoreCase(normalized) || "/?".equals(normalized)) {
+            return "/help";
+        }
+        if (":q".equalsIgnoreCase(normalized) || ":quit".equalsIgnoreCase(normalized)) {
+            return "/exit";
+        }
+        return normalized;
+    }
+
+    private boolean isExitCommand(String input) {
+        return "/exit".equalsIgnoreCase(input) || "/quit".equalsIgnoreCase(input);
+    }
+
+    private boolean isHelpCommand(String input) {
+        return input != null && input.toLowerCase().startsWith("/help");
+    }
+
+    private List<String> suggestSlashCommands(String input, int max) {
+        if (input == null || input.isBlank() || !input.startsWith("/")) {
+            return List.of();
+        }
+        String token = input.trim().split("\\s+")[0].toLowerCase();
+        List<String> prefixMatches = new ArrayList<>();
+        for (String candidate : COMMAND_CATALOG) {
+            if (candidate.equals(token)) {
+                return List.of();
+            }
+            if (candidate.startsWith(token) || token.startsWith(candidate)) {
+                prefixMatches.add(candidate);
+            }
+        }
+        if (!prefixMatches.isEmpty()) {
+            return prefixMatches.subList(0, Math.min(max, prefixMatches.size()));
+        }
+        List<String> ranked = new ArrayList<>();
+        int bestDistance = Integer.MAX_VALUE;
+        for (String candidate : COMMAND_CATALOG) {
+            int distance = levenshtein(token, candidate);
+            if (distance < bestDistance) {
+                bestDistance = distance;
+            }
+            ranked.add(candidate + "#" + distance);
+        }
+        if (bestDistance > 2) {
+            return List.of();
+        }
+        ranked.sort((a, b) -> Integer.compare(
+                Integer.parseInt(a.substring(a.indexOf('#') + 1)),
+                Integer.parseInt(b.substring(b.indexOf('#') + 1))));
+        List<String> suggestions = new ArrayList<>();
+        for (String value : ranked) {
+            if (suggestions.size() >= max) {
+                break;
+            }
+            String candidate = value.substring(0, value.indexOf('#'));
+            if (!suggestions.contains(candidate)) {
+                suggestions.add(candidate);
+            }
+        }
+        return suggestions;
+    }
+
+    private void printStatusBar(PrintWriter out, CliChatService chatService, SessionState sessionState) {
+        String status = "[status] user=" + chatService.userId()
+                + " provider=" + chatService.resolvedLlmProvider()
+                + " theme=" + uiTheme.name().toLowerCase()
+                + " pending=" + sessionState.pendingTasks.size();
+        out.println(ANSI.string("@|faint " + status + "|@"));
+    }
+
+    private void printAutoDispatchHint(PrintWriter out, String command) {
+        printInfo(out, "已识别自然语言指令 -> " + command + "（自动调度）");
+    }
+
+    private int levenshtein(String left, String right) {
+        int[][] dp = new int[left.length() + 1][right.length() + 1];
+        for (int i = 0; i <= left.length(); i++) {
+            dp[i][0] = i;
+        }
+        for (int j = 0; j <= right.length(); j++) {
+            dp[0][j] = j;
+        }
+        for (int i = 1; i <= left.length(); i++) {
+            for (int j = 1; j <= right.length(); j++) {
+                int cost = left.charAt(i - 1) == right.charAt(j - 1) ? 0 : 1;
+                dp[i][j] = Math.min(
+                        Math.min(dp[i - 1][j] + 1, dp[i][j - 1] + 1),
+                        dp[i - 1][j - 1] + cost
+                );
+            }
+        }
+        return dp[left.length()][right.length()];
     }
 
     private Map<String, String> parseOptionPairs(String arguments) {
@@ -913,18 +1228,55 @@ class InteractiveChatRunner {
     }
 
     private void printAssistantReply(PrintWriter out, ChatResponseDto response) {
-        out.println(ANSI.string("@|bold,green 助手[" + response.channel() + "]|@") + " " + response.reply());
+        String reply = response.reply() == null ? "" : response.reply();
+        if (!showRoutingDetails) {
+            reply = stripRoutingHint(reply);
+            out.println(ANSI.string("@|bold,green 助手|@") + " " + reply);
+            return;
+        }
+        if (reply.startsWith("[自动调度]")) {
+            String[] lines = reply.split("\\n", 2);
+            String dispatchLine = lines[0].replace("[自动调度]", "").trim();
+            out.println(ANSI.string("@|bold,magenta 自动调度|@") + " " + dispatchLine);
+            if (lines.length > 1) {
+                out.println(ANSI.string("@|bold,green 助手[" + response.channel() + "]|@") + " " + lines[1]);
+            }
+            return;
+        }
+        out.println(ANSI.string("@|bold,green 助手[" + response.channel() + "]|@") + " " + reply);
+    }
+
+    private String stripRoutingHint(String reply) {
+        if (reply == null || reply.isBlank()) {
+            return "";
+        }
+        if (!reply.startsWith("[自动调度]")) {
+            return reply;
+        }
+        String[] lines = reply.split("\\n", 2);
+        return lines.length > 1 ? lines[1] : "";
     }
 
     private void printInfo(PrintWriter out, String message) {
+        if (uiTheme == UiTheme.CYBER) {
+            out.println(ANSI.string("@|cyan [info]|@") + " " + ANSI.string("@|faint >>|@") + " " + message);
+            return;
+        }
         out.println(ANSI.string("@|cyan [info]|@") + " " + message);
     }
 
     private void printError(PrintWriter out, String message) {
+        if (uiTheme == UiTheme.CYBER) {
+            out.println(ANSI.string("@|bold,red [error]|@") + " " + ANSI.string("@|bold,red !!|@") + " " + message);
+            return;
+        }
         out.println(ANSI.string("@|bold,red [error]|@") + " " + message);
     }
 
     private String renderPrompt(CliChatService chatService) {
+        if (uiTheme == UiTheme.CYBER) {
+            return ANSI.string("@|bold,yellow [" + chatService.userId() + "]|@") + ANSI.string("@|faint ::|@") + " ";
+        }
         return ANSI.string("@|bold,yellow " + chatService.userId() + "|@") + " > ";
     }
 
@@ -937,6 +1289,53 @@ class InteractiveChatRunner {
         } catch (NumberFormatException ex) {
             return defaultValue;
         }
+    }
+
+    private String buildSkillDslJson(String skillName, Map<String, Object> payload) {
+        return "{\"skill\":\"" + escapeJson(skillName) + "\",\"input\":" + toJsonValue(payload) + "}";
+    }
+
+    private String toJsonValue(Object value) {
+        if (value == null) {
+            return "null";
+        }
+        if (value instanceof Number || value instanceof Boolean) {
+            return String.valueOf(value);
+        }
+        if (value instanceof Map<?, ?> map) {
+            StringBuilder builder = new StringBuilder("{");
+            boolean first = true;
+            for (Map.Entry<?, ?> entry : map.entrySet()) {
+                if (!first) {
+                    builder.append(',');
+                }
+                first = false;
+                builder.append('"').append(escapeJson(String.valueOf(entry.getKey()))).append('"')
+                        .append(':')
+                        .append(toJsonValue(entry.getValue()));
+            }
+            return builder.append('}').toString();
+        }
+        if (value instanceof List<?> list) {
+            StringBuilder builder = new StringBuilder("[");
+            for (int i = 0; i < list.size(); i++) {
+                if (i > 0) {
+                    builder.append(',');
+                }
+                builder.append(toJsonValue(list.get(i)));
+            }
+            return builder.append(']').toString();
+        }
+        return '"' + escapeJson(String.valueOf(value)) + '"';
+    }
+
+    private String escapeJson(String value) {
+        return value
+                .replace("\\", "\\\\")
+                .replace("\"", "\\\"")
+                .replace("\n", "\\n")
+                .replace("\r", "\\r")
+                .replace("\t", "\\t");
     }
 
     private int parseInt(String value, int defaultValue) {

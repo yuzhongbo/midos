@@ -1,6 +1,7 @@
 package com.zhongbo.mindos.assistant.cli;
 
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -9,6 +10,21 @@ import java.util.regex.Pattern;
  * Stateless natural-language parser that maps colloquial chat text to existing slash commands.
  */
 class CommandNluParser {
+
+    enum ConfidenceLevel {
+        HIGH,
+        LOW
+    }
+
+    record NaturalLanguageResolution(String command, ConfidenceLevel confidenceLevel) {
+        static NaturalLanguageResolution none() {
+            return new NaturalLanguageResolution(null, ConfidenceLevel.HIGH);
+        }
+
+        boolean isLowConfidence() {
+            return command != null && confidenceLevel == ConfidenceLevel.LOW;
+        }
+    }
 
     private static final int MAX_PROFILE_FIELD_LENGTH = 120;
 
@@ -25,6 +41,17 @@ class CommandNluParser {
     private static final Pattern PROFILE_STYLE_PATTERN = Pattern.compile("(?:风格|语气|style)\\s*(?:改为|改成|换成|设为|设成|设置为|设置成|想用|是|为|=|:)\\s*([^,，。；;\\n]+)", Pattern.CASE_INSENSITIVE);
     private static final Pattern PROFILE_LANGUAGE_PATTERN = Pattern.compile("(?:语言|language)\\s*(?:改为|改成|换成|设为|设成|设置为|设置成|想用|是|为|=|:)\\s*([^,，。；;\\n]+)", Pattern.CASE_INSENSITIVE);
     private static final Pattern PROFILE_TIMEZONE_PATTERN = Pattern.compile("(?:时区|timezone)\\s*(?:改为|改成|换成|设为|设成|设置为|设置成|是|为|=|:)\\s*([^,，。；;\\n]+)", Pattern.CASE_INSENSITIVE);
+    private static final Pattern TEACHING_TOPIC_BEFORE_PATTERN = Pattern.compile("([\\p{L}A-Za-z0-9+#._-]{2,32})\\s*(?:教学规划|学习计划|复习计划|课程规划)");
+    private static final Pattern TEACHING_TOPIC_AFTER_PATTERN = Pattern.compile("(?:学|学习|复习|备考|课程)\\s*([\\p{L}A-Za-z0-9+#._-]{2,32})");
+    private static final Pattern TEACHING_GOAL_PATTERN = Pattern.compile("(?:目标(?:是|为)?|想要|希望)\\s*([^，。；;\\n]+)");
+    private static final Pattern TEACHING_DURATION_PATTERN = Pattern.compile("([0-9零一二两三四五六七八九十百千万]+)\\s*(?:周|weeks?)", Pattern.CASE_INSENSITIVE);
+    private static final Pattern TEACHING_WEEKLY_HOURS_PATTERN = Pattern.compile("(?:每周|一周)\\s*([0-9零一二两三四五六七八九十百千万]+)\\s*(?:小时|h|hours?)", Pattern.CASE_INSENSITIVE);
+    private static final Pattern TEACHING_LEVEL_PATTERN = Pattern.compile("(?:年级|阶段|level|级别)\\s*[:：]?\\s*([A-Za-z0-9一二三四五六七八九十高初大研Gg-]+)", Pattern.CASE_INSENSITIVE);
+    private static final Pattern TEACHING_STUDENT_ID_PATTERN = Pattern.compile("(?:学生|student)\\s*(?:id|ID)?\\s*[:：]?\\s*([A-Za-z0-9._-]+)");
+    private static final Pattern TEACHING_WEAK_TOPICS_PATTERN = Pattern.compile("(?:薄弱点|薄弱科目|弱项)\\s*[:：]?\\s*([^，。；;\\n]+)");
+    private static final Pattern TEACHING_STRONG_TOPICS_PATTERN = Pattern.compile("(?:优势项|擅长|强项)\\s*[:：]?\\s*([^，。；;\\n]+)");
+    private static final Pattern TEACHING_STYLE_PATTERN = Pattern.compile("(?:学习风格|学习方式)\\s*[:：]?\\s*([^，。；;\\n]+)");
+    private static final Pattern TEACHING_CONSTRAINTS_PATTERN = Pattern.compile("(?:约束|限制|不可用时段)\\s*[:：]?\\s*([^，。；;\\n]+)");
 
     String resolveNaturalLanguageCommand(String input) {
         if (input == null || input.isBlank()) {
@@ -63,6 +90,11 @@ class CommandNluParser {
             return skillLoadCommand;
         }
 
+        String teachingPlanCommand = extractTeachingPlanCommand(input, normalized);
+        if (teachingPlanCommand != null) {
+            return teachingPlanCommand;
+        }
+
         if (containsAny(normalized, "帮助", "命令", "怎么用", "help")) {
             return "/help";
         }
@@ -75,7 +107,14 @@ class CommandNluParser {
         if (containsAny(normalized, "清空窗口", "清空会话", "clear")) {
             return "/clear";
         }
-        if (containsAny(normalized, "重试", "再试一次", "retry")) {
+        if (containsAny(normalized,
+                "重试",
+                "再试一次",
+                "retry",
+                "继续上次",
+                "继续刚才",
+                "按之前方式",
+                "按上次方式")) {
             return "/retry";
         }
         if (containsAny(normalized, "有哪些技能", "技能列表", "你会什么", "你能做什么", "skills")) {
@@ -92,6 +131,33 @@ class CommandNluParser {
         }
         if (containsAny(normalized, "重载技能", "刷新技能", "reload skills")) {
             return "/skill reload";
+        }
+        if (containsAny(normalized,
+                "显示路由细节",
+                "打开路由细节",
+                "开启路由细节",
+                "打开排障模式",
+                "开启排障模式",
+                "show routing details",
+                "enable debug mode")) {
+            return "/routing on";
+        }
+        if (containsAny(normalized,
+                "隐藏路由细节",
+                "关闭路由细节",
+                "关闭排障模式",
+                "退出排障模式",
+                "hide routing details",
+                "disable debug mode")) {
+            return "/routing off";
+        }
+        if (containsAny(normalized,
+                "当前路由模式",
+                "查看路由模式",
+                "排障模式状态",
+                "routing mode",
+                "debug mode")) {
+            return "/routing";
         }
 
         String serverUrl = extractServerUrl(input);
@@ -111,6 +177,73 @@ class CommandNluParser {
         }
 
         return null;
+    }
+
+    NaturalLanguageResolution resolveNaturalLanguage(String input) {
+        String command = resolveNaturalLanguageCommand(input);
+        if (command == null) {
+            return NaturalLanguageResolution.none();
+        }
+        return new NaturalLanguageResolution(command, isLowConfidenceIntent(input, command)
+                ? ConfidenceLevel.LOW
+                : ConfidenceLevel.HIGH);
+    }
+
+    private boolean isLowConfidenceIntent(String input, String command) {
+        if (command == null || input == null) {
+            return false;
+        }
+        if (!command.startsWith("/teach plan")) {
+            return false;
+        }
+        Map<String, Object> payload = parseTeachingPlanInput(input);
+        int signalCount = 0;
+        if (payload.containsKey("topic")) {
+            signalCount++;
+        }
+        if (payload.containsKey("goal")) {
+            signalCount++;
+        }
+        if (payload.containsKey("durationWeeks")) {
+            signalCount++;
+        }
+        if (payload.containsKey("weeklyHours")) {
+            signalCount++;
+        }
+        if (payload.containsKey("studentId")) {
+            signalCount++;
+        }
+
+        String normalized = normalizeNaturalLanguage(input);
+        boolean hasActionVerb = containsAny(normalized,
+                "做一个", "做一份", "制定", "生成", "安排", "study plan", "teaching plan");
+        return signalCount < 2 && !hasActionVerb;
+    }
+
+    Map<String, Object> parseTeachingPlanInput(String input) {
+        if (input == null || input.isBlank()) {
+            return Map.of();
+        }
+        Map<String, Object> payload = new LinkedHashMap<>();
+        putIfPresent(payload, "studentId", extractByPattern(input, TEACHING_STUDENT_ID_PATTERN));
+        putIfPresent(payload, "topic", extractTeachingTopic(input));
+        putIfPresent(payload, "goal", extractByPattern(input, TEACHING_GOAL_PATTERN));
+        putIfPresent(payload, "gradeOrLevel", extractByPattern(input, TEACHING_LEVEL_PATTERN));
+
+        Integer durationWeeks = extractFlexibleNumber(input, TEACHING_DURATION_PATTERN);
+        if (durationWeeks != null && durationWeeks > 0) {
+            payload.put("durationWeeks", durationWeeks);
+        }
+        Integer weeklyHours = extractFlexibleNumber(input, TEACHING_WEEKLY_HOURS_PATTERN);
+        if (weeklyHours != null && weeklyHours > 0) {
+            payload.put("weeklyHours", weeklyHours);
+        }
+
+        putListIfPresent(payload, "weakTopics", extractDelimitedValues(input, TEACHING_WEAK_TOPICS_PATTERN));
+        putListIfPresent(payload, "strongTopics", extractDelimitedValues(input, TEACHING_STRONG_TOPICS_PATTERN));
+        putListIfPresent(payload, "learningStyle", extractDelimitedValues(input, TEACHING_STYLE_PATTERN));
+        putListIfPresent(payload, "constraints", extractDelimitedValues(input, TEACHING_CONSTRAINTS_PATTERN));
+        return Map.copyOf(payload);
     }
 
     private String extractHistoryCommand(String normalized) {
@@ -230,6 +363,86 @@ class CommandNluParser {
             command.append(" --").append(entry.getKey()).append(' ').append(entry.getValue());
         }
         return command.toString();
+    }
+
+    private String extractTeachingPlanCommand(String input, String normalized) {
+        if (!containsAny(normalized,
+                "教学规划",
+                "学习计划",
+                "复习计划",
+                "课程规划",
+                "study plan",
+                "teaching plan")) {
+            return null;
+        }
+        String query = input.replaceAll("[\\r\\n\\t]+", " ")
+                .replace("--", " ")
+                .trim();
+        if (query.isBlank()) {
+            return "/teach plan";
+        }
+        return "/teach plan --query " + query;
+    }
+
+    private String extractTeachingTopic(String input) {
+        Matcher beforeMatcher = TEACHING_TOPIC_BEFORE_PATTERN.matcher(input);
+        if (beforeMatcher.find()) {
+            return sanitizeTopic(beforeMatcher.group(1));
+        }
+        Matcher afterMatcher = TEACHING_TOPIC_AFTER_PATTERN.matcher(input);
+        if (afterMatcher.find()) {
+            return sanitizeTopic(afterMatcher.group(1));
+        }
+        return null;
+    }
+
+    private Integer extractFlexibleNumber(String input, Pattern pattern) {
+        Matcher matcher = pattern.matcher(input);
+        if (!matcher.find()) {
+            return null;
+        }
+        return parseFlexibleNumber(matcher.group(1));
+    }
+
+    private String extractByPattern(String input, Pattern pattern) {
+        Matcher matcher = pattern.matcher(input);
+        return matcher.find() ? matcher.group(1).trim() : null;
+    }
+
+    private List<String> extractDelimitedValues(String input, Pattern pattern) {
+        String raw = extractByPattern(input, pattern);
+        if (raw == null || raw.isBlank()) {
+            return List.of();
+        }
+        List<String> values = new java.util.ArrayList<>();
+        for (String part : raw.split("[,，;；/、]")) {
+            String normalized = part.trim();
+            if (!normalized.isBlank()) {
+                values.add(normalized);
+            }
+        }
+        return List.copyOf(values);
+    }
+
+    private void putIfPresent(Map<String, Object> payload, String key, String value) {
+        if (value != null && !value.isBlank()) {
+            payload.put(key, value);
+        }
+    }
+
+    private void putListIfPresent(Map<String, Object> payload, String key, List<String> values) {
+        if (values != null && !values.isEmpty()) {
+            payload.put(key, values);
+        }
+    }
+
+    private String sanitizeTopic(String rawTopic) {
+        if (rawTopic == null || rawTopic.isBlank()) {
+            return null;
+        }
+        return rawTopic.trim()
+                .replaceFirst("^(给我一个|给我一份|给我|帮我做|帮我|请帮我|请|做个|做一份|做一个)", "")
+                .trim();
     }
 
     private void putMatchedProfileOption(Map<String, String> options, String key, Pattern pattern, String input) {
