@@ -1,11 +1,18 @@
 package com.zhongbo.mindos.assistant.api;
 
 import com.zhongbo.mindos.assistant.common.dto.ConversationTurnDto;
+import com.zhongbo.mindos.assistant.common.dto.MemoryCompressionPlanRequestDto;
+import com.zhongbo.mindos.assistant.common.dto.MemoryCompressionPlanResponseDto;
+import com.zhongbo.mindos.assistant.common.dto.MemoryCompressionStepDto;
+import com.zhongbo.mindos.assistant.common.dto.MemoryStyleProfileDto;
 import com.zhongbo.mindos.assistant.common.dto.MemorySyncRequestDto;
 import com.zhongbo.mindos.assistant.common.dto.MemorySyncResponseDto;
 import com.zhongbo.mindos.assistant.common.dto.ProceduralMemoryEntryDto;
 import com.zhongbo.mindos.assistant.common.dto.SemanticMemoryEntryDto;
 import com.zhongbo.mindos.assistant.memory.MemoryManager;
+import com.zhongbo.mindos.assistant.memory.model.MemoryCompressionPlan;
+import com.zhongbo.mindos.assistant.memory.model.MemoryCompressionStep;
+import com.zhongbo.mindos.assistant.memory.model.MemoryStyleProfile;
 import com.zhongbo.mindos.assistant.memory.model.ConversationTurn;
 import com.zhongbo.mindos.assistant.memory.model.MemoryApplyResult;
 import com.zhongbo.mindos.assistant.memory.model.MemorySyncBatch;
@@ -54,6 +61,26 @@ public class MemorySyncController {
         return toResponse(snapshot, applyResult.acceptedCount(), applyResult.skippedCount());
     }
 
+    @GetMapping("/{userId}/style")
+    public MemoryStyleProfileDto getMemoryStyle(@PathVariable String userId) {
+        return toDto(memoryManager.getMemoryStyleProfile(userId));
+    }
+
+    @PostMapping("/{userId}/style")
+    public MemoryStyleProfileDto updateMemoryStyle(@PathVariable String userId,
+                                                   @RequestBody MemoryStyleProfileDto request) {
+        MemoryStyleProfile updated = memoryManager.updateMemoryStyleProfile(userId, toModel(request));
+        return toDto(updated);
+    }
+
+    @PostMapping("/{userId}/compress-plan")
+    public MemoryCompressionPlanResponseDto buildCompressionPlan(@PathVariable String userId,
+                                                                 @RequestBody MemoryCompressionPlanRequestDto request) {
+        MemoryStyleProfile overrideStyle = new MemoryStyleProfile(request.styleName(), request.tone(), request.outputFormat());
+        MemoryCompressionPlan plan = memoryManager.buildMemoryCompressionPlan(userId, request.sourceText(), overrideStyle);
+        return toDto(plan);
+    }
+
     private MemorySyncResponseDto toResponse(MemorySyncSnapshot snapshot, int acceptedCount, int skippedCount) {
         return new MemorySyncResponseDto(
                 snapshot.cursor(),
@@ -99,6 +126,26 @@ public class MemorySyncController {
 
     private ProceduralMemoryEntryDto toDto(ProceduralMemoryEntry entry) {
         return new ProceduralMemoryEntryDto(entry.skillName(), entry.input(), entry.success(), entry.createdAt());
+    }
+
+    private MemoryStyleProfile toModel(MemoryStyleProfileDto dto) {
+        if (dto == null) {
+            return new MemoryStyleProfile(null, null, null);
+        }
+        return new MemoryStyleProfile(dto.styleName(), dto.tone(), dto.outputFormat());
+    }
+
+    private MemoryStyleProfileDto toDto(MemoryStyleProfile style) {
+        return new MemoryStyleProfileDto(style.styleName(), style.tone(), style.outputFormat());
+    }
+
+    private MemoryCompressionPlanResponseDto toDto(MemoryCompressionPlan plan) {
+        List<MemoryCompressionStepDto> steps = plan.steps().stream().map(this::toDto).toList();
+        return new MemoryCompressionPlanResponseDto(toDto(plan.styleProfile()), steps, plan.createdAt());
+    }
+
+    private MemoryCompressionStepDto toDto(MemoryCompressionStep step) {
+        return new MemoryCompressionStepDto(step.stage(), step.content(), step.length());
     }
 }
 

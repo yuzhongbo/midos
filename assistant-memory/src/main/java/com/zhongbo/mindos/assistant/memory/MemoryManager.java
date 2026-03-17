@@ -1,7 +1,9 @@
 package com.zhongbo.mindos.assistant.memory;
 
 import com.zhongbo.mindos.assistant.memory.model.ConversationTurn;
+import com.zhongbo.mindos.assistant.memory.model.MemoryCompressionPlan;
 import com.zhongbo.mindos.assistant.memory.model.MemoryApplyResult;
+import com.zhongbo.mindos.assistant.memory.model.MemoryStyleProfile;
 import com.zhongbo.mindos.assistant.memory.model.MemorySyncBatch;
 import com.zhongbo.mindos.assistant.memory.model.MemorySyncSnapshot;
 import com.zhongbo.mindos.assistant.memory.model.ProceduralMemoryEntry;
@@ -19,17 +21,20 @@ public class MemoryManager {
     private final ProceduralMemoryService proceduralMemoryService;
     private final MemorySyncService memorySyncService;
     private final MemoryConsolidationService memoryConsolidationService;
+    private final MemoryCompressionPlanningService memoryCompressionPlanningService;
 
     public MemoryManager(EpisodicMemoryService episodicMemoryService,
                          SemanticMemoryService semanticMemoryService,
                          ProceduralMemoryService proceduralMemoryService,
                          MemorySyncService memorySyncService,
-                         MemoryConsolidationService memoryConsolidationService) {
+                         MemoryConsolidationService memoryConsolidationService,
+                         MemoryCompressionPlanningService memoryCompressionPlanningService) {
         this.episodicMemoryService = episodicMemoryService;
         this.semanticMemoryService = semanticMemoryService;
         this.proceduralMemoryService = proceduralMemoryService;
         this.memorySyncService = memorySyncService;
         this.memoryConsolidationService = memoryConsolidationService;
+        this.memoryCompressionPlanningService = memoryCompressionPlanningService;
     }
 
     public void storeUserConversation(String userId, String message) {
@@ -95,5 +100,21 @@ public class MemoryManager {
     public MemoryApplyResult applyIncrementalUpdates(String userId, MemorySyncBatch batch) {
         return memorySyncService.applyUpdates(userId, batch);
     }
-}
 
+    public MemoryStyleProfile updateMemoryStyleProfile(
+            String userId,
+            MemoryStyleProfile styleProfile) {
+        return memoryCompressionPlanningService.updateStyleProfile(userId, styleProfile);
+    }
+
+    public MemoryStyleProfile getMemoryStyleProfile(String userId) {
+        return memoryCompressionPlanningService.getStyleProfile(userId);
+    }
+
+    public MemoryCompressionPlan buildMemoryCompressionPlan(
+            String userId,
+            String sourceText,
+            MemoryStyleProfile styleOverride) {
+        return memoryCompressionPlanningService.buildPlan(userId, sourceText, styleOverride);
+    }
+}

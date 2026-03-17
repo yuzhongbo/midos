@@ -212,6 +212,7 @@ curl -X POST http://localhost:8080/api/skills/load-mcp \
   - per-request override: send `profile.llmProvider` (CLI: `profile set --llm-provider openai`)
 - Semantic memory is stored when input starts with `remember `.
 - Memory sync API supports incremental pull via cursor (`since`) for multi-terminal synchronization.
+- Memory compression planning supports gradual stages (`RAW -> CONDENSED -> BRIEF -> STYLED`) with per-user style profile via `POST /api/memory/{userId}/style`, `GET /api/memory/{userId}/style`, and `POST /api/memory/{userId}/compress-plan`.
 - **Custom skills (JSON)**: drop `.json` files into `mindos.skills.custom-dir`; reload without restart via `POST /api/skills/reload`.
   ```json
   { "name": "greet", "description": "Warm greeting", "triggers": ["greet","hello"], "response": "Hello {{user}}! You said: {{input}}" }
