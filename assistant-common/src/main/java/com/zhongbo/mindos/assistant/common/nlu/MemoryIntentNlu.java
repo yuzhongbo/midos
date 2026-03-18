@@ -1,17 +1,31 @@
 package com.zhongbo.mindos.assistant.common.nlu;
 
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public final class MemoryIntentNlu {
 
-    private static final Pattern MEMORY_FOCUS_CN_PATTERN = Pattern.compile("(?:按|以|用)?\\s*(任务|学习|复盘)\\s*聚焦");
-    private static final Pattern MEMORY_FOCUS_CN_ALT_PATTERN = Pattern.compile("聚焦\\s*(任务|学习|复盘)");
-    private static final Pattern MEMORY_FOCUS_EN_PATTERN = Pattern.compile("focus\\s*[:：]?\\s*(task|learning|review)", Pattern.CASE_INSENSITIVE);
     private static final Pattern STYLE_NAME_PATTERN = Pattern.compile("(?:记忆风格|压缩风格|风格)\\s*(?:改成|改为|设为|设置为|用|是|为|=|:)\\s*([^,，。；;\\n]+)", Pattern.CASE_INSENSITIVE);
     private static final Pattern STYLE_TONE_PATTERN = Pattern.compile("(?:语气|tone)\\s*(?:改成|改为|设为|设置为|用|是|为|=|:)?\\s*([^,，。；;\\n]+)", Pattern.CASE_INSENSITIVE);
     private static final Pattern STYLE_OUTPUT_PATTERN = Pattern.compile("(?:格式|输出格式|output format)\\s*(?:改成|改为|设为|设置为|用|是|为|=|:)?\\s*([^,，。；;\\n]+)", Pattern.CASE_INSENSITIVE);
+
+    private static final String PROP_FOCUS_TASK_TERMS = "mindos.memory.nlu.focus.task-terms";
+    private static final String PROP_FOCUS_LEARNING_TERMS = "mindos.memory.nlu.focus.learning-terms";
+    private static final String PROP_FOCUS_REVIEW_TERMS = "mindos.memory.nlu.focus.review-terms";
+    private static final String PROP_STYLE_ACTION_TERMS = "mindos.memory.nlu.style.action-terms";
+    private static final String PROP_STYLE_COACH_TERMS = "mindos.memory.nlu.style.coach-terms";
+    private static final String PROP_STYLE_STORY_TERMS = "mindos.memory.nlu.style.story-terms";
+    private static final String PROP_STYLE_CONCISE_TERMS = "mindos.memory.nlu.style.concise-terms";
+    private static final String PROP_TONE_WARM_TERMS = "mindos.memory.nlu.tone.warm-terms";
+    private static final String PROP_TONE_DIRECT_TERMS = "mindos.memory.nlu.tone.direct-terms";
+    private static final String PROP_TONE_NEUTRAL_TERMS = "mindos.memory.nlu.tone.neutral-terms";
+    private static final String PROP_FORMAT_BULLET_TERMS = "mindos.memory.nlu.format.bullet-terms";
+    private static final String PROP_FORMAT_PLAIN_TERMS = "mindos.memory.nlu.format.plain-terms";
 
     private MemoryIntentNlu() {
     }
@@ -49,9 +63,10 @@ public final class MemoryIntentNlu {
         }
 
         String raw = input == null ? "" : input;
-        String styleName = extractByPattern(raw, STYLE_NAME_PATTERN);
-        String tone = extractByPattern(raw, STYLE_TONE_PATTERN);
-        String outputFormat = extractByPattern(raw, STYLE_OUTPUT_PATTERN);
+        SynonymConfig config = synonymConfig();
+        String styleName = normalizeMappedValue(extractByPattern(raw, STYLE_NAME_PATTERN), config.styleAliases());
+        String tone = normalizeMappedValue(extractByPattern(raw, STYLE_TONE_PATTERN), config.toneAliases());
+        String outputFormat = normalizeMappedValue(extractByPattern(raw, STYLE_OUTPUT_PATTERN), config.formatAliases());
         return new StyleUpdateIntent(styleName, tone, outputFormat);
     }
 
@@ -85,39 +100,157 @@ public final class MemoryIntentNlu {
     }
 
     private static String extractCompressionFocus(String input, String normalized) {
+        SynonymConfig config = synonymConfig();
         String source = input == null ? "" : input;
-        Matcher matcher = MEMORY_FOCUS_CN_PATTERN.matcher(source);
+        Matcher matcher = config.focusCnPattern().matcher(source);
         if (matcher.find()) {
-            return mapChineseFocus(matcher.group(1));
+            return mapAliasValue(matcher.group(1), config.focusAliases());
         }
-        matcher = MEMORY_FOCUS_CN_ALT_PATTERN.matcher(source);
+        matcher = config.focusCnAltPattern().matcher(source);
         if (matcher.find()) {
-            return mapChineseFocus(matcher.group(1));
+            return mapAliasValue(matcher.group(1), config.focusAliases());
         }
-        matcher = MEMORY_FOCUS_EN_PATTERN.matcher(normalized == null ? "" : normalized);
+        matcher = config.focusEnPattern().matcher(normalized == null ? "" : normalized);
         if (matcher.find()) {
-            return matcher.group(1).toLowerCase(Locale.ROOT);
+            return mapAliasValue(matcher.group(1), config.focusAliases());
         }
         return null;
     }
 
-    private static String mapChineseFocus(String focus) {
-        if (focus == null) {
-            return null;
-        }
-        return switch (focus.trim()) {
-            case "任务" -> "task";
-            case "学习" -> "learning";
-            case "复盘" -> "review";
-            default -> null;
-        };
+    private static String stripTrailingFocusPhrase(String source) {
+        SynonymConfig config = synonymConfig();
+        String normalized = source == null ? "" : source.trim();
+        normalized = config.focusStripCnPattern().matcher(normalized).replaceFirst("").trim();
+        normalized = config.focusStripCnAltPattern().matcher(normalized).replaceFirst("").trim();
+        normalized = config.focusStripEnPattern().matcher(normalized).replaceFirst("").trim();
+        normalized = config.focusStripEnAltPattern().matcher(normalized).replaceFirst("").trim();
+        return normalized;
     }
 
-    private static String stripTrailingFocusPhrase(String source) {
-        String normalized = source == null ? "" : source.trim();
-        normalized = normalized.replaceFirst("[，,;；]?\\s*按?(任务|学习|复盘)聚焦$", "").trim();
-        normalized = normalized.replaceFirst("[，,;；]?\\s*(task|learning|review)\\s*focus$", "").trim();
-        return normalized;
+    private static SynonymConfig synonymConfig() {
+        Map<String, Set<String>> focus = new LinkedHashMap<>();
+        focus.put("task", termsFor(PROP_FOCUS_TASK_TERMS, "task", "任务", "todo", "待办"));
+        focus.put("learning", termsFor(PROP_FOCUS_LEARNING_TERMS, "learning", "study", "学习"));
+        focus.put("review", termsFor(PROP_FOCUS_REVIEW_TERMS, "review", "复盘", "总结"));
+
+        Map<String, Set<String>> style = new LinkedHashMap<>();
+        style.put("action", termsFor(PROP_STYLE_ACTION_TERMS, "action", "todo", "行动", "清单"));
+        style.put("coach", termsFor(PROP_STYLE_COACH_TERMS, "coach", "teaching", "teacher", "教学", "教练"));
+        style.put("story", termsFor(PROP_STYLE_STORY_TERMS, "story", "narrative", "故事"));
+        style.put("concise", termsFor(PROP_STYLE_CONCISE_TERMS, "concise", "简洁", "精简"));
+
+        Map<String, Set<String>> tone = new LinkedHashMap<>();
+        tone.put("warm", termsFor(PROP_TONE_WARM_TERMS, "warm", "温和", "友好"));
+        tone.put("direct", termsFor(PROP_TONE_DIRECT_TERMS, "direct", "直接", "简练"));
+        tone.put("neutral", termsFor(PROP_TONE_NEUTRAL_TERMS, "neutral", "中性"));
+
+        Map<String, Set<String>> format = new LinkedHashMap<>();
+        format.put("bullet", termsFor(PROP_FORMAT_BULLET_TERMS, "bullet", "list", "列表", "清单"));
+        format.put("plain", termsFor(PROP_FORMAT_PLAIN_TERMS, "plain", "文本", "自然段"));
+
+        Map<String, String> focusAliases = aliasToCanonical(focus);
+        String focusAlternation = toAlternation(focusAliases.keySet());
+        Pattern focusCnPattern = Pattern.compile("(?:^|[，,;；\\s])(?:按|以|用)?\\s*(" + focusAlternation + ")\\s*聚焦\\s*$", Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
+        Pattern focusCnAltPattern = Pattern.compile("(?:^|[，,;；\\s])聚焦\\s*(?:到)?\\s*(" + focusAlternation + ")\\s*$", Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
+        Pattern focusEnPattern = Pattern.compile("(?:^|[，,;；\\s])focus\\s*[:：]?\\s*(" + focusAlternation + ")\\s*$", Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
+        Pattern focusStripCnPattern = Pattern.compile("[，,;；]?\\s*(?:按|以|用)?\\s*(" + focusAlternation + ")\\s*聚焦$", Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
+        Pattern focusStripCnAltPattern = Pattern.compile("[，,;；]?\\s*聚焦\\s*(?:到)?\\s*(" + focusAlternation + ")$", Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
+        Pattern focusStripEnPattern = Pattern.compile("[，,;；]?\\s*focus\\s*[:：]?\\s*(" + focusAlternation + ")$", Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
+        Pattern focusStripEnAltPattern = Pattern.compile("[，,;；]?\\s*(" + focusAlternation + ")\\s*focus$", Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
+        return new SynonymConfig(
+                focusAliases,
+                aliasToCanonical(style),
+                aliasToCanonical(tone),
+                aliasToCanonical(format),
+                focusCnPattern,
+                focusCnAltPattern,
+                focusEnPattern,
+                focusStripCnPattern,
+                focusStripCnAltPattern,
+                focusStripEnPattern,
+                focusStripEnAltPattern
+        );
+    }
+
+    private static Set<String> termsFor(String propertyKey, String... defaults) {
+        Set<String> terms = new LinkedHashSet<>();
+        for (String value : defaults) {
+            addTerm(terms, value);
+        }
+        for (String value : readConfiguredTerms(propertyKey)) {
+            addTerm(terms, value);
+        }
+        return terms;
+    }
+
+    private static Set<String> readConfiguredTerms(String propertyKey) {
+        String configured = System.getProperty(propertyKey);
+        if (configured == null || configured.isBlank()) {
+            return Set.of();
+        }
+        Set<String> values = new LinkedHashSet<>();
+        String replaced = configured.replace('，', ',').replace('；', ',').replace(';', ',');
+        for (String token : replaced.split(",")) {
+            addTerm(values, token);
+        }
+        return values;
+    }
+
+    private static void addTerm(Set<String> container, String value) {
+        if (value == null) {
+            return;
+        }
+        String normalized = normalizeToken(value);
+        if (!normalized.isBlank()) {
+            container.add(normalized);
+        }
+    }
+
+    private static Map<String, String> aliasToCanonical(Map<String, Set<String>> canonicalToTerms) {
+        Map<String, String> aliasMap = new LinkedHashMap<>();
+        for (Map.Entry<String, Set<String>> entry : canonicalToTerms.entrySet()) {
+            String canonical = normalizeToken(entry.getKey());
+            aliasMap.put(canonical, canonical);
+            for (String term : entry.getValue()) {
+                aliasMap.put(normalizeToken(term), canonical);
+            }
+        }
+        return aliasMap;
+    }
+
+    private static String toAlternation(Set<String> terms) {
+        return terms.stream()
+                .filter(term -> !term.isBlank())
+                .sorted((a, b) -> Integer.compare(b.length(), a.length()))
+                .map(Pattern::quote)
+                .reduce((left, right) -> left + "|" + right)
+                .orElse("task|learning|review");
+    }
+
+    private static String normalizeMappedValue(String value, Map<String, String> aliases) {
+        if (value == null) {
+            return null;
+        }
+        String canonical = mapAliasValue(value, aliases);
+        return canonical == null ? value.trim() : canonical;
+    }
+
+    private static String mapAliasValue(String value, Map<String, String> aliases) {
+        if (value == null) {
+            return null;
+        }
+        return aliases.get(normalizeToken(value));
+    }
+
+    private static String normalizeToken(String value) {
+        if (value == null) {
+            return "";
+        }
+        return value
+                .replace('\u3000', ' ')
+                .replaceAll("\\s+", " ")
+                .trim()
+                .toLowerCase(Locale.ROOT);
     }
 
     private static boolean containsAny(String text, String... fragments) {
@@ -146,11 +279,22 @@ public final class MemoryIntentNlu {
         if (input == null) {
             return "";
         }
-        return input
-                .replace('\u3000', ' ')
-                .replaceAll("\\s+", " ")
-                .trim()
-                .toLowerCase(Locale.ROOT);
+        return normalizeToken(input);
+    }
+
+    private record SynonymConfig(
+            Map<String, String> focusAliases,
+            Map<String, String> styleAliases,
+            Map<String, String> toneAliases,
+            Map<String, String> formatAliases,
+            Pattern focusCnPattern,
+            Pattern focusCnAltPattern,
+            Pattern focusEnPattern,
+            Pattern focusStripCnPattern,
+            Pattern focusStripCnAltPattern,
+            Pattern focusStripEnPattern,
+            Pattern focusStripEnAltPattern
+    ) {
     }
 
     public record CompressionIntent(String source, String focus) {

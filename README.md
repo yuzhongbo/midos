@@ -219,6 +219,40 @@ curl -X POST http://localhost:8080/api/skills/load-mcp \
 - Memory sync API supports incremental pull via cursor (`since`) for multi-terminal synchronization.
 - Memory compression planning supports gradual stages (`RAW -> CONDENSED -> BRIEF -> STYLED`) with per-user style profile via `POST /api/memory/{userId}/style`, `GET /api/memory/{userId}/style`, and `POST /api/memory/{userId}/compress-plan`.
 - Compression plan supports optional `focus` (`learning`/`task`/`review`) and style update supports optional auto-tune (`POST /api/memory/{userId}/style?autoTune=true&sampleText=...`).
+- Memory NLU synonyms for style/compress intents are configurable via JVM system properties (`-Dmindos.memory.nlu.*`); values are comma-separated terms and normalize to canonical values used by API/CLI (`focus`: `task|learning|review`, `style`: `action|coach|story|concise`, `tone`: `warm|direct|neutral`, `format`: `bullet|plain`).
+  - focus keys:
+    - `mindos.memory.nlu.focus.task-terms`
+    - `mindos.memory.nlu.focus.learning-terms`
+    - `mindos.memory.nlu.focus.review-terms`
+  - style keys:
+    - `mindos.memory.nlu.style.action-terms`
+    - `mindos.memory.nlu.style.coach-terms`
+    - `mindos.memory.nlu.style.story-terms`
+    - `mindos.memory.nlu.style.concise-terms`
+  - tone keys:
+    - `mindos.memory.nlu.tone.warm-terms`
+    - `mindos.memory.nlu.tone.direct-terms`
+    - `mindos.memory.nlu.tone.neutral-terms`
+  - format keys:
+    - `mindos.memory.nlu.format.bullet-terms`
+    - `mindos.memory.nlu.format.plain-terms`
+  - dev example:
+    ```bash
+    ./mvnw -pl assistant-api -am spring-boot:run \
+      -Dspring-boot.run.jvmArguments="-Dmindos.memory.nlu.focus.review-terms=复盘,总结,retrospective -Dmindos.memory.nlu.style.action-terms=action,行动,行动派 -Dmindos.memory.nlu.tone.warm-terms=warm,温和,gentle -Dmindos.memory.nlu.format.bullet-terms=bullet,列表,markdown list"
+    ```
+  - prod example:
+    ```bash
+    java \
+      -Dmindos.memory.nlu.focus.review-terms="复盘,总结,retrospective" \
+      -Dmindos.memory.nlu.style.action-terms="action,行动,行动派" \
+      -Dmindos.memory.nlu.tone.warm-terms="warm,温和,gentle" \
+      -Dmindos.memory.nlu.format.bullet-terms="bullet,列表,markdown list" \
+      -jar assistant-api/target/assistant-api-0.1.0-SNAPSHOT.jar
+    ```
+  - quick verify phrases:
+    - `按我的风格压缩这段记忆：记录今日复盘，聚焦到retrospective` -> focus `review`
+    - `把记忆风格改成 行动派，语气 gentle，格式 markdown list` -> `action/warm/bullet`
 - IM webhook integration (disabled by default) supports Feishu/DingTalk/WeChat text chat via `/api/im/feishu/events`, `/api/im/dingtalk/events`, `/api/im/wechat/events`; all platforms can enable signature verification independently in `application.properties`.
 - IM 文本可直接触发 memory 能力：`查看记忆风格`、`按任务聚焦压缩这段记忆：...`、`根据这段话微调记忆风格：...`。
 - **Custom skills (JSON)**: drop `.json` files into `mindos.skills.custom-dir`; reload without restart via `POST /api/skills/reload`.
