@@ -357,7 +357,8 @@ class InteractiveChatRunner {
         out.println("  /memory push --file path [--limit N]    推送记忆 JSON 文件（兼容模式）");
         out.println("  /memory style show                      查看当前记忆压缩风格");
         out.println("  /memory style set --style-name 名称     更新记忆压缩风格");
-        out.println("  /memory compress --source 文本          生成逐步记忆压缩规划");
+        out.println("  /memory style set --auto-tune --sample-text 文本  自动微调记忆风格");
+        out.println("  /memory compress --source 文本 [--focus learning|task|review]  生成逐步记忆压缩规划");
         out.println("  /teach plan [--query 文本]              生成教学规划（自动转 teaching.plan skill）");
         out.println(ANSI.string("@|bold,cyan [Shortcuts]|@"));
         out.println("  自然语言指令示例                          我有哪些技能 / 帮我拉取记忆 / 加载jar https://...");
@@ -397,6 +398,7 @@ class InteractiveChatRunner {
         out.println("  拉取：直接说“帮我拉取最近 30 条记忆”或“从 12 开始拉取记忆”");
         out.println("  推送：直接说“帮我保存 20 条记忆”或“开始记忆推送”");
         out.println("  风格：直接说“查看我的记忆风格”或“把记忆风格改成 action，语气 warm”");
+        out.println("  微调：直接说“根据这段话自动微调记忆风格：...”");
         out.println("  压缩：直接说“按我的风格压缩这段记忆：...”");
         out.println("  如需技术命令格式请看 /help full");
         out.flush();
@@ -856,10 +858,12 @@ class InteractiveChatRunner {
 
         if (input.startsWith("/memory style set")) {
             Map<String, String> parsed = parseOptionPairs(input.substring("/memory style set".length()).trim());
+            boolean autoTune = parseBooleanFlag(parsed, "auto-tune");
+            String sampleText = parsed.get("sample-text");
             String styleName = parsed.get("style-name");
             String tone = parsed.get("tone");
             String outputFormat = parsed.get("output-format");
-            if (styleName == null || styleName.isBlank()) {
+            if (!autoTune && (styleName == null || styleName.isBlank())) {
                 styleName = promptForMemoryValue(out, reader, "记忆风格名称", null, false);
                 if (styleName == null) {
                     printInfo(out, "已取消记忆风格更新。");
@@ -880,9 +884,18 @@ class InteractiveChatRunner {
                     return true;
                 }
             }
+            if (autoTune && (sampleText == null || sampleText.isBlank())) {
+                sampleText = promptForMemoryValue(out, reader, "用于自动微调的样本文本", null, false);
+                if (sampleText == null) {
+                    printInfo(out, "已取消记忆风格更新。");
+                    return true;
+                }
+            }
             try {
                 MemoryStyleProfileDto response = chatService.updateMemoryStyleProfile(
-                        new MemoryStyleProfileDto(styleName, blankToNull(tone), blankToNull(outputFormat))
+                        new MemoryStyleProfileDto(blankToNull(styleName), blankToNull(tone), blankToNull(outputFormat)),
+                        autoTune,
+                        blankToNull(sampleText)
                 );
                 printInfo(out, "记忆风格已更新。");
                 printMemoryStyle(out, response);
@@ -913,7 +926,8 @@ class InteractiveChatRunner {
                             source,
                             blankToNull(parsed.get("style-name")),
                             blankToNull(parsed.get("tone")),
-                            blankToNull(parsed.get("output-format"))
+                            blankToNull(parsed.get("output-format")),
+                            blankToNull(parsed.get("focus"))
                     )
             );
             printMemoryCompressionPlan(out, response);
@@ -1312,6 +1326,18 @@ class InteractiveChatRunner {
 
     private String nullSafe(String value) {
         return value == null ? "" : value;
+    }
+
+    private boolean parseBooleanFlag(Map<String, String> options, String key) {
+        if (!options.containsKey(key)) {
+            return false;
+        }
+        String value = options.get(key);
+        if (value == null || value.isBlank()) {
+            return true;
+        }
+        String normalized = value.trim().toLowerCase();
+        return !List.of("false", "0", "no", "n").contains(normalized);
     }
 
     private void printProfile(PrintWriter out, AssistantProfile profile) {

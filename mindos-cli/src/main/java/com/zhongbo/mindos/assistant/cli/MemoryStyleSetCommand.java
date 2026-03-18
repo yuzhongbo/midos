@@ -21,6 +21,12 @@ public class MemoryStyleSetCommand implements Runnable {
     @CommandLine.Option(names = {"--output-format"}, description = "Output format such as plain or bullet")
     private String outputFormat;
 
+    @CommandLine.Option(names = {"--auto-tune"}, description = "Enable lightweight auto tune from sample text")
+    private boolean autoTune;
+
+    @CommandLine.Option(names = {"--sample-text"}, description = "Sample text used when auto tune is enabled")
+    private String sampleText;
+
     @CommandLine.Option(names = {"--server"}, defaultValue = "http://localhost:8080", description = "MindOS server base URL")
     private String server;
 
@@ -41,7 +47,9 @@ public class MemoryStyleSetCommand implements Runnable {
         try {
             CliChatService chatService = new CliChatService(userId, server, profileConfig, llmProvider);
             MemoryStyleProfileDto response = chatService.updateMemoryStyleProfile(
-                    new MemoryStyleProfileDto(styleName, tone, outputFormat)
+                    new MemoryStyleProfileDto(styleName, tone, outputFormat),
+                    autoTune,
+                    sampleText
             );
             System.out.println("style.name=" + response.styleName());
             System.out.println("style.tone=" + response.tone());

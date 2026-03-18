@@ -28,8 +28,17 @@ public class MemoryCompressionPlanningService {
     }
 
     public MemoryStyleProfile updateStyleProfile(String userId, MemoryStyleProfile preferredStyle) {
+        return updateStyleProfile(userId, preferredStyle, false, null);
+    }
+
+    public MemoryStyleProfile updateStyleProfile(String userId,
+                                                 MemoryStyleProfile preferredStyle,
+                                                 boolean autoTune,
+                                                 String sampleText) {
         String key = normalizeUserId(userId);
-        MemoryStyleProfile normalized = normalizeStyle(preferredStyle);
+        MemoryStyleProfile current = styleProfiles.getOrDefault(key, DEFAULT_STYLE);
+        MemoryStyleProfile tuned = autoTune ? mergeStyle(current, inferStyleFromSample(sampleText)) : current;
+        MemoryStyleProfile normalized = mergeStyle(tuned, preferredStyle);
         styleProfiles.put(key, normalized);
         return normalized;
     }
@@ -39,6 +48,13 @@ public class MemoryCompressionPlanningService {
     }
 
     public MemoryCompressionPlan buildPlan(String userId, String sourceText, MemoryStyleProfile styleOverride) {
+        return buildPlan(userId, sourceText, styleOverride, null);
+    }
+
+    public MemoryCompressionPlan buildPlan(String userId,
+                                           String sourceText,
+                                           MemoryStyleProfile styleOverride,
+                                           String focus) {
         MemoryStyleProfile baseStyle = styleOverride == null
                 ? getStyleProfile(userId)
                 : mergeStyle(getStyleProfile(userId), styleOverride);
@@ -46,7 +62,7 @@ public class MemoryCompressionPlanningService {
         String raw = memoryConsolidationService.normalizeText(sourceText);
         String condensed = condense(raw);
         String brief = buildBrief(condensed);
-        String styled = applyStyle(brief, baseStyle);
+        String styled = applyStyle(brief, baseStyle, focus);
 
         List<MemoryCompressionStep> steps = List.of(
                 step("RAW", raw),
@@ -77,9 +93,9 @@ public class MemoryCompressionPlanningService {
         if (style == null) {
             return DEFAULT_STYLE;
         }
-        String styleName = normalizeOrDefault(style.styleName(), DEFAULT_STYLE.styleName());
+        String styleName = normalizeStyleName(normalizeOrDefault(style.styleName(), DEFAULT_STYLE.styleName()));
         String tone = normalizeOrDefault(style.tone(), DEFAULT_STYLE.tone());
-        String outputFormat = normalizeOrDefault(style.outputFormat(), DEFAULT_STYLE.outputFormat());
+        String outputFormat = normalizeOutputFormat(normalizeOrDefault(style.outputFormat(), DEFAULT_STYLE.outputFormat()));
         return new MemoryStyleProfile(styleName, tone, outputFormat);
     }
 
@@ -115,13 +131,13 @@ public class MemoryCompressionPlanningService {
         return String.join("; ", lines);
     }
 
-    private String applyStyle(String summary, MemoryStyleProfile style) {
+    private String applyStyle(String summary, MemoryStyleProfile style, String focus) {
         if (isBlank(summary)) {
             return "";
         }
-        String styleName = style.styleName().toLowerCase(Locale.ROOT);
+        String styleName = normalizeStyleName(style.styleName());
         String tone = style.tone();
-        String format = style.outputFormat().toLowerCase(Locale.ROOT);
+        String format = normalizeOutputFormat(style.outputFormat());
 
         String base;
         switch (styleName) {
@@ -137,7 +153,20 @@ public class MemoryCompressionPlanningService {
         if (!isBlank(tone) && !"direct".equalsIgnoreCase(tone)) {
             base = "[" + tone + "] " + base;
         }
-        return base;
+        return applyFocus(base, focus);
+    }
+
+    private String applyFocus(String text, String focus) {
+        String normalizedFocus = normalizeFocus(focus);
+        if (isBlank(normalizedFocus) || text.isBlank()) {
+            return text;
+        }
+        return switch (normalizedFocus) {
+            case "learning" -> "[学习聚焦] " + text;
+            case "task" -> "[任务聚焦] " + text;
+            case "review" -> "[复盘聚焦] " + text;
+            default -> text;
+        };
     }
 
     private String toActionList(String summary) {
@@ -169,6 +198,64 @@ public class MemoryCompressionPlanningService {
                 .map(memoryConsolidationService::normalizeText)
                 .filter(line -> !line.isBlank())
                 .toList();
+    }
+
+    private String normalizeStyleName(String styleName) {
+        String normalized = normalizeOrDefault(styleName, DEFAULT_STYLE.styleName()).toLowerCase(Locale.ROOT);
+        return switch (normalized) {
+            case "teaching", "teacher", "coach", "教学", "教练" -> "coach";
+            case "todo", "action", "行动", "清单" -> "action";
+            case "narrative", "story", "故事" -> "story";
+            default -> "concise";
+        };
+    }
+
+    private String normalizeOutputFormat(String outputFormat) {
+        String normalized = normalizeOrDefault(outputFormat, DEFAULT_STYLE.outputFormat()).toLowerCase(Locale.ROOT);
+        return switch (normalized) {
+            case "bullet", "list", "列表", "清单" -> "bullet";
+            default -> "plain";
+        };
+    }
+
+    private MemoryStyleProfile inferStyleFromSample(String sampleText) {
+        String normalized = normalizeOrDefault(sampleText, "").toLowerCase(Locale.ROOT);
+        if (normalized.isBlank()) {
+            return DEFAULT_STYLE;
+        }
+        String styleName = "concise";
+        if (containsAny(normalized, "任务", "todo", "待办", "行动", "步骤")) {
+            styleName = "action";
+        } else if (containsAny(normalized, "学习", "教学", "复习", "计划", "讲解")) {
+            styleName = "coach";
+        }
+        String tone = containsAny(normalized, "请", "谢谢", "麻烦") ? "warm" : "direct";
+        String outputFormat = normalized.contains("\n") || containsAny(normalized, "1.", "2.", "- ")
+                ? "bullet"
+                : "plain";
+        return new MemoryStyleProfile(styleName, tone, outputFormat);
+    }
+
+    private String normalizeFocus(String focus) {
+        if (isBlank(focus)) {
+            return "";
+        }
+        String normalized = focus.trim().toLowerCase(Locale.ROOT);
+        return switch (normalized) {
+            case "学习", "learning", "study" -> "learning";
+            case "任务", "task", "todo" -> "task";
+            case "复盘", "review", "总结" -> "review";
+            default -> "";
+        };
+    }
+
+    private boolean containsAny(String text, String... fragments) {
+        for (String fragment : fragments) {
+            if (text.contains(fragment)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private String normalizeUserId(String userId) {

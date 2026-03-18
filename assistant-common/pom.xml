@@ -12,5 +12,13 @@
 
     <artifactId>assistant-common</artifactId>
     <name>assistant-common</name>
+    <dependencies>
+        <dependency>
+            <groupId>org.testng</groupId>
+            <artifactId>testng</artifactId>
+            <version>RELEASE</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
 </project>
 

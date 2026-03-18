@@ -107,6 +107,14 @@ public class MemoryManager {
         return memoryCompressionPlanningService.updateStyleProfile(userId, styleProfile);
     }
 
+    public MemoryStyleProfile updateMemoryStyleProfile(
+            String userId,
+            MemoryStyleProfile styleProfile,
+            boolean autoTune,
+            String sampleText) {
+        return memoryCompressionPlanningService.updateStyleProfile(userId, styleProfile, autoTune, sampleText);
+    }
+
     public MemoryStyleProfile getMemoryStyleProfile(String userId) {
         return memoryCompressionPlanningService.getStyleProfile(userId);
     }
@@ -116,5 +124,13 @@ public class MemoryManager {
             String sourceText,
             MemoryStyleProfile styleOverride) {
         return memoryCompressionPlanningService.buildPlan(userId, sourceText, styleOverride);
+    }
+
+    public MemoryCompressionPlan buildMemoryCompressionPlan(
+            String userId,
+            String sourceText,
+            MemoryStyleProfile styleOverride,
+            String focus) {
+        return memoryCompressionPlanningService.buildPlan(userId, sourceText, styleOverride, focus);
     }
 }

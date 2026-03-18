@@ -59,8 +59,14 @@ class CliChatService {
     }
 
     MemoryStyleProfileDto updateMemoryStyleProfile(MemoryStyleProfileDto request) {
+        return updateMemoryStyleProfile(request, false, null);
+    }
+
+    MemoryStyleProfileDto updateMemoryStyleProfile(MemoryStyleProfileDto request,
+                                                   boolean autoTune,
+                                                   String sampleText) {
         AssistantSdkClient client = new AssistantSdkClient(java.net.URI.create(server));
-        return client.updateMemoryStyle(userId, request);
+        return client.updateMemoryStyle(userId, request, autoTune, sampleText);
     }
 
     MemoryCompressionPlanResponseDto buildMemoryCompressionPlan(MemoryCompressionPlanRequestDto request) {

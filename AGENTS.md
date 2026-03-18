@@ -20,8 +20,10 @@ This repository is a lightweight, single-user personal AI assistant backend. Opt
   - `mindos-cli`: Picocli command-line client using `assistant-sdk`; default entrypoint opens an interactive chat session and slash commands handle common session/profile/memory actions in one window
 - Runtime flow: `/chat` (backward compatible with `/api/chat`) -> dispatcher -> (DSL/skill engine or LLM fallback) -> memory updates.
 - IM integration flow (optional): `/api/im/feishu/events`, `/api/im/dingtalk/events`, `/api/im/wechat/events` -> dispatcher chat route -> platform text response.
+- IM 文本也支持 memory 自然语言入口：如“查看记忆风格”“按任务聚焦压缩这段记忆：...”“根据这段话微调记忆风格：...”。
 - Multi-terminal memory flow: `/api/memory/{userId}/sync` with cursor-based pull (`GET`) and idempotent push (`POST eventId`).
 - Memory compression planning flow: `/api/memory/{userId}/style` (`GET`/`POST`) + `/api/memory/{userId}/compress-plan` (`POST`) for gradual compression with per-user style profile.
+- `compress-plan` 可选 `focus`（learning/task/review）；`style` 更新可选 `autoTune=true&sampleText=...` 做轻量风格微调。
 
 ## Repository map
 - `assistant-api/src/main/java/com/zhongbo/mindos/assistant/api/ChatController.java`: chat HTTP interface.

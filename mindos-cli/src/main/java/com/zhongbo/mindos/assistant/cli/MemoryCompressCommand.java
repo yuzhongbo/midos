@@ -26,6 +26,9 @@ public class MemoryCompressCommand implements Runnable {
     @CommandLine.Option(names = {"--output-format"}, description = "Override output format for this compression")
     private String outputFormat;
 
+    @CommandLine.Option(names = {"--focus"}, description = "Optional focus: learning, task, or review")
+    private String focus;
+
     @CommandLine.Option(names = {"--server"}, defaultValue = "http://localhost:8080", description = "MindOS server base URL")
     private String server;
 
@@ -46,7 +49,7 @@ public class MemoryCompressCommand implements Runnable {
         try {
             CliChatService chatService = new CliChatService(userId, server, profileConfig, llmProvider);
             MemoryCompressionPlanResponseDto response = chatService.buildMemoryCompressionPlan(
-                    new MemoryCompressionPlanRequestDto(source, styleName, tone, outputFormat)
+                    new MemoryCompressionPlanRequestDto(source, styleName, tone, outputFormat, focus)
             );
             System.out.println("style.name=" + response.style().styleName());
             System.out.println("style.tone=" + response.style().tone());

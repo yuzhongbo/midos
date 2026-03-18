@@ -91,7 +91,8 @@ class MemorySyncControllerTest {
                 .andExpect(jsonPath("$.outputFormat").value("bullet"));
 
         String planPayload = "{" +
-                "\"sourceText\":\"第一步先梳理目标。第二步拆分任务。第三步每天复盘。\"" +
+                "\"sourceText\":\"第一步先梳理目标。第二步拆分任务。第三步每天复盘。\"," +
+                "\"focus\":\"task\"" +
                 "}";
 
         mockMvc.perform(post("/api/memory/plan-user/compress-plan")
@@ -101,11 +102,55 @@ class MemorySyncControllerTest {
                 .andExpect(jsonPath("$.style.styleName").value("action"))
                 .andExpect(jsonPath("$.steps.length()").value(4))
                 .andExpect(jsonPath("$.steps[0].stage").value("RAW"))
-                .andExpect(jsonPath("$.steps[3].stage").value("STYLED"));
+                .andExpect(jsonPath("$.steps[3].stage").value("STYLED"))
+                .andExpect(jsonPath("$.steps[3].content").value(org.hamcrest.Matchers.containsString("[任务聚焦]")));
 
         mockMvc.perform(get("/api/memory/plan-user/style"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.styleName").value("action"));
+    }
+
+    @Test
+    void shouldFallbackToRecentConversationWhenCompressionSourceIsBlank() throws Exception {
+        String syncPayload = "{" +
+                "\"eventId\":\"evt-chat\"," +
+                "\"episodic\":[{" +
+                "\"role\":\"user\",\"content\":\"今天先整理目标，再拆任务\"},{" +
+                "\"role\":\"assistant\",\"content\":\"建议分成三步执行\"}]," +
+                "\"semantic\":[]," +
+                "\"procedural\":[]" +
+                "}";
+
+        mockMvc.perform(post("/api/memory/fallback-user/sync")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(syncPayload))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(post("/api/memory/fallback-user/compress-plan")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"sourceText\":\"\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.steps[0].stage").value("RAW"))
+                .andExpect(jsonPath("$.steps[0].content").value(org.hamcrest.Matchers.containsString("今天先整理目标，再拆任务")))
+                .andExpect(jsonPath("$.steps[0].content").value(org.hamcrest.Matchers.containsString("assistant: 建议分成三步执行")));
+    }
+
+    @Test
+    void shouldAutoTuneStyleWhenRequestedByQuery() throws Exception {
+        String stylePayload = "{" +
+                "\"styleName\":\"\"," +
+                "\"tone\":\"\"," +
+                "\"outputFormat\":\"\"" +
+                "}";
+
+        mockMvc.perform(post("/api/memory/tune-user/style")
+                        .param("autoTune", "true")
+                        .param("sampleText", "请帮我按步骤拆分任务清单")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(stylePayload))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.styleName").value("action"))
+                .andExpect(jsonPath("$.tone").value("warm"));
     }
 }
 

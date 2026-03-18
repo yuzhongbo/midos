@@ -72,6 +72,51 @@ class ImWebhookControllerTest {
     }
 
     @Test
+    void shouldHandleDingtalkMemoryCompressionFocusIntent() throws Exception {
+        String payload = "{" +
+                "\"senderId\":\"ding-memory-user\"," +
+                "\"conversationId\":\"conv-memory\"," +
+                "\"text\":{\"content\":\"按我的风格压缩这段记忆：先拆任务再执行，按任务聚焦\"}" +
+                "}";
+
+        mockMvc.perform(post("/api/im/dingtalk/events")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(payload))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.msgtype").value("text"))
+                .andExpect(jsonPath("$.text.content").value(org.hamcrest.Matchers.containsString("[任务聚焦]")));
+    }
+
+    @Test
+    void shouldHandleDingtalkMemoryStyleUpdateAndAutoTuneIntent() throws Exception {
+        String updatePayload = "{" +
+                "\"senderId\":\"ding-style-user\"," +
+                "\"conversationId\":\"conv-style\"," +
+                "\"text\":{\"content\":\"把记忆风格改成 action，语气 warm，格式 bullet\"}" +
+                "}";
+
+        mockMvc.perform(post("/api/im/dingtalk/events")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(updatePayload))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.msgtype").value("text"))
+                .andExpect(jsonPath("$.text.content").value(org.hamcrest.Matchers.containsString("记忆风格已更新")));
+
+        String tunePayload = "{" +
+                "\"senderId\":\"ding-style-user\"," +
+                "\"conversationId\":\"conv-style\"," +
+                "\"text\":{\"content\":\"根据这段话微调记忆风格：请帮我按步骤拆分任务清单\"}" +
+                "}";
+
+        mockMvc.perform(post("/api/im/dingtalk/events")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(tunePayload))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.msgtype").value("text"))
+                .andExpect(jsonPath("$.text.content").value(org.hamcrest.Matchers.containsString("记忆风格已微调")));
+    }
+
+    @Test
     void shouldHandleWechatVerifyAndTextEvent() throws Exception {
         mockMvc.perform(get("/api/im/wechat/events")
                         .param("signature", "any")

@@ -68,8 +68,10 @@ public class MemorySyncController {
 
     @PostMapping("/{userId}/style")
     public MemoryStyleProfileDto updateMemoryStyle(@PathVariable String userId,
-                                                   @RequestBody MemoryStyleProfileDto request) {
-        MemoryStyleProfile updated = memoryManager.updateMemoryStyleProfile(userId, toModel(request));
+                                                   @RequestBody MemoryStyleProfileDto request,
+                                                   @RequestParam(defaultValue = "false") boolean autoTune,
+                                                   @RequestParam(required = false) String sampleText) {
+        MemoryStyleProfile updated = memoryManager.updateMemoryStyleProfile(userId, toModel(request), autoTune, sampleText);
         return toDto(updated);
     }
 
@@ -77,7 +79,14 @@ public class MemorySyncController {
     public MemoryCompressionPlanResponseDto buildCompressionPlan(@PathVariable String userId,
                                                                  @RequestBody MemoryCompressionPlanRequestDto request) {
         MemoryStyleProfile overrideStyle = new MemoryStyleProfile(request.styleName(), request.tone(), request.outputFormat());
-        MemoryCompressionPlan plan = memoryManager.buildMemoryCompressionPlan(userId, request.sourceText(), overrideStyle);
+        String sourceText = request.sourceText();
+        if (sourceText == null || sourceText.isBlank()) {
+            sourceText = memoryManager.getRecentConversation(userId, 8).stream()
+                    .map(turn -> turn.role() + ": " + turn.content())
+                    .reduce((a, b) -> a + "\n" + b)
+                    .orElse("暂无可压缩记忆");
+        }
+        MemoryCompressionPlan plan = memoryManager.buildMemoryCompressionPlan(userId, sourceText, overrideStyle, request.focus());
         return toDto(plan);
     }
 

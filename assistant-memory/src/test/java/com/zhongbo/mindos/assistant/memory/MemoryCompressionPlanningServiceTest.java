@@ -45,5 +45,59 @@ class MemoryCompressionPlanningServiceTest {
         assertEquals("coach", plan.styleProfile().styleName());
         assertTrue(plan.steps().get(3).content().contains("建议按步骤执行"));
     }
+
+    @Test
+    void shouldKeepCurrentStyleWhenOnlyPartialFieldsAreProvided() {
+        MemoryConsolidationService consolidationService = new MemoryConsolidationService();
+        MemoryCompressionPlanningService service = new MemoryCompressionPlanningService(consolidationService);
+
+        service.updateStyleProfile("u3", new MemoryStyleProfile("story", "warm", "bullet"));
+        MemoryStyleProfile updated = service.updateStyleProfile("u3", new MemoryStyleProfile(null, "calm", null));
+
+        assertEquals("story", updated.styleName());
+        assertEquals("calm", updated.tone());
+        assertEquals("bullet", updated.outputFormat());
+    }
+
+    @Test
+    void shouldNormalizeStyleAliasesToStableValues() {
+        MemoryConsolidationService consolidationService = new MemoryConsolidationService();
+        MemoryCompressionPlanningService service = new MemoryCompressionPlanningService(consolidationService);
+
+        MemoryStyleProfile updated = service.updateStyleProfile("u4", new MemoryStyleProfile("教学", "warm", "列表"));
+        assertEquals("coach", updated.styleName());
+        assertEquals("bullet", updated.outputFormat());
+    }
+
+    @Test
+    void shouldApplyFocusLabelToStyledStep() {
+        MemoryConsolidationService consolidationService = new MemoryConsolidationService();
+        MemoryCompressionPlanningService service = new MemoryCompressionPlanningService(consolidationService);
+
+        MemoryCompressionPlan plan = service.buildPlan(
+                "u5",
+                "先完成需求梳理，再拆分任务，最后确认验收。",
+                new MemoryStyleProfile("action", "direct", "plain"),
+                "task"
+        );
+
+        assertTrue(plan.steps().get(3).content().contains("[任务聚焦]"));
+    }
+
+    @Test
+    void shouldAutoTuneStyleWhenRequested() {
+        MemoryConsolidationService consolidationService = new MemoryConsolidationService();
+        MemoryCompressionPlanningService service = new MemoryCompressionPlanningService(consolidationService);
+
+        MemoryStyleProfile tuned = service.updateStyleProfile(
+                "u6",
+                new MemoryStyleProfile(null, null, null),
+                true,
+                "请帮我按步骤拆分任务清单"
+        );
+
+        assertEquals("action", tuned.styleName());
+        assertEquals("warm", tuned.tone());
+    }
 }
 

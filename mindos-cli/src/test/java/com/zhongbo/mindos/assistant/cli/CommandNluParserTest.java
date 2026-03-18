@@ -43,6 +43,14 @@ class CommandNluParserTest {
                 parser.resolveNaturalLanguageCommand("按我的风格压缩这段记忆：明天先整理目标，再拆任务"));
         assertEquals("/memory style show",
                 parser.resolveNaturalLanguageCommand("查看我的记忆风格"));
+        assertEquals("/memory style set --auto-tune --sample-text 请帮我按步骤拆分任务清单",
+                parser.resolveNaturalLanguageCommand("根据这段话微调记忆风格：请帮我按步骤拆分任务清单"));
+        assertEquals("/memory compress --source 先拆任务再执行",
+                parser.resolveNaturalLanguageCommand("按我的风格压缩这段记忆：先拆任务再执行"));
+        assertEquals("/memory compress --source 先拆任务再执行 --focus task",
+                parser.resolveNaturalLanguageCommand("按我的风格压缩这段记忆：先拆任务再执行，按任务聚焦"));
+        assertEquals("/memory compress --source 先回顾错题再总结 --focus review",
+                parser.resolveNaturalLanguageCommand("按我的风格压缩这段记忆：先回顾错题再总结，按复盘聚焦"));
     }
 
     @Test

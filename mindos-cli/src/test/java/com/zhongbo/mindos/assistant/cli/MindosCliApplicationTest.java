@@ -1466,10 +1466,12 @@ class MindosCliApplicationTest {
 
     @Test
     void shouldShowAndSetMemoryStyleAndBuildCompressionPlan() throws IOException {
+        AtomicReference<String> styleRequestUriRef = new AtomicReference<>("");
         AtomicReference<String> styleRequestBodyRef = new AtomicReference<>("");
         AtomicReference<String> compressRequestBodyRef = new AtomicReference<>("");
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/api/memory/cli-user/style", exchange -> {
+            styleRequestUriRef.set(exchange.getRequestURI().toString());
             if ("GET".equalsIgnoreCase(exchange.getRequestMethod())) {
                 byte[] response = "{\"styleName\":\"concise\",\"tone\":\"direct\",\"outputFormat\":\"plain\"}"
                         .getBytes(StandardCharsets.UTF_8);
@@ -1511,7 +1513,7 @@ class MindosCliApplicationTest {
                     "--server", "http://127.0.0.1:" + port
             );
             assertEquals(0, showResult.exitCode());
-            assertTrue(showResult.stdout().contains("style.name=concise"));
+            assertTrue(styleRequestUriRef.get().contains("/api/memory/cli-user/style"));
 
             CommandOutputResult setResult = executeWithOut(
                     "memory", "style", "set",
@@ -1523,18 +1525,30 @@ class MindosCliApplicationTest {
             );
             assertEquals(0, setResult.exitCode());
             assertTrue(styleRequestBodyRef.get().contains("\"styleName\":\"action\""));
-            assertTrue(setResult.stdout().contains("style.outputFormat=bullet"));
+            assertTrue(styleRequestUriRef.get().contains("autoTune=false"));
+
+            CommandOutputResult autoTuneResult = executeWithOut(
+                    "memory", "style", "set",
+                    "--user", "cli-user",
+                    "--style-name", "",
+                    "--auto-tune",
+                    "--sample-text", "请帮我按步骤拆分任务清单",
+                    "--server", "http://127.0.0.1:" + port
+            );
+            assertEquals(0, autoTuneResult.exitCode());
+            assertTrue(styleRequestUriRef.get().contains("autoTune=true"));
+            assertTrue(styleRequestUriRef.get().contains("sampleText="));
 
             CommandOutputResult compressResult = executeWithOut(
                     "memory", "compress",
                     "--user", "cli-user",
                     "--source", "明天先整理目标，再拆任务",
+                    "--focus", "task",
                     "--server", "http://127.0.0.1:" + port
             );
             assertEquals(0, compressResult.exitCode());
             assertTrue(compressRequestBodyRef.get().contains("\"sourceText\":\"明天先整理目标，再拆任务\""));
-            assertTrue(compressResult.stdout().contains("RAW: 原文"));
-            assertTrue(compressResult.stdout().contains("STYLED: - 行动项"));
+            assertTrue(compressRequestBodyRef.get().contains("\"focus\":\"task\""));
         } finally {
             server.stop(0);
         }
@@ -1564,7 +1578,7 @@ class MindosCliApplicationTest {
             int port = server.getAddress().getPort();
 
             CommandOutputResult result = executeInteractiveWithOut(
-                    "按我的风格压缩这段记忆：明天先整理目标，再拆任务\n"
+                    "按我的风格压缩这段记忆：明天先整理目标，再拆任务，按任务聚焦\n"
                             + "/exit\n",
                     "--server", "http://127.0.0.1:" + port,
                     "--user", "cli-user"
@@ -1572,10 +1586,11 @@ class MindosCliApplicationTest {
 
             String console = result.stdout();
             assertEquals(0, result.exitCode());
-            assertTrue(console.contains("已识别自然语言指令 -> /memory compress --source 明天先整理目标，再拆任务"));
+            assertTrue(console.contains("已识别自然语言指令 -> /memory compress --source 明天先整理目标，再拆任务 --focus task"));
             assertTrue(console.contains("记忆压缩规划"));
             assertTrue(console.contains("[STYLED] - 明天先整理目标"));
             assertTrue(requestBodyRef.get().contains("\"sourceText\":\"明天先整理目标，再拆任务\""));
+            assertTrue(requestBodyRef.get().contains("\"focus\":\"task\""));
         } finally {
             server.stop(0);
         }

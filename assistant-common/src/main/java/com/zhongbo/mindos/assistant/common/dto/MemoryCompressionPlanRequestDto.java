@@ -4,7 +4,8 @@ public record MemoryCompressionPlanRequestDto(
         String sourceText,
         String styleName,
         String tone,
-        String outputFormat
+        String outputFormat,
+        String focus
 ) {
 }
 

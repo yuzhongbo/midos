@@ -128,10 +128,10 @@ class AssistantSdkClientTest {
             pathRef.set(exchange.getRequestURI().toString());
             bodyRef.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
             byte[] response;
-            if ("GET".equalsIgnoreCase(exchange.getRequestMethod()) && pathRef.get().endsWith("/style")) {
+            if ("GET".equalsIgnoreCase(exchange.getRequestMethod()) && pathRef.get().contains("/style")) {
                 response = "{\"styleName\":\"action\",\"tone\":\"warm\",\"outputFormat\":\"bullet\"}"
                         .getBytes(StandardCharsets.UTF_8);
-            } else if (pathRef.get().endsWith("/style")) {
+            } else if (pathRef.get().contains("/style")) {
                 response = bodyRef.get().getBytes(StandardCharsets.UTF_8);
             } else {
                 response = ("{" +
@@ -160,9 +160,17 @@ class AssistantSdkClientTest {
                     new MemoryStyleProfileDto("coach", "calm", "plain"));
             assertEquals("coach", updated.styleName());
             assertTrue(bodyRef.get().contains("\"styleName\":\"coach\""));
+            assertTrue(pathRef.get().contains("autoTune=false"));
+
+            client.updateMemoryStyle("user a+b",
+                    new MemoryStyleProfileDto("coach", "calm", "plain"),
+                    true,
+                    "请帮我按步骤拆分任务清单");
+            assertTrue(pathRef.get().contains("autoTune=true"));
+            assertTrue(pathRef.get().contains("sampleText="));
 
             var plan = client.buildMemoryCompressionPlan("user a+b",
-                    new MemoryCompressionPlanRequestDto("原始记忆", null, null, null));
+                    new MemoryCompressionPlanRequestDto("原始记忆", null, null, null, "task"));
             assertTrue(pathRef.get().contains("/api/memory/user+a%2Bb/compress-plan"));
             assertEquals("action", plan.style().styleName());
             assertEquals(2, plan.steps().size());

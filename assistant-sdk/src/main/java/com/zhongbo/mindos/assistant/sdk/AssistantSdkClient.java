@@ -112,8 +112,23 @@ public class AssistantSdkClient {
     }
 
     public MemoryStyleProfileDto updateMemoryStyle(String userId, MemoryStyleProfileDto request) {
+        return updateMemoryStyle(userId, request, false, null);
+    }
+
+    public MemoryStyleProfileDto updateMemoryStyle(String userId,
+                                                   MemoryStyleProfileDto request,
+                                                   boolean autoTune,
+                                                   String sampleText) {
         String encodedUser = encodePathSegment(userId);
-        URI uri = baseUri.resolve("/api/memory/" + encodedUser + "/style");
+        StringBuilder uriBuilder = new StringBuilder("/api/memory/")
+                .append(encodedUser)
+                .append("/style?autoTune=")
+                .append(autoTune);
+        if (sampleText != null && !sampleText.isBlank()) {
+            uriBuilder.append("&sampleText=")
+                    .append(URLEncoder.encode(sampleText, StandardCharsets.UTF_8));
+        }
+        URI uri = baseUri.resolve(uriBuilder.toString());
 
         try {
             String body = objectMapper.writeValueAsString(request);
