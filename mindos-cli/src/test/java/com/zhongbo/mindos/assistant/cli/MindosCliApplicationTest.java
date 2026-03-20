@@ -1712,8 +1712,11 @@ class MindosCliApplicationTest {
             assertTrue(console.contains("必须提交合同"));
             assertTrue(console.contains("如果你愿意，回复“生成待办”"));
             assertTrue(console.contains("已根据关键点整理执行清单"));
+            assertTrue(console.contains("优先级说明：P1=今天必须完成"));
+            assertTrue(console.contains("当前待办策略：P1>= 45，P2>= 25"));
             assertTrue(console.contains("[今天（today）]"));
             assertTrue(console.contains("P1"));
+            assertTrue(console.contains("建议24小时内完成"));
             assertTrue(requestBodyRef.get().contains("\"sourceText\":\"明天18:30前必须提交合同，不要遗漏附件\""));
             assertTrue(requestBodyRef.get().contains("\"focus\":\"task\""));
         } finally {

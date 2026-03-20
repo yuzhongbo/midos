@@ -20,6 +20,13 @@ import java.util.concurrent.ConcurrentHashMap;
 @Service
 public class ImGatewayService {
 
+    private static final String PROP_TODO_P1_THRESHOLD = "mindos.todo.priority.p1-threshold";
+    private static final String PROP_TODO_P2_THRESHOLD = "mindos.todo.priority.p2-threshold";
+    private static final String PROP_TODO_WINDOW_P1 = "mindos.todo.window.p1";
+    private static final String PROP_TODO_WINDOW_P2 = "mindos.todo.window.p2";
+    private static final String PROP_TODO_WINDOW_P3 = "mindos.todo.window.p3";
+    private static final String PROP_TODO_LEGEND = "mindos.todo.legend";
+
     private final DispatcherService dispatcherService;
     private final MemoryManager memoryManager;
     private final MemoryConsolidationService memoryConsolidationService;
@@ -167,6 +174,7 @@ public class ImGatewayService {
     }
 
     private String buildTodoChecklistReply(List<String> points) {
+        TodoPriorityPolicy policy = resolveTodoPriorityPolicy();
         List<String> sorted = sortByPriority(points);
         List<String> today = new ArrayList<>();
         List<String> thisWeek = new ArrayList<>();
@@ -180,32 +188,79 @@ public class ImGatewayService {
         }
 
         StringBuilder builder = new StringBuilder("好的，已根据关键点整理执行清单：");
-        appendBucket(builder, "今天（today）", today);
-        appendBucket(builder, "本周（this week）", thisWeek);
-        appendBucket(builder, "后续（later）", later);
+        appendPriorityLegend(builder, policy);
+        appendBucket(builder, "今天（today）", today, policy);
+        appendBucket(builder, "本周（this week）", thisWeek, policy);
+        appendBucket(builder, "后续（later）", later, policy);
         if (today.isEmpty() && thisWeek.isEmpty() && later.isEmpty()) {
             builder.append("\n1) 暂无可执行条目，请补充更具体的行动描述。");
         }
         return builder.toString();
     }
 
-    private void appendBucket(StringBuilder builder, String title, List<String> items) {
+    private void appendPriorityLegend(StringBuilder builder, TodoPriorityPolicy policy) {
+        builder.append("\n").append(policy.legend()).append("\n");
+    }
+
+    private void appendBucket(StringBuilder builder, String title, List<String> items, TodoPriorityPolicy policy) {
         if (items.isEmpty()) {
             return;
         }
         builder.append("\n[").append(title).append("]");
         for (int i = 0; i < items.size(); i++) {
-            String formatted = formatTodoItem(items.get(i));
+            String formatted = formatTodoItem(items.get(i), policy);
             builder.append("\n").append(i + 1).append(") ").append(formatted);
         }
     }
 
-    private String formatTodoItem(String point) {
+    private String formatTodoItem(String point, TodoPriorityPolicy policy) {
         int score = priorityScore(point);
-        String priority = score >= 45 ? "P1" : (score >= 25 ? "P2" : "P3");
+        String priority = score >= policy.p1Threshold() ? "P1" : (score >= policy.p2Threshold() ? "P2" : "P3");
         String action = actionVerb(point);
         String cleaned = normalizeActionText(point);
-        return priority + " " + action + "：" + cleaned;
+        return priority + " " + action + "：" + cleaned + "（" + suggestedWindow(priority, policy) + "）";
+    }
+
+    private String suggestedWindow(String priority, TodoPriorityPolicy policy) {
+        return switch (priority) {
+            case "P1" -> policy.p1Window();
+            case "P2" -> policy.p2Window();
+            default -> policy.p3Window();
+        };
+    }
+
+    private TodoPriorityPolicy resolveTodoPriorityPolicy() {
+        int p1Threshold = readPositiveIntProperty(PROP_TODO_P1_THRESHOLD, 45);
+        int p2Threshold = readPositiveIntProperty(PROP_TODO_P2_THRESHOLD, 25);
+        if (p2Threshold > p1Threshold) {
+            p2Threshold = p1Threshold;
+        }
+        String p1Window = readTextProperty(PROP_TODO_WINDOW_P1, "建议24小时内完成");
+        String p2Window = readTextProperty(PROP_TODO_WINDOW_P2, "建议3天内完成");
+        String p3Window = readTextProperty(PROP_TODO_WINDOW_P3, "建议本周内完成");
+        String legend = readTextProperty(PROP_TODO_LEGEND, "优先级说明：P1=今天必须完成，P2=3天内推进，P3=本周内安排。");
+        return new TodoPriorityPolicy(p1Threshold, p2Threshold, p1Window, p2Window, p3Window, legend);
+    }
+
+    private int readPositiveIntProperty(String key, int defaultValue) {
+        String value = System.getProperty(key);
+        if (value == null || value.isBlank()) {
+            return defaultValue;
+        }
+        try {
+            int parsed = Integer.parseInt(value.trim());
+            return parsed > 0 ? parsed : defaultValue;
+        } catch (NumberFormatException ignored) {
+            return defaultValue;
+        }
+    }
+
+    private String readTextProperty(String key, String defaultValue) {
+        String value = System.getProperty(key);
+        if (value == null || value.isBlank()) {
+            return defaultValue;
+        }
+        return value.trim();
     }
 
     private String actionVerb(String point) {
@@ -329,6 +384,16 @@ public class ImGatewayService {
     private String buildUserId(ImPlatform platform, String senderId) {
         String normalizedSender = senderId == null || senderId.isBlank() ? "anonymous" : senderId.trim();
         return "im:" + platform.name().toLowerCase() + ":" + normalizedSender;
+    }
+
+    private record TodoPriorityPolicy(
+            int p1Threshold,
+            int p2Threshold,
+            String p1Window,
+            String p2Window,
+            String p3Window,
+            String legend
+    ) {
     }
 }
 

@@ -261,6 +261,11 @@ curl -X POST http://localhost:8080/api/skills/load-mcp \
 - IM webhook integration (disabled by default) supports Feishu/DingTalk/WeChat text chat via `/api/im/feishu/events`, `/api/im/dingtalk/events`, `/api/im/wechat/events`; all platforms can enable signature verification independently in `application.properties`.
 - IM 文本可直接触发 memory 能力：`查看记忆风格`、`按任务聚焦压缩这段记忆：...`、`根据这段话微调记忆风格：...`。
 - 若压缩结果提示“关键约束可能被弱化”，可直接回复“要/好的/ok”继续获取原文关键点清单并逐条复核（IM 与 CLI 交互窗口均支持）；复核后回复“生成待办”可一键转成按 `today / this week / later` 分组的执行清单。
+- 待办优先级策略可通过 JVM 系统属性覆盖（默认不配即可）：
+  - `mindos.todo.priority.p1-threshold`（默认 `45`）
+  - `mindos.todo.priority.p2-threshold`（默认 `25`）
+  - `mindos.todo.window.p1` / `mindos.todo.window.p2` / `mindos.todo.window.p3`
+  - `mindos.todo.legend`
 - IM/CLI 的 memory compress 回复会附带轻量可观测信息（如压缩率与关键约束保留提示），便于在自然语言对话里确认压缩效果。
 - `POST /api/memory/{userId}/sync` response now includes apply counters: `deduplicatedCount`, `keySignalInputCount`, and `keySignalStoredCount` for monitoring compression/dedup effectiveness.
 - **Custom skills (JSON)**: drop `.json` files into `mindos.skills.custom-dir`; reload without restart via `POST /api/skills/reload`.
