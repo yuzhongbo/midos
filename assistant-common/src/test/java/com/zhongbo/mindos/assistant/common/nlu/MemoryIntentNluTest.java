@@ -3,6 +3,7 @@ package com.zhongbo.mindos.assistant.common.nlu;
 import org.testng.annotations.Test;
 
 import static org.testng.Assert.assertEquals;
+import static org.testng.Assert.assertFalse;
 import static org.testng.Assert.assertNotNull;
 import static org.testng.Assert.assertNull;
 import static org.testng.Assert.assertTrue;
@@ -24,6 +25,15 @@ public class MemoryIntentNluTest {
         assertEquals(MemoryIntentNlu.extractAutoTuneSample("根据这段话微调记忆风格：请帮我按步骤拆分任务清单"),
                 "请帮我按步骤拆分任务清单");
         assertNull(MemoryIntentNlu.extractAutoTuneSample("查看我的记忆风格"));
+    }
+
+    @Test
+    public void shouldDetectAffirmativeIntent() {
+        assertTrue(MemoryIntentNlu.isAffirmativeIntent("要"));
+        assertTrue(MemoryIntentNlu.isAffirmativeIntent("好的"));
+        assertTrue(MemoryIntentNlu.isAffirmativeIntent("ok"));
+        assertFalse(MemoryIntentNlu.isAffirmativeIntent("不用"));
+        assertFalse(MemoryIntentNlu.isAffirmativeIntent("先不了"));
     }
 
     @Test

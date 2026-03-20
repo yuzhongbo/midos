@@ -118,6 +118,22 @@ class ImWebhookControllerTest {
     }
 
     @Test
+    void shouldReturnCompressionReplyWhenKeyConstraintsArePreserved() throws Exception {
+        String compressPayload = "{" +
+                "\"senderId\":\"ding-review-user\"," +
+                "\"conversationId\":\"conv-review\"," +
+                "\"text\":{\"content\":\"按我的风格压缩这段记忆：今天18:30前必须提交合同，不要遗漏附件\"}" +
+                "}";
+
+        mockMvc.perform(post("/api/im/dingtalk/events")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(compressPayload))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.msgtype").value("text"))
+                .andExpect(jsonPath("$.text.content").value(org.hamcrest.Matchers.containsString("关键约束已保留")));
+    }
+
+    @Test
     void shouldHandleWechatVerifyAndTextEvent() throws Exception {
         mockMvc.perform(get("/api/im/wechat/events")
                         .param("signature", "any")

@@ -35,6 +35,14 @@ public final class MemoryIntentNlu {
         return containsAny(normalized, "查看我的记忆风格", "查看记忆风格", "当前记忆风格", "memory style");
     }
 
+    public static boolean isAffirmativeIntent(String input) {
+        String normalized = normalize(input);
+        if (normalized.isBlank()) {
+            return false;
+        }
+        return Set.of("要", "好的", "好", "行", "可以", "ok", "yes", "确认").contains(normalized);
+    }
+
     public static String extractAutoTuneSample(String input) {
         String normalized = normalize(input);
         if (!containsAny(normalized, "自动微调记忆风格", "根据这段话微调记忆风格", "自动调整记忆风格")) {

@@ -10,6 +10,7 @@ import com.zhongbo.mindos.assistant.common.dto.MemorySyncRequestDto;
 import com.zhongbo.mindos.assistant.common.dto.MemorySyncResponseDto;
 import com.zhongbo.mindos.assistant.common.dto.ProceduralMemoryEntryDto;
 import com.zhongbo.mindos.assistant.common.dto.SemanticMemoryEntryDto;
+import com.zhongbo.mindos.assistant.common.nlu.MemoryIntentNlu;
 import com.zhongbo.mindos.assistant.sdk.AssistantSdkException;
 import picocli.CommandLine;
 
@@ -25,6 +26,7 @@ import java.time.Instant;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -167,6 +169,15 @@ class InteractiveChatRunner {
                     if (handleSlashCommand(naturalLanguageCommand, out, chatService, reader, sessionState, backgroundExecutor)) {
                         continue;
                     }
+                }
+
+                if (handleMemoryReviewFollowUpIfNeeded(input, out, sessionState)) {
+                    out.flush();
+                    continue;
+                }
+                if (handleTodoGenerationFollowUpIfNeeded(input, out, sessionState)) {
+                    out.flush();
+                    continue;
                 }
 
                 try {
@@ -771,7 +782,7 @@ class InteractiveChatRunner {
         }
 
         if (input.startsWith("/memory compress")) {
-            return handleMemoryCompressCommand(input, out, chatService, reader);
+            return handleMemoryCompressCommand(input, out, chatService, reader, sessionState);
         }
 
         if (input.startsWith("/memory pull")) {
@@ -913,7 +924,8 @@ class InteractiveChatRunner {
     private boolean handleMemoryCompressCommand(String input,
                                                 PrintWriter out,
                                                 CliChatService chatService,
-                                                BufferedReader reader) {
+                                                BufferedReader reader,
+                                                SessionState sessionState) {
         Map<String, String> parsed = parseOptionPairs(input.substring("/memory compress".length()).trim());
         String source = parsed.get("source");
         if (source == null || source.isBlank()) {
@@ -933,11 +945,235 @@ class InteractiveChatRunner {
                             blankToNull(parsed.get("focus"))
                     )
             );
-            printMemoryCompressionPlan(out, response);
+            printMemoryCompressionPlan(out, response, sessionState);
         } catch (AssistantSdkException ex) {
             printError(out, "memory compress 失败(status=" + ex.statusCode() + ", code=" + ex.errorCode() + "): " + ex.getMessage());
         }
         return true;
+    }
+
+    private boolean handleMemoryReviewFollowUpIfNeeded(String input, PrintWriter out, SessionState sessionState) {
+        String source = sessionState.pendingMemoryReviewSource;
+        if (source == null || source.isBlank()) {
+            return false;
+        }
+        if (!MemoryIntentNlu.isAffirmativeIntent(input)) {
+            return false;
+        }
+        List<String> keyPoints = extractReviewPoints(source);
+        if (keyPoints.isEmpty()) {
+            printInfo(out, "我这边暂时没提炼出关键点，你可以继续补充原文，我再帮你复核。");
+            sessionState.pendingMemoryReviewSource = null;
+            return true;
+        }
+        printInfo(out, "好的，我整理了原文关键点，建议你逐条确认：");
+        for (int i = 0; i < keyPoints.size(); i++) {
+            out.println((i + 1) + ") " + keyPoints.get(i));
+        }
+        sessionState.pendingMemoryReviewSource = null;
+        sessionState.pendingMemoryReviewPoints = List.copyOf(keyPoints);
+        out.println("如果你愿意，回复“生成待办”，我可以把这些关键点转成执行清单。");
+        return true;
+    }
+
+    private boolean handleTodoGenerationFollowUpIfNeeded(String input, PrintWriter out, SessionState sessionState) {
+        if (!isTodoGenerationIntent(input)) {
+            return false;
+        }
+        List<String> points = sessionState.pendingMemoryReviewPoints;
+        if (points == null || points.isEmpty()) {
+            return false;
+        }
+        printInfo(out, "好的，已根据关键点整理执行清单：");
+        printBucketedTodoList(out, points);
+        sessionState.pendingMemoryReviewPoints = null;
+        return true;
+    }
+
+    private void printBucketedTodoList(PrintWriter out, List<String> points) {
+        List<String> sorted = sortByPriority(points);
+        List<String> today = new ArrayList<>();
+        List<String> thisWeek = new ArrayList<>();
+        List<String> later = new ArrayList<>();
+        for (String point : sorted) {
+            switch (classifyBucket(point)) {
+                case "today" -> today.add(point);
+                case "this-week" -> thisWeek.add(point);
+                default -> later.add(point);
+            }
+        }
+        printTodoBucket(out, "今天（today）", today);
+        printTodoBucket(out, "本周（this week）", thisWeek);
+        printTodoBucket(out, "后续（later）", later);
+        if (today.isEmpty() && thisWeek.isEmpty() && later.isEmpty()) {
+            out.println("1) 暂无可执行条目，请补充更具体的行动描述。");
+        }
+    }
+
+    private void printTodoBucket(PrintWriter out, String title, List<String> items) {
+        if (items.isEmpty()) {
+            return;
+        }
+        out.println("[" + title + "]");
+        for (int i = 0; i < items.size(); i++) {
+            out.println((i + 1) + ") " + formatTodoItem(items.get(i)));
+        }
+    }
+
+    private String formatTodoItem(String point) {
+        int score = priorityScore(point);
+        String priority = score >= 45 ? "P1" : (score >= 25 ? "P2" : "P3");
+        String action = actionVerb(point);
+        String cleaned = normalizeActionText(point);
+        return priority + " " + action + "：" + cleaned;
+    }
+
+    private String actionVerb(String point) {
+        String normalized = normalizeMemoryText(point).toLowerCase();
+        if (containsAny(normalized, "提交", "send", "commit")) {
+            return "提交";
+        }
+        if (containsAny(normalized, "检查", "核对", "确认", "review", "check")) {
+            return "核对";
+        }
+        if (containsAny(normalized, "联系", "沟通", "通知", "call", "contact")) {
+            return "联系";
+        }
+        if (containsAny(normalized, "安排", "计划", "prepare", "plan")) {
+            return "安排";
+        }
+        return "执行";
+    }
+
+    private String normalizeActionText(String point) {
+        return normalizeMemoryText(point)
+                .replaceFirst("^(请|需要|要|必须|务必|尽快)\\s*", "")
+                .trim();
+    }
+
+    private List<String> sortByPriority(List<String> points) {
+        return points.stream()
+                .sorted((left, right) -> Integer.compare(priorityScore(right), priorityScore(left)))
+                .toList();
+    }
+
+    private int priorityScore(String point) {
+        String normalized = normalizeMemoryText(point).toLowerCase();
+        int score = 0;
+        if (containsAny(normalized, "今天", "今日", "今晚", "today", "立即", "马上")) {
+            score += 30;
+        }
+        if (containsAny(normalized, "明天", "后天", "本周", "这周", "周", "this week", "tomorrow")) {
+            score += 20;
+        }
+        if (normalized.matches(".*\\d{1,2}[:：]\\d{2}.*") || containsAny(normalized, "截止", "deadline", "due")) {
+            score += 15;
+        }
+        if (containsKeySignal(normalized)) {
+            score += 10;
+        }
+        return score;
+    }
+
+    private String classifyBucket(String point) {
+        String normalized = normalizeMemoryText(point).toLowerCase();
+        if (containsAny(normalized, "今天", "今日", "今晚", "today", "立即", "马上")
+                || normalized.matches(".*\\d{1,2}[:：]\\d{2}.*")) {
+            return "today";
+        }
+        if (containsAny(normalized, "明天", "后天", "本周", "这周", "周", "this week", "tomorrow")) {
+            return "this-week";
+        }
+        return "later";
+    }
+
+    private boolean containsAny(String text, String... terms) {
+        for (String term : terms) {
+            if (text.contains(term)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean isTodoGenerationIntent(String input) {
+        String normalized = normalizeMemoryText(input).toLowerCase();
+        if (normalized.isBlank()) {
+            return false;
+        }
+        return normalized.contains("生成待办")
+                || normalized.contains("转成待办")
+                || normalized.contains("行动清单")
+                || normalized.contains("todo list")
+                || normalized.equals("待办")
+                || normalized.equals("todo");
+    }
+
+    private List<String> extractReviewPoints(String sourceText) {
+        String normalized = normalizeMemoryText(sourceText);
+        if (normalized.isBlank()) {
+            return List.of();
+        }
+        String[] parts = normalized.split("[\\n。！？!?；;]+");
+        LinkedHashSet<String> prioritized = new LinkedHashSet<>();
+        LinkedHashSet<String> fallback = new LinkedHashSet<>();
+        for (String part : parts) {
+            String line = normalizeMemoryText(part);
+            if (line.isBlank()) {
+                continue;
+            }
+            if (containsKeySignal(line)) {
+                prioritized.add(line);
+            } else {
+                fallback.add(line);
+            }
+        }
+        List<String> selected = new ArrayList<>();
+        for (String line : prioritized) {
+            if (selected.size() >= 5) {
+                break;
+            }
+            selected.add(line);
+        }
+        for (String line : fallback) {
+            if (selected.size() >= 5) {
+                break;
+            }
+            selected.add(line);
+        }
+        return selected;
+    }
+
+    private String normalizeMemoryText(String text) {
+        if (text == null) {
+            return "";
+        }
+        return text
+                .replace('\u3000', ' ')
+                .replaceAll("[\\p{Cntrl}&&[^\\n\\t]]", " ")
+                .replaceAll("[ \\t\\x0B\\f\\r]+", " ")
+                .replaceAll(" *\\n+ *", "\\n")
+                .trim();
+    }
+
+    private boolean containsKeySignal(String text) {
+        String normalized = normalizeMemoryText(text).toLowerCase();
+        if (normalized.isBlank()) {
+            return false;
+        }
+        return normalized.matches(".*\\d.*")
+                || normalized.matches(".*(\\d{1,2}[:：]\\d{2}|\\d{4}[-/]\\d{1,2}[-/]\\d{1,2}|\\d+\\s*(天|周|月|年|小时|分钟)).*")
+                || normalized.contains("截止")
+                || normalized.contains("deadline")
+                || normalized.contains("必须")
+                || normalized.contains("不要")
+                || normalized.contains("不能")
+                || normalized.contains("禁止")
+                || normalized.contains("风险")
+                || normalized.contains("不可")
+                || normalized.contains("http://")
+                || normalized.contains("https://")
+                || normalized.contains("@");
     }
 
     private boolean handleInteractiveMemoryPush(PrintWriter out,
@@ -1327,24 +1563,36 @@ class InteractiveChatRunner {
 
     private void printMemoryStyle(PrintWriter out, MemoryStyleProfileDto style) {
         out.println(ANSI.string("@|bold 记忆风格|@"));
-        out.println("style.name=" + nullSafe(style.styleName()));
-        out.println("style.tone=" + nullSafe(style.tone()));
-        out.println("style.outputFormat=" + nullSafe(style.outputFormat()));
+        out.println("当前记忆风格："
+                + nullSafe(style.styleName())
+                + "，语气=" + nullSafe(style.tone())
+                + "，输出=" + nullSafe(style.outputFormat()));
+        if (showRoutingDetails) {
+            out.println("style.name=" + nullSafe(style.styleName()));
+            out.println("style.tone=" + nullSafe(style.tone()));
+            out.println("style.outputFormat=" + nullSafe(style.outputFormat()));
+        }
     }
 
-    private void printMemoryCompressionPlan(PrintWriter out, MemoryCompressionPlanResponseDto response) {
+    private void printMemoryCompressionPlan(PrintWriter out,
+                                            MemoryCompressionPlanResponseDto response,
+                                            SessionState sessionState) {
         out.println(ANSI.string("@|bold 记忆压缩规划|@"));
         printMemoryStyle(out, response.style());
         int rawLength = -1;
         int styledLength = -1;
         boolean keySignalHintDetected = false;
+        String rawContent = "";
+        String styledContent = "";
         for (MemoryCompressionStepDto step : response.steps()) {
             out.println("- [" + step.stage() + "] " + step.content());
             if ("RAW".equals(step.stage())) {
                 rawLength = step.length();
+                rawContent = step.content();
             }
             if ("STYLED".equals(step.stage())) {
                 styledLength = step.length();
+                styledContent = step.content();
                 keySignalHintDetected = step.content().contains("不能")
                         || step.content().contains("必须")
                         || step.content().contains("截止")
@@ -1361,6 +1609,15 @@ class InteractiveChatRunner {
         }
         if (keySignalHintDetected && showRoutingDetails) {
             out.println("memory.keySignalHint=关键约束已体现在压缩结果中");
+        }
+
+        if (containsKeySignal(rawContent) && !containsKeySignal(styledContent)) {
+            sessionState.pendingMemoryReviewSource = rawContent;
+            sessionState.pendingMemoryReviewPoints = null;
+            out.println("如果你愿意，直接回复“要/好的”，我可以继续列出原文关键点让你逐条复核。");
+        } else {
+            sessionState.pendingMemoryReviewSource = null;
+            sessionState.pendingMemoryReviewPoints = null;
         }
     }
 
@@ -1555,10 +1812,14 @@ class InteractiveChatRunner {
         private final List<String> localTurns = new ArrayList<>();
         private final List<CompletableFuture<Void>> pendingTasks = new CopyOnWriteArrayList<>();
         private String lastUserMessage;
+        private String pendingMemoryReviewSource;
+        private List<String> pendingMemoryReviewPoints;
 
         void clear() {
             localTurns.clear();
             lastUserMessage = null;
+            pendingMemoryReviewSource = null;
+            pendingMemoryReviewPoints = null;
         }
     }
 }

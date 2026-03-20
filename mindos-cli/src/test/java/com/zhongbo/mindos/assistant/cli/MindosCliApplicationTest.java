@@ -550,6 +550,81 @@ class MindosCliApplicationTest {
     }
 
     @Test
+    void shouldShowMemoryStyleInNaturalLanguageByDefault() throws IOException {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/api/memory/cli-user/style", exchange -> {
+            String responseBody = "{" +
+                    "\"styleName\":\"action\"," +
+                    "\"tone\":\"warm\"," +
+                    "\"outputFormat\":\"bullet\"" +
+                    "}";
+            byte[] response = responseBody.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+
+        try {
+            server.start();
+            int port = server.getAddress().getPort();
+
+            CommandOutputResult result = executeInteractiveWithOutDefault(
+                    "/memory style show\n"
+                            + "/exit\n",
+                    "--server", "http://127.0.0.1:" + port,
+                    "--user", "cli-user"
+            );
+
+            String console = result.stdout();
+            assertEquals(0, result.exitCode());
+            assertTrue(console.contains("当前记忆风格：action，语气=warm，输出=bullet"));
+            assertFalse(console.contains("style.name="));
+            assertFalse(console.contains("style.tone="));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void shouldShowMemoryStyleTechnicalFieldsInRoutingDetailsMode() throws IOException {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/api/memory/cli-user/style", exchange -> {
+            String responseBody = "{" +
+                    "\"styleName\":\"action\"," +
+                    "\"tone\":\"warm\"," +
+                    "\"outputFormat\":\"bullet\"" +
+                    "}";
+            byte[] response = responseBody.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+
+        try {
+            server.start();
+            int port = server.getAddress().getPort();
+
+            CommandOutputResult result = executeInteractiveWithOut(
+                    "/memory style show\n"
+                            + "/exit\n",
+                    "--server", "http://127.0.0.1:" + port,
+                    "--user", "cli-user"
+            );
+
+            String console = result.stdout();
+            assertEquals(0, result.exitCode());
+            assertTrue(console.contains("当前记忆风格：action，语气=warm，输出=bullet"));
+            assertTrue(console.contains("style.name=action"));
+            assertTrue(console.contains("style.tone=warm"));
+            assertTrue(console.contains("style.outputFormat=bullet"));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
     void shouldManageSkillsInsideInteractiveMode() throws IOException {
         AtomicReference<String> bodyRef = new AtomicReference<>("");
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
@@ -1603,8 +1678,8 @@ class MindosCliApplicationTest {
             byte[] response = ("{" +
                     "\"style\":{\"styleName\":\"action\",\"tone\":\"warm\",\"outputFormat\":\"bullet\"}," +
                     "\"steps\":[{" +
-                    "\"stage\":\"RAW\",\"content\":\"明天先整理目标，再拆任务\",\"length\":12},{" +
-                    "\"stage\":\"STYLED\",\"content\":\"- 明天先整理目标\\n- 再拆任务\",\"length\":15}]," +
+                    "\"stage\":\"RAW\",\"content\":\"明天18:30前必须提交合同，不要遗漏附件\",\"length\":20},{" +
+                    "\"stage\":\"STYLED\",\"content\":\"- 提交合同\\n- 检查附件\",\"length\":11}]," +
                     "\"createdAt\":\"2026-03-17T00:00:00Z\"" +
                     "}").getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().set("Content-Type", "application/json");
@@ -1618,7 +1693,9 @@ class MindosCliApplicationTest {
             int port = server.getAddress().getPort();
 
             CommandOutputResult result = executeInteractiveWithOut(
-                    "按我的风格压缩这段记忆：明天先整理目标，再拆任务，按任务聚焦\n"
+                    "按我的风格压缩这段记忆：明天18:30前必须提交合同，不要遗漏附件，按任务聚焦\n"
+                            + "要\n"
+                            + "生成待办\n"
                             + "/exit\n",
                     "--server", "http://127.0.0.1:" + port,
                     "--user", "cli-user"
@@ -1626,11 +1703,18 @@ class MindosCliApplicationTest {
 
             String console = result.stdout();
             assertEquals(0, result.exitCode());
-            assertTrue(console.contains("已识别自然语言指令 -> /memory compress --source 明天先整理目标，再拆任务 --focus task"));
+            assertTrue(console.contains("已识别自然语言指令 -> /memory compress"));
             assertTrue(console.contains("记忆压缩规划"));
-            assertTrue(console.contains("[STYLED] - 明天先整理目标"));
+            assertTrue(console.contains("[STYLED] - 提交合同"));
             assertTrue(console.contains("memory.compressRate="));
-            assertTrue(requestBodyRef.get().contains("\"sourceText\":\"明天先整理目标，再拆任务\""));
+            assertTrue(console.contains("如果你愿意，直接回复“要/好的”"));
+            assertTrue(console.contains("好的，我整理了原文关键点"));
+            assertTrue(console.contains("必须提交合同"));
+            assertTrue(console.contains("如果你愿意，回复“生成待办”"));
+            assertTrue(console.contains("已根据关键点整理执行清单"));
+            assertTrue(console.contains("[今天（today）]"));
+            assertTrue(console.contains("P1"));
+            assertTrue(requestBodyRef.get().contains("\"sourceText\":\"明天18:30前必须提交合同，不要遗漏附件\""));
             assertTrue(requestBodyRef.get().contains("\"focus\":\"task\""));
         } finally {
             server.stop(0);
