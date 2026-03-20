@@ -44,7 +44,7 @@ public class MemorySyncController {
                                               @RequestParam(defaultValue = "0") long since,
                                               @RequestParam(defaultValue = "100") int limit) {
         MemorySyncSnapshot snapshot = memoryManager.fetchIncrementalUpdates(userId, since, limit);
-        return toResponse(snapshot, 0, 0);
+        return toResponse(snapshot, 0, 0, 0, 0, 0);
     }
 
     @PostMapping("/{userId}/sync")
@@ -58,7 +58,12 @@ public class MemorySyncController {
                 toProceduralEntries(request.procedural())
         ));
         MemorySyncSnapshot snapshot = memoryManager.fetchIncrementalUpdates(userId, 0L, limit);
-        return toResponse(snapshot, applyResult.acceptedCount(), applyResult.skippedCount());
+        return toResponse(snapshot,
+                applyResult.acceptedCount(),
+                applyResult.skippedCount(),
+                applyResult.deduplicatedCount(),
+                applyResult.keySignalInputCount(),
+                applyResult.keySignalStoredCount());
     }
 
     @GetMapping("/{userId}/style")
@@ -90,11 +95,19 @@ public class MemorySyncController {
         return toDto(plan);
     }
 
-    private MemorySyncResponseDto toResponse(MemorySyncSnapshot snapshot, int acceptedCount, int skippedCount) {
+    private MemorySyncResponseDto toResponse(MemorySyncSnapshot snapshot,
+                                             int acceptedCount,
+                                             int skippedCount,
+                                             int deduplicatedCount,
+                                             int keySignalInputCount,
+                                             int keySignalStoredCount) {
         return new MemorySyncResponseDto(
                 snapshot.cursor(),
                 acceptedCount,
                 skippedCount,
+                deduplicatedCount,
+                keySignalInputCount,
+                keySignalStoredCount,
                 snapshot.episodic().stream().map(this::toDto).toList(),
                 snapshot.semantic().stream().map(this::toDto).toList(),
                 snapshot.procedural().stream().map(this::toDto).toList()

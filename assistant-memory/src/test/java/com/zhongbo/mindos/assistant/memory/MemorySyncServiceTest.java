@@ -7,10 +7,13 @@ import com.zhongbo.mindos.assistant.memory.model.ProceduralMemoryEntry;
 import com.zhongbo.mindos.assistant.memory.model.SemanticMemoryEntry;
 import org.junit.jupiter.api.Test;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class MemorySyncServiceTest {
 
@@ -82,6 +85,77 @@ class MemorySyncServiceTest {
         assertEquals(1, entries.size());
         assertEquals("Spring Boot", entries.get(0).text());
         assertEquals(8, entries.get(0).embedding().size());
+    }
+
+    @Test
+    void shouldSkipApproximateDuplicateSemanticEntries() {
+        MemoryConsolidationService consolidationService = new MemoryConsolidationService();
+        CentralMemoryRepository repository = new InMemoryCentralMemoryRepository();
+        EpisodicMemoryService episodicMemoryService = new EpisodicMemoryService();
+        SemanticMemoryService semanticMemoryService = new SemanticMemoryService(consolidationService);
+        ProceduralMemoryService proceduralMemoryService = new ProceduralMemoryService();
+        MemorySyncService service = new MemorySyncService(
+                repository,
+                episodicMemoryService,
+                semanticMemoryService,
+                proceduralMemoryService,
+                consolidationService
+        );
+
+        MemorySyncBatch batch = new MemorySyncBatch(
+                "evt-approx-dedup",
+                List.of(),
+                List.of(
+                        new SemanticMemoryEntry("请在2026-04-01前完成数学作业并复盘记录", List.of(0.11, 0.22, 0.33, 0.44), Instant.now()),
+                        new SemanticMemoryEntry("请在2026-04-01前完成数学作业并复盘记录一下", List.of(0.11, 0.22, 0.33, 0.44), Instant.now())
+                ),
+                List.of()
+        );
+
+        MemoryApplyResult result = service.applyUpdates("approx-user", batch);
+        List<SemanticMemoryEntry> entries = semanticMemoryService.search("approx-user", "数学作业", 10);
+
+        assertEquals(1, result.acceptedCount());
+        assertEquals(1, result.skippedCount());
+        assertEquals(1, entries.size());
+    }
+
+    @Test
+    void shouldMeetBasicSyncPerformanceBaseline() {
+        assertTimeoutPreemptively(Duration.ofSeconds(4), () -> {
+            System.setProperty("mindos.memory.inmemory.max-events-per-user", "10000");
+            try {
+                MemoryConsolidationService consolidationService = new MemoryConsolidationService();
+                CentralMemoryRepository repository = new InMemoryCentralMemoryRepository();
+                EpisodicMemoryService episodicMemoryService = new EpisodicMemoryService();
+                SemanticMemoryService semanticMemoryService = new SemanticMemoryService(consolidationService);
+                ProceduralMemoryService proceduralMemoryService = new ProceduralMemoryService();
+                MemorySyncService service = new MemorySyncService(
+                        repository,
+                        episodicMemoryService,
+                        semanticMemoryService,
+                        proceduralMemoryService,
+                        consolidationService
+                );
+
+                for (int i = 0; i < 1_500; i++) {
+                    MemorySyncBatch batch = new MemorySyncBatch(
+                            "evt-perf-" + i,
+                            List.of(new ConversationTurn("user", "msg-" + i, Instant.now())),
+                            List.of(new SemanticMemoryEntry("semantic-entry-" + i, List.of(0.1 + i, 0.2 + i, 0.3 + i), Instant.now())),
+                            List.of(new ProceduralMemoryEntry("skill.demo", "input-" + i, true, Instant.now()))
+                    );
+                    service.applyUpdates("perf-user", batch);
+                }
+
+                assertEquals(1_500, repository.fetchSince("perf-user", 0L, 10_000).episodic().size());
+                int semanticCount = repository.fetchSince("perf-user", 0L, 10_000).semantic().size();
+                assertTrue(semanticCount > 0 && semanticCount <= 1_500);
+                assertEquals(1_500, repository.fetchSince("perf-user", 0L, 10_000).procedural().size());
+            } finally {
+                System.clearProperty("mindos.memory.inmemory.max-events-per-user");
+            }
+        });
     }
 }
 

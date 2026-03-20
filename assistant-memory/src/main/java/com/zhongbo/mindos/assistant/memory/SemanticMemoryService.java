@@ -17,6 +17,11 @@ import java.util.concurrent.ConcurrentHashMap;
 @Service
 public class SemanticMemoryService {
 
+    private static final int MAX_APPROX_CANDIDATES = 64;
+    private static final double APPROX_JACCARD_THRESHOLD = 0.82;
+    private static final double APPROX_JACCARD_WITH_EMBEDDING_THRESHOLD = 0.65;
+    private static final double APPROX_EMBEDDING_SIMILARITY_THRESHOLD = 0.985;
+
     private final MemoryConsolidationService memoryConsolidationService;
     private final Map<String, UserSemanticStore> entriesByUser = new ConcurrentHashMap<>();
 
@@ -63,7 +68,7 @@ public class SemanticMemoryService {
         if (consolidated == null || consolidated.text().isBlank()) {
             return false;
         }
-        return store.containsKey(memoryConsolidationService.semanticKey(consolidated.text()));
+        return store.containsEquivalent(memoryConsolidationService.semanticKey(consolidated.text()), consolidated);
     }
 
     private final class UserSemanticStore {
@@ -88,6 +93,43 @@ public class SemanticMemoryService {
 
         synchronized boolean containsKey(String key) {
             return entries.containsKey(key);
+        }
+
+        synchronized boolean containsEquivalent(String key, SemanticMemoryEntry entry) {
+            if (containsKey(key)) {
+                return true;
+            }
+
+            LinkedHashSet<String> queryTokens = tokenize(entry.text());
+            LinkedHashSet<String> candidateKeys = new LinkedHashSet<>();
+            for (String token : queryTokens) {
+                candidateKeys.addAll(keysByToken.getOrDefault(token, Set.of()));
+                if (candidateKeys.size() >= MAX_APPROX_CANDIDATES) {
+                    break;
+                }
+            }
+            if (candidateKeys.isEmpty()) {
+                int scanned = 0;
+                for (String candidateKey : entries.keySet()) {
+                    candidateKeys.add(candidateKey);
+                    scanned++;
+                    if (scanned >= MAX_APPROX_CANDIDATES) {
+                        break;
+                    }
+                }
+            }
+
+            String normalizedInput = memoryConsolidationService.normalizeText(entry.text()).toLowerCase(Locale.ROOT);
+            for (String candidateKey : candidateKeys) {
+                StoredSemanticEntry candidate = entries.get(candidateKey);
+                if (candidate == null) {
+                    continue;
+                }
+                if (isApproxEquivalent(entry, queryTokens, normalizedInput, candidate)) {
+                    return true;
+                }
+            }
+            return false;
         }
 
         synchronized List<SemanticMemoryEntry> search(String query, int limit) {
@@ -158,6 +200,77 @@ public class SemanticMemoryService {
             String normalizedText = memoryConsolidationService.normalizeText(entry.entry().text()).toLowerCase(Locale.ROOT);
             int containsBonus = normalizedQuery.isBlank() ? 0 : (normalizedText.contains(normalizedQuery) ? 4 : 0);
             return overlap * 10 + containsBonus;
+        }
+
+        private boolean isApproxEquivalent(SemanticMemoryEntry input,
+                                           Set<String> inputTokens,
+                                           String normalizedInput,
+                                           StoredSemanticEntry candidate) {
+            String normalizedCandidate = memoryConsolidationService.normalizeText(candidate.entry().text())
+                    .toLowerCase(Locale.ROOT);
+            if (normalizedInput.equals(normalizedCandidate)) {
+                return true;
+            }
+
+            if (normalizedInput.length() >= 8
+                    && normalizedCandidate.length() >= 8
+                    && (normalizedInput.contains(normalizedCandidate) || normalizedCandidate.contains(normalizedInput))) {
+                return true;
+            }
+
+            double tokenSimilarity = jaccard(inputTokens, candidate.tokens());
+            double embeddingSimilarity = cosineSimilarity(input.embedding(), candidate.entry().embedding());
+            boolean hasKeySignal = memoryConsolidationService.containsKeySignal(normalizedInput)
+                    || memoryConsolidationService.containsKeySignal(normalizedCandidate);
+            double strictTokenThreshold = hasKeySignal ? 0.9 : APPROX_JACCARD_THRESHOLD;
+
+            if (tokenSimilarity >= strictTokenThreshold) {
+                return true;
+            }
+            return tokenSimilarity >= APPROX_JACCARD_WITH_EMBEDDING_THRESHOLD
+                    && embeddingSimilarity >= APPROX_EMBEDDING_SIMILARITY_THRESHOLD;
+        }
+
+        private double jaccard(Set<String> left, Set<String> right) {
+            if (left.isEmpty() || right.isEmpty()) {
+                return 0.0;
+            }
+            int intersection = 0;
+            for (String token : left) {
+                if (right.contains(token)) {
+                    intersection++;
+                }
+            }
+            if (intersection == 0) {
+                return 0.0;
+            }
+            int union = left.size() + right.size() - intersection;
+            if (union <= 0) {
+                return 0.0;
+            }
+            return (double) intersection / union;
+        }
+
+        private double cosineSimilarity(List<Double> left, List<Double> right) {
+            if (left == null || right == null || left.isEmpty() || right.isEmpty()) {
+                return 0.0;
+            }
+            int dimension = Math.min(left.size(), right.size());
+
+            double dot = 0.0;
+            double leftNorm = 0.0;
+            double rightNorm = 0.0;
+            for (int i = 0; i < dimension; i++) {
+                double lv = left.get(i);
+                double rv = right.get(i);
+                dot += lv * rv;
+                leftNorm += lv * lv;
+                rightNorm += rv * rv;
+            }
+            if (leftNorm <= 0 || rightNorm <= 0) {
+                return 0.0;
+            }
+            return dot / (Math.sqrt(leftNorm) * Math.sqrt(rightNorm));
         }
     }
 

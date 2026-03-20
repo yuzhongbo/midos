@@ -18,6 +18,7 @@ public class MemoryCompressionPlanningService {
 
     private static final int MAX_CONDENSED_LINES = 6;
     private static final int MAX_BRIEF_LINES = 3;
+    private static final int MAX_KEY_LINES_PREFERRED = 3;
     private static final MemoryStyleProfile DEFAULT_STYLE = new MemoryStyleProfile("concise", "direct", "plain");
 
     private final MemoryConsolidationService memoryConsolidationService;
@@ -112,10 +113,7 @@ public class MemoryCompressionPlanningService {
             }
         }
 
-        List<String> lines = new ArrayList<>(unique);
-        if (lines.size() > MAX_CONDENSED_LINES) {
-            lines = lines.subList(0, MAX_CONDENSED_LINES);
-        }
+        List<String> lines = selectImportantLines(new ArrayList<>(unique), MAX_CONDENSED_LINES);
         return String.join("\n", lines);
     }
 
@@ -126,9 +124,38 @@ public class MemoryCompressionPlanningService {
         List<String> lines = condensed.lines()
                 .map(memoryConsolidationService::normalizeText)
                 .filter(line -> !line.isBlank())
-                .limit(MAX_BRIEF_LINES)
                 .toList();
+        lines = selectImportantLines(lines, MAX_BRIEF_LINES);
         return String.join("; ", lines);
+    }
+
+    private List<String> selectImportantLines(List<String> lines, int maxLines) {
+        if (lines.isEmpty() || maxLines <= 0) {
+            return List.of();
+        }
+        if (lines.size() <= maxLines) {
+            return lines;
+        }
+
+        List<String> selected = new ArrayList<>(maxLines);
+        int keyLimit = Math.min(MAX_KEY_LINES_PREFERRED, maxLines);
+        for (String line : lines) {
+            if (selected.size() >= keyLimit) {
+                break;
+            }
+            if (memoryConsolidationService.containsKeySignal(line)) {
+                selected.add(line);
+            }
+        }
+        for (String line : lines) {
+            if (selected.size() >= maxLines) {
+                break;
+            }
+            if (!selected.contains(line)) {
+                selected.add(line);
+            }
+        }
+        return selected;
     }
 
     private String applyStyle(String summary, MemoryStyleProfile style, String focus) {

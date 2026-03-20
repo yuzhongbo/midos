@@ -34,14 +34,16 @@ class MemorySyncControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.cursor").isNumber())
                 .andExpect(jsonPath("$.acceptedCount").value(3))
-                .andExpect(jsonPath("$.skippedCount").value(0));
+                .andExpect(jsonPath("$.skippedCount").value(0))
+                .andExpect(jsonPath("$.deduplicatedCount").value(0));
 
         mockMvc.perform(post("/api/memory/local-user/sync")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(payload))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.acceptedCount").value(0))
-                .andExpect(jsonPath("$.skippedCount").value(3));
+                .andExpect(jsonPath("$.skippedCount").value(3))
+                .andExpect(jsonPath("$.deduplicatedCount").value(3));
 
         mockMvc.perform(get("/api/memory/local-user/sync")
                         .param("since", "0")

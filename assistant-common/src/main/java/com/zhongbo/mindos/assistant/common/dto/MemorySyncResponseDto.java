@@ -6,6 +6,9 @@ public record MemorySyncResponseDto(
         long cursor,
         int acceptedCount,
         int skippedCount,
+        int deduplicatedCount,
+        int keySignalInputCount,
+        int keySignalStoredCount,
         List<ConversationTurnDto> episodic,
         List<SemanticMemoryEntryDto> semantic,
         List<ProceduralMemoryEntryDto> procedural

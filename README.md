@@ -219,6 +219,11 @@ curl -X POST http://localhost:8080/api/skills/load-mcp \
 - Memory sync API supports incremental pull via cursor (`since`) for multi-terminal synchronization.
 - Memory compression planning supports gradual stages (`RAW -> CONDENSED -> BRIEF -> STYLED`) with per-user style profile via `POST /api/memory/{userId}/style`, `GET /api/memory/{userId}/style`, and `POST /api/memory/{userId}/compress-plan`.
 - Compression plan supports optional `focus` (`learning`/`task`/`review`) and style update supports optional auto-tune (`POST /api/memory/{userId}/style?autoTune=true&sampleText=...`).
+- Memory key-signal detection is configurable via JVM properties (comma-separated):
+  - `mindos.memory.key-signal.constraint-terms`
+  - `mindos.memory.key-signal.deadline-terms`
+  - `mindos.memory.key-signal.contact-terms`
+  - examples: `-Dmindos.memory.key-signal.constraint-terms=必须,禁止,不要,不可`.
 - Memory NLU synonyms for style/compress intents are configurable via JVM system properties (`-Dmindos.memory.nlu.*`); values are comma-separated terms and normalize to canonical values used by API/CLI (`focus`: `task|learning|review`, `style`: `action|coach|story|concise`, `tone`: `warm|direct|neutral`, `format`: `bullet|plain`).
   - focus keys:
     - `mindos.memory.nlu.focus.task-terms`
@@ -255,6 +260,8 @@ curl -X POST http://localhost:8080/api/skills/load-mcp \
     - `把记忆风格改成 行动派，语气 gentle，格式 markdown list` -> `action/warm/bullet`
 - IM webhook integration (disabled by default) supports Feishu/DingTalk/WeChat text chat via `/api/im/feishu/events`, `/api/im/dingtalk/events`, `/api/im/wechat/events`; all platforms can enable signature verification independently in `application.properties`.
 - IM 文本可直接触发 memory 能力：`查看记忆风格`、`按任务聚焦压缩这段记忆：...`、`根据这段话微调记忆风格：...`。
+- IM/CLI 的 memory compress 回复会附带轻量可观测信息（如压缩率与关键约束保留提示），便于在自然语言对话里确认压缩效果。
+- `POST /api/memory/{userId}/sync` response now includes apply counters: `deduplicatedCount`, `keySignalInputCount`, and `keySignalStoredCount` for monitoring compression/dedup effectiveness.
 - **Custom skills (JSON)**: drop `.json` files into `mindos.skills.custom-dir`; reload without restart via `POST /api/skills/reload`.
   ```json
   { "name": "greet", "description": "Warm greeting", "triggers": ["greet","hello"], "response": "Hello {{user}}! You said: {{input}}" }

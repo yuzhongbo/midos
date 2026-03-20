@@ -39,6 +39,9 @@ public class MemorySyncService {
         long cursor = 0L;
         int accepted = 0;
         int skipped = 0;
+        int deduplicated = 0;
+        int keySignalInput = 0;
+        int keySignalStored = 0;
         String eventId = consolidatedBatch.eventId();
 
         for (ConversationTurn turn : consolidatedBatch.episodic()) {
@@ -49,12 +52,18 @@ public class MemorySyncService {
                 accepted++;
             } else {
                 skipped++;
+                deduplicated++;
             }
         }
 
         for (SemanticMemoryEntry entry : consolidatedBatch.semantic()) {
+            boolean keySignalEntry = memoryConsolidationService.containsKeySignal(entry.text());
+            if (keySignalEntry) {
+                keySignalInput++;
+            }
             if (semanticMemoryService.containsEquivalentEntry(userId, entry)) {
                 skipped++;
+                deduplicated++;
                 continue;
             }
             MemoryAppendResult result = centralMemoryRepository.appendSemantic(userId, entry, withSuffix(eventId, "semantic", accepted + skipped));
@@ -62,8 +71,12 @@ public class MemorySyncService {
             if (result.accepted()) {
                 semanticMemoryService.addEntry(userId, entry);
                 accepted++;
+                if (keySignalEntry) {
+                    keySignalStored++;
+                }
             } else {
                 skipped++;
+                deduplicated++;
             }
         }
 
@@ -75,10 +88,11 @@ public class MemorySyncService {
                 accepted++;
             } else {
                 skipped++;
+                deduplicated++;
             }
         }
 
-        return new MemoryApplyResult(cursor, accepted, skipped);
+        return new MemoryApplyResult(cursor, accepted, skipped, deduplicated, keySignalInput, keySignalStored);
     }
 
     public long recordEpisodic(String userId, ConversationTurn turn) {

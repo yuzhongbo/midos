@@ -84,7 +84,8 @@ class ImWebhookControllerTest {
                         .content(payload))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.msgtype").value("text"))
-                .andExpect(jsonPath("$.text.content").value(org.hamcrest.Matchers.containsString("[任务聚焦]")));
+                .andExpect(jsonPath("$.text.content").value(org.hamcrest.Matchers.containsString("[任务聚焦]")))
+                .andExpect(jsonPath("$.text.content").value(org.hamcrest.Matchers.containsString("我已帮你完成记忆整理")));
     }
 
     @Test

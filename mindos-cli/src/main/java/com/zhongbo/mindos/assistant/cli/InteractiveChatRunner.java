@@ -785,10 +785,15 @@ class InteractiveChatRunner {
                             MemorySyncResponseDto response = chatService.pullMemory(since, limit);
                             synchronized (out) {
                                 printInfo(out, "memory 拉取完成");
-                                out.println("memory.cursor=" + response.cursor());
-                                out.println("memory.episodic=" + response.episodic().size());
-                                out.println("memory.semantic=" + response.semantic().size());
-                                out.println("memory.procedural=" + response.procedural().size());
+                                out.println("已拉取记忆：对话 " + response.episodic().size()
+                                        + " 条，知识 " + response.semantic().size()
+                                        + " 条，流程 " + response.procedural().size() + " 条。");
+                                if (showRoutingDetails) {
+                                    out.println("memory.cursor=" + response.cursor());
+                                    out.println("memory.episodic=" + response.episodic().size());
+                                    out.println("memory.semantic=" + response.semantic().size());
+                                    out.println("memory.procedural=" + response.procedural().size());
+                                }
                                 out.flush();
                             }
                         } catch (AssistantSdkException ex) {
@@ -820,9 +825,7 @@ class InteractiveChatRunner {
                             MemorySyncResponseDto response = chatService.pushMemory(file, limit);
                             synchronized (out) {
                                 printInfo(out, "memory 推送完成（已自动整理/压缩/去重）");
-                                out.println("memory.cursor=" + response.cursor());
-                                out.println("memory.accepted=" + response.acceptedCount());
-                                out.println("memory.skipped=" + response.skippedCount());
+                                printMemoryApplyStats(out, response);
                                 out.flush();
                             }
                         } catch (AssistantSdkException ex) {
@@ -967,9 +970,7 @@ class InteractiveChatRunner {
                         MemorySyncResponseDto response = chatService.pushMemory(request, limit);
                         synchronized (out) {
                             printInfo(out, "memory 推送完成（已自动整理/压缩/去重）");
-                            out.println("memory.cursor=" + response.cursor());
-                            out.println("memory.accepted=" + response.acceptedCount());
-                            out.println("memory.skipped=" + response.skippedCount());
+                            printMemoryApplyStats(out, response);
                             out.flush();
                         }
                     } catch (AssistantSdkException ex) {
@@ -990,6 +991,28 @@ class InteractiveChatRunner {
         printInfo(out, submitMessage);
         CompletableFuture<Void> future = CompletableFuture.runAsync(task, backgroundExecutor);
         sessionState.pendingTasks.add(future);
+    }
+
+    private void printMemoryApplyStats(PrintWriter out, MemorySyncResponseDto response) {
+        int processed = response.acceptedCount() + response.skippedCount();
+        double dedupRate = processed == 0 ? 0.0 : (double) response.deduplicatedCount() / processed;
+        out.println("本次记忆处理完成：接收 " + response.acceptedCount()
+                + " 条，跳过 " + response.skippedCount()
+                + " 条，去重 " + response.deduplicatedCount()
+                + " 条（" + formatPercent(dedupRate) + "）。");
+        if (response.keySignalInputCount() > 0) {
+            out.println("关键信息保留 "
+                    + response.keySignalStoredCount() + "/" + response.keySignalInputCount() + " 条。");
+        }
+        if (showRoutingDetails) {
+            out.println("memory.cursor=" + response.cursor());
+            out.println("memory.accepted=" + response.acceptedCount());
+            out.println("memory.skipped=" + response.skippedCount());
+            out.println("memory.deduplicated=" + response.deduplicatedCount());
+            out.println("memory.deduplicatedRate=" + Math.round(dedupRate * 10_000d) / 100d + "%");
+            out.println("memory.keySignalInput=" + response.keySignalInputCount());
+            out.println("memory.keySignalStored=" + response.keySignalStoredCount());
+        }
     }
 
     private MemorySyncRequestDto promptForMemoryRequest(PrintWriter out,
@@ -1290,7 +1313,7 @@ class InteractiveChatRunner {
                 currentKey = token.substring(2);
                 currentValue = new StringBuilder();
             } else if (currentKey != null) {
-                if (currentValue.length() > 0) {
+                if (!currentValue.isEmpty()) {
                     currentValue.append(' ');
                 }
                 currentValue.append(token);
@@ -1312,9 +1335,37 @@ class InteractiveChatRunner {
     private void printMemoryCompressionPlan(PrintWriter out, MemoryCompressionPlanResponseDto response) {
         out.println(ANSI.string("@|bold 记忆压缩规划|@"));
         printMemoryStyle(out, response.style());
+        int rawLength = -1;
+        int styledLength = -1;
+        boolean keySignalHintDetected = false;
         for (MemoryCompressionStepDto step : response.steps()) {
             out.println("- [" + step.stage() + "] " + step.content());
+            if ("RAW".equals(step.stage())) {
+                rawLength = step.length();
+            }
+            if ("STYLED".equals(step.stage())) {
+                styledLength = step.length();
+                keySignalHintDetected = step.content().contains("不能")
+                        || step.content().contains("必须")
+                        || step.content().contains("截止")
+                        || step.content().contains("风险");
+            }
         }
+        if (rawLength > 0 && styledLength >= 0) {
+            double ratio = (double) styledLength / rawLength;
+            out.println("压缩完成：由 " + rawLength + " 字精炼到 " + styledLength
+                    + " 字（" + formatPercent(ratio) + "）。");
+            if (showRoutingDetails) {
+                out.println(String.format("memory.compressRate=%.2f%%", ratio * 100.0));
+            }
+        }
+        if (keySignalHintDetected && showRoutingDetails) {
+            out.println("memory.keySignalHint=关键约束已体现在压缩结果中");
+        }
+    }
+
+    private String formatPercent(double value) {
+        return String.format("%.2f%%", value * 100.0);
     }
 
     private String blankToNull(String value) {

@@ -3,6 +3,7 @@ package com.zhongbo.mindos.assistant.api.im;
 import com.zhongbo.mindos.assistant.common.nlu.MemoryIntentNlu;
 import com.zhongbo.mindos.assistant.dispatcher.DispatchResult;
 import com.zhongbo.mindos.assistant.dispatcher.DispatcherService;
+import com.zhongbo.mindos.assistant.memory.MemoryConsolidationService;
 import com.zhongbo.mindos.assistant.memory.MemoryManager;
 import com.zhongbo.mindos.assistant.memory.model.MemoryCompressionPlan;
 import com.zhongbo.mindos.assistant.memory.model.MemoryCompressionStep;
@@ -17,11 +18,14 @@ public class ImGatewayService {
 
     private final DispatcherService dispatcherService;
     private final MemoryManager memoryManager;
+    private final MemoryConsolidationService memoryConsolidationService;
 
     ImGatewayService(DispatcherService dispatcherService,
-                     MemoryManager memoryManager) {
+                     MemoryManager memoryManager,
+                     MemoryConsolidationService memoryConsolidationService) {
         this.dispatcherService = dispatcherService;
         this.memoryManager = memoryManager;
+        this.memoryConsolidationService = memoryConsolidationService;
     }
 
     String chat(ImPlatform platform, String senderId, String chatId, String text) {
@@ -93,11 +97,33 @@ public class ImGatewayService {
                 new MemoryStyleProfile(null, null, null),
                 focus
         );
-        return plan.steps().stream()
+        String styled = plan.steps().stream()
                 .filter(step -> "STYLED".equals(step.stage()))
                 .map(MemoryCompressionStep::content)
                 .findFirst()
                 .orElse("已生成记忆压缩规划。");
+        return styled + "\n" + summarizeCompression(source, styled);
+    }
+
+    private String summarizeCompression(String rawText, String styledText) {
+        String raw = memoryConsolidationService.normalizeText(rawText);
+        String styled = memoryConsolidationService.normalizeText(styledText);
+        int rawLength = raw.length();
+        int styledLength = styled.length();
+        double ratio = rawLength == 0 ? 0.0 : (double) styledLength / rawLength;
+        String ratioText = String.format("压缩后约为原文的 %.1f%%", ratio * 100.0);
+
+        boolean keySignalIn = memoryConsolidationService.containsKeySignal(raw);
+        boolean keySignalOut = memoryConsolidationService.containsKeySignal(styled);
+        String keySignalHint;
+        if (!keySignalIn) {
+            keySignalHint = "未发现明显的硬性约束。";
+        } else if (keySignalOut) {
+            keySignalHint = "关键约束已保留。";
+        } else {
+            keySignalHint = "我识别到关键约束，但压缩结果里可能不完整，建议你再确认一下。";
+        }
+        return "我已帮你完成记忆整理，" + ratioText + "。" + keySignalHint;
     }
 
 

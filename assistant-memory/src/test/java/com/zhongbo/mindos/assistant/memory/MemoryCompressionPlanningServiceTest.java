@@ -1,6 +1,7 @@
 package com.zhongbo.mindos.assistant.memory;
 
 import com.zhongbo.mindos.assistant.memory.model.MemoryCompressionPlan;
+import com.zhongbo.mindos.assistant.memory.model.MemoryCompressionStep;
 import com.zhongbo.mindos.assistant.memory.model.MemoryStyleProfile;
 import org.junit.jupiter.api.Test;
 
@@ -8,6 +9,14 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class MemoryCompressionPlanningServiceTest {
+
+    private static String contentByStage(MemoryCompressionPlan plan, String stage) {
+        return plan.steps().stream()
+                .filter(step -> stage.equals(step.stage()))
+                .map(MemoryCompressionStep::content)
+                .findFirst()
+                .orElse("");
+    }
 
     @Test
     void shouldBuildGradualCompressionPlanUsingStoredStyle() {
@@ -98,6 +107,24 @@ class MemoryCompressionPlanningServiceTest {
 
         assertEquals("action", tuned.styleName());
         assertEquals("warm", tuned.tone());
+    }
+
+    @Test
+    void shouldPreserveCriticalConstraintLinesWhenCompressing() {
+        MemoryConsolidationService consolidationService = new MemoryConsolidationService();
+        MemoryCompressionPlanningService service = new MemoryCompressionPlanningService(consolidationService);
+
+        String source = "先梳理背景。\n整理学习材料。\n输出初稿。\n和同学讨论。\n"
+                + "截止时间是2026-04-01 20:00。\n"
+                + "不能遗漏高风险模块。\n"
+                + "完成后复盘。";
+        MemoryCompressionPlan plan = service.buildPlan("u7", source, new MemoryStyleProfile("concise", "direct", "plain"));
+
+        String condensed = contentByStage(plan, "CONDENSED");
+        String brief = contentByStage(plan, "BRIEF");
+        assertTrue(condensed.contains("截止时间是2026-04-01 20:00"));
+        assertTrue(condensed.contains("不能遗漏高风险模块"));
+        assertTrue(brief.contains("截止时间是2026-04-01 20:00") || brief.contains("不能遗漏高风险模块"));
     }
 }
 

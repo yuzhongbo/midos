@@ -8,15 +8,32 @@ import org.springframework.stereotype.Service;
 
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
+import java.util.regex.Pattern;
 
 @Service
 public class MemoryConsolidationService {
 
     private static final int MAX_EMBEDDING_SIZE = 8;
+    private static final String PROP_KEY_SIGNAL_CONSTRAINT_TERMS = "mindos.memory.key-signal.constraint-terms";
+    private static final String PROP_KEY_SIGNAL_DEADLINE_TERMS = "mindos.memory.key-signal.deadline-terms";
+    private static final String PROP_KEY_SIGNAL_CONTACT_TERMS = "mindos.memory.key-signal.contact-terms";
+
+    private static final Pattern DIGIT_PATTERN = Pattern.compile("\\d");
+    private static final Pattern DATE_TIME_PATTERN = Pattern.compile("(\\d{1,2}[:：]\\d{2}|\\d{4}[-/]\\d{1,2}[-/]\\d{1,2}|\\d+\\s*(?:天|周|月|年|小时|分钟)|(?:截止|deadline|due|before|之前|内))", Pattern.CASE_INSENSITIVE);
+
+    private final Set<String> constraintTerms = loadTerms(PROP_KEY_SIGNAL_CONSTRAINT_TERMS,
+            "不要", "不能", "禁止", "避免", "务必", "必须", "一定", "优先", "风险", "不可");
+    private final Set<String> deadlineTerms = loadTerms(PROP_KEY_SIGNAL_DEADLINE_TERMS,
+            "截止", "deadline", "due", "before", "之前", "内");
+    private final Set<String> contactTerms = loadTerms(PROP_KEY_SIGNAL_CONTACT_TERMS,
+            "http://", "https://", "@", "邮箱", "email", "电话", "phone");
 
     public MemorySyncBatch consolidateBatch(MemorySyncBatch batch) {
         if (batch == null) {
@@ -72,6 +89,60 @@ public class MemoryConsolidationService {
         return normalizeText(text).toLowerCase(Locale.ROOT);
     }
 
+    public boolean containsKeySignal(String text) {
+        return keySignalScore(text) > 0;
+    }
+
+    public int keySignalScore(String text) {
+        String normalized = normalizeText(text);
+        if (normalized.isBlank()) {
+            return 0;
+        }
+        int score = 0;
+        if (DIGIT_PATTERN.matcher(normalized).find()) {
+            score += 2;
+        }
+        if (DATE_TIME_PATTERN.matcher(normalized).find()) {
+            score += 3;
+        }
+        if (containsAnyTerm(normalized, constraintTerms)) {
+            score += 3;
+        }
+        if (containsAnyTerm(normalized, deadlineTerms)) {
+            score += 2;
+        }
+        if (containsAnyTerm(normalized, contactTerms)) {
+            score += 1;
+        }
+        return score;
+    }
+
+    private Set<String> loadTerms(String propertyKey, String... defaults) {
+        String override = System.getProperty(propertyKey);
+        if (override == null || override.isBlank()) {
+            return Set.of(defaults);
+        }
+        Set<String> terms = Arrays.stream(override.split(","))
+                .map(this::normalizeText)
+                .map(value -> value.toLowerCase(Locale.ROOT))
+                .filter(value -> !value.isBlank())
+                .collect(LinkedHashSet::new, Set::add, Set::addAll);
+        if (terms.isEmpty()) {
+            return Set.of(defaults);
+        }
+        return Set.copyOf(terms);
+    }
+
+    private boolean containsAnyTerm(String text, Set<String> terms) {
+        String normalized = normalizeText(text).toLowerCase(Locale.ROOT);
+        for (String term : terms) {
+            if (normalized.contains(term)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     public String normalizeText(String text) {
         if (text == null) {
             return "";
@@ -97,16 +168,30 @@ public class MemoryConsolidationService {
     }
 
     private SemanticMemoryEntry mergeSemanticEntries(SemanticMemoryEntry existing, SemanticMemoryEntry candidate) {
-        String mergedText = candidate.text().length() >= existing.text().length()
-                ? candidate.text()
-                : existing.text();
-        List<Double> mergedEmbedding = candidate.embedding().size() >= existing.embedding().size()
-                ? candidate.embedding()
-                : existing.embedding();
+        int existingPriority = semanticPriority(existing);
+        int candidatePriority = semanticPriority(candidate);
+        SemanticMemoryEntry preferred = candidatePriority >= existingPriority ? candidate : existing;
+        SemanticMemoryEntry fallback = preferred == candidate ? existing : candidate;
+
+        String mergedText = preferred.text();
+        List<Double> mergedEmbedding = preferred.embedding().size() >= fallback.embedding().size()
+                ? preferred.embedding()
+                : fallback.embedding();
         Instant createdAt = existing.createdAt().isBefore(candidate.createdAt())
                 ? existing.createdAt()
                 : candidate.createdAt();
         return new SemanticMemoryEntry(mergedText, mergedEmbedding, createdAt);
+    }
+
+    private int semanticPriority(SemanticMemoryEntry entry) {
+        if (entry == null) {
+            return Integer.MIN_VALUE;
+        }
+        String text = normalizeText(entry.text());
+        int score = keySignalScore(text) * 10;
+        score += Math.min(text.length(), 256);
+        score += Math.min(entry.embedding().size(), MAX_EMBEDDING_SIZE) * 2;
+        return score;
     }
 
     private List<Double> compactEmbedding(List<Double> embedding, String text) {

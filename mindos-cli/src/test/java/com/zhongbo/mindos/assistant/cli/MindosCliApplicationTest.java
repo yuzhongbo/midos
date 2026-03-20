@@ -510,6 +510,46 @@ class MindosCliApplicationTest {
     }
 
     @Test
+    void shouldHideMemoryTechnicalMetricsByDefaultInInteractiveMode() throws IOException {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/api/memory/cli-user/sync", exchange -> {
+            String responseBody = "{" +
+                    "\"cursor\":9," +
+                    "\"acceptedCount\":0," +
+                    "\"skippedCount\":0," +
+                    "\"episodic\":[{\"role\":\"user\",\"content\":\"hi\",\"createdAt\":\"2026-03-13T00:00:00Z\"}]," +
+                    "\"semantic\":[]," +
+                    "\"procedural\":[]" +
+                    "}";
+            byte[] response = responseBody.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+
+        try {
+            server.start();
+            int port = server.getAddress().getPort();
+
+            CommandOutputResult result = executeInteractiveWithOutDefault(
+                    "/memory pull --since 0 --limit 50\n"
+                            + "/exit\n",
+                    "--server", "http://127.0.0.1:" + port,
+                    "--user", "cli-user"
+            );
+
+            String console = result.stdout();
+            assertEquals(0, result.exitCode());
+            assertTrue(console.contains("已拉取记忆：对话 1 条"));
+            assertFalse(console.contains("memory.cursor="));
+            assertFalse(console.contains("memory.episodic="));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
     void shouldManageSkillsInsideInteractiveMode() throws IOException {
         AtomicReference<String> bodyRef = new AtomicReference<>("");
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
@@ -1589,6 +1629,7 @@ class MindosCliApplicationTest {
             assertTrue(console.contains("已识别自然语言指令 -> /memory compress --source 明天先整理目标，再拆任务 --focus task"));
             assertTrue(console.contains("记忆压缩规划"));
             assertTrue(console.contains("[STYLED] - 明天先整理目标"));
+            assertTrue(console.contains("memory.compressRate="));
             assertTrue(requestBodyRef.get().contains("\"sourceText\":\"明天先整理目标，再拆任务\""));
             assertTrue(requestBodyRef.get().contains("\"focus\":\"task\""));
         } finally {

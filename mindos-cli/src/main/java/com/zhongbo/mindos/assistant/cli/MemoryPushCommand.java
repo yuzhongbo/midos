@@ -47,6 +47,12 @@ public class MemoryPushCommand implements Runnable {
             System.out.println("cursor=" + response.cursor());
             System.out.println("accepted=" + response.acceptedCount());
             System.out.println("skipped=" + response.skippedCount());
+            System.out.println("deduplicated=" + response.deduplicatedCount());
+            int processed = response.acceptedCount() + response.skippedCount();
+            double dedupRate = processed == 0 ? 0.0 : (double) response.deduplicatedCount() / processed;
+            System.out.printf("deduplicatedRate=%.2f%%%n", dedupRate * 100.0);
+            System.out.println("keySignalInput=" + response.keySignalInputCount());
+            System.out.println("keySignalStored=" + response.keySignalStoredCount());
         } catch (AssistantSdkException ex) {
             String error = "MindOS memory push failed"
                     + " (status=" + ex.statusCode()
