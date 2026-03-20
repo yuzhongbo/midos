@@ -61,6 +61,7 @@ class ImGatewayServiceTest {
         String third = service.chat(ImPlatform.DINGTALK, "u1", "c1", "生成待办");
         assertTrue(third.contains("执行清单"));
         assertTrue(third.contains("优先级说明：P1=今天必须完成"));
+        assertTrue(third.contains("当前待办策略：P1>= 45，P2>= 25"));
         assertTrue(third.contains("今天（today）"));
         assertTrue(third.contains("P1"));
         assertTrue(third.contains("建议24小时内完成"));
@@ -107,6 +108,7 @@ class ImGatewayServiceTest {
         String todo = service.chat(ImPlatform.DINGTALK, "u3", "c3", "生成待办");
 
         assertTrue(todo.contains("优先级说明：按团队自定义策略执行。"));
+        assertTrue(todo.contains("当前待办策略：P1>= 100，P2>= 10"));
         assertTrue(todo.contains("P2"));
         assertTrue(todo.contains("建议两天内完成"));
     }

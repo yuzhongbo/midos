@@ -47,7 +47,7 @@ class InteractiveChatRunner {
 
     private static final List<String> COMMAND_CATALOG = List.of(
             "/help", "/session", "/user", "/server", "/provider", "/history",
-            "/retry", "/clear", "/skills", "/skill", "/profile", "/memory",
+            "/retry", "/clear", "/skills", "/skill", "/profile", "/memory", "/todo",
             "/teach", "/theme", "/routing", "/exit", "/quit"
     );
 
@@ -377,6 +377,9 @@ class InteractiveChatRunner {
         out.println("  /memory style set --style-name 名称     更新记忆压缩风格");
         out.println("  /memory style set --auto-tune --sample-text 文本  自动微调记忆风格");
         out.println("  /memory compress --source 文本 [--focus learning|task|review]  生成逐步记忆压缩规划");
+        out.println("  /todo policy [show]                     查看当前会话待办策略");
+        out.println("  /todo policy set --p1-threshold N --p2-threshold N [--window-p1 文案 --window-p2 文案 --window-p3 文案 --legend 文案]");
+        out.println("  /todo policy reset                      恢复当前会话待办策略默认值");
         out.println("  /teach plan [--query 文本]              生成教学规划（自动转 teaching.plan skill）");
         out.println(ANSI.string("@|bold,cyan [Shortcuts]|@"));
         out.println("  自然语言指令示例                          我有哪些技能 / 帮我拉取记忆 / 加载jar https://...");
@@ -418,6 +421,7 @@ class InteractiveChatRunner {
         out.println("  风格：直接说“查看我的记忆风格”或“把记忆风格改成 action，语气 warm”");
         out.println("  微调：直接说“根据这段话自动微调记忆风格：...”");
         out.println("  压缩：直接说“按我的风格压缩这段记忆：...”");
+        out.println("  待办策略：直接说“查看待办策略”或“恢复待办策略默认”");
         out.println("  如需技术命令格式请看 /help full");
         out.flush();
     }
@@ -499,6 +503,10 @@ class InteractiveChatRunner {
             return handleMemoryCommand(input, out, chatService, reader, sessionState, backgroundExecutor);
         }
 
+        if (input.startsWith("/todo")) {
+            return handleTodoCommand(input, out, sessionState);
+        }
+
         if (input.startsWith("/theme")) {
             return handleThemeCommand(input, out);
         }
@@ -544,6 +552,66 @@ class InteractiveChatRunner {
         uiTheme = UiTheme.fromValue(argument);
         printInfo(out, "已切换主题: " + uiTheme.name().toLowerCase());
         return true;
+    }
+
+    private boolean handleTodoCommand(String input, PrintWriter out, SessionState sessionState) {
+        String args = input.substring("/todo".length()).trim();
+        if (args.isBlank() || args.equalsIgnoreCase("policy") || args.equalsIgnoreCase("policy show")) {
+            TodoPriorityPolicy policy = resolveTodoPriorityPolicy(sessionState);
+            printInfo(out, "当前待办策略：P1>= " + policy.p1Threshold()
+                    + "，P2>= " + policy.p2Threshold()
+                    + "；P1=" + policy.p1Window()
+                    + "，P2=" + policy.p2Window()
+                    + "，P3=" + policy.p3Window() + "。"
+            );
+            out.println(policy.legend());
+            return true;
+        }
+
+        if (args.equalsIgnoreCase("policy reset")) {
+            sessionState.todoPolicyOverride = null;
+            printInfo(out, "已恢复会话待办策略默认值。");
+            return true;
+        }
+
+        if (args.toLowerCase().startsWith("policy set")) {
+            Map<String, String> parsed = parseOptionPairs(args.substring("policy set".length()).trim());
+            TodoPriorityPolicy base = resolveTodoPriorityPolicy(sessionState);
+            int p1 = parsePositiveInt(parsed.get("p1-threshold"), base.p1Threshold());
+            int p2 = parsePositiveInt(parsed.get("p2-threshold"), base.p2Threshold());
+            if (p2 > p1) {
+                p2 = p1;
+            }
+            String w1 = fallbackText(parsed.get("window-p1"), base.p1Window());
+            String w2 = fallbackText(parsed.get("window-p2"), base.p2Window());
+            String w3 = fallbackText(parsed.get("window-p3"), base.p3Window());
+            String legend = fallbackText(parsed.get("legend"), base.legend());
+            sessionState.todoPolicyOverride = new TodoPriorityPolicy(p1, p2, w1, w2, w3, legend);
+            printInfo(out, "会话待办策略已更新。输入 /todo policy 查看当前策略。");
+            return true;
+        }
+
+        printError(out, "用法: /todo policy [show|set|reset]");
+        return true;
+    }
+
+    private int parsePositiveInt(String value, int fallback) {
+        if (value == null || value.isBlank()) {
+            return fallback;
+        }
+        try {
+            int parsed = Integer.parseInt(value.trim());
+            return parsed > 0 ? parsed : fallback;
+        } catch (NumberFormatException ex) {
+            return fallback;
+        }
+    }
+
+    private String fallbackText(String value, String fallback) {
+        if (value == null || value.isBlank()) {
+            return fallback;
+        }
+        return value.trim();
     }
 
     private boolean handleProviderCommand(String input, PrintWriter out, CliChatService chatService) {
@@ -992,13 +1060,13 @@ class InteractiveChatRunner {
             return false;
         }
         printInfo(out, "好的，已根据关键点整理执行清单：");
-        printBucketedTodoList(out, points);
+        printBucketedTodoList(out, points, sessionState);
         sessionState.pendingMemoryReviewPoints = null;
         return true;
     }
 
-    private void printBucketedTodoList(PrintWriter out, List<String> points) {
-        TodoPriorityPolicy policy = resolveTodoPriorityPolicy();
+    private void printBucketedTodoList(PrintWriter out, List<String> points, SessionState sessionState) {
+        TodoPriorityPolicy policy = resolveTodoPriorityPolicy(sessionState);
         List<String> sorted = sortByPriority(points);
         List<String> today = new ArrayList<>();
         List<String> thisWeek = new ArrayList<>();
@@ -1051,7 +1119,10 @@ class InteractiveChatRunner {
         };
     }
 
-    private TodoPriorityPolicy resolveTodoPriorityPolicy() {
+    private TodoPriorityPolicy resolveTodoPriorityPolicy(SessionState sessionState) {
+        if (sessionState != null && sessionState.todoPolicyOverride != null) {
+            return sessionState.todoPolicyOverride;
+        }
         int p1Threshold = readPositiveIntProperty(PROP_TODO_P1_THRESHOLD, 45);
         int p2Threshold = readPositiveIntProperty(PROP_TODO_P2_THRESHOLD, 25);
         if (p2Threshold > p1Threshold) {
@@ -1871,12 +1942,14 @@ class InteractiveChatRunner {
         private String lastUserMessage;
         private String pendingMemoryReviewSource;
         private List<String> pendingMemoryReviewPoints;
+        private TodoPriorityPolicy todoPolicyOverride;
 
         void clear() {
             localTurns.clear();
             lastUserMessage = null;
             pendingMemoryReviewSource = null;
             pendingMemoryReviewPoints = null;
+            todoPolicyOverride = null;
         }
     }
 

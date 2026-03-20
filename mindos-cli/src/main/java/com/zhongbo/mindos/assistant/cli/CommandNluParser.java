@@ -43,6 +43,8 @@ class CommandNluParser {
     private static final Pattern PROFILE_STYLE_PATTERN = Pattern.compile("(?:风格|语气|style)\\s*(?:改为|改成|换成|设为|设成|设置为|设置成|想用|是|为|=|:)\\s*([^,，。；;\\n]+)", Pattern.CASE_INSENSITIVE);
     private static final Pattern PROFILE_LANGUAGE_PATTERN = Pattern.compile("(?:语言|language)\\s*(?:改为|改成|换成|设为|设成|设置为|设置成|想用|是|为|=|:)\\s*([^,，。；;\\n]+)", Pattern.CASE_INSENSITIVE);
     private static final Pattern PROFILE_TIMEZONE_PATTERN = Pattern.compile("(?:时区|timezone)\\s*(?:改为|改成|换成|设为|设成|设置为|设置成|是|为|=|:)\\s*([^,，。；;\\n]+)", Pattern.CASE_INSENSITIVE);
+    private static final Pattern TODO_P1_PATTERN = Pattern.compile("(?:p1|优先级1|一级优先级|p1阈值)\\s*(?:改为|设为|设置为|=|:)\\s*(\\d+)", Pattern.CASE_INSENSITIVE);
+    private static final Pattern TODO_P2_PATTERN = Pattern.compile("(?:p2|优先级2|二级优先级|p2阈值)\\s*(?:改为|设为|设置为|=|:)\\s*(\\d+)", Pattern.CASE_INSENSITIVE);
     private static final Pattern TEACHING_TOPIC_BEFORE_PATTERN = Pattern.compile("([\\p{L}A-Za-z0-9+#._-]{2,32})\\s*(?:教学规划|学习计划|复习计划|课程规划)");
     private static final Pattern TEACHING_TOPIC_AFTER_PATTERN = Pattern.compile("(?:学|学习|复习|备考|课程)\\s*([\\p{L}A-Za-z0-9+#._-]{2,32})");
     private static final Pattern TEACHING_GOAL_PATTERN = Pattern.compile("(?:目标(?:是|为)?|想要|希望)\\s*([^，。；;\\n]+)");
@@ -90,6 +92,11 @@ class CommandNluParser {
         String memoryPushCommand = extractMemoryPushCommand(normalized);
         if (memoryPushCommand != null) {
             return memoryPushCommand;
+        }
+
+        String todoPolicyCommand = extractTodoPolicyCommand(input, normalized);
+        if (todoPolicyCommand != null) {
+            return todoPolicyCommand;
         }
 
         String userCommand = extractUserCommand(input, normalized);
@@ -362,6 +369,33 @@ class CommandNluParser {
             return "/memory push";
         }
         return "/memory push --limit " + limit;
+    }
+
+    private String extractTodoPolicyCommand(String input, String normalized) {
+        if (containsAny(normalized, "恢复待办策略默认", "重置待办策略", "todo policy reset")) {
+            return "/todo policy reset";
+        }
+        if (containsAny(normalized, "查看待办策略", "当前待办策略", "todo policy")) {
+            return "/todo policy show";
+        }
+        if (!containsAny(normalized, "待办策略", "todo policy", "p1", "p2")) {
+            return null;
+        }
+        Matcher p1Matcher = TODO_P1_PATTERN.matcher(input == null ? "" : input);
+        Matcher p2Matcher = TODO_P2_PATTERN.matcher(input == null ? "" : input);
+        String p1 = p1Matcher.find() ? p1Matcher.group(1) : null;
+        String p2 = p2Matcher.find() ? p2Matcher.group(1) : null;
+        if (p1 == null && p2 == null) {
+            return null;
+        }
+        StringBuilder command = new StringBuilder("/todo policy set");
+        if (p1 != null) {
+            command.append(" --p1-threshold ").append(p1);
+        }
+        if (p2 != null) {
+            command.append(" --p2-threshold ").append(p2);
+        }
+        return command.toString();
     }
 
     private String extractUserCommand(String input, String normalized) {

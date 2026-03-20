@@ -1725,6 +1725,84 @@ class MindosCliApplicationTest {
     }
 
     @Test
+    void shouldApplyConfiguredTodoPolicyInInteractiveChecklist() throws IOException {
+        String oldP1 = System.getProperty("mindos.todo.priority.p1-threshold");
+        String oldP2 = System.getProperty("mindos.todo.priority.p2-threshold");
+        String oldWindowP2 = System.getProperty("mindos.todo.window.p2");
+        String oldLegend = System.getProperty("mindos.todo.legend");
+
+        AtomicReference<String> requestBodyRef = new AtomicReference<>("");
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/api/memory/cli-user/compress-plan", exchange -> {
+            requestBodyRef.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            byte[] response = ("{" +
+                    "\"style\":{\"styleName\":\"action\",\"tone\":\"warm\",\"outputFormat\":\"bullet\"}," +
+                    "\"steps\":[{" +
+                    "\"stage\":\"RAW\",\"content\":\"今天18:30前必须提交合同，不要遗漏附件\",\"length\":20},{" +
+                    "\"stage\":\"STYLED\",\"content\":\"- 提交合同\\n- 检查附件\",\"length\":11}]," +
+                    "\"createdAt\":\"2026-03-17T00:00:00Z\"" +
+                    "}").getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+
+        try {
+            System.setProperty("mindos.todo.priority.p1-threshold", "90");
+            System.setProperty("mindos.todo.priority.p2-threshold", "10");
+            System.setProperty("mindos.todo.window.p2", "建议两天内完成");
+            System.setProperty("mindos.todo.legend", "优先级说明：按团队自定义策略执行。");
+
+            server.start();
+            int port = server.getAddress().getPort();
+
+            CommandOutputResult result = executeInteractiveWithOutDefault(
+                    "/memory compress --source 今天18:30前必须提交合同，不要遗漏附件 --focus task\n"
+                            + "要\n"
+                            + "生成待办\n"
+                            + "/exit\n",
+                    "--server", "http://127.0.0.1:" + port,
+                    "--user", "cli-user"
+            );
+
+            String console = result.stdout();
+            assertEquals(0, result.exitCode());
+            assertTrue(console.contains("优先级说明：按团队自定义策略执行。"));
+            assertTrue(console.contains("当前待办策略：P1>= 90，P2>= 10"));
+            assertTrue(console.contains("P2"));
+            assertTrue(console.contains("建议两天内完成"));
+            assertTrue(requestBodyRef.get().contains("\"focus\":\"task\""));
+        } finally {
+            server.stop(0);
+            restoreProperty("mindos.todo.priority.p1-threshold", oldP1);
+            restoreProperty("mindos.todo.priority.p2-threshold", oldP2);
+            restoreProperty("mindos.todo.window.p2", oldWindowP2);
+            restoreProperty("mindos.todo.legend", oldLegend);
+        }
+    }
+
+    @Test
+    void shouldSupportSessionTodoPolicyShowSetAndReset() {
+        CommandOutputResult result = executeInteractiveWithOutDefault(
+                "/todo policy show\n"
+                        + "/todo policy set --p1-threshold 70 --p2-threshold 20 --window-p2 建议两天内推进 --legend 优先级说明：会话策略\n"
+                        + "/todo policy show\n"
+                        + "/todo policy reset\n"
+                        + "/todo policy show\n"
+                        + "/exit\n"
+        );
+
+        String console = result.stdout();
+        assertEquals(0, result.exitCode());
+        assertTrue(console.contains("当前待办策略：P1>= 45，P2>= 25"));
+        assertTrue(console.contains("会话待办策略已更新"));
+        assertTrue(console.contains("当前待办策略：P1>= 70，P2>= 20"));
+        assertTrue(console.contains("优先级说明：会话策略"));
+        assertTrue(console.contains("已恢复会话待办策略默认值"));
+    }
+
+    @Test
     void shouldPullMemoryFromServer() throws IOException {
         AtomicReference<String> requestUriRef = new AtomicReference<>("");
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
@@ -1946,6 +2024,14 @@ class MindosCliApplicationTest {
             count++;
             fromIndex = next + target.length();
         }
+    }
+
+    private void restoreProperty(String key, String value) {
+        if (value == null) {
+            System.clearProperty(key);
+            return;
+        }
+        System.setProperty(key, value);
     }
 
     private record CommandExecutionResult(int exitCode, String stderr) {

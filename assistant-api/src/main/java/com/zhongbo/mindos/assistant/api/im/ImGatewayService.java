@@ -189,6 +189,7 @@ public class ImGatewayService {
 
         StringBuilder builder = new StringBuilder("好的，已根据关键点整理执行清单：");
         appendPriorityLegend(builder, policy);
+        appendPolicyPreview(builder, policy);
         appendBucket(builder, "今天（today）", today, policy);
         appendBucket(builder, "本周（this week）", thisWeek, policy);
         appendBucket(builder, "后续（later）", later, policy);
@@ -200,6 +201,20 @@ public class ImGatewayService {
 
     private void appendPriorityLegend(StringBuilder builder, TodoPriorityPolicy policy) {
         builder.append("\n").append(policy.legend()).append("\n");
+    }
+
+    private void appendPolicyPreview(StringBuilder builder, TodoPriorityPolicy policy) {
+        builder.append("当前待办策略：P1>= ")
+                .append(policy.p1Threshold())
+                .append("，P2>= ")
+                .append(policy.p2Threshold())
+                .append("；P1=")
+                .append(policy.p1Window())
+                .append("，P2=")
+                .append(policy.p2Window())
+                .append("，P3=")
+                .append(policy.p3Window())
+                .append("。\n");
     }
 
     private void appendBucket(StringBuilder builder, String title, List<String> items, TodoPriorityPolicy policy) {

@@ -38,6 +38,14 @@ class CommandNluParserTest {
     }
 
     @Test
+    void shouldMapNaturalLanguageToTodoPolicyCommands() {
+        assertEquals("/todo policy show", parser.resolveNaturalLanguageCommand("查看待办策略"));
+        assertEquals("/todo policy reset", parser.resolveNaturalLanguageCommand("恢复待办策略默认"));
+        assertEquals("/todo policy set --p1-threshold 60 --p2-threshold 30",
+                parser.resolveNaturalLanguageCommand("把待办策略改一下，p1 改为 60，p2 设为 30"));
+    }
+
+    @Test
     void shouldMapNaturalLanguageToMemoryCompressionAndStyleCommands() {
         assertEquals("/memory compress --source 明天先整理目标，再拆任务",
                 parser.resolveNaturalLanguageCommand("按我的风格压缩这段记忆：明天先整理目标，再拆任务"));
