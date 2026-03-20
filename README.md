@@ -91,6 +91,7 @@ Chat 与记忆操作：
 - `把用户改为 dev-user` -> `/user dev-user`
 - `把模型切换到 openai` / `取消模型覆盖` -> `/provider openai` / `/provider default`
 - `查看我的记忆风格` / `把记忆风格改成 action，语气 warm，格式 bullet` -> `/memory style show` / `/memory style set ...`
+- `请帮我做心理分析，我和同事沟通卡住了，用职场版，优先级聚焦 p1` -> `/eq coach --query ... --style workplace --mode analysis --priority-focus p1`
 
 网络与扩展接入（通常用于高级/排障场景）：
 - `把服务地址换成 http://localhost:18080` -> `/server http://localhost:18080`（需确认）
@@ -128,6 +129,7 @@ Chat 与记忆操作：
 /memory style show
 /memory style set --style-name action --tone warm --output-format bullet
 /memory compress --source 这周先整理目标，再拆任务
+/eq coach --query 我最近和同事沟通卡住了 --style workplace --mode both --priority-focus p1
 /exit
 ```
 
@@ -229,6 +231,11 @@ curl -X POST http://localhost:8080/api/skills/load-mcp \
   - `mindos.memory.key-signal.contact-terms`
   - examples: `-Dmindos.memory.key-signal.constraint-terms=必须,禁止,不要,不可`.
 - Memory NLU synonyms for style/compress intents are configurable via JVM system properties (`-Dmindos.memory.nlu.*`); values are comma-separated terms and normalize to canonical values used by API/CLI (`focus`: `task|learning|review`, `style`: `action|coach|story|concise`, `tone`: `warm|direct|neutral`, `format`: `bullet|plain`).
+- `eq.coach` supports optional output controls: `style` (`gentle|direct|workplace|intimate`), `mode` (`analysis|reply|both`), `priorityFocus` (`p1|p2|p3`).
+- `eq.coach` risk terms are configurable via JVM properties (comma-separated):
+  - `mindos.eq.coach.risk.high-terms`
+  - `mindos.eq.coach.risk.medium-terms`
+  - example: `-Dmindos.eq.coach.risk.high-terms=离婚,分手,崩溃,绝望,失眠 -Dmindos.eq.coach.risk.medium-terms=冲突,冷战,争执,焦虑,拖延`
 - MCP servers support both internal services and third-party services (for example, GitHub MCP) through `/api/skills/load-mcp`; optional `headers` can be provided for per-server authentication.
   - focus keys:
     - `mindos.memory.nlu.focus.task-terms`

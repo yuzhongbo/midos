@@ -140,6 +140,18 @@ class CommandNluParserTest {
                 "/eq coach --query 请给我高情商建议，先分析再给 --mode both",
                 parser.resolveNaturalLanguageCommand("请给我高情商建议，先分析再给话术，模式设为 both")
         );
+        assertEquals(
+                "/eq coach --query 请给我高情商建议，和同事沟通卡住了 --priority-focus p1",
+                parser.resolveNaturalLanguageCommand("请给我高情商建议，和同事沟通卡住了，优先级聚焦 p1")
+        );
+        assertEquals(
+                "/eq coach --query 请给我高情商建议，和主管沟通失焦了 --priority-focus p1",
+                parser.resolveNaturalLanguageCommand("请给我高情商建议，和主管沟通失焦了，先做最高优先级")
+        );
+        assertEquals(
+                "/eq coach --query 请给我高情商建议，我想稳住推进节奏 --priority-focus p2",
+                parser.resolveNaturalLanguageCommand("请给我高情商建议，我想稳住推进节奏，先看次优先")
+        );
     }
 
     @Test

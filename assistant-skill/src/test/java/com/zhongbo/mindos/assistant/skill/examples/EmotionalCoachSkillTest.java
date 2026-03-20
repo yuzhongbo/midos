@@ -121,5 +121,20 @@ class EmotionalCoachSkillTest {
             }
         }
     }
+
+    @Test
+    void shouldSupportPriorityFocusOption() {
+        SkillResult focused = skill.run(new SkillContext(
+                "u1",
+                "",
+                java.util.Map.of("query", "我和同事沟通冲突升级", "priorityFocus", "p1")
+        ));
+
+        assertTrue(focused.success());
+        assertTrue(focused.output().contains("建议优先级（已聚焦 P1）"));
+        assertTrue(focused.output().contains("- P1:"));
+        assertFalse(focused.output().contains("- P2:"));
+        assertFalse(focused.output().contains("- P3:"));
+    }
 }
 

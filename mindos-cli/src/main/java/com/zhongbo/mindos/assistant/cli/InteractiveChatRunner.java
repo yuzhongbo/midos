@@ -381,7 +381,7 @@ class InteractiveChatRunner {
         out.println("  /todo policy set --p1-threshold N --p2-threshold N [--window-p1 文案 --window-p2 文案 --window-p3 文案 --legend 文案]");
         out.println("  /todo policy reset                      恢复当前会话待办策略默认值");
         out.println("  /teach plan [--query 文本]              生成教学规划（自动转 teaching.plan skill）");
-        out.println("  /eq coach [--query 文本] [--style gentle|direct|workplace|intimate] [--mode analysis|reply|both]  生成高情商沟通建议");
+        out.println("  /eq coach [--query 文本] [--style gentle|direct|workplace|intimate] [--mode analysis|reply|both] [--priority-focus p1|p2|p3]  生成高情商沟通建议");
         out.println(ANSI.string("@|bold,cyan [Shortcuts]|@"));
         out.println("  自然语言指令示例                          我有哪些技能 / 帮我拉取记忆 / 加载jar https://...");
         out.println("  重要命令会二次确认                        例如重置配置、加载外部技能、切换 server");
@@ -677,11 +677,21 @@ class InteractiveChatRunner {
                                     CliChatService chatService,
                                     BufferedReader reader,
                                     SessionState sessionState) {
-        if (!input.startsWith("/eq coach")) {
+        if (!input.startsWith("/eq ")) {
             return false;
+        }
+        if (!input.startsWith("/eq coach")) {
+            printError(out, "用法：/eq coach --query 场景 [--style gentle|direct|workplace|intimate] [--mode analysis|reply|both] [--priority-focus p1|p2|p3]");
+            return true;
         }
 
         Map<String, String> parsed = parseOptionPairs(input.substring("/eq coach".length()).trim());
+        for (String key : parsed.keySet()) {
+            if (!List.of("query", "style", "mode", "priority-focus", "priorityFocus").contains(key)) {
+                printError(out, "不支持的参数 --" + key + "。仅支持 query/style/mode/priority-focus。");
+                return true;
+            }
+        }
         String query = parsed.get("query");
         if (query == null || query.isBlank()) {
             query = promptForMemoryValue(out, reader, "请输入沟通场景", null, false);
@@ -690,16 +700,40 @@ class InteractiveChatRunner {
                 return true;
             }
         }
+        query = query.trim();
+        if (query.isBlank()) {
+            printError(out, "query 不能为空。请提供具体场景。");
+            return true;
+        }
 
         Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("query", query.trim());
-        String style = parsed.get("style");
-        if (style != null && !style.isBlank()) {
-            payload.put("style", style.trim());
+        payload.put("query", query);
+        String rawStyle = parsed.get("style");
+        String style = normalizeEqStyleValue(rawStyle);
+        if (rawStyle != null && !rawStyle.isBlank() && style == null) {
+            printError(out, "style 非法：" + rawStyle + "。可选值：gentle|direct|workplace|intimate");
+            return true;
         }
-        String mode = parsed.get("mode");
+        if (style != null && !style.isBlank()) {
+            payload.put("style", style);
+        }
+        String rawMode = parsed.get("mode");
+        String mode = normalizeEqModeValue(rawMode);
+        if (rawMode != null && !rawMode.isBlank() && mode == null) {
+            printError(out, "mode 非法：" + rawMode + "。可选值：analysis|reply|both");
+            return true;
+        }
         if (mode != null && !mode.isBlank()) {
-            payload.put("mode", mode.trim());
+            payload.put("mode", mode);
+        }
+        String priorityRaw = parsed.containsKey("priority-focus") ? parsed.get("priority-focus") : parsed.get("priorityFocus");
+        String priorityFocus = normalizeEqPriorityFocusValue(priorityRaw);
+        if (priorityRaw != null && !priorityRaw.isBlank() && priorityFocus == null) {
+            printError(out, "priority-focus 非法：" + priorityRaw + "。可选值：p1|p2|p3");
+            return true;
+        }
+        if (priorityFocus != null && !priorityFocus.isBlank()) {
+            payload.put("priorityFocus", priorityFocus);
         }
 
         String dslMessage = buildSkillDslJson("eq.coach", payload);
@@ -1984,6 +2018,63 @@ class InteractiveChatRunner {
         } catch (NumberFormatException ex) {
             return defaultValue;
         }
+    }
+
+    private String normalizeEqStyleValue(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        String normalized = raw.trim().toLowerCase();
+        if (normalized.contains("gentle") || normalized.contains("温和")) {
+            return "gentle";
+        }
+        if (normalized.contains("direct") || normalized.contains("直接")) {
+            return "direct";
+        }
+        if (normalized.contains("work") || normalized.contains("职场")) {
+            return "workplace";
+        }
+        if (normalized.contains("intimate") || normalized.contains("亲密") || normalized.contains("关系")) {
+            return "intimate";
+        }
+        return null;
+    }
+
+    private String normalizeEqModeValue(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        String normalized = raw.trim().toLowerCase();
+        if (normalized.contains("analysis") || normalized.contains("分析")) {
+            return "analysis";
+        }
+        if (normalized.contains("reply") || normalized.contains("回复") || normalized.contains("话术")) {
+            return "reply";
+        }
+        if (normalized.contains("both") || normalized.contains("都要") || normalized.contains("完整")) {
+            return "both";
+        }
+        return null;
+    }
+
+    private String normalizeEqPriorityFocusValue(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        String normalized = raw.trim().toLowerCase();
+        if (normalized.contains("p1") || normalized.contains("1") || normalized.contains("一级")
+                || normalized.contains("最高") || normalized.contains("紧急")) {
+            return "p1";
+        }
+        if (normalized.contains("p2") || normalized.contains("2") || normalized.contains("二级")
+                || normalized.contains("次优先") || normalized.contains("中优先")) {
+            return "p2";
+        }
+        if (normalized.contains("p3") || normalized.contains("3") || normalized.contains("三级")
+                || normalized.contains("低优先") || normalized.contains("后续")) {
+            return "p3";
+        }
+        return null;
     }
 
     private static final class SessionState {

@@ -65,6 +65,7 @@ public class EmotionalCoachSkill implements Skill {
         String style = normalizeStyle(context.attributes().get("style"));
         String styleLabel = STYLE_LABELS.getOrDefault(style, "温和版");
         String mode = normalizeMode(context.attributes().get("mode"));
+        String priorityFocus = normalizePriorityFocus(context.attributes().get("priorityFocus"));
         String riskLevel = assessRiskLevel(scenario);
         int confidence = estimateConfidence(scenario);
 
@@ -79,8 +80,8 @@ public class EmotionalCoachSkill implements Skill {
         if (!"reply".equals(mode)) {
             output.append(buildAnalysisBlock(scenario));
         }
-        output.append(buildPrioritySection(riskLevel));
-        output.append(build24HourChecklist(riskLevel));
+        output.append(buildPrioritySection(riskLevel, priorityFocus));
+        output.append(build24HourChecklist(riskLevel, priorityFocus));
 
         return SkillResult.success(name(), output.toString());
     }
@@ -258,23 +259,62 @@ public class EmotionalCoachSkill implements Skill {
         return Math.min(score, 92);
     }
 
-    private String buildPrioritySection(String riskLevel) {
+    private String normalizePriorityFocus(Object rawFocus) {
+        if (rawFocus == null) {
+            return null;
+        }
+        String focus = String.valueOf(rawFocus).trim().toLowerCase(Locale.ROOT);
+        if (focus.isBlank()) {
+            return null;
+        }
+        if (focus.contains("1") || focus.contains("p1") || focus.contains("一级")) {
+            return "p1";
+        }
+        if (focus.contains("2") || focus.contains("p2") || focus.contains("二级")) {
+            return "p2";
+        }
+        if (focus.contains("3") || focus.contains("p3") || focus.contains("三级")) {
+            return "p3";
+        }
+        return null;
+    }
+
+    private String buildPrioritySection(String riskLevel, String priorityFocus) {
         String p1Focus = "高".equals(riskLevel) ? "先止损，避免冲突升级" : "先完成关键对齐";
         String p2Focus = "高".equals(riskLevel) ? "补全事实与边界" : "补充信息与反馈";
         String p3Focus = "高".equals(riskLevel) ? "复盘触发因素" : "优化后续节奏";
+        if ("p1".equals(priorityFocus)) {
+            return "建议优先级（已聚焦 P1）\n"
+                    + "- P1: " + p1Focus + "\n\n";
+        }
+        if ("p2".equals(priorityFocus)) {
+            return "建议优先级（已聚焦 P2）\n"
+                    + "- P2: " + p2Focus + "\n\n";
+        }
+        if ("p3".equals(priorityFocus)) {
+            return "建议优先级（已聚焦 P3）\n"
+                    + "- P3: " + p3Focus + "\n\n";
+        }
         return "建议优先级\n"
                 + "- P1: " + p1Focus + "\n"
                 + "- P2: " + p2Focus + "\n"
                 + "- P3: " + p3Focus + "\n\n";
     }
 
-    private String build24HourChecklist(String riskLevel) {
+    private String build24HourChecklist(String riskLevel, String priorityFocus) {
         String syncWindow = "高".equals(riskLevel) ? "2小时内" : "今天内";
+        String focusedAction = switch (priorityFocus == null ? "" : priorityFocus) {
+            case "p1" -> "优先完成 P1：先止损并明确最关键的一步沟通动作。";
+            case "p2" -> "优先完成 P2：补齐事实与边界，避免误判。";
+            case "p3" -> "优先完成 P3：做一轮复盘，优化后续节奏。";
+            default -> "按 P1->P2->P3 顺序推进，避免同时开太多线程。";
+        };
         return "24小时行动清单\n"
                 + "1) 写下事实与目标（5分钟），只保留可验证信息。\n"
                 + "2) 用“事实-感受-请求”发出第一条消息（10分钟）。\n"
                 + "3) 在" + syncWindow + "约一个简短同步，确认下一步分工。\n"
-                + "4) 同步后复盘一次：哪些表达有效，哪些需要调整。\n\n";
+                + "4) 同步后复盘一次：哪些表达有效，哪些需要调整。\n"
+                + "5) " + focusedAction + "\n\n";
     }
 }
 

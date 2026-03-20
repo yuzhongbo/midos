@@ -878,7 +878,7 @@ class MindosCliApplicationTest {
             int port = server.getAddress().getPort();
 
             CommandOutputResult result = executeInteractiveWithOut(
-                    "请帮我做心理分析，我和同事协作卡住了，用职场版\n"
+                    "请帮我做心理分析，我和同事协作卡住了，用职场版，优先级聚焦 p1\n"
                             + "/exit\n",
                     "--server", "http://127.0.0.1:" + port,
                     "--user", "cli-user"
@@ -894,6 +894,40 @@ class MindosCliApplicationTest {
             assertTrue(requestBody.contains("\\\"query\\\":"));
             assertTrue(requestBody.contains("\\\"style\\\":\\\"workplace\\\""));
             assertTrue(requestBody.contains("\\\"mode\\\":\\\"analysis\\\""));
+            assertTrue(requestBody.contains("\\\"priorityFocus\\\":\\\"p1\\\""));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void shouldRejectUnsupportedEqCoachOption() throws IOException {
+        java.util.concurrent.atomic.AtomicInteger chatCalls = new java.util.concurrent.atomic.AtomicInteger(0);
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/chat", exchange -> {
+            chatCalls.incrementAndGet();
+            byte[] response = "{\"reply\":\"coach ok\",\"channel\":\"eq.coach\"}".getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+
+        try {
+            server.start();
+            int port = server.getAddress().getPort();
+
+            CommandOutputResult result = executeInteractiveWithOut(
+                    "/eq coach --query 我需要沟通建议 --oops bad\n"
+                            + "/exit\n",
+                    "--server", "http://127.0.0.1:" + port,
+                    "--user", "cli-user"
+            );
+
+            String console = result.stdout();
+            assertEquals(0, result.exitCode());
+            assertTrue(console.contains("不支持的参数 --oops"));
+            assertEquals(0, chatCalls.get());
         } finally {
             server.stop(0);
         }

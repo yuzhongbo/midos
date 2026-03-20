@@ -58,6 +58,7 @@ class CommandNluParser {
     private static final Pattern TEACHING_CONSTRAINTS_PATTERN = Pattern.compile("(?:约束|限制|不可用时段)\\s*[:：]?\\s*([^，。；;\\n]+)");
     private static final Pattern EQ_STYLE_PATTERN = Pattern.compile("(?:风格|语气|版本|style)\\s*(?:改为|设为|设置为|用|使用|=|:)\\s*([^,，。；;\\n]+)", Pattern.CASE_INSENSITIVE);
     private static final Pattern EQ_MODE_PATTERN = Pattern.compile("(?:模式|mode)\\s*(?:改为|设为|设置为|用|使用|=|:)\\s*([^,，。；;\\n]+)", Pattern.CASE_INSENSITIVE);
+    private static final Pattern EQ_PRIORITY_FOCUS_PATTERN = Pattern.compile("(?:优先级聚焦|priority\\s*focus|focus)\\s*(?:改为|设为|设置为|用|使用|=|:)\\s*([^,，。；;\\n]+)", Pattern.CASE_INSENSITIVE);
 
     String resolveNaturalLanguageCommand(String input) {
         if (input == null || input.isBlank()) {
@@ -513,6 +514,7 @@ class CommandNluParser {
             style = normalizeEqStyle(null, normalized);
         }
         String mode = normalizeEqMode(extractByPattern(input, EQ_MODE_PATTERN), normalized);
+        String priorityFocus = normalizeEqPriorityFocus(extractByPattern(input, EQ_PRIORITY_FOCUS_PATTERN), normalized);
         query = sanitizeEqQuery(query);
         StringBuilder command = new StringBuilder("/eq coach --query ").append(query);
         if (style != null) {
@@ -520,6 +522,9 @@ class CommandNluParser {
         }
         if (mode != null) {
             command.append(" --mode ").append(mode);
+        }
+        if (priorityFocus != null) {
+            command.append(" --priority-focus ").append(priorityFocus);
         }
         return command.toString();
     }
@@ -565,6 +570,40 @@ class CommandNluParser {
         return null;
     }
 
+    private String normalizeEqPriorityFocus(String explicitFocus, String normalizedInput) {
+        String raw = explicitFocus == null ? normalizedInput : explicitFocus.toLowerCase();
+        if (raw == null) {
+            return null;
+        }
+        if (raw.contains("p1")
+                || raw.contains("优先级1")
+                || raw.contains("一级优先")
+                || raw.contains("先看p1")
+                || raw.contains("最高优先")
+                || raw.contains("最紧急")
+                || raw.contains("highest priority")
+                || raw.contains("critical")) {
+            return "p1";
+        }
+        if (raw.contains("p2")
+                || raw.contains("优先级2")
+                || raw.contains("二级优先")
+                || raw.contains("先看p2")
+                || raw.contains("次优先")
+                || raw.contains("中优先")) {
+            return "p2";
+        }
+        if (raw.contains("p3")
+                || raw.contains("优先级3")
+                || raw.contains("三级优先")
+                || raw.contains("先看p3")
+                || raw.contains("低优先")
+                || raw.contains("后续优先")) {
+            return "p3";
+        }
+        return null;
+    }
+
     private String sanitizeEqQuery(String query) {
         if (query == null || query.isBlank()) {
             return "";
@@ -574,6 +613,8 @@ class CommandNluParser {
         cleaned = cleaned.replaceAll("(?:，|,)?\\s*(?:用|使用)?\\s*(?:温和版|直接版|职场版|亲密关系版|gentle|direct|workplace|intimate)\\s*$", "");
         cleaned = cleaned.replaceAll("(?:，|,)?\\s*(?:模式|mode)\\s*(?:改为|设为|设置为|用|使用|=|:)?\\s*(?:analysis|reply|both|分析|回复|都要|都给|完整)\\s*$", "");
         cleaned = cleaned.replaceAll("(?:，|,)?\\s*(?:只做|只要|仅)?\\s*(?:分析|回复|话术|analysis|reply|both|都要|都给|完整)\\s*$", "");
+        cleaned = cleaned.replaceAll("(?:，|,)?\\s*(?:优先级聚焦|priority\\s*focus|focus)\\s*(?:改为|设为|设置为|用|使用|=|:)?\\s*(?:p1|p2|p3|优先级1|优先级2|优先级3|一级优先|二级优先|三级优先)\\s*$", "");
+        cleaned = cleaned.replaceAll("(?:，|,)?\\s*(?:先看|优先看|先做|先处理)?\\s*(?:p1|p2|p3|优先级1|优先级2|优先级3|一级优先|二级优先|三级优先|最高优先级|最紧急|次优先|中优先|低优先|后续优先)\\s*$", "");
         return cleaned.trim();
     }
 
