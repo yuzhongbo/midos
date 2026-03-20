@@ -244,6 +244,47 @@ class AssistantSdkClientTest {
     }
 
     @Test
+    void shouldLoadMcpServerWithHeaders() throws IOException {
+        AtomicReference<String> pathRef = new AtomicReference<>("");
+        AtomicReference<String> bodyRef = new AtomicReference<>("");
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/api/skills", exchange -> {
+            pathRef.set(exchange.getRequestURI().toString());
+            bodyRef.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            byte[] response = ("{" +
+                    "\"loaded\":1," +
+                    "\"alias\":\"github\"," +
+                    "\"url\":\"https://example.com/mcp\"," +
+                    "\"headersApplied\":1," +
+                    "\"status\":\"ok\"" +
+                    "}").getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+
+        try {
+            server.start();
+            AssistantSdkClient client = new AssistantSdkClient(URI.create("http://127.0.0.1:" + server.getAddress().getPort()));
+            java.util.Map<String, Object> response = client.loadMcpServer(
+                    "github",
+                    "https://example.com/mcp",
+                    java.util.Map.of("Authorization", "Bearer token")
+            );
+
+            assertEquals("/api/skills/load-mcp", pathRef.get());
+            assertTrue(bodyRef.get().contains("\"alias\":\"github\""));
+            assertTrue(bodyRef.get().contains("\"headers\":{"));
+            assertTrue(bodyRef.get().contains("\"Authorization\":\"Bearer token\""));
+            assertEquals(1, response.get("loaded"));
+            assertEquals("ok", response.get("status"));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
     void shouldLoadExternalJar() throws IOException {
         AtomicReference<String> pathRef = new AtomicReference<>("");
         AtomicReference<String> bodyRef = new AtomicReference<>("");

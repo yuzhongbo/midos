@@ -381,6 +381,7 @@ class InteractiveChatRunner {
         out.println("  /todo policy set --p1-threshold N --p2-threshold N [--window-p1 文案 --window-p2 文案 --window-p3 文案 --legend 文案]");
         out.println("  /todo policy reset                      恢复当前会话待办策略默认值");
         out.println("  /teach plan [--query 文本]              生成教学规划（自动转 teaching.plan skill）");
+        out.println("  /eq coach [--query 文本] [--style gentle|direct|workplace|intimate] [--mode analysis|reply|both]  生成高情商沟通建议");
         out.println(ANSI.string("@|bold,cyan [Shortcuts]|@"));
         out.println("  自然语言指令示例                          我有哪些技能 / 帮我拉取记忆 / 加载jar https://...");
         out.println("  重要命令会二次确认                        例如重置配置、加载外部技能、切换 server");
@@ -399,6 +400,7 @@ class InteractiveChatRunner {
     private void printQuickHelp(PrintWriter out) {
         out.println("自然语言使用指南:");
         out.println("  你可以直接说：我有哪些技能 / 帮我拉取记忆 / 给学生做学习计划");
+        out.println("  你可以直接说：高情商回复这个场景：...（自动路由到 eq.coach）");
         out.println("  你可以直接说：打开排障模式 / 关闭排障模式");
         out.println("  你可以直接说：查看会话信息 / 重试刚才那条 / 清空窗口");
         out.println("  你可以直接说：退出 / 结束");
@@ -497,6 +499,10 @@ class InteractiveChatRunner {
 
         if (input.startsWith("/teach")) {
             return handleTeachCommand(input, out, chatService, reader, sessionState);
+        }
+
+        if (input.startsWith("/eq")) {
+            return handleEqCommand(input, out, chatService, reader, sessionState);
         }
 
         if (input.startsWith("/memory")) {
@@ -661,6 +667,50 @@ class InteractiveChatRunner {
             printAssistantReply(out, response);
         } catch (AssistantSdkException ex) {
             printError(out, "teaching.plan 执行失败(status=" + ex.statusCode()
+                    + ", code=" + ex.errorCode() + "): " + ex.getMessage());
+        }
+        return true;
+    }
+
+    private boolean handleEqCommand(String input,
+                                    PrintWriter out,
+                                    CliChatService chatService,
+                                    BufferedReader reader,
+                                    SessionState sessionState) {
+        if (!input.startsWith("/eq coach")) {
+            return false;
+        }
+
+        Map<String, String> parsed = parseOptionPairs(input.substring("/eq coach".length()).trim());
+        String query = parsed.get("query");
+        if (query == null || query.isBlank()) {
+            query = promptForMemoryValue(out, reader, "请输入沟通场景", null, false);
+            if (query == null || query.isBlank()) {
+                printInfo(out, "已取消情商沟通建议生成。");
+                return true;
+            }
+        }
+
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("query", query.trim());
+        String style = parsed.get("style");
+        if (style != null && !style.isBlank()) {
+            payload.put("style", style.trim());
+        }
+        String mode = parsed.get("mode");
+        if (mode != null && !mode.isBlank()) {
+            payload.put("mode", mode.trim());
+        }
+
+        String dslMessage = buildSkillDslJson("eq.coach", payload);
+        try {
+            ChatResponseDto response = chatService.sendMessage(dslMessage);
+            sessionState.lastUserMessage = query;
+            sessionState.localTurns.add("你> " + query + " (eq-coach)");
+            sessionState.localTurns.add("助手[" + response.channel() + "]> " + response.reply());
+            printAssistantReply(out, response);
+        } catch (AssistantSdkException ex) {
+            printError(out, "eq.coach 执行失败(status=" + ex.statusCode()
                     + ", code=" + ex.errorCode() + "): " + ex.getMessage());
         }
         return true;

@@ -123,6 +123,26 @@ class CommandNluParserTest {
     }
 
     @Test
+    void shouldMapNaturalLanguageToEqCoachCommand() {
+        assertEquals(
+                "/eq coach --query 请给我高情商沟通建议，场景是和同事协作卡住了 --style workplace",
+                parser.resolveNaturalLanguageCommand("请给我高情商沟通建议，场景是和同事协作卡住了，用职场版")
+        );
+        assertEquals(
+                "/eq coach --query 我该怎么说比较好 --style direct",
+                parser.resolveNaturalLanguageCommand("我该怎么说比较好，风格直接版")
+        );
+        assertEquals(
+                "/eq coach --query 请帮我做心理分析：我和朋友因为沟通误会冷战了 --mode analysis",
+                parser.resolveNaturalLanguageCommand("请帮我做心理分析：我和朋友因为沟通误会冷战了")
+        );
+        assertEquals(
+                "/eq coach --query 请给我高情商建议，先分析再给 --mode both",
+                parser.resolveNaturalLanguageCommand("请给我高情商建议，先分析再给话术，模式设为 both")
+        );
+    }
+
+    @Test
     void shouldExtractTeachingPlanPayloadFromQuery() {
         var payload = parser.parseTeachingPlanInput("给学生 stu-1 做一个数学学习计划，目标是期末提分，六周，每周八小时，薄弱点函数、概率，学习风格练习优先");
         assertEquals("stu-1", payload.get("studentId"));

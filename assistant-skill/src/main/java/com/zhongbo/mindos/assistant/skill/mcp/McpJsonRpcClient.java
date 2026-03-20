@@ -40,15 +40,23 @@ public class McpJsonRpcClient {
     }
 
     public void initialize(String serverUrl) {
+        initialize(serverUrl, Map.of());
+    }
+
+    public void initialize(String serverUrl, Map<String, String> headers) {
         invoke(serverUrl, "initialize", Map.of(
                 "protocolVersion", "2024-11-05",
                 "capabilities", Map.of(),
                 "clientInfo", Map.of("name", "MindOS", "version", "0.1.0")
-        ));
+        ), headers);
     }
 
     public List<McpToolDefinition> listTools(String serverAlias, String serverUrl) {
-        Map<String, Object> result = invoke(serverUrl, "tools/list", Map.of());
+        return listTools(serverAlias, serverUrl, Map.of());
+    }
+
+    public List<McpToolDefinition> listTools(String serverAlias, String serverUrl, Map<String, String> headers) {
+        Map<String, Object> result = invoke(serverUrl, "tools/list", Map.of(), headers);
         Object rawTools = result.get("tools");
         if (!(rawTools instanceof List<?> tools)) {
             return List.of();
@@ -66,20 +74,30 @@ public class McpJsonRpcClient {
             }
             Object rawDescription = rawTool.containsKey("description") ? rawTool.get("description") : "";
             String description = String.valueOf(rawDescription).trim();
-            mapped.add(new McpToolDefinition(serverAlias, serverUrl, name, description));
+            mapped.add(new McpToolDefinition(serverAlias, serverUrl, name, description, headers));
         }
         return List.copyOf(mapped);
     }
 
     public String callTool(String serverUrl, String toolName, Map<String, Object> arguments) {
+        return callTool(serverUrl, toolName, arguments, Map.of());
+    }
+
+    public String callTool(String serverUrl,
+                           String toolName,
+                           Map<String, Object> arguments,
+                           Map<String, String> headers) {
         Map<String, Object> result = invoke(serverUrl, "tools/call", Map.of(
                 "name", toolName,
                 "arguments", arguments == null ? Map.of() : arguments
-        ));
+        ), headers);
         return renderResult(result);
     }
 
-    private Map<String, Object> invoke(String serverUrl, String method, Map<String, Object> params) {
+    private Map<String, Object> invoke(String serverUrl,
+                                       String method,
+                                       Map<String, Object> params,
+                                       Map<String, String> headers) {
         try {
             String requestBody = objectMapper.writeValueAsString(Map.of(
                     "jsonrpc", "2.0",
@@ -88,11 +106,23 @@ public class McpJsonRpcClient {
                     "params", params == null ? Map.of() : params
             ));
 
-            HttpRequest request = HttpRequest.newBuilder(URI.create(serverUrl))
+            HttpRequest.Builder requestBuilder = HttpRequest.newBuilder(URI.create(serverUrl))
                     .header("Content-Type", "application/json")
                     .header("Accept", "application/json")
-                    .POST(HttpRequest.BodyPublishers.ofString(requestBody))
-                    .build();
+                    .POST(HttpRequest.BodyPublishers.ofString(requestBody));
+
+            if (headers != null && !headers.isEmpty()) {
+                for (Map.Entry<String, String> header : headers.entrySet()) {
+                    if (header.getKey() == null || header.getKey().isBlank()) {
+                        continue;
+                    }
+                    if (header.getValue() == null || header.getValue().isBlank()) {
+                        continue;
+                    }
+                    requestBuilder.header(header.getKey().trim(), header.getValue().trim());
+                }
+            }
+            HttpRequest request = requestBuilder.build();
 
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
             if (response.statusCode() < 200 || response.statusCode() >= 300) {

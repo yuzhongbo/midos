@@ -11,6 +11,7 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -29,11 +30,24 @@ class McpJsonRpcClientTest {
 
     @Test
     void shouldInitializeListToolsAndCallTool() throws Exception {
+        AtomicBoolean initializeHeaderSeen = new AtomicBoolean(false);
+        AtomicBoolean listHeaderSeen = new AtomicBoolean(false);
+        AtomicBoolean callHeaderSeen = new AtomicBoolean(false);
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/mcp", exchange -> {
             Map<String, Object> request = objectMapper.readValue(
                     exchange.getRequestBody().readAllBytes(), new TypeReference<>() {});
             String method = String.valueOf(request.get("method"));
+            String auth = exchange.getRequestHeaders().getFirst("Authorization");
+            if ("initialize".equals(method)) {
+                initializeHeaderSeen.set("Bearer test-token".equals(auth));
+            }
+            if ("tools/list".equals(method)) {
+                listHeaderSeen.set("Bearer test-token".equals(auth));
+            }
+            if ("tools/call".equals(method)) {
+                callHeaderSeen.set("Bearer test-token".equals(auth));
+            }
             byte[] response = switch (method) {
                 case "initialize" -> json(Map.of(
                         "jsonrpc", "2.0",
@@ -67,15 +81,20 @@ class McpJsonRpcClientTest {
 
         String baseUrl = "http://127.0.0.1:" + server.getAddress().getPort() + "/mcp";
         McpJsonRpcClient client = new McpJsonRpcClient();
+        Map<String, String> headers = Map.of("Authorization", "Bearer test-token");
 
-        client.initialize(baseUrl);
-        List<McpToolDefinition> tools = client.listTools("docs", baseUrl);
-        String output = client.callTool(baseUrl, "weather", Map.of("city", "Shanghai"));
+        client.initialize(baseUrl, headers);
+        List<McpToolDefinition> tools = client.listTools("docs", baseUrl, headers);
+        String output = client.callTool(baseUrl, "weather", Map.of("city", "Shanghai"), headers);
 
         assertEquals(1, tools.size());
         assertEquals("mcp.docs.weather", tools.get(0).skillName());
         assertEquals("Lookup weather", tools.get(0).description());
+        assertEquals("Bearer test-token", tools.get(0).headers().get("Authorization"));
         assertEquals("sunny", output);
+        assertTrue(initializeHeaderSeen.get());
+        assertTrue(listHeaderSeen.get());
+        assertTrue(callHeaderSeen.get());
     }
 
     private byte[] json(Map<String, Object> value) throws IOException {

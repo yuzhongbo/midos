@@ -56,6 +56,8 @@ class CommandNluParser {
     private static final Pattern TEACHING_STRONG_TOPICS_PATTERN = Pattern.compile("(?:优势项|擅长|强项)\\s*[:：]?\\s*([^，。；;\\n]+)");
     private static final Pattern TEACHING_STYLE_PATTERN = Pattern.compile("(?:学习风格|学习方式)\\s*[:：]?\\s*([^，。；;\\n]+)");
     private static final Pattern TEACHING_CONSTRAINTS_PATTERN = Pattern.compile("(?:约束|限制|不可用时段)\\s*[:：]?\\s*([^，。；;\\n]+)");
+    private static final Pattern EQ_STYLE_PATTERN = Pattern.compile("(?:风格|语气|版本|style)\\s*(?:改为|设为|设置为|用|使用|=|:)\\s*([^,，。；;\\n]+)", Pattern.CASE_INSENSITIVE);
+    private static final Pattern EQ_MODE_PATTERN = Pattern.compile("(?:模式|mode)\\s*(?:改为|设为|设置为|用|使用|=|:)\\s*([^,，。；;\\n]+)", Pattern.CASE_INSENSITIVE);
 
     String resolveNaturalLanguageCommand(String input) {
         if (input == null || input.isBlank()) {
@@ -112,6 +114,11 @@ class CommandNluParser {
         String teachingPlanCommand = extractTeachingPlanCommand(input, normalized);
         if (teachingPlanCommand != null) {
             return teachingPlanCommand;
+        }
+
+        String eqCoachCommand = extractEqCoachCommand(input, normalized);
+        if (eqCoachCommand != null) {
+            return eqCoachCommand;
         }
 
         if (containsAny(normalized, "帮助", "命令", "怎么用", "help")) {
@@ -480,6 +487,94 @@ class CommandNluParser {
             return "/teach plan";
         }
         return "/teach plan --query " + query;
+    }
+
+    private String extractEqCoachCommand(String input, String normalized) {
+        if (!containsAny(normalized,
+                "高情商",
+                "情商",
+                "沟通建议",
+                "沟通攻略",
+                "心理分析",
+                "事情分析",
+                "分析这件事",
+                "怎么说",
+                "eq coach",
+                "eq.coach")) {
+            return null;
+        }
+        String query = input == null ? "" : input.replaceAll("[\\r\\n\\t]+", " ").replace("--", " ").trim();
+        if (query.isBlank()) {
+            return "/eq coach";
+        }
+
+        String style = normalizeEqStyle(extractByPattern(input, EQ_STYLE_PATTERN), normalized);
+        if (style == null) {
+            style = normalizeEqStyle(null, normalized);
+        }
+        String mode = normalizeEqMode(extractByPattern(input, EQ_MODE_PATTERN), normalized);
+        query = sanitizeEqQuery(query);
+        StringBuilder command = new StringBuilder("/eq coach --query ").append(query);
+        if (style != null) {
+            command.append(" --style ").append(style);
+        }
+        if (mode != null) {
+            command.append(" --mode ").append(mode);
+        }
+        return command.toString();
+    }
+
+    private String normalizeEqStyle(String explicitStyle, String normalizedInput) {
+        String raw = explicitStyle == null ? normalizedInput : explicitStyle.toLowerCase();
+        if (raw == null) {
+            return null;
+        }
+        if (raw.contains("温和") || raw.contains("gentle")) {
+            return "gentle";
+        }
+        if (raw.contains("直接") || raw.contains("direct")) {
+            return "direct";
+        }
+        if (raw.contains("职场") || raw.contains("work")) {
+            return "workplace";
+        }
+        if (raw.contains("亲密") || raw.contains("伴侣") || raw.contains("关系") || raw.contains("intimate")) {
+            return "intimate";
+        }
+        return null;
+    }
+
+    private String normalizeEqMode(String explicitMode, String normalizedInput) {
+        String raw = explicitMode == null ? normalizedInput : explicitMode.toLowerCase();
+        if (raw == null) {
+            return null;
+        }
+        if (raw.contains("都要")
+                || raw.contains("都给")
+                || raw.contains("完整")
+                || raw.contains("both")
+                || (raw.contains("分析") && raw.contains("回复"))) {
+            return "both";
+        }
+        if (raw.contains("analysis") || raw.contains("只分析") || raw.contains("分析")) {
+            return "analysis";
+        }
+        if (raw.contains("reply") || raw.contains("回复") || raw.contains("话术")) {
+            return "reply";
+        }
+        return null;
+    }
+
+    private String sanitizeEqQuery(String query) {
+        if (query == null || query.isBlank()) {
+            return "";
+        }
+        String cleaned = query;
+        cleaned = cleaned.replaceAll("(?:，|,)?\\s*(?:风格|语气|版本|style)\\s*(?:改为|设为|设置为|用|使用|=|:)?\\s*(?:温和版|直接版|职场版|亲密关系版|gentle|direct|workplace|intimate)\\s*$", "");
+        cleaned = cleaned.replaceAll("(?:，|,)?\\s*(?:用|使用)?\\s*(?:温和版|直接版|职场版|亲密关系版|gentle|direct|workplace|intimate)\\s*$", "");
+        cleaned = cleaned.replaceAll("(?:，|,)?\\s*(?:模式|mode)\\s*(?:改为|设为|设置为|用|使用|=|:)?\\s*(?:analysis|reply|both|分析|回复|都要|都给|完整)\\s*$", "");
+        cleaned = cleaned.replaceAll("(?:，|,)?\\s*(?:只做|只要|仅)?\\s*(?:分析|回复|话术|analysis|reply|both|都要|都给|完整)\\s*$", "");
+        return cleaned.trim();
     }
 
     private String extractTeachingTopic(String input) {

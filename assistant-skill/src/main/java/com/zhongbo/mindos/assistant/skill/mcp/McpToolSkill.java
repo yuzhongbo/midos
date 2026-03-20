@@ -73,7 +73,12 @@ public class McpToolSkill implements Skill {
             if (!arguments.containsKey("input") && context.input() != null && !context.input().isBlank()) {
                 arguments.put("input", context.input());
             }
-            String output = mcpClient.callTool(toolDefinition.serverUrl(), toolDefinition.name(), arguments);
+            String output = mcpClient.callTool(
+                    toolDefinition.serverUrl(),
+                    toolDefinition.name(),
+                    arguments,
+                    toolDefinition.headers()
+            );
             return SkillResult.success(name(), output);
         } catch (RuntimeException ex) {
             return SkillResult.failure(name(), "MCP tool call failed: " + ex.getMessage());

@@ -67,13 +67,18 @@ public class McpSkillLoader {
     }
 
     public int loadServer(String alias, String serverUrl) {
+        return loadServer(alias, serverUrl, Map.of());
+    }
+
+    public int loadServer(String alias, String serverUrl, Map<String, String> headers) {
         if (alias == null || alias.isBlank() || serverUrl == null || serverUrl.isBlank()) {
             return 0;
         }
         try {
             String normalizedAlias = normalizeAlias(alias);
-            mcpClient.initialize(serverUrl);
-            List<McpToolDefinition> tools = mcpClient.listTools(normalizedAlias, serverUrl);
+            Map<String, String> safeHeaders = headers == null ? Map.of() : Map.copyOf(headers);
+            mcpClient.initialize(serverUrl, safeHeaders);
+            List<McpToolDefinition> tools = mcpClient.listTools(normalizedAlias, serverUrl, safeHeaders);
             for (McpToolDefinition tool : tools) {
                 skillRegistry.register(new McpToolSkill(tool, mcpClient));
                 LOGGER.info("McpSkillLoader: registered MCP tool skill '" + tool.skillName() + "'");

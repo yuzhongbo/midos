@@ -198,6 +198,10 @@ curl -X POST http://localhost:8080/api/skills/reload-mcp
 curl -X POST http://localhost:8080/api/skills/load-mcp \
   -H 'Content-Type: application/json' \
   -d '{"alias":"docs","url":"http://localhost:8081/mcp"}'
+
+curl -X POST http://localhost:8080/api/skills/load-mcp \
+  -H 'Content-Type: application/json' \
+  -d '{"alias":"github","url":"https://example.com/mcp","headers":{"Authorization":"Bearer <token>"}}'
 ```
 
 ## Example response
@@ -225,6 +229,7 @@ curl -X POST http://localhost:8080/api/skills/load-mcp \
   - `mindos.memory.key-signal.contact-terms`
   - examples: `-Dmindos.memory.key-signal.constraint-terms=必须,禁止,不要,不可`.
 - Memory NLU synonyms for style/compress intents are configurable via JVM system properties (`-Dmindos.memory.nlu.*`); values are comma-separated terms and normalize to canonical values used by API/CLI (`focus`: `task|learning|review`, `style`: `action|coach|story|concise`, `tone`: `warm|direct|neutral`, `format`: `bullet|plain`).
+- MCP servers support both internal services and third-party services (for example, GitHub MCP) through `/api/skills/load-mcp`; optional `headers` can be provided for per-server authentication.
   - focus keys:
     - `mindos.memory.nlu.focus.task-terms`
     - `mindos.memory.nlu.focus.learning-terms`

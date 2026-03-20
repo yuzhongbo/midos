@@ -861,6 +861,45 @@ class MindosCliApplicationTest {
     }
 
     @Test
+    void shouldMapNaturalLanguageToEqCoachDslInsideInteractiveMode() throws IOException {
+        AtomicReference<String> requestBodyRef = new AtomicReference<>("");
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/chat", exchange -> {
+            requestBodyRef.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            byte[] response = "{\"reply\":\"coach ok\",\"channel\":\"eq.coach\"}".getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+
+        try {
+            server.start();
+            int port = server.getAddress().getPort();
+
+            CommandOutputResult result = executeInteractiveWithOut(
+                    "请帮我做心理分析，我和同事协作卡住了，用职场版\n"
+                            + "/exit\n",
+                    "--server", "http://127.0.0.1:" + port,
+                    "--user", "cli-user"
+            );
+
+            String console = result.stdout();
+            assertEquals(0, result.exitCode());
+            assertTrue(console.contains("已识别自然语言指令 -> /eq coach --query"));
+            assertTrue(console.contains("助手[eq.coach] coach ok"));
+
+            String requestBody = requestBodyRef.get();
+            assertTrue(requestBody.contains("\\\"skill\\\":\\\"eq.coach\\\""));
+            assertTrue(requestBody.contains("\\\"query\\\":"));
+            assertTrue(requestBody.contains("\\\"style\\\":\\\"workplace\\\""));
+            assertTrue(requestBody.contains("\\\"mode\\\":\\\"analysis\\\""));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
     void shouldFallbackToChatWhenLowConfidenceNaturalLanguageCommandIsDeclined() throws IOException {
         AtomicReference<String> requestBodyRef = new AtomicReference<>("");
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);

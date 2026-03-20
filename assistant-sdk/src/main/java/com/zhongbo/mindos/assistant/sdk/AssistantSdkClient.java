@@ -19,6 +19,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -221,10 +222,17 @@ public class AssistantSdkClient {
     }
 
     public Map<String, Object> loadMcpServer(String alias, String url) {
-        return postForMap(baseUri.resolve("/api/skills/load-mcp"), Map.of(
-                        "alias", alias,
-                        "url", url
-                ),
+        return loadMcpServer(alias, url, Map.of());
+    }
+
+    public Map<String, Object> loadMcpServer(String alias, String url, Map<String, String> headers) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("alias", alias);
+        payload.put("url", url);
+        if (headers != null && !headers.isEmpty()) {
+            payload.put("headers", headers);
+        }
+        return postForMap(baseUri.resolve("/api/skills/load-mcp"), payload,
                 "MindOS MCP server load call interrupted",
                 "Failed to call MindOS MCP server load endpoint");
     }

@@ -144,16 +144,24 @@ class ChatControllerTest {
     @Test
     void shouldMergeProfilePreferencesWhenContinuationAutoRoutesTeachingPlan() throws Exception {
         String profileJson = "{\"assistantName\":\"MindOS\",\"role\":\"高一\",\"style\":\"练习优先\",\"language\":\"zh-CN\",\"timezone\":\"Asia/Shanghai\"}";
+        String firstRequest = String.format(
+                "{\"userId\":\"pref-user\",\"message\":\"给我一个数学学习计划，目标是期末提分，六周，每周八小时\",\"profile\":%s}",
+                profileJson
+        );
+        String secondRequest = String.format(
+                "{\"userId\":\"pref-user\",\"message\":\"继续按之前方式\",\"profile\":%s}",
+                profileJson
+        );
 
         mockMvc.perform(post("/chat")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"userId\":\"pref-user\",\"message\":\"给我一个数学学习计划，目标是期末提分，六周，每周八小时\",\"profile\":" + profileJson + "}"))
+                        .content(firstRequest))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.channel").value("teaching.plan"));
 
         mockMvc.perform(post("/chat")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"userId\":\"pref-user\",\"message\":\"继续按之前方式\",\"profile\":" + profileJson + "}"))
+                        .content(secondRequest))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.channel").value("teaching.plan"))
                 .andExpect(jsonPath("$.reply").value(org.hamcrest.Matchers.containsString("对象: 高一")))
@@ -203,6 +211,14 @@ class ChatControllerTest {
                     new McpJsonRpcClient() {
                         @Override
                         public String callTool(String serverUrl, String toolName, java.util.Map<String, Object> arguments) {
+                            return "MCP docs result for " + arguments.getOrDefault("input", "");
+                        }
+
+                        @Override
+                        public String callTool(String serverUrl,
+                                               String toolName,
+                                               java.util.Map<String, Object> arguments,
+                                               java.util.Map<String, String> headers) {
                             return "MCP docs result for " + arguments.getOrDefault("input", "");
                         }
                     }

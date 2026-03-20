@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -106,22 +107,50 @@ public class SkillController {
     }
 
     @PostMapping("/load-mcp")
-    public Map<String, Object> loadMcpServer(@RequestBody Map<String, String> request) {
-        String alias = request == null ? null : request.get("alias");
-        String url = request == null ? null : request.get("url");
+    public Map<String, Object> loadMcpServer(@RequestBody Map<String, Object> request) {
+        String alias = request == null ? null : asTrimmedString(request.get("alias"));
+        String url = request == null ? null : asTrimmedString(request.get("url"));
         if (alias == null || alias.isBlank()) {
             return Map.of("status", "error", "error", "Field 'alias' is required.");
         }
         if (url == null || url.isBlank()) {
             return Map.of("status", "error", "error", "Field 'url' is required.");
         }
-        int count = mcpSkillLoader.loadServer(alias.trim(), url.trim());
-        return Map.of(
-                "loaded", count,
-                "alias", alias.trim(),
-                "url", url.trim(),
-                "status", count > 0 ? "ok" : "no_tools_found"
-        );
+        Map<String, String> headers = extractHeaders(request == null ? null : request.get("headers"));
+        int count = mcpSkillLoader.loadServer(alias, url, headers);
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("loaded", count);
+        response.put("alias", alias);
+        response.put("url", url);
+        if (!headers.isEmpty()) {
+            response.put("headersApplied", headers.size());
+        }
+        response.put("status", count > 0 ? "ok" : "no_tools_found");
+        return Map.copyOf(response);
+    }
+
+    private String asTrimmedString(Object rawValue) {
+        if (rawValue == null) {
+            return null;
+        }
+        String value = String.valueOf(rawValue).trim();
+        return value.isBlank() ? null : value;
+    }
+
+    private Map<String, String> extractHeaders(Object rawHeaders) {
+        if (!(rawHeaders instanceof Map<?, ?> headerMap)) {
+            return Map.of();
+        }
+        Map<String, String> parsed = new LinkedHashMap<>();
+        for (Map.Entry<?, ?> entry : headerMap.entrySet()) {
+            String key = asTrimmedString(entry.getKey());
+            String value = asTrimmedString(entry.getValue());
+            if (key == null || value == null) {
+                continue;
+            }
+            parsed.put(key, value);
+        }
+        return parsed.isEmpty() ? Map.of() : Map.copyOf(parsed);
     }
 }
 

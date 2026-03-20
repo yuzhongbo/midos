@@ -15,6 +15,7 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -33,8 +34,13 @@ class McpSkillLoaderTest {
 
     @Test
     void shouldRegisterAndExecuteMcpToolSkill() throws Exception {
+        AtomicBoolean authHeaderSeen = new AtomicBoolean(false);
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/mcp", exchange -> {
+            String auth = exchange.getRequestHeaders().getFirst("Authorization");
+            if ("Bearer loader-token".equals(auth)) {
+                authHeaderSeen.set(true);
+            }
             Map<String, Object> request = objectMapper.readValue(
                     exchange.getRequestBody().readAllBytes(), new TypeReference<>() {});
             String method = String.valueOf(request.get("method"));
@@ -72,7 +78,7 @@ class McpSkillLoaderTest {
         SkillRegistry registry = new SkillRegistry(List.<Skill>of());
         McpSkillLoader loader = new McpSkillLoader(registry, new McpJsonRpcClient(), "docs:" + url);
 
-        int loaded = loader.reload();
+        int loaded = loader.loadServer("docs", url, Map.of("Authorization", "Bearer loader-token"));
         Skill loadedSkill = registry.getSkill("mcp.docs.searchDocs").orElseThrow();
         SkillResult result = registry.getSkill("mcp.docs.searchDocs")
                 .orElseThrow()
@@ -83,6 +89,7 @@ class McpSkillLoaderTest {
         assertTrue(loadedSkill.supports("search docs for auth guide"));
         assertTrue(result.success());
         assertTrue(result.output().contains("query=auth"));
+        assertTrue(authHeaderSeen.get());
     }
 
     private byte[] json(Map<String, Object> value) throws IOException {
