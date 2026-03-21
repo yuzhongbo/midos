@@ -221,6 +221,10 @@ curl -X POST http://localhost:8080/api/skills/load-mcp \
   - provider endpoint map: `mindos.llm.provider-endpoints=openai:https://api.openai.com/v1/chat/completions,local:http://localhost:11434/v1/chat/completions`
   - provider key map: `mindos.llm.provider-keys=openai:sk-xxx,local:dummy-key`
   - per-request override: send `profile.llmProvider` (CLI: `profile set --llm-provider openai`)
+- LLM call metrics (token estimate + multi-provider stats):
+  - endpoint: `GET /api/metrics/llm?windowMinutes=60&provider=openai&includeRecent=true&recentLimit=20`
+  - toggles: `mindos.llm.metrics.enabled` (default `true`), `mindos.llm.metrics.max-recent-calls` (default `500`)
+  - summary includes success/fallback rate, average latency, estimated token totals, provider aggregates, and optional recent calls.
 - Semantic memory is stored when input starts with `remember `.
 - Dispatcher habit-routing confidence controls (optional, app/JVM properties):
   - `mindos.dispatcher.habit-routing.enabled` (default `true`)

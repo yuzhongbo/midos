@@ -4,12 +4,15 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zhongbo.mindos.assistant.common.LlmClient;
+import com.zhongbo.mindos.assistant.common.dto.LlmCallMetricDto;
 import com.zhongbo.mindos.assistant.common.dsl.SkillDSL;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
+import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 @Component
@@ -22,6 +25,7 @@ public class ApiKeyLlmClient implements LlmClient {
     private final Map<String, String> providerApiKeys;
     private final Map<String, String> userApiKeys;
     private final UserApiKeyService userApiKeyService;
+    private final LlmMetricsService llmMetricsService;
     private final int maxRetries;
     private final long retryDelayMs;
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -34,7 +38,8 @@ public class ApiKeyLlmClient implements LlmClient {
                            @Value("${mindos.llm.user-keys:}") String userKeys,
                            @Value("${mindos.llm.retry.max-attempts:3}") int maxRetries,
                            @Value("${mindos.llm.retry.delay-ms:300}") long retryDelayMs,
-                           UserApiKeyService userApiKeyService) {
+                           UserApiKeyService userApiKeyService,
+                           LlmMetricsService llmMetricsService) {
         this.provider = provider;
         this.endpoint = endpoint;
         this.globalApiKey = globalApiKey;
@@ -44,25 +49,34 @@ public class ApiKeyLlmClient implements LlmClient {
         this.maxRetries = Math.max(1, maxRetries);
         this.retryDelayMs = Math.max(0L, retryDelayMs);
         this.userApiKeyService = userApiKeyService;
+        this.llmMetricsService = llmMetricsService;
     }
 
     @Override
     public String generateResponse(String prompt, Map<String, Object> context) {
+        Instant startedAt = Instant.now();
+        Map<String, Object> safeContext = context == null ? Map.of() : context;
         if (prompt == null || prompt.isBlank()) {
-            return "[LLM error] Prompt cannot be empty.";
+            String output = "[LLM error] Prompt cannot be empty.";
+            recordMetric(startedAt, safeContext, null, null, false, false, prompt, output, "empty_prompt");
+            return output;
         }
 
-        String selectedProvider = resolveProvider(context);
+        String selectedProvider = resolveProvider(safeContext);
         String selectedEndpoint = resolveEndpoint(selectedProvider);
-        String apiKey = resolveApiKey(context, selectedProvider);
+        String apiKey = resolveApiKey(safeContext, selectedProvider);
         if (apiKey == null || apiKey.isBlank()) {
-            return "[LLM stub] No API key resolved. Configure mindos.llm.api-key, mindos.llm.provider-keys, or mindos.llm.user-keys.";
+            String output = "[LLM stub] No API key resolved. Configure mindos.llm.api-key, mindos.llm.provider-keys, or mindos.llm.user-keys.";
+            recordMetric(startedAt, safeContext, selectedProvider, selectedEndpoint, false, false, prompt, output, "missing_api_key");
+            return output;
         }
 
         RuntimeException lastError = null;
         for (int attempt = 1; attempt <= maxRetries; attempt++) {
             try {
-                return callProvider(selectedProvider, selectedEndpoint, prompt, context, apiKey);
+                String output = callProvider(selectedProvider, selectedEndpoint, prompt, safeContext, apiKey);
+                recordMetric(startedAt, safeContext, selectedProvider, selectedEndpoint, true, attempt > 1, prompt, output, null);
+                return output;
             } catch (RuntimeException ex) {
                 lastError = ex;
                 if (attempt < maxRetries) {
@@ -72,7 +86,10 @@ public class ApiKeyLlmClient implements LlmClient {
         }
 
         String reason = lastError == null ? "unknown" : lastError.getMessage();
-        return "[LLM error] Failed after " + maxRetries + " attempt(s): " + reason;
+        String output = "[LLM error] Failed after " + maxRetries + " attempt(s): " + reason;
+        recordMetric(startedAt, safeContext, selectedProvider, selectedEndpoint, false, maxRetries > 1, prompt, output,
+                lastError == null ? "runtime_error" : simplifyErrorType(lastError));
+        return output;
     }
 
     @Override
@@ -234,6 +251,67 @@ public class ApiKeyLlmClient implements LlmClient {
             return "openai";
         }
         return value.trim().toLowerCase();
+    }
+
+    private void recordMetric(Instant startedAt,
+                              Map<String, Object> context,
+                              String providerName,
+                              String endpointValue,
+                              boolean success,
+                              boolean retried,
+                              String prompt,
+                              String output,
+                              String errorType) {
+        long latencyMs = Math.max(0L, java.time.Duration.between(startedAt, Instant.now()).toMillis());
+        String providerValue = providerName == null || providerName.isBlank() ? resolveProvider(context) : providerName;
+        String endpointResolved = endpointValue == null || endpointValue.isBlank()
+                ? resolveEndpoint(providerValue)
+                : endpointValue;
+        String routeStage = context == null ? null : asText(context.get("routeStage"));
+        String userId = context == null ? null : asText(context.get("userId"));
+        int promptTokens = estimateTokens(prompt);
+        int responseTokens = estimateTokens(output);
+
+        llmMetricsService.record(new LlmCallMetricDto(
+                Instant.now(),
+                userId,
+                normalizeProvider(providerValue),
+                endpointResolved,
+                routeStage,
+                success,
+                retried,
+                latencyMs,
+                promptTokens,
+                responseTokens,
+                promptTokens + responseTokens,
+                errorType
+        ));
+    }
+
+    private int estimateTokens(String text) {
+        if (text == null || text.isBlank()) {
+            return 0;
+        }
+        String normalized = text.trim();
+        int approxByChars = (int) Math.ceil(normalized.length() / 4.0);
+        int approxByWords = normalized.split("\\s+").length;
+        return Math.max(1, Math.max(approxByChars, approxByWords));
+    }
+
+    private String simplifyErrorType(RuntimeException ex) {
+        String simple = ex.getClass().getSimpleName();
+        if (simple == null || simple.isBlank()) {
+            return "runtime_error";
+        }
+        return simple.toLowerCase(Locale.ROOT);
+    }
+
+    private String asText(Object value) {
+        if (value == null) {
+            return null;
+        }
+        String normalized = String.valueOf(value).trim();
+        return normalized.isBlank() ? null : normalized;
     }
 
     private Map<String, Object> asObjectMap(Object value) {

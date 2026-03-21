@@ -134,12 +134,16 @@ public class DispatcherService {
         );
         String memoryContext = buildMemoryContext(userId, userInput);
         SkillContext context = new SkillContext(userId, userInput, resolvedProfileContext);
-        Map<String, Object> llmContext = Map.of(
-                "userId", userId,
-                "memoryContext", memoryContext,
-                "input", userInput,
-                "profile", resolvedProfileContext
-        );
+        Map<String, Object> llmContext = new LinkedHashMap<>();
+        llmContext.put("userId", userId);
+        llmContext.put("memoryContext", memoryContext);
+        llmContext.put("input", userInput);
+        llmContext.put("routeStage", "llm-fallback");
+        llmContext.put("profile", resolvedProfileContext);
+        String llmProvider = asString(resolvedProfileContext.get("llmProvider"));
+        if (llmProvider != null) {
+            llmContext.put("llmProvider", llmProvider);
+        }
 
         return metaOrchestratorService.orchestrate(
                         () -> executeSinglePass(userId, userInput, context, memoryContext, llmContext),
@@ -240,7 +244,7 @@ public class DispatcherService {
                                 .orElseGet(() -> CompletableFuture.completedFuture(Optional.empty()));
                     }
 
-                    Optional<SkillDsl> llmDsl = detectSkillWithLlm(userId, userInput, memoryContext);
+                    Optional<SkillDsl> llmDsl = detectSkillWithLlm(userId, userInput, memoryContext, context.attributes());
                     if (llmDsl.isPresent()) {
                         LOGGER.info("Dispatcher route=llm-dsl, userId=" + userId + ", skill=" + llmDsl.get().skill());
                         return llmDsl.map(dsl -> skillEngine.executeDslAsync(dsl, context).thenApply(Optional::of))
@@ -808,7 +812,10 @@ public class DispatcherService {
         return List.copyOf(values);
     }
 
-    private Optional<SkillDsl> detectSkillWithLlm(String userId, String userInput, String memoryContext) {
+    private Optional<SkillDsl> detectSkillWithLlm(String userId,
+                                                  String userInput,
+                                                  String memoryContext,
+                                                  Map<String, Object> profileContext) {
         String knownSkills = skillEngine.describeAvailableSkills();
         String prompt = "You are a dispatcher. Decide whether a skill is needed. "
                 + "Return ONLY JSON with schema {\"skill\":\"name\",\"input\":{...}} or NONE.\n"
@@ -816,12 +823,21 @@ public class DispatcherService {
                 + "Context:\n" + memoryContext + "\n"
                 + "User input:\n" + userInput;
 
-        String llmReply = llmClient.generateResponse(prompt, Map.of("userId", userId, "memoryContext", memoryContext));
+        Map<String, Object> llmContext = new LinkedHashMap<>();
+        llmContext.put("userId", userId);
+        llmContext.put("memoryContext", memoryContext);
+        llmContext.put("routeStage", "llm-dsl");
+        String llmProvider = profileContext == null ? null : asString(profileContext.get("llmProvider"));
+        if (llmProvider != null) {
+            llmContext.put("llmProvider", llmProvider);
+        }
+        String llmReply = llmClient.generateResponse(prompt, Map.copyOf(llmContext));
         if (llmReply == null || llmReply.isBlank() || "NONE".equalsIgnoreCase(llmReply.trim())) {
             return Optional.empty();
         }
         return skillDslParser.parseSkillDslJson(llmReply);
     }
+
 
     private Optional<SkillResult> answerMetaQuestion(String userInput) {
         if (userInput == null || userInput.isBlank()) {
