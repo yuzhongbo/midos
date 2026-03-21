@@ -57,7 +57,7 @@ public class MindosCliApplication implements Runnable {
         }
         InteractiveChatRunner.UiTheme uiTheme = InteractiveChatRunner.UiTheme.fromValue(theme);
         boolean routingDetailsVisible = showRoutingDetails || !pureNaturalLanguage;
-        new InteractiveChatRunner(uiTheme, routingDetailsVisible).run(System.in, spec.commandLine().getOut(), chatService);
+        new InteractiveChatRunner(uiTheme, routingDetailsVisible).run(spec.commandLine().getOut(), chatService);
     }
 
     public static void main(String[] args) {

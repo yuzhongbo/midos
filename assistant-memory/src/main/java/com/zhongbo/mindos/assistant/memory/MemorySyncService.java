@@ -12,6 +12,9 @@ import org.springframework.stereotype.Service;
 @Service
 public class MemorySyncService {
 
+    private static final String PROP_WRITE_GATE_ENABLED = "mindos.memory.write-gate.enabled";
+    private static final String PROP_WRITE_GATE_MIN_LENGTH = "mindos.memory.write-gate.min-length";
+
     private final CentralMemoryRepository centralMemoryRepository;
     private final EpisodicMemoryService episodicMemoryService;
     private final SemanticMemoryService semanticMemoryService;
@@ -57,6 +60,10 @@ public class MemorySyncService {
         }
 
         for (SemanticMemoryEntry entry : consolidatedBatch.semantic()) {
+            if (!shouldStoreSemanticMemory(entry.text())) {
+                skipped++;
+                continue;
+            }
             boolean keySignalEntry = memoryConsolidationService.containsKeySignal(entry.text());
             if (keySignalEntry) {
                 keySignalInput++;
@@ -104,11 +111,18 @@ public class MemorySyncService {
     }
 
     public long recordSemantic(String userId, SemanticMemoryEntry entry) {
+        return recordSemantic(userId, entry, null);
+    }
+
+    public long recordSemantic(String userId, SemanticMemoryEntry entry, String bucket) {
         SemanticMemoryEntry consolidated = memoryConsolidationService.consolidateSemanticEntry(entry);
         if (consolidated == null || consolidated.text().isBlank()) {
             return 0L;
         }
-        if (semanticMemoryService.containsEquivalentEntry(userId, consolidated)) {
+        if (!shouldStoreSemanticMemory(consolidated.text())) {
+            return 0L;
+        }
+        if (semanticMemoryService.containsEquivalentEntry(userId, consolidated, bucket)) {
             return 0L;
         }
         return centralMemoryRepository.appendSemantic(userId, consolidated, null).cursor();
@@ -127,6 +141,30 @@ public class MemorySyncService {
             return null;
         }
         return baseEventId + ":" + stream + ":" + index;
+    }
+
+    private boolean shouldStoreSemanticMemory(String text) {
+        if (!Boolean.parseBoolean(System.getProperty(PROP_WRITE_GATE_ENABLED, "false"))) {
+            return true;
+        }
+        String normalized = memoryConsolidationService.normalizeText(text);
+        if (normalized.isBlank()) {
+            return false;
+        }
+        int minLength = parsePositiveInt(System.getProperty(PROP_WRITE_GATE_MIN_LENGTH, "10"), 10);
+        if (memoryConsolidationService.containsKeySignal(normalized)) {
+            return true;
+        }
+        return normalized.length() >= minLength;
+    }
+
+    private int parsePositiveInt(String raw, int fallback) {
+        try {
+            int value = Integer.parseInt(raw);
+            return value > 0 ? value : fallback;
+        } catch (NumberFormatException ex) {
+            return fallback;
+        }
     }
 }
 

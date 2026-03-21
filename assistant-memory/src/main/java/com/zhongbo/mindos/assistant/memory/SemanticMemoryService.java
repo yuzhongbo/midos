@@ -21,6 +21,8 @@ public class SemanticMemoryService {
     private static final double APPROX_JACCARD_THRESHOLD = 0.82;
     private static final double APPROX_JACCARD_WITH_EMBEDDING_THRESHOLD = 0.65;
     private static final double APPROX_EMBEDDING_SIMILARITY_THRESHOLD = 0.985;
+    private static final String DEFAULT_BUCKET = "global";
+    private static final String PROP_MEMORY_DECAY_HALF_LIFE_HOURS = "mindos.memory.search.decay-half-life-hours";
 
     private final MemoryConsolidationService memoryConsolidationService;
     private final Map<String, UserSemanticStore> entriesByUser = new ConcurrentHashMap<>();
@@ -34,13 +36,18 @@ public class SemanticMemoryService {
     }
 
     public void addEntry(String userId, SemanticMemoryEntry entry) {
+        addEntry(userId, entry, null);
+    }
+
+    public void addEntry(String userId, SemanticMemoryEntry entry, String bucket) {
         SemanticMemoryEntry consolidated = memoryConsolidationService.consolidateSemanticEntry(entry);
         if (consolidated == null || consolidated.text().isBlank()) {
             return;
         }
         entriesByUser.computeIfAbsent(userId, key -> new UserSemanticStore()).upsert(
                 memoryConsolidationService.semanticKey(consolidated.text()),
-                consolidated
+                consolidated,
+                normalizeBucket(bucket)
         );
     }
 
@@ -49,6 +56,10 @@ public class SemanticMemoryService {
     }
 
     public List<SemanticMemoryEntry> search(String userId, String query, int limit) {
+        return search(userId, query, limit, null);
+    }
+
+    public List<SemanticMemoryEntry> search(String userId, String query, int limit, String preferredBucket) {
         if (limit <= 0) {
             return List.of();
         }
@@ -56,10 +67,14 @@ public class SemanticMemoryService {
         if (store == null) {
             return List.of();
         }
-        return store.search(query, limit);
+        return store.search(query, limit, normalizeBucket(preferredBucket));
     }
 
     public boolean containsEquivalentEntry(String userId, SemanticMemoryEntry entry) {
+        return containsEquivalentEntry(userId, entry, null);
+    }
+
+    public boolean containsEquivalentEntry(String userId, SemanticMemoryEntry entry, String bucket) {
         UserSemanticStore store = entriesByUser.get(userId);
         if (store == null) {
             return false;
@@ -68,7 +83,18 @@ public class SemanticMemoryService {
         if (consolidated == null || consolidated.text().isBlank()) {
             return false;
         }
-        return store.containsEquivalent(memoryConsolidationService.semanticKey(consolidated.text()), consolidated);
+        return store.containsEquivalent(
+                memoryConsolidationService.semanticKey(consolidated.text()),
+                consolidated,
+                normalizeBucket(bucket)
+        );
+    }
+
+    private String normalizeBucket(String bucket) {
+        if (bucket == null || bucket.isBlank()) {
+            return DEFAULT_BUCKET;
+        }
+        return bucket.trim().toLowerCase(Locale.ROOT);
     }
 
     private final class UserSemanticStore {
@@ -76,18 +102,19 @@ public class SemanticMemoryService {
         private final Map<String, Set<String>> keysByToken = new HashMap<>();
         private long sequence;
 
-        synchronized void upsert(String key, SemanticMemoryEntry entry) {
-            StoredSemanticEntry existing = entries.remove(key);
+        synchronized void upsert(String key, SemanticMemoryEntry entry, String bucket) {
+            String bucketedKey = bucket + "::" + key;
+            StoredSemanticEntry existing = entries.remove(bucketedKey);
             if (existing != null) {
-                removeTokens(key, existing.tokens());
+                removeTokens(bucketedKey, existing.tokens());
                 entry = merge(existing.entry(), entry);
             }
 
             LinkedHashSet<String> tokens = tokenize(entry.text());
-            StoredSemanticEntry stored = new StoredSemanticEntry(entry, tokens, ++sequence);
-            entries.put(key, stored);
+            StoredSemanticEntry stored = new StoredSemanticEntry(entry, tokens, ++sequence, bucket);
+            entries.put(bucketedKey, stored);
             for (String token : tokens) {
-                keysByToken.computeIfAbsent(token, ignored -> new LinkedHashSet<>()).add(key);
+                keysByToken.computeIfAbsent(token, ignored -> new LinkedHashSet<>()).add(bucketedKey);
             }
         }
 
@@ -95,8 +122,9 @@ public class SemanticMemoryService {
             return entries.containsKey(key);
         }
 
-        synchronized boolean containsEquivalent(String key, SemanticMemoryEntry entry) {
-            if (containsKey(key)) {
+        synchronized boolean containsEquivalent(String key, SemanticMemoryEntry entry, String bucket) {
+            String bucketedKey = bucket + "::" + key;
+            if (containsKey(bucketedKey)) {
                 return true;
             }
 
@@ -125,6 +153,9 @@ public class SemanticMemoryService {
                 if (candidate == null) {
                     continue;
                 }
+                if (!candidate.bucket().equals(bucket)) {
+                    continue;
+                }
                 if (isApproxEquivalent(entry, queryTokens, normalizedInput, candidate)) {
                     return true;
                 }
@@ -132,7 +163,7 @@ public class SemanticMemoryService {
             return false;
         }
 
-        synchronized List<SemanticMemoryEntry> search(String query, int limit) {
+        synchronized List<SemanticMemoryEntry> search(String query, int limit, String preferredBucket) {
             List<StoredSemanticEntry> candidates = new ArrayList<>();
             LinkedHashSet<String> queryTokens = tokenize(query);
             if (queryTokens.isEmpty()) {
@@ -157,7 +188,7 @@ public class SemanticMemoryService {
             String normalizedQuery = memoryConsolidationService.normalizeText(query).toLowerCase(Locale.ROOT);
             return candidates.stream()
                     .sorted(Comparator
-                            .comparingInt((StoredSemanticEntry entry) -> score(entry, queryTokens, normalizedQuery))
+                            .comparingDouble((StoredSemanticEntry entry) -> score(entry, queryTokens, normalizedQuery, preferredBucket))
                             .thenComparingLong(StoredSemanticEntry::sequence)
                             .reversed())
                     .limit(limit)
@@ -187,9 +218,12 @@ public class SemanticMemoryService {
             }
         }
 
-        private int score(StoredSemanticEntry entry, Set<String> queryTokens, String normalizedQuery) {
+        private double score(StoredSemanticEntry entry,
+                             Set<String> queryTokens,
+                             String normalizedQuery,
+                             String preferredBucket) {
             if (queryTokens.isEmpty()) {
-                return 1;
+                return 1 + bucketBoost(entry.bucket(), preferredBucket) + recencyBoost(entry.entry());
             }
             int overlap = 0;
             for (String token : queryTokens) {
@@ -199,7 +233,36 @@ public class SemanticMemoryService {
             }
             String normalizedText = memoryConsolidationService.normalizeText(entry.entry().text()).toLowerCase(Locale.ROOT);
             int containsBonus = normalizedQuery.isBlank() ? 0 : (normalizedText.contains(normalizedQuery) ? 4 : 0);
-            return overlap * 10 + containsBonus;
+            return overlap * 10
+                    + containsBonus
+                    + bucketBoost(entry.bucket(), preferredBucket)
+                    + recencyBoost(entry.entry());
+        }
+
+        private double bucketBoost(String bucket, String preferredBucket) {
+            if (preferredBucket == null || preferredBucket.isBlank()) {
+                return 0.0;
+            }
+            return preferredBucket.equals(bucket) ? 8.0 : 0.0;
+        }
+
+        private double recencyBoost(SemanticMemoryEntry entry) {
+            double halfLifeHours = parseHalfLifeHours();
+            if (halfLifeHours <= 0) {
+                return 0.0;
+            }
+            double ageHours = Math.max(0.0,
+                    (double) (System.currentTimeMillis() - entry.createdAt().toEpochMilli()) / 3_600_000d);
+            return Math.exp(-ageHours / halfLifeHours) * 3.0;
+        }
+
+        private double parseHalfLifeHours() {
+            String raw = System.getProperty(PROP_MEMORY_DECAY_HALF_LIFE_HOURS, "72");
+            try {
+                return Math.max(1.0, Double.parseDouble(raw));
+            } catch (NumberFormatException ex) {
+                return 72.0;
+            }
         }
 
         private boolean isApproxEquivalent(SemanticMemoryEntry input,
@@ -302,7 +365,10 @@ public class SemanticMemoryService {
         return value.codePoints().anyMatch(codePoint -> Character.UnicodeScript.of(codePoint) == Character.UnicodeScript.HAN);
     }
 
-    private record StoredSemanticEntry(SemanticMemoryEntry entry, Set<String> tokens, long sequence) {
+    private record StoredSemanticEntry(SemanticMemoryEntry entry,
+                                       Set<String> tokens,
+                                       long sequence,
+                                       String bucket) {
     }
 }
 

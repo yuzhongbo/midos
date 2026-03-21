@@ -16,6 +16,43 @@ import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class MemorySyncServiceTest {
+    @Test
+    void shouldSkipShortLowSignalSemanticEntryWhenWriteGateEnabled() {
+        String oldEnabled = System.getProperty("mindos.memory.write-gate.enabled");
+        String oldMinLength = System.getProperty("mindos.memory.write-gate.min-length");
+        try {
+            System.setProperty("mindos.memory.write-gate.enabled", "true");
+            System.setProperty("mindos.memory.write-gate.min-length", "12");
+
+            MemoryConsolidationService consolidationService = new MemoryConsolidationService();
+            CentralMemoryRepository repository = new InMemoryCentralMemoryRepository();
+            EpisodicMemoryService episodicMemoryService = new EpisodicMemoryService();
+            SemanticMemoryService semanticMemoryService = new SemanticMemoryService(consolidationService);
+            ProceduralMemoryService proceduralMemoryService = new ProceduralMemoryService();
+            MemorySyncService service = new MemorySyncService(
+                    repository,
+                    episodicMemoryService,
+                    semanticMemoryService,
+                    proceduralMemoryService,
+                    consolidationService
+            );
+
+            MemorySyncBatch batch = new MemorySyncBatch(
+                    "evt-gate",
+                    List.of(),
+                    List.of(new SemanticMemoryEntry("ok", List.of(0.1, 0.2), Instant.now())),
+                    List.of()
+            );
+
+            MemoryApplyResult result = service.applyUpdates("gate-user", batch);
+            assertEquals(0, result.acceptedCount());
+            assertEquals(1, result.skippedCount());
+            assertTrue(semanticMemoryService.search("gate-user", 10).isEmpty());
+        } finally {
+            restoreProperty("mindos.memory.write-gate.enabled", oldEnabled);
+            restoreProperty("mindos.memory.write-gate.min-length", oldMinLength);
+        }
+    }
 
     @Test
     void shouldNotDuplicateLocalMemoryWhenApplyingSameEventTwice() {
@@ -156,6 +193,14 @@ class MemorySyncServiceTest {
                 System.clearProperty("mindos.memory.inmemory.max-events-per-user");
             }
         });
+    }
+
+    private void restoreProperty(String key, String value) {
+        if (value == null) {
+            System.clearProperty(key);
+        } else {
+            System.setProperty(key, value);
+        }
     }
 }
 

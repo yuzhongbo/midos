@@ -16,7 +16,6 @@ import picocli.CommandLine;
 
 import java.io.BufferedReader;
 import java.io.IOException;
-import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.PrintWriter;
 import java.nio.charset.StandardCharsets;
@@ -24,12 +23,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.UUID;
+import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
@@ -82,7 +76,7 @@ class InteractiveChatRunner {
         this.showRoutingDetails = showRoutingDetails;
     }
 
-    void run(InputStream inputStream, PrintWriter out, CliChatService chatService) {
+    void run(PrintWriter out, CliChatService chatService) {
         SessionState sessionState = new SessionState();
         ExecutorService backgroundExecutor = Executors.newSingleThreadExecutor(runnable -> {
             Thread thread = new Thread(runnable, "mindos-cli-bg");
@@ -90,7 +84,7 @@ class InteractiveChatRunner {
             return thread;
         });
         printWelcome(out, chatService, sessionState);
-        try (BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream, StandardCharsets.UTF_8))) {
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(System.in, StandardCharsets.UTF_8))) {
             while (true) {
                 drainCompletedTasks(out, chatService, sessionState);
                 printStatusBar(out, chatService, sessionState);
@@ -135,7 +129,7 @@ class InteractiveChatRunner {
                     if (handleSlashCommand(input, out, chatService, reader, sessionState, backgroundExecutor)) {
                         continue;
                     }
-                    List<String> suggestions = suggestSlashCommands(input, 3);
+                    List<String> suggestions = suggestSlashCommands(input);
                     if (suggestions.isEmpty()) {
                         printInfo(out, "未知命令：" + input + "，输入 /help 查看帮助。");
                     } else {
@@ -152,6 +146,7 @@ class InteractiveChatRunner {
                 if (naturalLanguageCommand != null) {
                     if (showRoutingDetails) {
                         printAutoDispatchHint(out, naturalLanguageCommand);
+                        printEqNaturalLanguageEnumHints(out, input, naturalLanguageCommand);
                     }
                     if (resolution.isLowConfidence()) {
                         Boolean confirmed = promptYesNo(out,
@@ -597,6 +592,17 @@ class InteractiveChatRunner {
             return true;
         }
 
+        if (args.toLowerCase().startsWith("policy ")) {
+            String candidate = args.substring("policy".length()).trim();
+            String subCommand = candidate.isBlank() ? "" : candidate.split("\\s+")[0];
+            String suggested = suggestClosestEnumValue(subCommand, List.of("show", "set", "reset"));
+            if (suggested != null) {
+                printError(out, "不支持的 policy 子命令：" + subCommand + "。可选值：show|set|reset");
+                printInfo(out, "猜你想用 /todo policy " + suggested + "。可直接重试该命令。");
+                return true;
+            }
+        }
+
         printError(out, "用法: /todo policy [show|set|reset]");
         return true;
     }
@@ -712,6 +718,7 @@ class InteractiveChatRunner {
         String style = normalizeEqStyleValue(rawStyle);
         if (rawStyle != null && !rawStyle.isBlank() && style == null) {
             printError(out, "style 非法：" + rawStyle + "。可选值：gentle|direct|workplace|intimate");
+            printSlashEnumSuggestion(out, "style", rawStyle, List.of("gentle", "direct", "workplace", "intimate"));
             return true;
         }
         if (style != null && !style.isBlank()) {
@@ -721,6 +728,7 @@ class InteractiveChatRunner {
         String mode = normalizeEqModeValue(rawMode);
         if (rawMode != null && !rawMode.isBlank() && mode == null) {
             printError(out, "mode 非法：" + rawMode + "。可选值：analysis|reply|both");
+            printSlashEnumSuggestion(out, "mode", rawMode, List.of("analysis", "reply", "both"));
             return true;
         }
         if (mode != null && !mode.isBlank()) {
@@ -730,6 +738,7 @@ class InteractiveChatRunner {
         String priorityFocus = normalizeEqPriorityFocusValue(priorityRaw);
         if (priorityRaw != null && !priorityRaw.isBlank() && priorityFocus == null) {
             printError(out, "priority-focus 非法：" + priorityRaw + "。可选值：p1|p2|p3");
+            printSlashEnumSuggestion(out, "priority-focus", priorityRaw, List.of("p1", "p2", "p3"));
             return true;
         }
         if (priorityFocus != null && !priorityFocus.isBlank()) {
@@ -946,7 +955,7 @@ class InteractiveChatRunner {
 
         if (input.startsWith("/memory pull")) {
             Map<String, String> parsed = parseOptionPairs(input.substring("/memory pull".length()).trim());
-            long since = parseLong(parsed.get("since"), 0L);
+            long since = parseLong(parsed.get("since"));
             int limit = parseInt(parsed.get("limit"), 100);
             submitBackgroundTask(out, sessionState, backgroundExecutor,
                     "memory pull 已在后台执行",
@@ -1031,11 +1040,26 @@ class InteractiveChatRunner {
 
         if (input.startsWith("/memory style set")) {
             Map<String, String> parsed = parseOptionPairs(input.substring("/memory style set".length()).trim());
-            boolean autoTune = parseBooleanFlag(parsed, "auto-tune");
+            boolean autoTune = parseBooleanFlag(parsed);
             String sampleText = parsed.get("sample-text");
             String styleName = parsed.get("style-name");
-            String tone = parsed.get("tone");
-            String outputFormat = parsed.get("output-format");
+
+            String rawTone = parsed.get("tone");
+            String tone = normalizeMemoryTone(rawTone);
+            if (rawTone != null && !rawTone.isBlank() && tone == null) {
+                printError(out, "tone 非法：" + rawTone + "。可选值：warm|direct|neutral");
+                printSlashEnumSuggestion(out, "tone", rawTone, List.of("warm", "direct", "neutral"));
+                return true;
+            }
+
+            String rawOutputFormat = parsed.get("output-format");
+            String outputFormat = normalizeMemoryOutputFormat(rawOutputFormat);
+            if (rawOutputFormat != null && !rawOutputFormat.isBlank() && outputFormat == null) {
+                printError(out, "output-format 非法：" + rawOutputFormat + "。可选值：plain|bullet");
+                printSlashEnumSuggestion(out, "output-format", rawOutputFormat, List.of("plain", "bullet"));
+                return true;
+            }
+
             if (!autoTune && (styleName == null || styleName.isBlank())) {
                 styleName = promptForMemoryValue(out, reader, "记忆风格名称", null, false);
                 if (styleName == null) {
@@ -1668,7 +1692,7 @@ class InteractiveChatRunner {
         return input != null && input.toLowerCase().startsWith("/help");
     }
 
-    private List<String> suggestSlashCommands(String input, int max) {
+    private List<String> suggestSlashCommands(String input) {
         if (input == null || input.isBlank() || !input.startsWith("/")) {
             return List.of();
         }
@@ -1683,7 +1707,7 @@ class InteractiveChatRunner {
             }
         }
         if (!prefixMatches.isEmpty()) {
-            return prefixMatches.subList(0, Math.min(max, prefixMatches.size()));
+            return prefixMatches.subList(0, Math.min(3, prefixMatches.size()));
         }
         List<String> ranked = new ArrayList<>();
         int bestDistance = Integer.MAX_VALUE;
@@ -1702,7 +1726,7 @@ class InteractiveChatRunner {
                 Integer.parseInt(b.substring(b.indexOf('#') + 1))));
         List<String> suggestions = new ArrayList<>();
         for (String value : ranked) {
-            if (suggestions.size() >= max) {
+            if (suggestions.size() >= 3) {
                 break;
             }
             String candidate = value.substring(0, value.indexOf('#'));
@@ -1725,299 +1749,278 @@ class InteractiveChatRunner {
         printInfo(out, "已识别自然语言指令 -> " + command + "（自动调度）");
     }
 
-    private int levenshtein(String left, String right) {
-        int[][] dp = new int[left.length() + 1][right.length() + 1];
-        for (int i = 0; i <= left.length(); i++) {
-            dp[i][0] = i;
+    private void printEqNaturalLanguageEnumHints(PrintWriter out, String input, String command) {
+        if (input == null || command == null || !command.startsWith("/eq coach")) {
+            return;
         }
-        for (int j = 0; j <= right.length(); j++) {
-            dp[0][j] = j;
+        String normalized = input.toLowerCase();
+        if ((normalized.contains("风格") || normalized.contains("版本") || normalized.contains("style"))
+                && !command.contains("--style ")) {
+            printInfo(out, "未识别到 style 参数，建议可用值：gentle|direct|workplace|intimate");
         }
-        for (int i = 1; i <= left.length(); i++) {
-            for (int j = 1; j <= right.length(); j++) {
-                int cost = left.charAt(i - 1) == right.charAt(j - 1) ? 0 : 1;
-                dp[i][j] = Math.min(
-                        Math.min(dp[i - 1][j] + 1, dp[i][j - 1] + 1),
-                        dp[i - 1][j - 1] + cost
-                );
+        if ((normalized.contains("模式") || normalized.contains("mode"))
+                && !command.contains("--mode ")) {
+            printInfo(out, "未识别到 mode 参数，建议可用值：analysis|reply|both");
+        }
+        if ((normalized.contains("优先级")
+                || normalized.contains("focus")
+                || normalized.contains("最高优先")
+                || normalized.contains("最紧急"))
+                && !command.contains("--priority-focus ")) {
+            printInfo(out, "未识别到 priority-focus 参数，建议可用值：p1|p2|p3");
+        }
+    }
+
+    private void printSlashEnumSuggestion(PrintWriter out,
+                                          String option,
+                                          String actual,
+                                          List<String> allowedValues) {
+        String best = suggestClosestEnumValue(actual, allowedValues);
+        if (best != null) {
+            printInfo(out, "猜你想用 --" + option + " " + best + "。可直接重试该命令。");
+        }
+    }
+
+    private String suggestClosestEnumValue(String actual, List<String> allowedValues) {
+        if (actual == null || actual.isBlank() || allowedValues == null || allowedValues.isEmpty()) {
+            return null;
+        }
+        String normalizedActual = actual.trim().toLowerCase();
+        String best = null;
+        int bestDistance = Integer.MAX_VALUE;
+        for (String candidate : allowedValues) {
+            int distance = levenshtein(normalizedActual, candidate.toLowerCase());
+            if (distance < bestDistance) {
+                bestDistance = distance;
+                best = candidate;
             }
         }
-        return dp[left.length()][right.length()];
+        if (best != null && bestDistance <= Math.max(2, best.length() / 3)) {
+            return best;
+        }
+        return null;
+    }
+
+    private String normalizeMemoryTone(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        String normalized = raw.trim().toLowerCase();
+        if (normalized.contains("warm") || normalized.contains("温和") || normalized.contains("友好")) {
+            return "warm";
+        }
+        if (normalized.contains("direct") || normalized.contains("直接")) {
+            return "direct";
+        }
+        if (normalized.contains("neutral") || normalized.contains("中性") || normalized.contains("客观")) {
+            return "neutral";
+        }
+        return null;
+    }
+
+    private String normalizeMemoryOutputFormat(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        String normalized = raw.trim().toLowerCase();
+        if ("plain".equals(normalized)
+                || "纯文本".equals(normalized)
+                || "文本".equals(normalized)) {
+            return "plain";
+        }
+        if ("bullet".equals(normalized)
+                || "列表".equals(normalized)
+                || "要点".equals(normalized)) {
+            return "bullet";
+        }
+        return null;
+    }
+
+    private String renderPrompt(CliChatService chatService) {
+        String user = chatService == null ? "user" : chatService.userId();
+        if (uiTheme == UiTheme.CLASSIC) {
+            return user + "> ";
+        }
+        return ANSI.string("@|bold,cyan " + user + "> |@");
+    }
+
+    private void printInfo(PrintWriter out, String message) {
+        out.println(message);
+    }
+
+    private void printError(PrintWriter out, String message) {
+        out.println("[error] " + message);
+    }
+
+    private void printAssistantReply(PrintWriter out, ChatResponseDto response) {
+        if (response == null) {
+            return;
+        }
+        out.println("助手[" + response.channel() + "] " + response.reply());
+    }
+
+    private void printProfile(PrintWriter out, AssistantProfile profile) {
+        if (profile == null) {
+            printInfo(out, "profile 为空。");
+            return;
+        }
+        out.println("assistant=" + safe(profile.assistantName()));
+        out.println("role=" + safe(profile.role()));
+        out.println("style=" + safe(profile.style()));
+        out.println("language=" + safe(profile.language()));
+        out.println("timezone=" + safe(profile.timezone()));
+        out.println("llm.provider=" + safe(profile.llmProvider()));
+    }
+
+    private Map<String, String> promptForProfileFields(PrintWriter out,
+                                                        BufferedReader reader,
+                                                        AssistantProfile current,
+                                                        Map<String, String> initialValues) {
+        Map<String, String> result = new LinkedHashMap<>();
+        if (initialValues != null) {
+            result.putAll(initialValues);
+        }
+        putIfBlank(result, "name", promptForMemoryValue(out, reader,
+                "name [当前=" + safe(current == null ? null : current.assistantName()) + "]",
+                safe(current == null ? null : current.assistantName()), true));
+        putIfBlank(result, "role", promptForMemoryValue(out, reader,
+                "role [当前=" + safe(current == null ? null : current.role()) + "]",
+                safe(current == null ? null : current.role()), true));
+        putIfBlank(result, "style", promptForMemoryValue(out, reader,
+                "style [当前=" + safe(current == null ? null : current.style()) + "]",
+                safe(current == null ? null : current.style()), true));
+        putIfBlank(result, "language", promptForMemoryValue(out, reader,
+                "language [当前=" + safe(current == null ? null : current.language()) + "]",
+                safe(current == null ? null : current.language()), true));
+        putIfBlank(result, "timezone", promptForMemoryValue(out, reader,
+                "timezone [当前=" + safe(current == null ? null : current.timezone()) + "]",
+                safe(current == null ? null : current.timezone()), true));
+        putIfBlank(result, "llm-provider", promptForMemoryValue(out, reader,
+                "llm-provider [当前=" + safe(current == null ? null : current.llmProvider()) + "]",
+                safe(current == null ? null : current.llmProvider()), true));
+        return result;
+    }
+
+    private void putIfBlank(Map<String, String> target, String key, String value) {
+        if (!target.containsKey(key) || target.get(key) == null || target.get(key).isBlank()) {
+            target.put(key, value);
+        }
     }
 
     private Map<String, String> parseOptionPairs(String arguments) {
+        Map<String, String> parsed = new LinkedHashMap<>();
         if (arguments == null || arguments.isBlank()) {
-            return Map.of();
+            return parsed;
         }
-        String[] tokens = arguments.split("\\s+");
-        Map<String, String> values = new LinkedHashMap<>();
-        String currentKey = null;
-        StringBuilder currentValue = new StringBuilder();
-        for (String token : tokens) {
-            if (token.startsWith("--")) {
-                if (currentKey != null) {
-                    values.put(currentKey, currentValue.toString().trim());
+        List<String> tokens = tokenizeArguments(arguments);
+        for (int i = 0; i < tokens.size(); i++) {
+            String token = tokens.get(i);
+            if (!token.startsWith("--") || token.length() <= 2) {
+                continue;
+            }
+            String key = token.substring(2);
+            String value = "true";
+            if (i + 1 < tokens.size() && !tokens.get(i + 1).startsWith("--")) {
+                if ("query".equals(key)) {
+                    StringBuilder merged = new StringBuilder();
+                    int j = i + 1;
+                    while (j < tokens.size() && !tokens.get(j).startsWith("--")) {
+                        if (!merged.isEmpty()) {
+                            merged.append(' ');
+                        }
+                        merged.append(tokens.get(j));
+                        j++;
+                    }
+                    value = merged.toString();
+                    i = j - 1;
+                } else {
+                    value = tokens.get(i + 1);
+                    i++;
                 }
-                currentKey = token.substring(2);
-                currentValue = new StringBuilder();
-            } else if (currentKey != null) {
-                if (!currentValue.isEmpty()) {
-                    currentValue.append(' ');
+            }
+            parsed.put(key, value);
+        }
+        return parsed;
+    }
+
+    private List<String> tokenizeArguments(String text) {
+        List<String> tokens = new ArrayList<>();
+        if (text == null || text.isBlank()) {
+            return tokens;
+        }
+        StringBuilder current = new StringBuilder();
+        boolean inQuote = false;
+        char quoteChar = 0;
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if ((c == '"' || c == '\'') && (!inQuote || c == quoteChar)) {
+                if (inQuote) {
+                    inQuote = false;
+                    quoteChar = 0;
+                } else {
+                    inQuote = true;
+                    quoteChar = c;
                 }
-                currentValue.append(token);
+                continue;
             }
-        }
-        if (currentKey != null) {
-            values.put(currentKey, currentValue.toString().trim());
-        }
-        return values;
-    }
-
-    private void printMemoryStyle(PrintWriter out, MemoryStyleProfileDto style) {
-        out.println(ANSI.string("@|bold 记忆风格|@"));
-        out.println("当前记忆风格："
-                + nullSafe(style.styleName())
-                + "，语气=" + nullSafe(style.tone())
-                + "，输出=" + nullSafe(style.outputFormat()));
-        if (showRoutingDetails) {
-            out.println("style.name=" + nullSafe(style.styleName()));
-            out.println("style.tone=" + nullSafe(style.tone()));
-            out.println("style.outputFormat=" + nullSafe(style.outputFormat()));
-        }
-    }
-
-    private void printMemoryCompressionPlan(PrintWriter out,
-                                            MemoryCompressionPlanResponseDto response,
-                                            SessionState sessionState) {
-        out.println(ANSI.string("@|bold 记忆压缩规划|@"));
-        printMemoryStyle(out, response.style());
-        int rawLength = -1;
-        int styledLength = -1;
-        boolean keySignalHintDetected = false;
-        String rawContent = "";
-        String styledContent = "";
-        for (MemoryCompressionStepDto step : response.steps()) {
-            out.println("- [" + step.stage() + "] " + step.content());
-            if ("RAW".equals(step.stage())) {
-                rawLength = step.length();
-                rawContent = step.content();
+            if (Character.isWhitespace(c) && !inQuote) {
+                if (!current.isEmpty()) {
+                    tokens.add(current.toString());
+                    current.setLength(0);
+                }
+                continue;
             }
-            if ("STYLED".equals(step.stage())) {
-                styledLength = step.length();
-                styledContent = step.content();
-                keySignalHintDetected = step.content().contains("不能")
-                        || step.content().contains("必须")
-                        || step.content().contains("截止")
-                        || step.content().contains("风险");
-            }
+            current.append(c);
         }
-        if (rawLength > 0 && styledLength >= 0) {
-            double ratio = (double) styledLength / rawLength;
-            out.println("压缩完成：由 " + rawLength + " 字精炼到 " + styledLength
-                    + " 字（" + formatPercent(ratio) + "）。");
-            if (showRoutingDetails) {
-                out.println(String.format("memory.compressRate=%.2f%%", ratio * 100.0));
-            }
+        if (!current.isEmpty()) {
+            tokens.add(current.toString());
         }
-        if (keySignalHintDetected && showRoutingDetails) {
-            out.println("memory.keySignalHint=关键约束已体现在压缩结果中");
-        }
+        return tokens;
+    }
 
-        if (containsKeySignal(rawContent) && !containsKeySignal(styledContent)) {
-            sessionState.pendingMemoryReviewSource = rawContent;
-            sessionState.pendingMemoryReviewPoints = null;
-            out.println("如果你愿意，直接回复“要/好的”，我可以继续列出原文关键点让你逐条复核。");
-        } else {
-            sessionState.pendingMemoryReviewSource = null;
-            sessionState.pendingMemoryReviewPoints = null;
+    private int parseInt(String raw, int fallback) {
+        if (raw == null || raw.isBlank()) {
+            return fallback;
+        }
+        try {
+            return Integer.parseInt(raw.trim());
+        } catch (NumberFormatException ex) {
+            return fallback;
         }
     }
 
-    private String formatPercent(double value) {
-        return String.format("%.2f%%", value * 100.0);
-    }
-
-    private String blankToNull(String value) {
-        if (value == null || value.isBlank()) {
-            return null;
+    private long parseLong(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return 0L;
         }
-        return value.trim();
+        try {
+            return Long.parseLong(raw.trim());
+        } catch (NumberFormatException ex) {
+            return 0L;
+        }
     }
 
-    private String nullSafe(String value) {
-        return value == null ? "" : value;
-    }
-
-    private boolean parseBooleanFlag(Map<String, String> options, String key) {
-        if (!options.containsKey(key)) {
+    private boolean parseBooleanFlag(Map<String, String> parsed) {
+        if (parsed == null || !parsed.containsKey("auto-tune")) {
             return false;
         }
-        String value = options.get(key);
+        String value = parsed.get("auto-tune");
         if (value == null || value.isBlank()) {
             return true;
         }
         String normalized = value.trim().toLowerCase();
-        return !List.of("false", "0", "no", "n").contains(normalized);
+        return List.of("true", "1", "yes", "y", "on", "是").contains(normalized);
     }
 
-    private void printProfile(PrintWriter out, AssistantProfile profile) {
-        out.println(ANSI.string("@|bold 本地 Profile|@"));
-        out.println("assistant=" + profile.assistantName());
-        out.println("role=" + profile.role());
-        out.println("style=" + profile.style());
-        out.println("language=" + profile.language());
-        out.println("timezone=" + profile.timezone());
-        out.println("llm.provider=" + profile.llmProvider());
+    private String blankToNull(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        return raw.trim();
     }
 
-    private Map<String, String> promptForProfileFields(PrintWriter out,
-                                                       BufferedReader reader,
-                                                       AssistantProfile current,
-                                                       Map<String, String> seed) {
-        Map<String, String> values = new LinkedHashMap<>(seed);
-        values.putIfAbsent("name", promptForValue(out, reader, "name", current.assistantName()));
-        values.putIfAbsent("role", promptForValue(out, reader, "role", current.role()));
-        values.putIfAbsent("style", promptForValue(out, reader, "style", current.style()));
-        values.putIfAbsent("language", promptForValue(out, reader, "language", current.language()));
-        values.putIfAbsent("timezone", promptForValue(out, reader, "timezone", current.timezone()));
-        values.putIfAbsent("llm-provider", promptForValue(out, reader, "llm-provider", current.llmProvider()));
-        return values;
-    }
-
-    private String promptForValue(PrintWriter out, BufferedReader reader, String field, String currentValue) {
-        try {
-            out.print(field + " [当前=" + (currentValue == null ? "" : currentValue) + "]：");
-            out.flush();
-            String value = reader.readLine();
-            if (value == null || value.isBlank()) {
-                return currentValue;
-            }
-            return value.trim();
-        } catch (IOException ex) {
-            return currentValue;
-        }
-    }
-
-    private void printAssistantReply(PrintWriter out, ChatResponseDto response) {
-        String reply = response.reply() == null ? "" : response.reply();
-        if (!showRoutingDetails) {
-            reply = stripRoutingHint(reply);
-            out.println(ANSI.string("@|bold,green 助手|@") + " " + reply);
-            return;
-        }
-        if (reply.startsWith("[自动调度]")) {
-            String[] lines = reply.split("\\n", 2);
-            String dispatchLine = lines[0].replace("[自动调度]", "").trim();
-            out.println(ANSI.string("@|bold,magenta 自动调度|@") + " " + dispatchLine);
-            if (lines.length > 1) {
-                out.println(ANSI.string("@|bold,green 助手[" + response.channel() + "]|@") + " " + lines[1]);
-            }
-            return;
-        }
-        out.println(ANSI.string("@|bold,green 助手[" + response.channel() + "]|@") + " " + reply);
-    }
-
-    private String stripRoutingHint(String reply) {
-        if (reply == null || reply.isBlank()) {
-            return "";
-        }
-        if (!reply.startsWith("[自动调度]")) {
-            return reply;
-        }
-        String[] lines = reply.split("\\n", 2);
-        return lines.length > 1 ? lines[1] : "";
-    }
-
-    private void printInfo(PrintWriter out, String message) {
-        if (uiTheme == UiTheme.CYBER) {
-            out.println(ANSI.string("@|cyan [info]|@") + " " + ANSI.string("@|faint >>|@") + " " + message);
-            return;
-        }
-        out.println(ANSI.string("@|cyan [info]|@") + " " + message);
-    }
-
-    private void printError(PrintWriter out, String message) {
-        if (uiTheme == UiTheme.CYBER) {
-            out.println(ANSI.string("@|bold,red [error]|@") + " " + ANSI.string("@|bold,red !!|@") + " " + message);
-            return;
-        }
-        out.println(ANSI.string("@|bold,red [error]|@") + " " + message);
-    }
-
-    private String renderPrompt(CliChatService chatService) {
-        if (uiTheme == UiTheme.CYBER) {
-            return ANSI.string("@|bold,yellow [" + chatService.userId() + "]|@") + ANSI.string("@|faint ::|@") + " ";
-        }
-        return ANSI.string("@|bold,yellow " + chatService.userId() + "|@") + " > ";
-    }
-
-    private long parseLong(String value, long defaultValue) {
-        if (value == null || value.isBlank()) {
-            return defaultValue;
-        }
-        try {
-            return Long.parseLong(value);
-        } catch (NumberFormatException ex) {
-            return defaultValue;
-        }
-    }
-
-    private String buildSkillDslJson(String skillName, Map<String, Object> payload) {
-        return "{\"skill\":\"" + escapeJson(skillName) + "\",\"input\":" + toJsonValue(payload) + "}";
-    }
-
-    private String toJsonValue(Object value) {
-        if (value == null) {
-            return "null";
-        }
-        if (value instanceof Number || value instanceof Boolean) {
-            return String.valueOf(value);
-        }
-        if (value instanceof Map<?, ?> map) {
-            StringBuilder builder = new StringBuilder("{");
-            boolean first = true;
-            for (Map.Entry<?, ?> entry : map.entrySet()) {
-                if (!first) {
-                    builder.append(',');
-                }
-                first = false;
-                builder.append('"').append(escapeJson(String.valueOf(entry.getKey()))).append('"')
-                        .append(':')
-                        .append(toJsonValue(entry.getValue()));
-            }
-            return builder.append('}').toString();
-        }
-        if (value instanceof List<?> list) {
-            StringBuilder builder = new StringBuilder("[");
-            for (int i = 0; i < list.size(); i++) {
-                if (i > 0) {
-                    builder.append(',');
-                }
-                builder.append(toJsonValue(list.get(i)));
-            }
-            return builder.append(']').toString();
-        }
-        return '"' + escapeJson(String.valueOf(value)) + '"';
-    }
-
-    private String escapeJson(String value) {
-        return value
-                .replace("\\", "\\\\")
-                .replace("\"", "\\\"")
-                .replace("\n", "\\n")
-                .replace("\r", "\\r")
-                .replace("\t", "\\t");
-    }
-
-    private int parseInt(String value, int defaultValue) {
-        if (value == null || value.isBlank()) {
-            return defaultValue;
-        }
-        try {
-            return Integer.parseInt(value);
-        } catch (NumberFormatException ex) {
-            return defaultValue;
-        }
+    private String formatPercent(double rate) {
+        return Math.round(rate * 10_000d) / 100d + "%";
     }
 
     private String normalizeEqStyleValue(String raw) {
@@ -2025,19 +2028,10 @@ class InteractiveChatRunner {
             return null;
         }
         String normalized = raw.trim().toLowerCase();
-        if (normalized.contains("gentle") || normalized.contains("温和")) {
-            return "gentle";
-        }
-        if (normalized.contains("direct") || normalized.contains("直接")) {
-            return "direct";
-        }
-        if (normalized.contains("work") || normalized.contains("职场")) {
-            return "workplace";
-        }
-        if (normalized.contains("intimate") || normalized.contains("亲密") || normalized.contains("关系")) {
-            return "intimate";
-        }
-        return null;
+        return switch (normalized) {
+            case "gentle", "direct", "workplace", "intimate" -> normalized;
+            default -> null;
+        };
     }
 
     private String normalizeEqModeValue(String raw) {
@@ -2045,16 +2039,10 @@ class InteractiveChatRunner {
             return null;
         }
         String normalized = raw.trim().toLowerCase();
-        if (normalized.contains("analysis") || normalized.contains("分析")) {
-            return "analysis";
-        }
-        if (normalized.contains("reply") || normalized.contains("回复") || normalized.contains("话术")) {
-            return "reply";
-        }
-        if (normalized.contains("both") || normalized.contains("都要") || normalized.contains("完整")) {
-            return "both";
-        }
-        return null;
+        return switch (normalized) {
+            case "analysis", "reply", "both" -> normalized;
+            default -> null;
+        };
     }
 
     private String normalizeEqPriorityFocusValue(String raw) {
@@ -2062,19 +2050,160 @@ class InteractiveChatRunner {
             return null;
         }
         String normalized = raw.trim().toLowerCase();
-        if (normalized.contains("p1") || normalized.contains("1") || normalized.contains("一级")
-                || normalized.contains("最高") || normalized.contains("紧急")) {
-            return "p1";
+        return switch (normalized) {
+            case "p1", "p2", "p3" -> normalized;
+            default -> null;
+        };
+    }
+
+    private String buildSkillDslJson(String skill, Map<String, Object> payload) {
+        Map<String, Object> root = new LinkedHashMap<>();
+        root.put("skill", skill);
+        root.put("input", payload == null ? Map.of() : payload);
+        return toJsonValue(root);
+    }
+
+    private String toJsonValue(Object value) {
+        if (value == null) {
+            return "null";
         }
-        if (normalized.contains("p2") || normalized.contains("2") || normalized.contains("二级")
-                || normalized.contains("次优先") || normalized.contains("中优先")) {
-            return "p2";
+        if (value instanceof String s) {
+            return '"' + escapeJson(s) + '"';
         }
-        if (normalized.contains("p3") || normalized.contains("3") || normalized.contains("三级")
-                || normalized.contains("低优先") || normalized.contains("后续")) {
-            return "p3";
+        if (value instanceof Number || value instanceof Boolean) {
+            return String.valueOf(value);
         }
-        return null;
+        if (value instanceof Map<?, ?> map) {
+            StringBuilder sb = new StringBuilder();
+            sb.append('{');
+            boolean first = true;
+            for (Map.Entry<?, ?> entry : map.entrySet()) {
+                if (!first) {
+                    sb.append(',');
+                }
+                first = false;
+                sb.append('"').append(escapeJson(String.valueOf(entry.getKey()))).append('"').append(':');
+                sb.append(toJsonValue(entry.getValue()));
+            }
+            sb.append('}');
+            return sb.toString();
+        }
+        if (value instanceof List<?> list) {
+            StringBuilder sb = new StringBuilder();
+            sb.append('[');
+            for (int i = 0; i < list.size(); i++) {
+                if (i > 0) {
+                    sb.append(',');
+                }
+                sb.append(toJsonValue(list.get(i)));
+            }
+            sb.append(']');
+            return sb.toString();
+        }
+        if (value instanceof Iterable<?> iterable) {
+            List<Object> materialized = new ArrayList<>();
+            for (Object item : iterable) {
+                materialized.add(item);
+            }
+            return toJsonValue(materialized);
+        }
+        if (value.getClass().isArray()) {
+            Object[] array = (Object[]) value;
+            List<Object> items = new ArrayList<>(Arrays.asList(array));
+            return toJsonValue(items);
+        }
+        return '"' + escapeJson(String.valueOf(value)) + '"';
+    }
+
+    private String escapeJson(String raw) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < raw.length(); i++) {
+            char c = raw.charAt(i);
+            switch (c) {
+                case '"' -> sb.append("\\\"");
+                case '\\' -> sb.append("\\\\");
+                case '\b' -> sb.append("\\b");
+                case '\f' -> sb.append("\\f");
+                case '\n' -> sb.append("\\n");
+                case '\r' -> sb.append("\\r");
+                case '\t' -> sb.append("\\t");
+                default -> {
+                    if (c < 0x20) {
+                        sb.append(String.format("\\u%04x", (int) c));
+                    } else {
+                        sb.append(c);
+                    }
+                }
+            }
+        }
+        return sb.toString();
+    }
+
+    private int levenshtein(String left, String right) {
+        String a = left == null ? "" : left;
+        String b = right == null ? "" : right;
+        int[][] dp = new int[a.length() + 1][b.length() + 1];
+        for (int i = 0; i <= a.length(); i++) {
+            dp[i][0] = i;
+        }
+        for (int j = 0; j <= b.length(); j++) {
+            dp[0][j] = j;
+        }
+        for (int i = 1; i <= a.length(); i++) {
+            for (int j = 1; j <= b.length(); j++) {
+                int cost = a.charAt(i - 1) == b.charAt(j - 1) ? 0 : 1;
+                dp[i][j] = Math.min(
+                        Math.min(dp[i - 1][j] + 1, dp[i][j - 1] + 1),
+                        dp[i - 1][j - 1] + cost
+                );
+            }
+        }
+        return dp[a.length()][b.length()];
+    }
+
+    private void printMemoryStyle(PrintWriter out, MemoryStyleProfileDto style) {
+        if (style == null) {
+            printInfo(out, "当前记忆风格：未设置。");
+            return;
+        }
+        printInfo(out, "当前记忆风格：" + safe(style.styleName()) + "，语气=" + safe(style.tone()) + "，输出=" + safe(style.outputFormat()));
+        if (showRoutingDetails) {
+            out.println("style.name=" + safe(style.styleName()));
+            out.println("style.tone=" + safe(style.tone()));
+            out.println("style.outputFormat=" + safe(style.outputFormat()));
+        }
+    }
+
+    private void printMemoryCompressionPlan(PrintWriter out,
+                                            MemoryCompressionPlanResponseDto response,
+                                            SessionState sessionState) {
+        if (response == null) {
+            printInfo(out, "记忆压缩规划：无结果。");
+            return;
+        }
+        out.println("记忆压缩规划");
+        printMemoryStyle(out, response.style());
+        List<MemoryCompressionStepDto> steps = response.steps() == null ? List.of() : response.steps();
+        for (MemoryCompressionStepDto step : steps) {
+            if (step == null) {
+                continue;
+            }
+            out.println("[" + safe(step.stage()) + "] " + safe(step.content()));
+        }
+        if (!steps.isEmpty()) {
+            int first = Math.max(1, steps.get(0).length());
+            int last = Math.max(0, steps.get(steps.size() - 1).length());
+            double compressRate = 1d - ((double) last / first);
+            out.println("memory.compressRate=" + formatPercent(compressRate));
+            if (sessionState != null && steps.get(0) != null) {
+                sessionState.pendingMemoryReviewSource = safe(steps.get(0).content());
+            }
+            out.println("如果你愿意，直接回复“要/好的”，我会帮你复核并提炼关键点。");
+        }
+    }
+
+    private String safe(String value) {
+        return value == null ? "" : value;
     }
 
     private static final class SessionState {

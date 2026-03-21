@@ -201,8 +201,39 @@ class ChatControllerTest {
                 .andExpect(jsonPath("$.reply").value(org.hamcrest.Matchers.containsString("[自动调度] 已按历史习惯调用 skill: todo.create")));
     }
 
+    @Test
+    void shouldReplanToLlmAndExposeExecutionTraceWhenSkillFails() throws Exception {
+        mockMvc.perform(post("/chat")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"userId\":\"meta-user\",\"message\":\"{\\\"skill\\\":\\\"boom.fail\\\",\\\"input\\\":{}}\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.channel").value("llm"))
+                .andExpect(jsonPath("$.executionTrace.strategy").value("meta-replan"))
+                .andExpect(jsonPath("$.executionTrace.replanCount").value(1));
+    }
+
     @TestConfiguration
     static class McpSkillTestConfig {
+
+        @Bean
+        Skill boomFailSkill() {
+            return new Skill() {
+                @Override
+                public String name() {
+                    return "boom.fail";
+                }
+
+                @Override
+                public String description() {
+                    return "Always fails for meta-orchestrator fallback tests.";
+                }
+
+                @Override
+                public com.zhongbo.mindos.assistant.common.SkillResult run(com.zhongbo.mindos.assistant.common.SkillContext context) {
+                    throw new IllegalStateException("boom from boom.fail");
+                }
+            };
+        }
 
         @Bean
         Skill mcpDocsSearchSkill() {

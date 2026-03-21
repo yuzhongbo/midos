@@ -56,7 +56,7 @@ public class ChatCommand implements Runnable {
         if (interactive || message == null || message.isBlank()) {
             InteractiveChatRunner.UiTheme uiTheme = InteractiveChatRunner.UiTheme.fromValue(theme);
             boolean routingDetailsVisible = showRoutingDetails || !pureNaturalLanguage;
-            new InteractiveChatRunner(uiTheme, routingDetailsVisible).run(System.in, spec.commandLine().getOut(), chatService);
+            new InteractiveChatRunner(uiTheme, routingDetailsVisible).run(spec.commandLine().getOut(), chatService);
             return;
         }
 

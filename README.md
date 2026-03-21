@@ -230,6 +230,11 @@ curl -X POST http://localhost:8080/api/skills/load-mcp \
   - `mindos.memory.key-signal.deadline-terms`
   - `mindos.memory.key-signal.contact-terms`
   - examples: `-Dmindos.memory.key-signal.constraint-terms=必须,禁止,不要,不可`.
+- Semantic memory anti-pollution controls (optional, JVM properties):
+  - write gate toggle: `mindos.memory.write-gate.enabled` (default `false`)
+  - write gate min length: `mindos.memory.write-gate.min-length` (default `10`)
+  - search recency decay half-life hours: `mindos.memory.search.decay-half-life-hours` (default `72`)
+  - when enabled, low-signal short semantic entries are skipped; retrieval prefers same inferred topic bucket and still keeps cross-bucket fallback.
 - Memory NLU synonyms for style/compress intents are configurable via JVM system properties (`-Dmindos.memory.nlu.*`); values are comma-separated terms and normalize to canonical values used by API/CLI (`focus`: `task|learning|review`, `style`: `action|coach|story|concise`, `tone`: `warm|direct|neutral`, `format`: `bullet|plain`).
 - `eq.coach` supports optional output controls: `style` (`gentle|direct|workplace|intimate`), `mode` (`analysis|reply|both`), `priorityFocus` (`p1|p2|p3`).
 - `eq.coach` risk terms are configurable via JVM properties (comma-separated):

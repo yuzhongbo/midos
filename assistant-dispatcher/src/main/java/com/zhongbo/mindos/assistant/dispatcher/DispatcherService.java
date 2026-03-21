@@ -4,6 +4,7 @@ import com.zhongbo.mindos.assistant.common.LlmClient;
 import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.common.SkillDsl;
 import com.zhongbo.mindos.assistant.common.SkillResult;
+import com.zhongbo.mindos.assistant.common.dto.ExecutionTraceDto;
 import com.zhongbo.mindos.assistant.memory.MemoryManager;
 import com.zhongbo.mindos.assistant.memory.model.ConversationTurn;
 import com.zhongbo.mindos.assistant.memory.model.ProceduralMemoryEntry;
@@ -52,6 +53,7 @@ public class DispatcherService {
 
     private final SkillEngine skillEngine;
     private final SkillDslParser skillDslParser;
+    private final MetaOrchestratorService metaOrchestratorService;
     private final MemoryManager memoryManager;
     private final LlmClient llmClient;
     private final boolean preferenceReuseEnabled;
@@ -63,6 +65,7 @@ public class DispatcherService {
 
     public DispatcherService(SkillEngine skillEngine,
                              SkillDslParser skillDslParser,
+                             MetaOrchestratorService metaOrchestratorService,
                              MemoryManager memoryManager,
                              LlmClient llmClient,
                              @Value("${mindos.dispatcher.preference-reuse.enabled:false}") boolean preferenceReuseEnabled,
@@ -73,6 +76,7 @@ public class DispatcherService {
                              @Value("${mindos.dispatcher.habit-routing.max-continuation-input-length:16}") int habitContinuationInputMaxLength) {
         this.skillEngine = skillEngine;
         this.skillDslParser = skillDslParser;
+        this.metaOrchestratorService = metaOrchestratorService;
         this.memoryManager = memoryManager;
         this.llmClient = llmClient;
         this.preferenceReuseEnabled = preferenceReuseEnabled;
@@ -111,15 +115,16 @@ public class DispatcherService {
                 "profile", profileContext == null ? Map.of() : profileContext
         );
 
-        return routeToSkillAsync(userId, userInput, context, memoryContext)
-                .thenApply(optionalResult -> optionalResult
-                        .orElseGet(() -> SkillResult.success("llm", llmClient.generateResponse(
-                                buildFallbackPrompt(memoryContext, userInput),
-                                llmContext
-                        ))))
-                .thenApply(result -> {
+        return metaOrchestratorService.orchestrate(
+                        () -> executeSinglePass(userId, userInput, context, memoryContext, llmContext),
+                        () -> CompletableFuture.completedFuture(buildLlmFallbackResult(memoryContext, userInput, llmContext))
+                )
+                .thenApply(orchestration -> {
+                    SkillResult result = orchestration.result();
+                    ExecutionTraceDto trace = orchestration.trace();
                     memoryManager.storeAssistantConversation(userId, result.output());
-                    return new DispatchResult(result.output(), result.skillName());
+                    maybeStoreExecutionTraceMemory(userId, trace);
+                    return new DispatchResult(result.output(), result.skillName(), trace);
                 })
                 .whenComplete((result, error) -> {
                     long durationMs = Duration.between(startTime, Instant.now()).toMillis();
@@ -134,6 +139,39 @@ public class DispatcherService {
                             + ", output=" + clip(result.reply())
                             + ", durationMs=" + durationMs);
                 });
+    }
+
+    private CompletableFuture<SkillResult> executeSinglePass(String userId,
+                                                             String userInput,
+                                                             SkillContext context,
+                                                             String memoryContext,
+                                                             Map<String, Object> llmContext) {
+        return routeToSkillAsync(userId, userInput, context, memoryContext)
+                .thenApply(optionalResult -> optionalResult.orElseGet(() ->
+                        buildLlmFallbackResult(memoryContext, userInput, llmContext)));
+    }
+
+    private SkillResult buildLlmFallbackResult(String memoryContext,
+                                               String userInput,
+                                               Map<String, Object> llmContext) {
+        return SkillResult.success("llm", llmClient.generateResponse(
+                buildFallbackPrompt(memoryContext, userInput),
+                llmContext
+        ));
+    }
+
+    private void maybeStoreExecutionTraceMemory(String userId, ExecutionTraceDto trace) {
+        if (trace == null || trace.replanCount() <= 0) {
+            return;
+        }
+        String summary = "meta-trace strategy=" + trace.strategy()
+                + ", replans=" + trace.replanCount()
+                + ", critique=" + (trace.critique() == null ? "none" : trace.critique().action());
+        List<Double> embedding = List.of(
+                (double) summary.length(),
+                Math.abs(summary.hashCode() % 1000) / 1000.0
+        );
+        memoryManager.storeKnowledge(userId, summary, embedding, "meta");
     }
 
     private CompletableFuture<Optional<SkillResult>> routeToSkillAsync(String userId,
@@ -801,8 +839,14 @@ public class DispatcherService {
     }
 
     private String buildMemoryContext(String userId, String userInput) {
+        String memoryBucket = inferMemoryBucket(userInput);
         List<ConversationTurn> recentConversation = memoryManager.getRecentConversation(userId, CONTEXT_HISTORY_LIMIT);
-        List<SemanticMemoryEntry> knowledge = memoryManager.searchKnowledge(userId, userInput, CONTEXT_KNOWLEDGE_LIMIT);
+        List<SemanticMemoryEntry> knowledge = memoryManager.searchKnowledge(
+                userId,
+                userInput,
+                CONTEXT_KNOWLEDGE_LIMIT,
+                memoryBucket
+        );
         List<SkillUsageStats> usageStats = memoryManager.getSkillUsageStats(userId).stream()
                 .sorted(Comparator.comparingLong(SkillUsageStats::successCount).reversed())
                 .limit(HABIT_SKILL_STATS_LIMIT)
@@ -850,6 +894,7 @@ public class DispatcherService {
         }
 
         String knowledge = input.substring("remember ".length()).trim();
+        String memoryBucket = inferMemoryBucket(knowledge);
         Map<String, Object> embeddingSeed = new LinkedHashMap<>();
         embeddingSeed.put("length", knowledge.length());
         embeddingSeed.put("hash", Math.abs(knowledge.hashCode() % 1000));
@@ -858,7 +903,31 @@ public class DispatcherService {
                 (double) ((Integer) embeddingSeed.get("length")),
                 ((Integer) embeddingSeed.get("hash")) / 1000.0
         );
-        memoryManager.storeKnowledge(userId, knowledge, embedding);
+        memoryManager.storeKnowledge(userId, knowledge, embedding, memoryBucket);
+    }
+
+    private String inferMemoryBucket(String input) {
+        String normalized = normalize(input);
+        if (normalized.isBlank()) {
+            return "general";
+        }
+        if (containsAny(normalized,
+                "学习计划", "教学规划", "复习计划", "备考", "课程", "学科", "数学", "英语", "物理", "化学")) {
+            return "learning";
+        }
+        if (containsAny(normalized,
+                "情商", "沟通", "同事", "关系", "冲突", "安抚", "eq", "coach")) {
+            return "eq";
+        }
+        if (containsAny(normalized,
+                "待办", "todo", "截止", "任务", "清单", "优先级", "计划")) {
+            return "task";
+        }
+        if (containsAny(normalized,
+                "代码", "编译", "java", "spring", "bug", "接口", "mcp", "sdk")) {
+            return "coding";
+        }
+        return "general";
     }
 
     private String clip(String value) {

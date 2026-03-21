@@ -15,6 +15,8 @@ import java.util.List;
 
 @Service
 public class MemoryManager {
+    private static final String PROP_WRITE_GATE_ENABLED = "mindos.memory.write-gate.enabled";
+    private static final String PROP_WRITE_GATE_MIN_LENGTH = "mindos.memory.write-gate.min-length";
 
     private final EpisodicMemoryService episodicMemoryService;
     private final SemanticMemoryService semanticMemoryService;
@@ -58,12 +60,19 @@ public class MemoryManager {
     }
 
     public void storeKnowledge(String userId, String text, List<Double> embedding) {
+        storeKnowledge(userId, text, embedding, null);
+    }
+
+    public void storeKnowledge(String userId, String text, List<Double> embedding, String bucket) {
         SemanticMemoryEntry entry = memoryConsolidationService.consolidateSemanticEntry(SemanticMemoryEntry.of(text, embedding));
         if (entry == null || entry.text().isBlank()) {
             return;
         }
-        memorySyncService.recordSemantic(userId, entry);
-        semanticMemoryService.addEntry(userId, entry);
+        if (!shouldStoreSemanticMemory(entry.text())) {
+            return;
+        }
+        memorySyncService.recordSemantic(userId, entry, bucket);
+        semanticMemoryService.addEntry(userId, entry, bucket);
     }
 
     public List<SemanticMemoryEntry> searchKnowledge(String userId, int limit) {
@@ -72,6 +81,10 @@ public class MemoryManager {
 
     public List<SemanticMemoryEntry> searchKnowledge(String userId, String query, int limit) {
         return semanticMemoryService.search(userId, query, limit);
+    }
+
+    public List<SemanticMemoryEntry> searchKnowledge(String userId, String query, int limit, String preferredBucket) {
+        return semanticMemoryService.search(userId, query, limit, preferredBucket);
     }
 
     public void logSkillUsage(String userId, String skillName, String input, boolean success) {
@@ -132,5 +145,29 @@ public class MemoryManager {
             MemoryStyleProfile styleOverride,
             String focus) {
         return memoryCompressionPlanningService.buildPlan(userId, sourceText, styleOverride, focus);
+    }
+
+    private boolean shouldStoreSemanticMemory(String text) {
+        if (!Boolean.parseBoolean(System.getProperty(PROP_WRITE_GATE_ENABLED, "false"))) {
+            return true;
+        }
+        String normalized = memoryConsolidationService.normalizeText(text);
+        if (normalized.isBlank()) {
+            return false;
+        }
+        int minLength = parsePositiveInt(System.getProperty(PROP_WRITE_GATE_MIN_LENGTH, "10"), 10);
+        if (memoryConsolidationService.containsKeySignal(normalized)) {
+            return true;
+        }
+        return normalized.length() >= minLength;
+    }
+
+    private int parsePositiveInt(String raw, int fallback) {
+        try {
+            int value = Integer.parseInt(raw);
+            return value > 0 ? value : fallback;
+        } catch (NumberFormatException ex) {
+            return fallback;
+        }
     }
 }

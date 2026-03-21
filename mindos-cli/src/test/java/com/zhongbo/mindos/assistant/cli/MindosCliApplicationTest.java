@@ -901,6 +901,43 @@ class MindosCliApplicationTest {
     }
 
     @Test
+    void shouldSuggestEqEnumValuesWhenNaturalLanguageOptionIsUnrecognized() throws IOException {
+        AtomicReference<String> requestBodyRef = new AtomicReference<>("");
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/chat", exchange -> {
+            requestBodyRef.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            byte[] response = "{\"reply\":\"coach ok\",\"channel\":\"eq.coach\"}".getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+
+        try {
+            server.start();
+            int port = server.getAddress().getPort();
+
+            CommandOutputResult result = executeInteractiveWithOut(
+                    "请给我高情商建议，风格超稳健版\n"
+                            + "/exit\n",
+                    "--server", "http://127.0.0.1:" + port,
+                    "--user", "cli-user"
+            );
+
+            String console = result.stdout();
+            assertEquals(0, result.exitCode());
+            assertTrue(console.contains("已识别自然语言指令 -> /eq coach --query"));
+            assertTrue(console.contains("未识别到 style 参数，建议可用值：gentle|direct|workplace|intimate"));
+
+            String requestBody = requestBodyRef.get();
+            assertTrue(requestBody.contains("\\\"skill\\\":\\\"eq.coach\\\""));
+            assertFalse(requestBody.contains("\\\"style\\\":"));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
     void shouldRejectUnsupportedEqCoachOption() throws IOException {
         java.util.concurrent.atomic.AtomicInteger chatCalls = new java.util.concurrent.atomic.AtomicInteger(0);
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
@@ -931,6 +968,100 @@ class MindosCliApplicationTest {
         } finally {
             server.stop(0);
         }
+    }
+
+    @Test
+    void shouldRejectInvalidEqCoachEnumValues() throws IOException {
+        java.util.concurrent.atomic.AtomicInteger chatCalls = new java.util.concurrent.atomic.AtomicInteger(0);
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/chat", exchange -> {
+            chatCalls.incrementAndGet();
+            byte[] response = "{\"reply\":\"coach ok\",\"channel\":\"eq.coach\"}".getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+
+        try {
+            server.start();
+            int port = server.getAddress().getPort();
+
+            CommandOutputResult result = executeInteractiveWithOut(
+                    "/eq coach --query 我需要沟通建议 --style super-soft\n"
+                            + "/exit\n",
+                    "--server", "http://127.0.0.1:" + port,
+                    "--user", "cli-user"
+            );
+
+            String console = result.stdout();
+            assertEquals(0, result.exitCode());
+            assertTrue(console.contains("style 非法：super-soft"));
+            assertTrue(console.contains("可选值：gentle|direct|workplace|intimate"));
+            assertEquals(0, chatCalls.get());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void shouldSuggestClosestEqEnumValueForSlashCommandTypos() throws IOException {
+        java.util.concurrent.atomic.AtomicInteger chatCalls = new java.util.concurrent.atomic.AtomicInteger(0);
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/chat", exchange -> {
+            chatCalls.incrementAndGet();
+            byte[] response = "{\"reply\":\"coach ok\",\"channel\":\"eq.coach\"}".getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+
+        try {
+            server.start();
+            int port = server.getAddress().getPort();
+
+            CommandOutputResult result = executeInteractiveWithOut(
+                    "/eq coach --query 我需要沟通建议 --style driect\n"
+                            + "/exit\n",
+                    "--server", "http://127.0.0.1:" + port,
+                    "--user", "cli-user"
+            );
+
+            String console = result.stdout();
+            assertEquals(0, result.exitCode());
+            assertTrue(console.contains("style 非法：driect"));
+            assertTrue(console.contains("猜你想用 --style direct"));
+            assertEquals(0, chatCalls.get());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void shouldSuggestTodoPolicySubcommandForTypos() {
+        CommandOutputResult result = executeInteractiveWithOutDefault(
+                "/todo policy shwo\n"
+                        + "/exit\n"
+        );
+
+        String console = result.stdout();
+        assertEquals(0, result.exitCode());
+        assertTrue(console.contains("不支持的 policy 子命令：shwo"));
+        assertTrue(console.contains("猜你想用 /todo policy show"));
+    }
+
+    @Test
+    void shouldSuggestMemoryStyleEnumForTypos() {
+        CommandOutputResult result = executeInteractiveWithOutDefault(
+                "/memory style set --style-name action --tone warm --output-format bullett\n"
+                        + "/exit\n"
+        );
+
+        String console = result.stdout();
+        assertEquals(0, result.exitCode());
+        assertTrue(console.contains("output-format 非法：bullett"));
+        assertTrue(console.contains("猜你想用 --output-format bullet"));
     }
 
     @Test

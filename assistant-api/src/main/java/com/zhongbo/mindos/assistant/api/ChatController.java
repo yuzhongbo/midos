@@ -45,7 +45,7 @@ public class ChatController {
             putIfNotNull(profileContext, "llmProvider", request.profile().llmProvider());
         }
         DispatchResult result = dispatcherService.dispatch(request.userId(), request.message(), profileContext);
-        return new ChatResponseDto(result.reply(), result.channel());
+        return new ChatResponseDto(result.reply(), result.channel(), result.executionTrace());
     }
 
     @GetMapping("/{userId}/history")
