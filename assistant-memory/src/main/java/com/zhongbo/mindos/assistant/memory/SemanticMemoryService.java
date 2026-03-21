@@ -23,6 +23,8 @@ public class SemanticMemoryService {
     private static final double APPROX_EMBEDDING_SIMILARITY_THRESHOLD = 0.985;
     private static final String DEFAULT_BUCKET = "global";
     private static final String PROP_MEMORY_DECAY_HALF_LIFE_HOURS = "mindos.memory.search.decay-half-life-hours";
+    private static final String PROP_SEARCH_CROSS_BUCKET_MAX = "mindos.memory.search.cross-bucket.max";
+    private static final String PROP_SEARCH_CROSS_BUCKET_RATIO = "mindos.memory.search.cross-bucket.ratio";
 
     private final MemoryConsolidationService memoryConsolidationService;
     private final Map<String, UserSemanticStore> entriesByUser = new ConcurrentHashMap<>();
@@ -67,7 +69,9 @@ public class SemanticMemoryService {
         if (store == null) {
             return List.of();
         }
-        return store.search(query, limit, normalizeBucket(preferredBucket));
+        boolean explicitPreferredBucket = preferredBucket != null && !preferredBucket.isBlank();
+        String normalizedPreferredBucket = explicitPreferredBucket ? normalizeBucket(preferredBucket) : null;
+        return store.search(query, limit, normalizedPreferredBucket, explicitPreferredBucket);
     }
 
     public boolean containsEquivalentEntry(String userId, SemanticMemoryEntry entry) {
@@ -163,7 +167,10 @@ public class SemanticMemoryService {
             return false;
         }
 
-        synchronized List<SemanticMemoryEntry> search(String query, int limit, String preferredBucket) {
+        synchronized List<SemanticMemoryEntry> search(String query,
+                                                      int limit,
+                                                      String preferredBucket,
+                                                      boolean enforceCrossBucketCap) {
             List<StoredSemanticEntry> candidates = new ArrayList<>();
             LinkedHashSet<String> queryTokens = tokenize(query);
             if (queryTokens.isEmpty()) {
@@ -186,14 +193,88 @@ public class SemanticMemoryService {
             }
 
             String normalizedQuery = memoryConsolidationService.normalizeText(query).toLowerCase(Locale.ROOT);
-            return candidates.stream()
+            List<StoredSemanticEntry> ranked = candidates.stream()
                     .sorted(Comparator
                             .comparingDouble((StoredSemanticEntry entry) -> score(entry, queryTokens, normalizedQuery, preferredBucket))
                             .thenComparingLong(StoredSemanticEntry::sequence)
                             .reversed())
-                    .limit(limit)
+                    .toList();
+
+            List<StoredSemanticEntry> mixed = enforceCrossBucketCap
+                    ? applyPreferredBucketMix(ranked, limit, preferredBucket)
+                    : ranked.stream().limit(limit).toList();
+
+            return mixed.stream()
                     .map(StoredSemanticEntry::entry)
                     .toList();
+        }
+
+        private List<StoredSemanticEntry> applyPreferredBucketMix(List<StoredSemanticEntry> ranked,
+                                                                   int limit,
+                                                                   String preferredBucket) {
+            if (preferredBucket == null || preferredBucket.isBlank()) {
+                return ranked.stream().limit(limit).toList();
+            }
+            int crossBucketCap = resolveCrossBucketCap(limit);
+            List<StoredSemanticEntry> sameBucket = new ArrayList<>();
+            List<StoredSemanticEntry> crossBucket = new ArrayList<>();
+            for (StoredSemanticEntry entry : ranked) {
+                if (preferredBucket.equals(entry.bucket())) {
+                    sameBucket.add(entry);
+                } else if (crossBucket.size() < crossBucketCap) {
+                    crossBucket.add(entry);
+                }
+            }
+
+            List<StoredSemanticEntry> mixed = new ArrayList<>(limit);
+            for (StoredSemanticEntry entry : sameBucket) {
+                if (mixed.size() >= limit) {
+                    break;
+                }
+                mixed.add(entry);
+            }
+            for (StoredSemanticEntry entry : crossBucket) {
+                if (mixed.size() >= limit) {
+                    break;
+                }
+                mixed.add(entry);
+            }
+            return mixed;
+        }
+
+        private int resolveCrossBucketCap(int limit) {
+            int maxCap = parsePositiveInt(System.getProperty(PROP_SEARCH_CROSS_BUCKET_MAX, "2"), 2);
+            double ratio = parseRatio(System.getProperty(PROP_SEARCH_CROSS_BUCKET_RATIO, "0.5"), 0.5);
+            int ratioCap = (int) Math.floor(limit * ratio);
+            int cap = Math.min(maxCap, Math.max(0, ratioCap));
+            return Math.min(limit, Math.max(0, cap));
+        }
+
+        private int parsePositiveInt(String raw, int fallback) {
+            if (raw == null || raw.isBlank()) {
+                return fallback;
+            }
+            try {
+                int value = Integer.parseInt(raw);
+                return value > 0 ? value : fallback;
+            } catch (NumberFormatException ex) {
+                return fallback;
+            }
+        }
+
+        private double parseRatio(String raw, double fallback) {
+            if (raw == null || raw.isBlank()) {
+                return fallback;
+            }
+            try {
+                double value = Double.parseDouble(raw);
+                if (Double.isNaN(value) || Double.isInfinite(value)) {
+                    return fallback;
+                }
+                return Math.max(0.0, Math.min(1.0, value));
+            } catch (NumberFormatException ex) {
+                return fallback;
+            }
         }
 
         private SemanticMemoryEntry merge(SemanticMemoryEntry existing, SemanticMemoryEntry candidate) {

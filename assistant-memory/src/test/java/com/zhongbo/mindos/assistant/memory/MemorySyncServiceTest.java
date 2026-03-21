@@ -29,12 +29,14 @@ class MemorySyncServiceTest {
             EpisodicMemoryService episodicMemoryService = new EpisodicMemoryService();
             SemanticMemoryService semanticMemoryService = new SemanticMemoryService(consolidationService);
             ProceduralMemoryService proceduralMemoryService = new ProceduralMemoryService();
+            SemanticWriteGatePolicy writeGatePolicy = new SemanticWriteGatePolicy(consolidationService);
             MemorySyncService service = new MemorySyncService(
                     repository,
                     episodicMemoryService,
                     semanticMemoryService,
                     proceduralMemoryService,
-                    consolidationService
+                    consolidationService,
+                    writeGatePolicy
             );
 
             MemorySyncBatch batch = new MemorySyncBatch(
@@ -55,18 +57,65 @@ class MemorySyncServiceTest {
     }
 
     @Test
+    void shouldHonorBucketSpecificWriteGateThresholdWhenRecordingSemantic() {
+        String oldEnabled = System.getProperty("mindos.memory.write-gate.enabled");
+        String oldMinLength = System.getProperty("mindos.memory.write-gate.min-length");
+        String oldTaskMinLength = System.getProperty("mindos.memory.write-gate.min-length.task");
+        try {
+            System.setProperty("mindos.memory.write-gate.enabled", "true");
+            System.setProperty("mindos.memory.write-gate.min-length", "10");
+            System.setProperty("mindos.memory.write-gate.min-length.task", "4");
+
+            MemoryConsolidationService consolidationService = new MemoryConsolidationService();
+            CentralMemoryRepository repository = new InMemoryCentralMemoryRepository();
+            EpisodicMemoryService episodicMemoryService = new EpisodicMemoryService();
+            SemanticMemoryService semanticMemoryService = new SemanticMemoryService(consolidationService);
+            ProceduralMemoryService proceduralMemoryService = new ProceduralMemoryService();
+            SemanticWriteGatePolicy writeGatePolicy = new SemanticWriteGatePolicy(consolidationService);
+            MemorySyncService service = new MemorySyncService(
+                    repository,
+                    episodicMemoryService,
+                    semanticMemoryService,
+                    proceduralMemoryService,
+                    consolidationService,
+                    writeGatePolicy
+            );
+
+            long allowedCursor = service.recordSemantic(
+                    "bucket-user",
+                    new SemanticMemoryEntry("plan", List.of(0.1, 0.2), Instant.now()),
+                    "task"
+            );
+            long deniedCursor = service.recordSemantic(
+                    "bucket-user",
+                    new SemanticMemoryEntry("plan", List.of(0.1, 0.2), Instant.now()),
+                    "profile"
+            );
+
+            assertTrue(allowedCursor > 0);
+            assertEquals(0L, deniedCursor);
+        } finally {
+            restoreProperty("mindos.memory.write-gate.enabled", oldEnabled);
+            restoreProperty("mindos.memory.write-gate.min-length", oldMinLength);
+            restoreProperty("mindos.memory.write-gate.min-length.task", oldTaskMinLength);
+        }
+    }
+
+    @Test
     void shouldNotDuplicateLocalMemoryWhenApplyingSameEventTwice() {
         MemoryConsolidationService consolidationService = new MemoryConsolidationService();
         CentralMemoryRepository repository = new InMemoryCentralMemoryRepository();
         EpisodicMemoryService episodicMemoryService = new EpisodicMemoryService();
         SemanticMemoryService semanticMemoryService = new SemanticMemoryService(consolidationService);
         ProceduralMemoryService proceduralMemoryService = new ProceduralMemoryService();
+        SemanticWriteGatePolicy writeGatePolicy = new SemanticWriteGatePolicy(consolidationService);
         MemorySyncService service = new MemorySyncService(
                 repository,
                 episodicMemoryService,
                 semanticMemoryService,
                 proceduralMemoryService,
-                consolidationService
+                consolidationService,
+                writeGatePolicy
         );
 
         MemorySyncBatch batch = new MemorySyncBatch(
@@ -96,12 +145,14 @@ class MemorySyncServiceTest {
         EpisodicMemoryService episodicMemoryService = new EpisodicMemoryService();
         SemanticMemoryService semanticMemoryService = new SemanticMemoryService(consolidationService);
         ProceduralMemoryService proceduralMemoryService = new ProceduralMemoryService();
+        SemanticWriteGatePolicy writeGatePolicy = new SemanticWriteGatePolicy(consolidationService);
         MemorySyncService service = new MemorySyncService(
                 repository,
                 episodicMemoryService,
                 semanticMemoryService,
                 proceduralMemoryService,
-                consolidationService
+                consolidationService,
+                writeGatePolicy
         );
 
         MemorySyncBatch batch = new MemorySyncBatch(
@@ -131,12 +182,14 @@ class MemorySyncServiceTest {
         EpisodicMemoryService episodicMemoryService = new EpisodicMemoryService();
         SemanticMemoryService semanticMemoryService = new SemanticMemoryService(consolidationService);
         ProceduralMemoryService proceduralMemoryService = new ProceduralMemoryService();
+        SemanticWriteGatePolicy writeGatePolicy = new SemanticWriteGatePolicy(consolidationService);
         MemorySyncService service = new MemorySyncService(
                 repository,
                 episodicMemoryService,
                 semanticMemoryService,
                 proceduralMemoryService,
-                consolidationService
+                consolidationService,
+                writeGatePolicy
         );
 
         MemorySyncBatch batch = new MemorySyncBatch(
@@ -167,12 +220,14 @@ class MemorySyncServiceTest {
                 EpisodicMemoryService episodicMemoryService = new EpisodicMemoryService();
                 SemanticMemoryService semanticMemoryService = new SemanticMemoryService(consolidationService);
                 ProceduralMemoryService proceduralMemoryService = new ProceduralMemoryService();
+                SemanticWriteGatePolicy writeGatePolicy = new SemanticWriteGatePolicy(consolidationService);
                 MemorySyncService service = new MemorySyncService(
                         repository,
                         episodicMemoryService,
                         semanticMemoryService,
                         proceduralMemoryService,
-                        consolidationService
+                        consolidationService,
+                        writeGatePolicy
                 );
 
                 for (int i = 0; i < 1_500; i++) {

@@ -170,6 +170,29 @@ class ChatControllerTest {
     }
 
     @Test
+    void shouldReuseLearnedProfilePreferencesWhenFollowUpHasNoProfile() throws Exception {
+        String profileJson = "{\"assistantName\":\"MindOS\",\"role\":\"高一\",\"style\":\"练习优先\",\"language\":\"zh-CN\",\"timezone\":\"Asia/Shanghai\"}";
+        String firstRequest = String.format(
+                "{\"userId\":\"pref-learn-user\",\"message\":\"给我一个数学学习计划，目标是期末提分，六周，每周八小时\",\"profile\":%s}",
+                profileJson
+        );
+
+        mockMvc.perform(post("/chat")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(firstRequest))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.channel").value("teaching.plan"));
+
+        mockMvc.perform(post("/chat")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"userId\":\"pref-learn-user\",\"message\":\"继续按之前方式\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.channel").value("teaching.plan"))
+                .andExpect(jsonPath("$.reply").value(org.hamcrest.Matchers.containsString("对象: 高一")))
+                .andExpect(jsonPath("$.reply").value(org.hamcrest.Matchers.containsString("学习风格: 练习优先")));
+    }
+
+    @Test
     void shouldAutoRouteContinuationToCodeGenerateWithHabitHint() throws Exception {
         mockMvc.perform(post("/chat")
                         .contentType(MediaType.APPLICATION_JSON)

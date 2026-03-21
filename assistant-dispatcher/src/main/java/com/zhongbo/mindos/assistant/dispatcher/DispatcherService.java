@@ -54,6 +54,7 @@ public class DispatcherService {
     private final SkillEngine skillEngine;
     private final SkillDslParser skillDslParser;
     private final MetaOrchestratorService metaOrchestratorService;
+    private final PersonaCoreService personaCoreService;
     private final MemoryManager memoryManager;
     private final LlmClient llmClient;
     private final boolean preferenceReuseEnabled;
@@ -66,6 +67,7 @@ public class DispatcherService {
     public DispatcherService(SkillEngine skillEngine,
                              SkillDslParser skillDslParser,
                              MetaOrchestratorService metaOrchestratorService,
+                             PersonaCoreService personaCoreService,
                              MemoryManager memoryManager,
                              LlmClient llmClient,
                              @Value("${mindos.dispatcher.preference-reuse.enabled:false}") boolean preferenceReuseEnabled,
@@ -77,6 +79,7 @@ public class DispatcherService {
         this.skillEngine = skillEngine;
         this.skillDslParser = skillDslParser;
         this.metaOrchestratorService = metaOrchestratorService;
+        this.personaCoreService = personaCoreService;
         this.memoryManager = memoryManager;
         this.llmClient = llmClient;
         this.preferenceReuseEnabled = preferenceReuseEnabled;
@@ -106,13 +109,17 @@ public class DispatcherService {
         memoryManager.storeUserConversation(userId, userInput);
         maybeStoreSemanticMemory(userId, userInput);
 
+        Map<String, Object> resolvedProfileContext = personaCoreService.resolveProfileContext(
+                userId,
+                profileContext == null ? Map.of() : profileContext
+        );
         String memoryContext = buildMemoryContext(userId, userInput);
-        SkillContext context = new SkillContext(userId, userInput, profileContext == null ? Map.of() : profileContext);
+        SkillContext context = new SkillContext(userId, userInput, resolvedProfileContext);
         Map<String, Object> llmContext = Map.of(
                 "userId", userId,
                 "memoryContext", memoryContext,
                 "input", userInput,
-                "profile", profileContext == null ? Map.of() : profileContext
+                "profile", resolvedProfileContext
         );
 
         return metaOrchestratorService.orchestrate(
@@ -123,6 +130,7 @@ public class DispatcherService {
                     SkillResult result = orchestration.result();
                     ExecutionTraceDto trace = orchestration.trace();
                     memoryManager.storeAssistantConversation(userId, result.output());
+                    personaCoreService.learnFromTurn(userId, resolvedProfileContext, result);
                     maybeStoreExecutionTraceMemory(userId, trace);
                     return new DispatchResult(result.output(), result.skillName(), trace);
                 })

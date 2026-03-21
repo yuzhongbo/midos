@@ -6,6 +6,7 @@ import com.zhongbo.mindos.assistant.memory.model.MemoryApplyResult;
 import com.zhongbo.mindos.assistant.memory.model.MemoryStyleProfile;
 import com.zhongbo.mindos.assistant.memory.model.MemorySyncBatch;
 import com.zhongbo.mindos.assistant.memory.model.MemorySyncSnapshot;
+import com.zhongbo.mindos.assistant.memory.model.PreferenceProfile;
 import com.zhongbo.mindos.assistant.memory.model.ProceduralMemoryEntry;
 import com.zhongbo.mindos.assistant.memory.model.SemanticMemoryEntry;
 import com.zhongbo.mindos.assistant.memory.model.SkillUsageStats;
@@ -15,28 +16,31 @@ import java.util.List;
 
 @Service
 public class MemoryManager {
-    private static final String PROP_WRITE_GATE_ENABLED = "mindos.memory.write-gate.enabled";
-    private static final String PROP_WRITE_GATE_MIN_LENGTH = "mindos.memory.write-gate.min-length";
-
     private final EpisodicMemoryService episodicMemoryService;
     private final SemanticMemoryService semanticMemoryService;
     private final ProceduralMemoryService proceduralMemoryService;
     private final MemorySyncService memorySyncService;
     private final MemoryConsolidationService memoryConsolidationService;
+    private final SemanticWriteGatePolicy semanticWriteGatePolicy;
     private final MemoryCompressionPlanningService memoryCompressionPlanningService;
+    private final PreferenceProfileService preferenceProfileService;
 
     public MemoryManager(EpisodicMemoryService episodicMemoryService,
                          SemanticMemoryService semanticMemoryService,
                          ProceduralMemoryService proceduralMemoryService,
                          MemorySyncService memorySyncService,
                          MemoryConsolidationService memoryConsolidationService,
-                         MemoryCompressionPlanningService memoryCompressionPlanningService) {
+                         SemanticWriteGatePolicy semanticWriteGatePolicy,
+                         MemoryCompressionPlanningService memoryCompressionPlanningService,
+                         PreferenceProfileService preferenceProfileService) {
         this.episodicMemoryService = episodicMemoryService;
         this.semanticMemoryService = semanticMemoryService;
         this.proceduralMemoryService = proceduralMemoryService;
         this.memorySyncService = memorySyncService;
         this.memoryConsolidationService = memoryConsolidationService;
+        this.semanticWriteGatePolicy = semanticWriteGatePolicy;
         this.memoryCompressionPlanningService = memoryCompressionPlanningService;
+        this.preferenceProfileService = preferenceProfileService;
     }
 
     public void storeUserConversation(String userId, String message) {
@@ -68,7 +72,7 @@ public class MemoryManager {
         if (entry == null || entry.text().isBlank()) {
             return;
         }
-        if (!shouldStoreSemanticMemory(entry.text())) {
+        if (!semanticWriteGatePolicy.shouldStore(entry.text(), bucket)) {
             return;
         }
         memorySyncService.recordSemantic(userId, entry, bucket);
@@ -147,27 +151,12 @@ public class MemoryManager {
         return memoryCompressionPlanningService.buildPlan(userId, sourceText, styleOverride, focus);
     }
 
-    private boolean shouldStoreSemanticMemory(String text) {
-        if (!Boolean.parseBoolean(System.getProperty(PROP_WRITE_GATE_ENABLED, "false"))) {
-            return true;
-        }
-        String normalized = memoryConsolidationService.normalizeText(text);
-        if (normalized.isBlank()) {
-            return false;
-        }
-        int minLength = parsePositiveInt(System.getProperty(PROP_WRITE_GATE_MIN_LENGTH, "10"), 10);
-        if (memoryConsolidationService.containsKeySignal(normalized)) {
-            return true;
-        }
-        return normalized.length() >= minLength;
+    public PreferenceProfile getPreferenceProfile(String userId) {
+        return preferenceProfileService.getProfile(userId);
     }
 
-    private int parsePositiveInt(String raw, int fallback) {
-        try {
-            int value = Integer.parseInt(raw);
-            return value > 0 ? value : fallback;
-        } catch (NumberFormatException ex) {
-            return fallback;
-        }
+    public PreferenceProfile updatePreferenceProfile(String userId, PreferenceProfile profile) {
+        return preferenceProfileService.updateProfile(userId, profile);
     }
+
 }

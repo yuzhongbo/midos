@@ -233,8 +233,11 @@ curl -X POST http://localhost:8080/api/skills/load-mcp \
 - Semantic memory anti-pollution controls (optional, JVM properties):
   - write gate toggle: `mindos.memory.write-gate.enabled` (default `false`)
   - write gate min length: `mindos.memory.write-gate.min-length` (default `10`)
+  - bucket min length override: `mindos.memory.write-gate.min-length.<bucket>` (optional, falls back to global min length)
   - search recency decay half-life hours: `mindos.memory.search.decay-half-life-hours` (default `72`)
-  - when enabled, low-signal short semantic entries are skipped; retrieval prefers same inferred topic bucket and still keeps cross-bucket fallback.
+  - explicit preferred-bucket search cross-bucket fallback cap: `mindos.memory.search.cross-bucket.max` (default `2`)
+  - explicit preferred-bucket search cross-bucket fallback ratio: `mindos.memory.search.cross-bucket.ratio` (default `0.5`, range `0..1`)
+  - when enabled, low-signal short semantic entries are skipped; retrieval prefers same inferred topic bucket and keeps bounded cross-bucket fallback when preferred bucket is explicit.
 - Memory NLU synonyms for style/compress intents are configurable via JVM system properties (`-Dmindos.memory.nlu.*`); values are comma-separated terms and normalize to canonical values used by API/CLI (`focus`: `task|learning|review`, `style`: `action|coach|story|concise`, `tone`: `warm|direct|neutral`, `format`: `bullet|plain`).
 - `eq.coach` supports optional output controls: `style` (`gentle|direct|workplace|intimate`), `mode` (`analysis|reply|both`), `priorityFocus` (`p1|p2|p3`).
 - `eq.coach` risk terms are configurable via JVM properties (comma-separated):
