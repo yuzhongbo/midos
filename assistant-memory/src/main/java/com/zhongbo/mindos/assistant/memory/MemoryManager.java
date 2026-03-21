@@ -7,6 +7,7 @@ import com.zhongbo.mindos.assistant.memory.model.MemoryStyleProfile;
 import com.zhongbo.mindos.assistant.memory.model.MemorySyncBatch;
 import com.zhongbo.mindos.assistant.memory.model.MemorySyncSnapshot;
 import com.zhongbo.mindos.assistant.memory.model.PreferenceProfile;
+import com.zhongbo.mindos.assistant.memory.model.PreferenceProfileExplain;
 import com.zhongbo.mindos.assistant.memory.model.ProceduralMemoryEntry;
 import com.zhongbo.mindos.assistant.memory.model.SemanticMemoryEntry;
 import com.zhongbo.mindos.assistant.memory.model.SkillUsageStats;
@@ -157,6 +158,10 @@ public class MemoryManager {
 
     public PreferenceProfile updatePreferenceProfile(String userId, PreferenceProfile profile) {
         return preferenceProfileService.updateProfile(userId, profile);
+    }
+
+    public PreferenceProfileExplain getPreferenceProfileExplain(String userId) {
+        return preferenceProfileService.getProfileExplain(userId);
     }
 
 }

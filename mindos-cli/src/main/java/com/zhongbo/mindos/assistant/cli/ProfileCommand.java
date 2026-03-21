@@ -9,14 +9,15 @@ import picocli.CommandLine;
         subcommands = {
                 ProfileShowCommand.class,
                 ProfileSetCommand.class,
-                ProfileResetCommand.class
+                ProfileResetCommand.class,
+                ProfilePersonaCommand.class
         }
 )
 public class ProfileCommand implements Runnable {
 
     @Override
     public void run() {
-        System.out.println("Use 'mindos profile show|set|reset' to manage profile settings.");
+        System.out.println("Use 'mindos profile show|set|reset|persona show' to manage profile settings.");
     }
 }
 

@@ -10,6 +10,8 @@ import com.zhongbo.mindos.assistant.common.dto.MemoryCompressionPlanResponseDto;
 import com.zhongbo.mindos.assistant.common.dto.MemoryStyleProfileDto;
 import com.zhongbo.mindos.assistant.common.dto.MemorySyncRequestDto;
 import com.zhongbo.mindos.assistant.common.dto.MemorySyncResponseDto;
+import com.zhongbo.mindos.assistant.common.dto.PersonaProfileExplainDto;
+import com.zhongbo.mindos.assistant.common.dto.PersonaProfileDto;
 import com.zhongbo.mindos.assistant.sdk.AssistantSdkClient;
 
 import java.io.IOException;
@@ -56,6 +58,16 @@ class CliChatService {
     MemoryStyleProfileDto getMemoryStyleProfile() {
         AssistantSdkClient client = new AssistantSdkClient(java.net.URI.create(server));
         return client.getMemoryStyle(userId);
+    }
+
+    PersonaProfileDto getPersonaProfile() {
+        AssistantSdkClient client = new AssistantSdkClient(java.net.URI.create(server));
+        return client.getPersonaProfile(userId);
+    }
+
+    PersonaProfileExplainDto getPersonaProfileExplain() {
+        AssistantSdkClient client = new AssistantSdkClient(java.net.URI.create(server));
+        return client.getPersonaProfileExplain(userId);
     }
 
     MemoryStyleProfileDto updateMemoryStyleProfile(MemoryStyleProfileDto request) {

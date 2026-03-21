@@ -154,5 +154,77 @@ class MemorySyncControllerTest {
                 .andExpect(jsonPath("$.styleName").value("action"))
                 .andExpect(jsonPath("$.tone").value("warm"));
     }
+
+    @Test
+    void shouldExposeConfirmedPersonaProfile() throws Exception {
+        String profileJson = "{\"assistantName\":\"MindOS\",\"role\":\"高一\",\"style\":\"练习优先\",\"language\":\"zh-CN\",\"timezone\":\"Asia/Shanghai\"}";
+
+        mockMvc.perform(post("/chat")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(String.format("{\"userId\":\"persona-user\",\"message\":\"给我一个数学学习计划，目标是期末提分，六周，每周八小时\",\"profile\":%s}", profileJson)))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(get("/api/memory/persona-user/persona"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.assistantName").value("MindOS"))
+                .andExpect(jsonPath("$.role").value("高一"))
+                .andExpect(jsonPath("$.style").value("练习优先"))
+                .andExpect(jsonPath("$.language").value("zh-CN"))
+                .andExpect(jsonPath("$.timezone").value("Asia/Shanghai"));
+    }
+
+    @Test
+    void shouldHidePendingConflictingPersonaValueUntilConfirmed() throws Exception {
+        String stableProfile = "{\"assistantName\":\"MindOS\",\"role\":\"高一\",\"style\":\"练习优先\",\"language\":\"zh-CN\",\"timezone\":\"Asia/Shanghai\"}";
+        String conflictingProfile = "{\"assistantName\":\"MindOS\",\"role\":\"程序员\",\"style\":\"直接\",\"language\":\"zh-CN\",\"timezone\":\"Asia/Shanghai\"}";
+
+        mockMvc.perform(post("/chat")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(String.format("{\"userId\":\"persona-conflict-user\",\"message\":\"给我一个数学学习计划，目标是期末提分，六周，每周八小时\",\"profile\":%s}", stableProfile)))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(post("/chat")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(String.format("{\"userId\":\"persona-conflict-user\",\"message\":\"给我一个数学学习计划，目标是冲刺提分，六周，每周八小时\",\"profile\":%s}", conflictingProfile)))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(get("/api/memory/persona-conflict-user/persona"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.role").value("高一"))
+                .andExpect(jsonPath("$.style").value("练习优先"));
+
+        mockMvc.perform(get("/api/memory/persona-conflict-user/persona/explain"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.confirmed.role").value("高一"))
+                .andExpect(jsonPath("$.pendingOverrides.length()").value(2))
+                .andExpect(jsonPath("$.pendingOverrides[0].confirmThreshold").value(2));
+    }
+
+    @Test
+    void shouldPromoteConflictAfterThresholdInPersonaExplain() throws Exception {
+        String stableProfile = "{\"assistantName\":\"MindOS\",\"role\":\"高一\",\"style\":\"练习优先\",\"language\":\"zh-CN\",\"timezone\":\"Asia/Shanghai\"}";
+        String conflictingProfile = "{\"assistantName\":\"MindOS\",\"role\":\"程序员\",\"style\":\"直接\",\"language\":\"zh-CN\",\"timezone\":\"Asia/Shanghai\"}";
+
+        mockMvc.perform(post("/chat")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(String.format("{\"userId\":\"persona-promote-user\",\"message\":\"给我一个数学学习计划，目标是期末提分，六周，每周八小时\",\"profile\":%s}", stableProfile)))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(post("/chat")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(String.format("{\"userId\":\"persona-promote-user\",\"message\":\"给我一个数学学习计划，目标是冲刺提分，六周，每周八小时\",\"profile\":%s}", conflictingProfile)))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(post("/chat")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(String.format("{\"userId\":\"persona-promote-user\",\"message\":\"给我一个数学学习计划，目标是模拟冲刺，六周，每周八小时\",\"profile\":%s}", conflictingProfile)))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(get("/api/memory/persona-promote-user/persona/explain"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.confirmed.role").value("程序员"))
+                .andExpect(jsonPath("$.confirmed.style").value("直接"))
+                .andExpect(jsonPath("$.pendingOverrides.length()").value(0));
+    }
 }
 

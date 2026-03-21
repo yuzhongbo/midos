@@ -222,7 +222,22 @@ curl -X POST http://localhost:8080/api/skills/load-mcp \
   - provider key map: `mindos.llm.provider-keys=openai:sk-xxx,local:dummy-key`
   - per-request override: send `profile.llmProvider` (CLI: `profile set --llm-provider openai`)
 - Semantic memory is stored when input starts with `remember `.
+- Dispatcher habit-routing confidence controls (optional, app/JVM properties):
+  - `mindos.dispatcher.habit-routing.enabled` (default `true`)
+  - `mindos.dispatcher.habit-routing.min-total-count` (default `2`)
+  - `mindos.dispatcher.habit-routing.min-success-rate` (default `0.6`)
+  - `mindos.dispatcher.habit-routing.recent-window-size` (default `6`)
+  - `mindos.dispatcher.habit-routing.recent-min-success-count` (default `2`)
+  - `mindos.dispatcher.habit-routing.recent-success-max-age-hours` (default `72`)
+  - continuation auto-routing now requires leading continuation cues (like `继续/按之前`) and stable recent success history.
+- Persona learning safety controls (optional, app/JVM properties):
+  - `mindos.dispatcher.persona-core.enabled` (default `true`)
+  - `mindos.dispatcher.persona-core.preferred-channel.min-consecutive-success` (default `2`)
+  - `mindos.dispatcher.persona-core.ignored-profile-terms` (default `unknown,null,n/a,na,tbd,todo,随便,不知道,待定`)
+  - `mindos.memory.preference.overwrite-confirm-turns` (default `2`): conflicting long-term profile values need repeated confirmation turns before replacement.
 - Memory sync API supports incremental pull via cursor (`since`) for multi-terminal synchronization.
+- Learned persona profile can be inspected via `GET /api/memory/{userId}/persona` (CLI: `mindos profile persona show`).
+- Persona debug explain view is available at `GET /api/memory/{userId}/persona/explain` to inspect pending conflict overrides before confirmation.
 - Memory compression planning supports gradual stages (`RAW -> CONDENSED -> BRIEF -> STYLED`) with per-user style profile via `POST /api/memory/{userId}/style`, `GET /api/memory/{userId}/style`, and `POST /api/memory/{userId}/compress-plan`.
 - Compression plan supports optional `focus` (`learning`/`task`/`review`) and style update supports optional auto-tune (`POST /api/memory/{userId}/style?autoTune=true&sampleText=...`).
 - Memory key-signal detection is configurable via JVM properties (comma-separated):

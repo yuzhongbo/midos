@@ -134,6 +134,12 @@ class ChatControllerTest {
 
         mockMvc.perform(post("/chat")
                         .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"userId\":\"habit-user\",\"message\":\"给我一个数学学习计划，目标是巩固提升，六周，每周八小时\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.channel").value("teaching.plan"));
+
+        mockMvc.perform(post("/chat")
+                        .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"userId\":\"habit-user\",\"message\":\"继续按之前方式，目标是冲刺提分\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.channel").value("teaching.plan"))
@@ -152,6 +158,12 @@ class ChatControllerTest {
                 "{\"userId\":\"pref-user\",\"message\":\"继续按之前方式\",\"profile\":%s}",
                 profileJson
         );
+
+        mockMvc.perform(post("/chat")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(firstRequest))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.channel").value("teaching.plan"));
 
         mockMvc.perform(post("/chat")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -185,7 +197,39 @@ class ChatControllerTest {
 
         mockMvc.perform(post("/chat")
                         .contentType(MediaType.APPLICATION_JSON)
+                        .content(firstRequest))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.channel").value("teaching.plan"));
+
+        mockMvc.perform(post("/chat")
+                        .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"userId\":\"pref-learn-user\",\"message\":\"继续按之前方式\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.channel").value("teaching.plan"))
+                .andExpect(jsonPath("$.reply").value(org.hamcrest.Matchers.containsString("对象: 高一")))
+                .andExpect(jsonPath("$.reply").value(org.hamcrest.Matchers.containsString("学习风格: 练习优先")));
+    }
+
+    @Test
+    void shouldIgnorePlaceholderProfileValuesWhenLearningPersona() throws Exception {
+        String stableProfile = "{\"assistantName\":\"MindOS\",\"role\":\"高一\",\"style\":\"练习优先\",\"language\":\"zh-CN\",\"timezone\":\"Asia/Shanghai\"}";
+        String placeholderProfile = "{\"assistantName\":\"MindOS\",\"role\":\"unknown\",\"style\":\"unknown\",\"language\":\"zh-CN\",\"timezone\":\"Asia/Shanghai\"}";
+
+        mockMvc.perform(post("/chat")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(String.format("{\"userId\":\"placeholder-user\",\"message\":\"给我一个数学学习计划，目标是期末提分，六周，每周八小时\",\"profile\":%s}", stableProfile)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.channel").value("teaching.plan"));
+
+        mockMvc.perform(post("/chat")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(String.format("{\"userId\":\"placeholder-user\",\"message\":\"给我一个数学学习计划，目标是冲刺提分，六周，每周八小时\",\"profile\":%s}", placeholderProfile)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.channel").value("teaching.plan"));
+
+        mockMvc.perform(post("/chat")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"userId\":\"placeholder-user\",\"message\":\"继续按之前方式\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.channel").value("teaching.plan"))
                 .andExpect(jsonPath("$.reply").value(org.hamcrest.Matchers.containsString("对象: 高一")))
@@ -197,6 +241,12 @@ class ChatControllerTest {
         mockMvc.perform(post("/chat")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"userId\":\"code-habit-user\",\"message\":\"generate code for order entity\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.channel").value("code.generate"));
+
+        mockMvc.perform(post("/chat")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"userId\":\"code-habit-user\",\"message\":\"generate code for order service\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.channel").value("code.generate"));
 
@@ -218,10 +268,31 @@ class ChatControllerTest {
 
         mockMvc.perform(post("/chat")
                         .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"userId\":\"todo-habit-user\",\"message\":\"{\\\"skill\\\":\\\"todo.create\\\",\\\"input\\\":{\\\"task\\\":\\\"准备技术评审\\\",\\\"dueDate\\\":\\\"周六\\\"}}\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.channel").value("todo.create"));
+
+        mockMvc.perform(post("/chat")
+                        .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"userId\":\"todo-habit-user\",\"message\":\"继续按之前方式，截止明天\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.channel").value("todo.create"))
                 .andExpect(jsonPath("$.reply").value(org.hamcrest.Matchers.containsString("[自动调度] 已按历史习惯调用 skill: todo.create")));
+    }
+
+    @Test
+    void shouldFallbackWhenHabitHistoryIsInsufficient() throws Exception {
+        mockMvc.perform(post("/chat")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"userId\":\"habit-threshold-user\",\"message\":\"generate code for member aggregate\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.channel").value("code.generate"));
+
+        mockMvc.perform(post("/chat")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"userId\":\"habit-threshold-user\",\"message\":\"继续按之前方式\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.channel").value("llm"));
     }
 
     @Test

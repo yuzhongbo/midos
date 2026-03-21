@@ -36,6 +36,16 @@ public class DispatcherService {
     private static final int CONTEXT_KNOWLEDGE_LIMIT = 3;
     private static final int HABIT_SKILL_STATS_LIMIT = 3;
     private static final String SKILL_HELP_CHANNEL = "skills.help";
+    private static final List<String> HABIT_CONTINUATION_CUES = List.of(
+            "继续",
+            "按之前",
+            "按上次",
+            "沿用",
+            "还是那个",
+            "同样方式",
+            "按照我的习惯",
+            "根据我的习惯"
+    );
     private static final Pattern TOPIC_BEFORE_PLAN_PATTERN = Pattern.compile("([\\p{L}A-Za-z0-9+#._-]{2,32})\\s*(?:教学规划|学习计划|复习计划|课程规划)");
     private static final Pattern TOPIC_AFTER_VERB_PATTERN = Pattern.compile("(?:学|学习|复习|备考|课程)\\s*([\\p{L}A-Za-z0-9+#._-]{2,32})");
     private static final Pattern GOAL_PATTERN = Pattern.compile("(?:目标(?:是|为)?|想要|希望)\\s*([^，。；;\\n]+)");
@@ -63,6 +73,9 @@ public class DispatcherService {
     private final double habitRoutingMinSuccessRate;
     private final boolean habitExplainHintEnabled;
     private final int habitContinuationInputMaxLength;
+    private final int habitRoutingRecentWindowSize;
+    private final int habitRoutingRecentMinSuccessCount;
+    private final double habitRoutingRecentMaxAgeHours;
 
     public DispatcherService(SkillEngine skillEngine,
                              SkillDslParser skillDslParser,
@@ -75,7 +88,10 @@ public class DispatcherService {
                              @Value("${mindos.dispatcher.habit-routing.min-total-count:2}") int habitRoutingMinTotalCount,
                              @Value("${mindos.dispatcher.habit-routing.min-success-rate:0.6}") double habitRoutingMinSuccessRate,
                              @Value("${mindos.dispatcher.habit-routing.explain-hint-enabled:true}") boolean habitExplainHintEnabled,
-                             @Value("${mindos.dispatcher.habit-routing.max-continuation-input-length:16}") int habitContinuationInputMaxLength) {
+                             @Value("${mindos.dispatcher.habit-routing.max-continuation-input-length:16}") int habitContinuationInputMaxLength,
+                             @Value("${mindos.dispatcher.habit-routing.recent-window-size:6}") int habitRoutingRecentWindowSize,
+                             @Value("${mindos.dispatcher.habit-routing.recent-min-success-count:2}") int habitRoutingRecentMinSuccessCount,
+                             @Value("${mindos.dispatcher.habit-routing.recent-success-max-age-hours:72}") double habitRoutingRecentMaxAgeHours) {
         this.skillEngine = skillEngine;
         this.skillDslParser = skillDslParser;
         this.metaOrchestratorService = metaOrchestratorService;
@@ -88,6 +104,9 @@ public class DispatcherService {
         this.habitRoutingMinSuccessRate = Math.max(0.0, Math.min(1.0, habitRoutingMinSuccessRate));
         this.habitExplainHintEnabled = habitExplainHintEnabled;
         this.habitContinuationInputMaxLength = Math.max(4, habitContinuationInputMaxLength);
+        this.habitRoutingRecentWindowSize = Math.max(3, habitRoutingRecentWindowSize);
+        this.habitRoutingRecentMinSuccessCount = Math.max(1, habitRoutingRecentMinSuccessCount);
+        this.habitRoutingRecentMaxAgeHours = Math.max(1.0, habitRoutingRecentMaxAgeHours);
     }
 
     public DispatchResult dispatch(String userId, String userInput) {
@@ -288,30 +307,24 @@ public class DispatcherService {
         }
 
         String normalized = normalize(userInput);
-        boolean continuationIntent = containsAny(normalized,
-                "继续",
-                "按之前",
-                "按上次",
-                "沿用",
-                "还是那个",
-                "同样方式",
-                "按照我的习惯",
-                "根据我的习惯");
-
-        if (!continuationIntent) {
+        if (!isContinuationIntent(normalized)) {
             return Optional.empty();
         }
 
-        Optional<String> preferredSkill = preferredSkillFromHistory(userId)
+        List<ProceduralMemoryEntry> history = memoryManager.getSkillUsageHistory(userId);
+        Optional<String> preferredSkill = preferredSkillFromHistory(history)
                 .or(() -> preferredSkillFromStats(userId));
         if (preferredSkill.isEmpty()) {
             return Optional.empty();
         }
+        if (!passesHabitConfidenceGate(userId, preferredSkill.get(), history)) {
+            return Optional.empty();
+        }
+
         return toSkillDslByHabit(userId, preferredSkill.get(), userInput, profileContext == null ? Map.of() : profileContext);
     }
 
-    private Optional<String> preferredSkillFromHistory(String userId) {
-        List<ProceduralMemoryEntry> history = memoryManager.getSkillUsageHistory(userId);
+    private Optional<String> preferredSkillFromHistory(List<ProceduralMemoryEntry> history) {
         for (int i = history.size() - 1; i >= 0; i--) {
             ProceduralMemoryEntry entry = history.get(i);
             if (entry.success() && entry.skillName() != null && !entry.skillName().isBlank()) {
@@ -319,6 +332,48 @@ public class DispatcherService {
             }
         }
         return Optional.empty();
+    }
+
+    private boolean passesHabitConfidenceGate(String userId,
+                                              String preferredSkill,
+                                              List<ProceduralMemoryEntry> history) {
+        if (preferredSkill == null || preferredSkill.isBlank() || history == null || history.isEmpty()) {
+            return false;
+        }
+        if (!passesStatsThreshold(userId, preferredSkill)) {
+            return false;
+        }
+
+        int scanned = 0;
+        int successCount = 0;
+        Instant lastSuccessAt = null;
+        for (int i = history.size() - 1; i >= 0 && scanned < habitRoutingRecentWindowSize; i--) {
+            ProceduralMemoryEntry entry = history.get(i);
+            scanned++;
+            if (!entry.success() || !preferredSkill.equals(entry.skillName())) {
+                continue;
+            }
+            successCount++;
+            if (lastSuccessAt == null || (entry.createdAt() != null && entry.createdAt().isAfter(lastSuccessAt))) {
+                lastSuccessAt = entry.createdAt();
+            }
+        }
+        if (successCount < habitRoutingRecentMinSuccessCount) {
+            return false;
+        }
+        if (lastSuccessAt == null) {
+            return false;
+        }
+
+        double ageHours = Math.max(0.0, Duration.between(lastSuccessAt, Instant.now()).toMillis() / 3_600_000d);
+        return ageHours <= habitRoutingRecentMaxAgeHours;
+    }
+
+    private boolean passesStatsThreshold(String userId, String skillName) {
+        return memoryManager.getSkillUsageStats(userId).stream()
+                .filter(stats -> skillName.equals(stats.skillName()))
+                .anyMatch(stats -> stats.totalCount() >= habitRoutingMinTotalCount
+                        && stats.successCount() * 1.0 / Math.max(1, stats.totalCount()) >= habitRoutingMinSuccessRate);
     }
 
     private Optional<String> preferredSkillFromStats(String userId) {
@@ -535,16 +590,24 @@ public class DispatcherService {
 
     private boolean isContinuationOnlyInput(String userInput) {
         String normalized = normalize(userInput);
-        return containsAny(normalized,
-                "继续",
-                "按之前",
-                "按上次",
-                "沿用",
-                "还是那个",
-                "同样方式",
-                "按照我的习惯",
-                "根据我的习惯")
+        return isContinuationIntent(normalized)
                 && normalized.length() <= habitContinuationInputMaxLength;
+    }
+
+    private boolean isContinuationIntent(String normalized) {
+        if (normalized == null || normalized.isBlank()) {
+            return false;
+        }
+        for (String cue : HABIT_CONTINUATION_CUES) {
+            int index = normalized.indexOf(cue);
+            if (index < 0) {
+                continue;
+            }
+            if (index <= 2) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private Map<String, Object> extractTeachingPlanPayload(String userInput) {

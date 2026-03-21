@@ -3,6 +3,8 @@ package com.zhongbo.mindos.assistant.sdk;
 import com.sun.net.httpserver.HttpServer;
 import com.zhongbo.mindos.assistant.common.dto.ConversationTurnDto;
 import com.zhongbo.mindos.assistant.common.dto.MemoryCompressionPlanRequestDto;
+import com.zhongbo.mindos.assistant.common.dto.PersonaProfileDto;
+import com.zhongbo.mindos.assistant.common.dto.PersonaProfileExplainDto;
 import com.zhongbo.mindos.assistant.common.dto.MemorySyncRequestDto;
 import com.zhongbo.mindos.assistant.common.dto.MemoryStyleProfileDto;
 import org.junit.jupiter.api.Test;
@@ -80,6 +82,82 @@ class AssistantSdkClientTest {
             assertTrue(pathRef.get().contains("/api/memory/user+a%2Bb/sync"));
             assertTrue(pathRef.get().contains("since=3"));
             assertTrue(pathRef.get().contains("limit=20"));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void shouldFetchPersonaProfileWithEncodedUserId() throws IOException {
+        AtomicReference<String> pathRef = new AtomicReference<>("");
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/api/memory", exchange -> {
+            pathRef.set(exchange.getRequestURI().toString());
+            byte[] response = ("{" +
+                    "\"assistantName\":\"MindOS\"," +
+                    "\"role\":\"高一\"," +
+                    "\"style\":\"练习优先\"," +
+                    "\"language\":\"zh-CN\"," +
+                    "\"timezone\":\"Asia/Shanghai\"," +
+                    "\"preferredChannel\":\"teaching.plan\"" +
+                    "}").getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+
+        try {
+            server.start();
+            AssistantSdkClient client = new AssistantSdkClient(URI.create("http://127.0.0.1:" + server.getAddress().getPort()));
+            PersonaProfileDto response = client.getPersonaProfile("user a+b");
+
+            assertEquals("MindOS", response.assistantName());
+            assertEquals("高一", response.role());
+            assertEquals("teaching.plan", response.preferredChannel());
+            assertTrue(pathRef.get().contains("/api/memory/user+a%2Bb/persona"));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void shouldFetchPersonaExplainWithEncodedUserId() throws IOException {
+        AtomicReference<String> pathRef = new AtomicReference<>("");
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/api/memory", exchange -> {
+            pathRef.set(exchange.getRequestURI().toString());
+            byte[] response = ("{" +
+                    "\"confirmed\":{" +
+                    "\"assistantName\":\"MindOS\"," +
+                    "\"role\":\"高一\"," +
+                    "\"style\":\"练习优先\"," +
+                    "\"language\":\"zh-CN\"," +
+                    "\"timezone\":\"Asia/Shanghai\"," +
+                    "\"preferredChannel\":\"teaching.plan\"}," +
+                    "\"pendingOverrides\":[{" +
+                    "\"field\":\"role\"," +
+                    "\"pendingValue\":\"程序员\"," +
+                    "\"count\":1," +
+                    "\"confirmThreshold\":2," +
+                    "\"remainingConfirmTurns\":1" +
+                    "}]" +
+                    "}").getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+
+        try {
+            server.start();
+            AssistantSdkClient client = new AssistantSdkClient(URI.create("http://127.0.0.1:" + server.getAddress().getPort()));
+            PersonaProfileExplainDto response = client.getPersonaProfileExplain("user a+b");
+
+            assertEquals("高一", response.confirmed().role());
+            assertEquals(1, response.pendingOverrides().size());
+            assertEquals("role", response.pendingOverrides().get(0).field());
+            assertTrue(pathRef.get().contains("/api/memory/user+a%2Bb/persona/explain"));
         } finally {
             server.stop(0);
         }

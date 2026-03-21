@@ -7,6 +7,9 @@ import com.zhongbo.mindos.assistant.common.dto.MemoryCompressionStepDto;
 import com.zhongbo.mindos.assistant.common.dto.MemoryStyleProfileDto;
 import com.zhongbo.mindos.assistant.common.dto.MemorySyncRequestDto;
 import com.zhongbo.mindos.assistant.common.dto.MemorySyncResponseDto;
+import com.zhongbo.mindos.assistant.common.dto.PendingPreferenceOverrideDto;
+import com.zhongbo.mindos.assistant.common.dto.PersonaProfileExplainDto;
+import com.zhongbo.mindos.assistant.common.dto.PersonaProfileDto;
 import com.zhongbo.mindos.assistant.common.dto.ProceduralMemoryEntryDto;
 import com.zhongbo.mindos.assistant.common.dto.SemanticMemoryEntryDto;
 import com.zhongbo.mindos.assistant.memory.MemoryManager;
@@ -17,6 +20,9 @@ import com.zhongbo.mindos.assistant.memory.model.ConversationTurn;
 import com.zhongbo.mindos.assistant.memory.model.MemoryApplyResult;
 import com.zhongbo.mindos.assistant.memory.model.MemorySyncBatch;
 import com.zhongbo.mindos.assistant.memory.model.MemorySyncSnapshot;
+import com.zhongbo.mindos.assistant.memory.model.PendingPreferenceOverride;
+import com.zhongbo.mindos.assistant.memory.model.PreferenceProfile;
+import com.zhongbo.mindos.assistant.memory.model.PreferenceProfileExplain;
 import com.zhongbo.mindos.assistant.memory.model.ProceduralMemoryEntry;
 import com.zhongbo.mindos.assistant.memory.model.SemanticMemoryEntry;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -64,6 +70,16 @@ public class MemorySyncController {
                 applyResult.deduplicatedCount(),
                 applyResult.keySignalInputCount(),
                 applyResult.keySignalStoredCount());
+    }
+
+    @GetMapping("/{userId}/persona")
+    public PersonaProfileDto getPersonaProfile(@PathVariable String userId) {
+        return toDto(memoryManager.getPreferenceProfile(userId));
+    }
+
+    @GetMapping("/{userId}/persona/explain")
+    public PersonaProfileExplainDto getPersonaProfileExplain(@PathVariable String userId) {
+        return toDto(memoryManager.getPreferenceProfileExplain(userId));
     }
 
     @GetMapping("/{userId}/style")
@@ -164,6 +180,34 @@ public class MemorySyncController {
     private MemoryCompressionPlanResponseDto toDto(MemoryCompressionPlan plan) {
         List<MemoryCompressionStepDto> steps = plan.steps().stream().map(this::toDto).toList();
         return new MemoryCompressionPlanResponseDto(toDto(plan.styleProfile()), steps, plan.createdAt());
+    }
+
+    private PersonaProfileDto toDto(PreferenceProfile profile) {
+        return new PersonaProfileDto(
+                profile.assistantName(),
+                profile.role(),
+                profile.style(),
+                profile.language(),
+                profile.timezone(),
+                profile.preferredChannel()
+        );
+    }
+
+    private PersonaProfileExplainDto toDto(PreferenceProfileExplain explain) {
+        return new PersonaProfileExplainDto(
+                toDto(explain.confirmedProfile()),
+                explain.pendingOverrides().stream().map(this::toDto).toList()
+        );
+    }
+
+    private PendingPreferenceOverrideDto toDto(PendingPreferenceOverride pending) {
+        return new PendingPreferenceOverrideDto(
+                pending.field(),
+                pending.pendingValue(),
+                pending.count(),
+                pending.confirmThreshold(),
+                pending.remainingConfirmTurns()
+        );
     }
 
     private MemoryCompressionStepDto toDto(MemoryCompressionStep step) {

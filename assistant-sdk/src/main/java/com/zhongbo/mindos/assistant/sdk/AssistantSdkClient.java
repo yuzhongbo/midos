@@ -10,6 +10,8 @@ import com.zhongbo.mindos.assistant.common.dto.MemoryCompressionPlanResponseDto;
 import com.zhongbo.mindos.assistant.common.dto.MemoryStyleProfileDto;
 import com.zhongbo.mindos.assistant.common.dto.MemorySyncRequestDto;
 import com.zhongbo.mindos.assistant.common.dto.MemorySyncResponseDto;
+import com.zhongbo.mindos.assistant.common.dto.PersonaProfileExplainDto;
+import com.zhongbo.mindos.assistant.common.dto.PersonaProfileDto;
 
 import java.io.IOException;
 import java.net.URLEncoder;
@@ -109,6 +111,42 @@ public class AssistantSdkClient {
             throw new AssistantSdkException(0, "INTERRUPTED", "MindOS memory style fetch call interrupted");
         } catch (IOException e) {
             throw new AssistantSdkException(0, "NETWORK_ERROR", "Failed to call MindOS memory style fetch endpoint");
+        }
+    }
+
+    public PersonaProfileDto getPersonaProfile(String userId) {
+        String encodedUser = encodePathSegment(userId);
+        URI uri = baseUri.resolve("/api/memory/" + encodedUser + "/persona");
+
+        try {
+            HttpRequest httpRequest = HttpRequest.newBuilder(uri)
+                    .header("Accept", "application/json")
+                    .GET()
+                    .build();
+            return sendForBody(httpRequest, PersonaProfileDto.class);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new AssistantSdkException(0, "INTERRUPTED", "MindOS persona profile fetch call interrupted");
+        } catch (IOException e) {
+            throw new AssistantSdkException(0, "NETWORK_ERROR", "Failed to call MindOS persona profile endpoint");
+        }
+    }
+
+    public PersonaProfileExplainDto getPersonaProfileExplain(String userId) {
+        String encodedUser = encodePathSegment(userId);
+        URI uri = baseUri.resolve("/api/memory/" + encodedUser + "/persona/explain");
+
+        try {
+            HttpRequest httpRequest = HttpRequest.newBuilder(uri)
+                    .header("Accept", "application/json")
+                    .GET()
+                    .build();
+            return sendForBody(httpRequest, PersonaProfileExplainDto.class);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new AssistantSdkException(0, "INTERRUPTED", "MindOS persona explain fetch call interrupted");
+        } catch (IOException e) {
+            throw new AssistantSdkException(0, "NETWORK_ERROR", "Failed to call MindOS persona explain endpoint");
         }
     }
 

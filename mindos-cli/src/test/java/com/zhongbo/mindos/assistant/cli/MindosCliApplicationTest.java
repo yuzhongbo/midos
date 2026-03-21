@@ -63,6 +63,100 @@ class MindosCliApplicationTest {
         assertTrue(help.contains("show"));
         assertTrue(help.contains("set"));
         assertTrue(help.contains("reset"));
+        assertTrue(help.contains("persona"));
+    }
+
+    @Test
+    void shouldShowPersonaProfileFromServer() throws IOException {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/api/memory", exchange -> {
+            byte[] response = ("{" +
+                    "\"assistantName\":\"MindOS\"," +
+                    "\"role\":\"高一\"," +
+                    "\"style\":\"练习优先\"," +
+                    "\"language\":\"zh-CN\"," +
+                    "\"timezone\":\"Asia/Shanghai\"," +
+                    "\"preferredChannel\":\"teaching.plan\"" +
+                    "}").getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+
+        try {
+            server.start();
+            CommandOutputResult result = executeWithOut(
+                    "profile", "persona", "show",
+                    "--server", "http://127.0.0.1:" + server.getAddress().getPort(),
+                    "--user", "cli-user"
+            );
+
+            assertEquals(0, result.exitCode());
+            String console = result.stdout();
+            assertTrue(console.contains("persona.assistantName=MindOS"));
+            assertTrue(console.contains("persona.role=高一"));
+            assertTrue(console.contains("persona.preferredChannel=teaching.plan"));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void shouldShowPersonaExplainFromServer() throws IOException {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/api/memory", exchange -> {
+            String path = exchange.getRequestURI().getPath();
+            byte[] response;
+            if (path.endsWith("/persona/explain")) {
+                response = ("{" +
+                        "\"confirmed\":{" +
+                        "\"assistantName\":\"MindOS\"," +
+                        "\"role\":\"高一\"," +
+                        "\"style\":\"练习优先\"," +
+                        "\"language\":\"zh-CN\"," +
+                        "\"timezone\":\"Asia/Shanghai\"," +
+                        "\"preferredChannel\":\"teaching.plan\"}," +
+                        "\"pendingOverrides\":[{" +
+                        "\"field\":\"role\"," +
+                        "\"pendingValue\":\"程序员\"," +
+                        "\"count\":1," +
+                        "\"confirmThreshold\":2," +
+                        "\"remainingConfirmTurns\":1" +
+                        "}]" +
+                        "}").getBytes(StandardCharsets.UTF_8);
+            } else {
+                response = ("{" +
+                        "\"assistantName\":\"MindOS\"," +
+                        "\"role\":\"高一\"," +
+                        "\"style\":\"练习优先\"," +
+                        "\"language\":\"zh-CN\"," +
+                        "\"timezone\":\"Asia/Shanghai\"," +
+                        "\"preferredChannel\":\"teaching.plan\"" +
+                        "}").getBytes(StandardCharsets.UTF_8);
+            }
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+
+        try {
+            server.start();
+            CommandOutputResult result = executeWithOut(
+                    "profile", "persona", "explain",
+                    "--server", "http://127.0.0.1:" + server.getAddress().getPort(),
+                    "--user", "cli-user"
+            );
+
+            assertEquals(0, result.exitCode());
+            String console = result.stdout();
+            assertTrue(console.contains("persona.confirmed.role=高一"));
+            assertTrue(console.contains("persona.pending.role=程序员"));
+            assertTrue(console.contains("remaining=1"));
+        } finally {
+            server.stop(0);
+        }
     }
 
     @Test
