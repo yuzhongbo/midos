@@ -1,6 +1,8 @@
 package com.zhongbo.mindos.assistant.memory;
 
 import com.zhongbo.mindos.assistant.memory.model.ConversationTurn;
+import com.zhongbo.mindos.assistant.memory.model.LongTask;
+import com.zhongbo.mindos.assistant.memory.model.LongTaskStatus;
 import com.zhongbo.mindos.assistant.memory.model.MemoryCompressionPlan;
 import com.zhongbo.mindos.assistant.memory.model.MemoryApplyResult;
 import com.zhongbo.mindos.assistant.memory.model.MemoryStyleProfile;
@@ -14,6 +16,7 @@ import com.zhongbo.mindos.assistant.memory.model.SkillUsageStats;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
+import java.time.Instant;
 
 @Service
 public class MemoryManager {
@@ -25,6 +28,7 @@ public class MemoryManager {
     private final SemanticWriteGatePolicy semanticWriteGatePolicy;
     private final MemoryCompressionPlanningService memoryCompressionPlanningService;
     private final PreferenceProfileService preferenceProfileService;
+    private final LongTaskService longTaskService;
 
     public MemoryManager(EpisodicMemoryService episodicMemoryService,
                          SemanticMemoryService semanticMemoryService,
@@ -33,7 +37,8 @@ public class MemoryManager {
                          MemoryConsolidationService memoryConsolidationService,
                          SemanticWriteGatePolicy semanticWriteGatePolicy,
                          MemoryCompressionPlanningService memoryCompressionPlanningService,
-                         PreferenceProfileService preferenceProfileService) {
+                         PreferenceProfileService preferenceProfileService,
+                         LongTaskService longTaskService) {
         this.episodicMemoryService = episodicMemoryService;
         this.semanticMemoryService = semanticMemoryService;
         this.proceduralMemoryService = proceduralMemoryService;
@@ -42,6 +47,7 @@ public class MemoryManager {
         this.semanticWriteGatePolicy = semanticWriteGatePolicy;
         this.memoryCompressionPlanningService = memoryCompressionPlanningService;
         this.preferenceProfileService = preferenceProfileService;
+        this.longTaskService = longTaskService;
     }
 
     public void storeUserConversation(String userId, String message) {
@@ -162,6 +168,58 @@ public class MemoryManager {
 
     public PreferenceProfileExplain getPreferenceProfileExplain(String userId) {
         return preferenceProfileService.getProfileExplain(userId);
+    }
+
+    public LongTask createLongTask(String userId,
+                                   String title,
+                                   String objective,
+                                   List<String> steps,
+                                   Instant dueAt,
+                                   Instant nextCheckAt) {
+        return longTaskService.createTask(userId, title, objective, steps, dueAt, nextCheckAt);
+    }
+
+    public List<LongTask> listLongTasks(String userId, String statusFilter) {
+        return longTaskService.listTasks(userId, statusFilter);
+    }
+
+    public LongTask getLongTask(String userId, String taskId) {
+        return longTaskService.getTask(userId, taskId);
+    }
+
+    public List<LongTask> claimReadyLongTasks(String userId, String workerId, int limit, long leaseSeconds) {
+        return longTaskService.claimReadyTasks(userId, workerId, limit, leaseSeconds);
+    }
+
+    public LongTask updateLongTaskProgress(String userId,
+                                           String taskId,
+                                           String workerId,
+                                           String completedStep,
+                                           String note,
+                                           String blockedReason,
+                                           Instant nextCheckAt,
+                                           boolean markCompleted) {
+        return longTaskService.updateProgress(userId, taskId, workerId, completedStep, note, blockedReason, nextCheckAt, markCompleted);
+    }
+
+    public LongTask updateLongTaskStatus(String userId,
+                                         String taskId,
+                                         LongTaskStatus status,
+                                         String note,
+                                         Instant nextCheckAt) {
+        return longTaskService.updateStatus(userId, taskId, status, note, nextCheckAt);
+    }
+
+    public List<String> listLongTaskUsers() {
+        return longTaskService.listUserIds();
+    }
+
+    public LongTaskService.AutoAdvanceResult autoAdvanceLongTasks(String userId,
+                                                                  String workerId,
+                                                                  int limit,
+                                                                  long leaseSeconds,
+                                                                  long nextCheckDelaySeconds) {
+        return longTaskService.autoAdvanceReadyTasks(userId, workerId, limit, leaseSeconds, nextCheckDelaySeconds);
     }
 
 }

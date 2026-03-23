@@ -42,13 +42,13 @@ public class EchoSkill implements Skill {
 
     @Override
     public SkillResult run(SkillContext context) {
-        String input = context.input();
-        if (input == null || input.length() <= "echo ".length()) {
+        String echoedText = resolveEchoText(context);
+        if (echoedText == null || echoedText.isBlank()) {
             return SkillResult.failure(name(), "Usage: echo <text>");
         }
         if (llmClient != null) {
             try {
-                String prompt = "你是一个智能回声助手，请智能地复述或扩展用户输入内容，仅输出文本。输入：" + input.substring("echo ".length());
+                String prompt = "你是一个智能回声助手，请智能地复述或扩展用户输入内容，仅输出文本。输入：" + echoedText;
                 String llmReply = llmClient.generateResponse(prompt, buildLlmContext(context));
                 if (llmReply != null && !llmReply.isBlank()) {
                     return SkillResult.success(name(), llmReply.trim());
@@ -57,8 +57,22 @@ public class EchoSkill implements Skill {
                 LOGGER.log(Level.WARNING, "LLM call failed for echo skill, fallback to local output", ex);
             }
         }
-        String output = input.substring("echo ".length());
-        return SkillResult.success(name(), output);
+        return SkillResult.success(name(), echoedText);
+    }
+
+    private String resolveEchoText(SkillContext context) {
+        Object explicitText = context == null || context.attributes() == null ? null : context.attributes().get("text");
+        if (explicitText != null) {
+            String normalized = String.valueOf(explicitText).trim();
+            if (!normalized.isBlank()) {
+                return normalized;
+            }
+        }
+        String input = context == null ? null : context.input();
+        if (input == null || input.length() <= "echo ".length() || !input.toLowerCase().startsWith("echo ")) {
+            return null;
+        }
+        return input.substring("echo ".length()).trim();
     }
 
     private Map<String, Object> buildLlmContext(SkillContext context) {

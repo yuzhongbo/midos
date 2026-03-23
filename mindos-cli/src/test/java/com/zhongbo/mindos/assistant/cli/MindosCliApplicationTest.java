@@ -330,7 +330,7 @@ class MindosCliApplicationTest {
         Path configPath = tempDir.resolve("profile.properties");
 
         CommandOutputResult result = executeInteractiveWithOut(
-                "/profile set --name BoAssistant --role coding-partner --style detailed --language zh-CN --timezone UTC --llm-provider openai\n"
+                "/profile set --name BoAssistant --role coding-partner --style detailed --language zh-CN --timezone UTC --llm-provider openai --llm-preset quality\n"
                         + "/profile show\n"
                         + "/exit\n",
                 "--profile-config", configPath.toString()
@@ -345,9 +345,11 @@ class MindosCliApplicationTest {
         assertEquals("detailed", profile.style());
         assertEquals("UTC", profile.timezone());
         assertEquals("openai", profile.llmProvider());
+        assertEquals("quality", profile.llmPreset());
         assertTrue(console.contains("本地 profile 已更新"));
         assertTrue(console.contains("assistant=BoAssistant"));
         assertTrue(console.contains("llm.provider=openai"));
+        assertTrue(console.contains("llm.preset=quality"));
     }
 
     @Test
@@ -360,6 +362,7 @@ class MindosCliApplicationTest {
                 "concise",
                 "zh-CN",
                 "Asia/Shanghai",
+                "",
                 ""
         ));
 
@@ -371,6 +374,7 @@ class MindosCliApplicationTest {
                         + "zh-CN\n"
                         + "UTC\n"
                         + "openai\n"
+                        + "quality\n"
                         + "/exit\n",
                 "--profile-config", configPath.toString()
         );
@@ -384,8 +388,10 @@ class MindosCliApplicationTest {
         assertEquals("detailed", profile.style());
         assertEquals("UTC", profile.timezone());
         assertEquals("openai", profile.llmProvider());
+        assertEquals("quality", profile.llmPreset());
         assertTrue(console.contains("name [当前=MindOS Assistant]"));
         assertTrue(console.contains("llm-provider [当前=]"));
+        assertTrue(console.contains("llm-preset [当前=]"));
     }
 
     @Test

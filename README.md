@@ -218,13 +218,32 @@ curl -X POST http://localhost:8080/api/skills/load-mcp \
 - LLM calls are stubbed unless `mindos.llm.api-key` is set in `assistant-api/src/main/resources/application.properties`.
 - Optional multi-provider routing:
   - default provider: `mindos.llm.provider=stub`
+  - routing mode: `mindos.llm.routing.mode=fixed|auto` (default `fixed`)
+  - auto stage mapping: `mindos.llm.routing.stage-map=llm-dsl:openai,llm-fallback:openai`
+  - preset mapping: `mindos.llm.routing.preset-map=cost:openai,balanced:openai,quality:openai`
   - provider endpoint map: `mindos.llm.provider-endpoints=openai:https://api.openai.com/v1/chat/completions,local:http://localhost:11434/v1/chat/completions`
   - provider key map: `mindos.llm.provider-keys=openai:sk-xxx,local:dummy-key`
-  - per-request override: send `profile.llmProvider` (CLI: `profile set --llm-provider openai`)
+  - per-request override: send `profile.llmProvider` (CLI: `profile set --llm-provider openai`; use `auto` to force automatic stage-based routing)
+  - per-request/server-profile preset: send `profile.llmPreset` (CLI: `profile set --llm-preset quality`) to pick a named cost/quality preset before stage auto-routing.
 - LLM call metrics (token estimate + multi-provider stats):
   - endpoint: `GET /api/metrics/llm?windowMinutes=60&provider=openai&includeRecent=true&recentLimit=20`
   - toggles: `mindos.llm.metrics.enabled` (default `true`), `mindos.llm.metrics.max-recent-calls` (default `500`)
   - summary includes success/fallback rate, average latency, estimated token totals, provider aggregates, and optional recent calls.
+- Long-task orchestration API (multi-day / multi-worker):
+  - create: `POST /api/tasks/{userId}` with `{title, objective, steps[], dueAt?, nextCheckAt?}`
+  - list/query: `GET /api/tasks/{userId}?status=PENDING|RUNNING|BLOCKED|COMPLETED|CANCELLED`, `GET /api/tasks/{userId}/{taskId}`
+  - claim ready work (supports parallel workers): `POST /api/tasks/{userId}/claim?workerId=worker-a&limit=2&leaseSeconds=300`
+  - progress update: `POST /api/tasks/{userId}/{taskId}/progress` with `{workerId, completedStep?, note?, blockedReason?, nextCheckAt?, markCompleted}`
+  - status override: `POST /api/tasks/{userId}/{taskId}/status` with `{status, note?, nextCheckAt?}`
+  - manual auto-advance trigger: `POST /api/tasks/{userId}/auto-run` (advances one ready step per claimed task)
+  - each claim uses a lease (`leaseOwner`, `leaseUntil`) so multiple worker threads/processes can collaborate safely without double-processing.
+  - optional background auto-runner (disabled by default):
+    - `mindos.tasks.auto-run.enabled`
+    - `mindos.tasks.auto-run.fixed-delay-ms`
+    - `mindos.tasks.auto-run.worker-id`
+    - `mindos.tasks.auto-run.claim-limit`
+    - `mindos.tasks.auto-run.lease-seconds`
+    - `mindos.tasks.auto-run.next-check-delay-seconds`
 - Semantic memory is stored when input starts with `remember `.
 - Dispatcher habit-routing confidence controls (optional, app/JVM properties):
   - `mindos.dispatcher.habit-routing.enabled` (default `true`)
@@ -234,6 +253,50 @@ curl -X POST http://localhost:8080/api/skills/load-mcp \
   - `mindos.dispatcher.habit-routing.recent-min-success-count` (default `2`)
   - `mindos.dispatcher.habit-routing.recent-success-max-age-hours` (default `72`)
   - continuation auto-routing now requires leading continuation cues (like `继续/按之前`) and stable recent success history.
+- Dispatcher token/loop guards:
+  - `mindos.dispatcher.prompt.max-chars` (default `2800`)
+  - `mindos.dispatcher.memory-context.max-chars` (default `1800`)
+  - `mindos.dispatcher.llm-reply.max-chars` (default `1200`)
+  - `mindos.dispatcher.skill.guard.max-consecutive` (default `2`), blocks repeated same-skill loop routing and falls back to broader reasoning.
+  - `mindos.dispatcher.skill.guard.recent-window-size` (default `6`), recent procedural entries scanned for loop fingerprints.
+  - `mindos.dispatcher.skill.guard.repeat-input-threshold` (default `2`), repeated same-skill + same-input fingerprints allowed within cooldown before blocking.
+  - `mindos.dispatcher.skill.guard.cooldown-seconds` (default `180`), cooldown window for repeated same-input loop detection.
+- Prompt-injection safety guard (default enabled):
+  - `mindos.dispatcher.prompt-injection.guard.enabled` (default `true`)
+  - `mindos.dispatcher.prompt-injection.guard.risk-terms` (comma-separated risky phrases)
+  - `mindos.dispatcher.prompt-injection.guard.safe-reply` (safe response when risky prompt is detected)
+  - when matched, dispatcher returns channel `security.guard` and refuses sensitive execution.
+- High-risk operation approval policy (optional, server-side enforced):
+  - `mindos.security.risky-ops.require-approval` (default `false`)
+  - `mindos.security.risky-ops.use-challenge-token` (default `true`), enable one-time challenge token approval to prevent header replay
+  - `mindos.security.risky-ops.approval-header` / `mindos.security.risky-ops.approval-value`
+  - `mindos.security.risky-ops.challenge-header` / `mindos.security.risky-ops.challenge.max-ttl-seconds`
+  - `mindos.security.risky-ops.admin-token-header` / `mindos.security.risky-ops.admin-token` (optional extra secret)
+  - challenge endpoint: `POST /api/security/challenge` with `{operation, resource, actor, ttlSeconds?}` (requires admin token when configured)
+  - challenge validation is strict: token must match `operation + resource + actor + request IP`, and token is consumed once.
+  - `mindos.security.skill.load-jar.allowed-hosts` / `mindos.security.skill.load-mcp.allowed-hosts`
+  - when enabled, `POST /api/skills/load-jar`, `POST /api/skills/load-mcp`, and `POST /api/tasks/{userId}/auto-run` require approval headers and skill URLs are host allowlisted.
+- Skill capability whitelist policy (fine-grained):
+  - `mindos.security.skill.capability.guard.enabled` (default `true`)
+  - `mindos.security.skill.allowed-capabilities` (default `fs.read,fs.write,exec,net`)
+  - `mindos.security.skill.capability-map` (example: `echo:exec,file.search:fs.read,mcp.docs.searchDocs:net`)
+  - blocked skill execution returns channel `security.guard` with missing capability details.
+- Structured security audit logging:
+  - `mindos.security.audit.enabled` (default `true`)
+  - `mindos.security.audit.file` (default `logs/security-audit.log`)
+  - `mindos.security.audit.trace-id-header` (default `X-Trace-Id`)
+  - audit query endpoints:
+    - `GET /api/security/audit?limit=50` (simple recent list, requires admin token when configured)
+    - `GET /api/security/audit/query?limit=50&cursor=<signed_cursor>&actor=&operation=&result=&traceId=&from=&to=` (filtered cursor paging)
+      - `cursor` is short JWT-style (`header.payload.signature`), HMAC-signed (tamper-proof), and bound to current filters.
+      - JWT header includes `kid` for signing key version so key rotation can verify old cursors while new cursors use the active key.
+      - `from` / `to` use ISO-8601 UTC timestamps (example: `2026-03-23T10:00:00Z`).
+      - `nextCursor` and `nextCursorExpiresAt` are returned when more items exist.
+  - cursor key rotation config:
+    - `mindos.security.audit.cursor-active-key-version` (example: `v2`)
+    - `mindos.security.audit.cursor-signing-keys` (example: `v1:old-secret,v2:new-secret`)
+    - if keyring is empty, fallback key `mindos.security.audit.cursor-signing-key` is used for active version.
+  - audit fields include actor, operation, resource, timestamp, traceId, result, reason, remote address, and user-agent.
 - Persona learning safety controls (optional, app/JVM properties):
   - `mindos.dispatcher.persona-core.enabled` (default `true`)
   - `mindos.dispatcher.persona-core.preferred-channel.min-consecutive-success` (default `2`)

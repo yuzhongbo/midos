@@ -6,7 +6,8 @@ public record AssistantProfileDto(
         String style,
         String language,
         String timezone,
-        String llmProvider
+        String llmProvider,
+        String llmPreset
 ) {
 }
 

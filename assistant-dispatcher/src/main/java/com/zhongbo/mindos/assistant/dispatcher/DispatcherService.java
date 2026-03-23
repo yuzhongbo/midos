@@ -16,10 +16,12 @@ import org.springframework.stereotype.Service;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Arrays;
 import java.util.concurrent.CompletableFuture;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.logging.Level;
@@ -64,6 +66,7 @@ public class DispatcherService {
     private final SkillEngine skillEngine;
     private final SkillDslParser skillDslParser;
     private final MetaOrchestratorService metaOrchestratorService;
+    private final SkillCapabilityPolicy skillCapabilityPolicy;
     private final PersonaCoreService personaCoreService;
     private final MemoryManager memoryManager;
     private final LlmClient llmClient;
@@ -76,10 +79,21 @@ public class DispatcherService {
     private final int habitRoutingRecentWindowSize;
     private final int habitRoutingRecentMinSuccessCount;
     private final double habitRoutingRecentMaxAgeHours;
+    private final int promptMaxChars;
+    private final int memoryContextMaxChars;
+    private final int llmReplyMaxChars;
+    private final int skillGuardMaxConsecutive;
+    private final int skillGuardRecentWindowSize;
+    private final int skillGuardRepeatInputThreshold;
+    private final long skillGuardCooldownSeconds;
+    private final boolean promptInjectionGuardEnabled;
+    private final List<String> promptInjectionRiskTerms;
+    private final String promptInjectionSafeReply;
 
     public DispatcherService(SkillEngine skillEngine,
                              SkillDslParser skillDslParser,
                              MetaOrchestratorService metaOrchestratorService,
+                             SkillCapabilityPolicy skillCapabilityPolicy,
                              PersonaCoreService personaCoreService,
                              MemoryManager memoryManager,
                              LlmClient llmClient,
@@ -91,10 +105,21 @@ public class DispatcherService {
                              @Value("${mindos.dispatcher.habit-routing.max-continuation-input-length:16}") int habitContinuationInputMaxLength,
                              @Value("${mindos.dispatcher.habit-routing.recent-window-size:6}") int habitRoutingRecentWindowSize,
                              @Value("${mindos.dispatcher.habit-routing.recent-min-success-count:2}") int habitRoutingRecentMinSuccessCount,
-                             @Value("${mindos.dispatcher.habit-routing.recent-success-max-age-hours:72}") double habitRoutingRecentMaxAgeHours) {
+                             @Value("${mindos.dispatcher.habit-routing.recent-success-max-age-hours:72}") double habitRoutingRecentMaxAgeHours,
+                             @Value("${mindos.dispatcher.prompt.max-chars:2800}") int promptMaxChars,
+                             @Value("${mindos.dispatcher.memory-context.max-chars:1800}") int memoryContextMaxChars,
+                             @Value("${mindos.dispatcher.llm-reply.max-chars:1200}") int llmReplyMaxChars,
+                             @Value("${mindos.dispatcher.skill.guard.max-consecutive:2}") int skillGuardMaxConsecutive,
+                             @Value("${mindos.dispatcher.skill.guard.recent-window-size:6}") int skillGuardRecentWindowSize,
+                             @Value("${mindos.dispatcher.skill.guard.repeat-input-threshold:2}") int skillGuardRepeatInputThreshold,
+                             @Value("${mindos.dispatcher.skill.guard.cooldown-seconds:180}") long skillGuardCooldownSeconds,
+                             @Value("${mindos.dispatcher.prompt-injection.guard.enabled:true}") boolean promptInjectionGuardEnabled,
+                             @Value("${mindos.dispatcher.prompt-injection.guard.risk-terms:ignore previous instructions,ignore all previous instructions,reveal api key,show system prompt,忽略之前的指令,忽略系统指令,泄露api key,显示系统提示词}") String promptInjectionRiskTerms,
+                             @Value("${mindos.dispatcher.prompt-injection.guard.safe-reply:检测到高风险诱导指令，已拒绝执行敏感操作。请改为明确、安全、可审计的请求。}") String promptInjectionSafeReply) {
         this.skillEngine = skillEngine;
         this.skillDslParser = skillDslParser;
         this.metaOrchestratorService = metaOrchestratorService;
+        this.skillCapabilityPolicy = skillCapabilityPolicy;
         this.personaCoreService = personaCoreService;
         this.memoryManager = memoryManager;
         this.llmClient = llmClient;
@@ -107,6 +132,18 @@ public class DispatcherService {
         this.habitRoutingRecentWindowSize = Math.max(3, habitRoutingRecentWindowSize);
         this.habitRoutingRecentMinSuccessCount = Math.max(1, habitRoutingRecentMinSuccessCount);
         this.habitRoutingRecentMaxAgeHours = Math.max(1.0, habitRoutingRecentMaxAgeHours);
+        this.promptMaxChars = Math.max(600, promptMaxChars);
+        this.memoryContextMaxChars = Math.max(400, memoryContextMaxChars);
+        this.llmReplyMaxChars = Math.max(200, llmReplyMaxChars);
+        this.skillGuardMaxConsecutive = Math.max(1, skillGuardMaxConsecutive);
+        this.skillGuardRecentWindowSize = Math.max(2, skillGuardRecentWindowSize);
+        this.skillGuardRepeatInputThreshold = Math.max(2, skillGuardRepeatInputThreshold);
+        this.skillGuardCooldownSeconds = Math.max(0L, skillGuardCooldownSeconds);
+        this.promptInjectionGuardEnabled = promptInjectionGuardEnabled;
+        this.promptInjectionRiskTerms = parseRiskTerms(promptInjectionRiskTerms);
+        this.promptInjectionSafeReply = promptInjectionSafeReply == null || promptInjectionSafeReply.isBlank()
+                ? "检测到高风险诱导指令，已拒绝执行敏感操作。请改为明确、安全、可审计的请求。"
+                : promptInjectionSafeReply;
     }
 
     public DispatchResult dispatch(String userId, String userInput) {
@@ -128,6 +165,12 @@ public class DispatcherService {
         memoryManager.storeUserConversation(userId, userInput);
         maybeStoreSemanticMemory(userId, userInput);
 
+        if (isPromptInjectionAttempt(userInput)) {
+            LOGGER.warning("Dispatcher guard=prompt-injection, userId=" + userId + ", input=" + clip(userInput));
+            memoryManager.storeAssistantConversation(userId, promptInjectionSafeReply);
+            return CompletableFuture.completedFuture(new DispatchResult(promptInjectionSafeReply, "security.guard"));
+        }
+
         Map<String, Object> resolvedProfileContext = personaCoreService.resolveProfileContext(
                 userId,
                 profileContext == null ? Map.of() : profileContext
@@ -144,6 +187,10 @@ public class DispatcherService {
         if (llmProvider != null) {
             llmContext.put("llmProvider", llmProvider);
         }
+        String llmPreset = asString(resolvedProfileContext.get("llmPreset"));
+        if (llmPreset != null) {
+            llmContext.put("llmPreset", llmPreset);
+        }
 
         return metaOrchestratorService.orchestrate(
                         () -> executeSinglePass(userId, userInput, context, memoryContext, llmContext),
@@ -151,6 +198,9 @@ public class DispatcherService {
                 )
                 .thenApply(orchestration -> {
                     SkillResult result = orchestration.result();
+                    if ("llm".equals(result.skillName())) {
+                        result = SkillResult.success("llm", capText(result.output(), llmReplyMaxChars));
+                    }
                     ExecutionTraceDto trace = orchestration.trace();
                     memoryManager.storeAssistantConversation(userId, result.output());
                     personaCoreService.learnFromTurn(userId, resolvedProfileContext, result);
@@ -211,6 +261,10 @@ public class DispatcherService {
                                                                        String memoryContext) {
         Optional<SkillDsl> explicitDsl = skillDslParser.parse(userInput);
         if (explicitDsl.isPresent()) {
+            Optional<SkillResult> blocked = maybeBlockByCapability(explicitDsl.get().skill());
+            if (blocked.isPresent()) {
+                return CompletableFuture.completedFuture(blocked);
+            }
             LOGGER.info("Dispatcher route=explicit-dsl, userId=" + userId + ", skill=" + explicitDsl.get().skill());
             return explicitDsl.map(dsl -> skillEngine.executeDslAsync(dsl, context).thenApply(Optional::of))
                     .orElseGet(() -> CompletableFuture.completedFuture(Optional.empty()));
@@ -218,6 +272,10 @@ public class DispatcherService {
 
         Optional<SkillDsl> ruleDsl = detectSkillWithRules(userInput);
         if (ruleDsl.isPresent()) {
+            Optional<SkillResult> blocked = maybeBlockByCapability(ruleDsl.get().skill());
+            if (blocked.isPresent()) {
+                return CompletableFuture.completedFuture(blocked);
+            }
             LOGGER.info("Dispatcher route=rule, userId=" + userId + ", skill=" + ruleDsl.get().skill());
             return ruleDsl.map(dsl -> skillEngine.executeDslAsync(dsl, context).thenApply(Optional::of))
                     .orElseGet(() -> CompletableFuture.completedFuture(Optional.empty()));
@@ -232,12 +290,24 @@ public class DispatcherService {
         return skillEngine.executeDetectedSkillAsync(context)
                 .thenCompose(detectedSkill -> {
                     if (detectedSkill.isPresent()) {
+                        Optional<SkillResult> blocked = maybeBlockByCapability(detectedSkill.get().skillName());
+                        if (blocked.isPresent()) {
+                            return CompletableFuture.completedFuture(blocked);
+                        }
+                        if (isSkillLoopGuardBlocked(userId, detectedSkill.get().skillName(), userInput)) {
+                            LOGGER.info("Dispatcher guard=loop-skip, userId=" + userId + ", skill=" + detectedSkill.get().skillName());
+                            return CompletableFuture.completedFuture(Optional.empty());
+                        }
                         LOGGER.info("Dispatcher route=detected-skill, userId=" + userId + ", skill=" + detectedSkill.get().skillName());
                         return CompletableFuture.completedFuture(detectedSkill);
                     }
 
                     Optional<SkillDsl> habitDsl = detectSkillWithMemoryHabits(userId, userInput, context.attributes());
                     if (habitDsl.isPresent()) {
+                        Optional<SkillResult> blocked = maybeBlockByCapability(habitDsl.get().skill());
+                        if (blocked.isPresent()) {
+                            return CompletableFuture.completedFuture(blocked);
+                        }
                         LOGGER.info("Dispatcher route=memory-habit, userId=" + userId + ", skill=" + habitDsl.get().skill());
                         return habitDsl.map(dsl -> skillEngine.executeDslAsync(dsl, context)
                                         .thenApply(result -> Optional.of(enrichMemoryHabitResult(result, dsl.skill(), context.attributes()))))
@@ -246,6 +316,14 @@ public class DispatcherService {
 
                     Optional<SkillDsl> llmDsl = detectSkillWithLlm(userId, userInput, memoryContext, context.attributes());
                     if (llmDsl.isPresent()) {
+                        Optional<SkillResult> blocked = maybeBlockByCapability(llmDsl.get().skill());
+                        if (blocked.isPresent()) {
+                            return CompletableFuture.completedFuture(blocked);
+                        }
+                        if (isSkillLoopGuardBlocked(userId, llmDsl.get().skill(), userInput)) {
+                            LOGGER.info("Dispatcher guard=loop-skip, userId=" + userId + ", skill=" + llmDsl.get().skill());
+                            return CompletableFuture.completedFuture(Optional.empty());
+                        }
                         LOGGER.info("Dispatcher route=llm-dsl, userId=" + userId + ", skill=" + llmDsl.get().skill());
                         return llmDsl.map(dsl -> skillEngine.executeDslAsync(dsl, context).thenApply(Optional::of))
                                 .orElseGet(() -> CompletableFuture.completedFuture(Optional.empty()));
@@ -322,6 +400,9 @@ public class DispatcherService {
             return Optional.empty();
         }
         if (!passesHabitConfidenceGate(userId, preferredSkill.get(), history)) {
+            return Optional.empty();
+        }
+        if (isSkillLoopGuardBlocked(userId, preferredSkill.get(), userInput)) {
             return Optional.empty();
         }
 
@@ -819,17 +900,23 @@ public class DispatcherService {
         String knownSkills = skillEngine.describeAvailableSkills();
         String prompt = "You are a dispatcher. Decide whether a skill is needed. "
                 + "Return ONLY JSON with schema {\"skill\":\"name\",\"input\":{...}} or NONE.\n"
-                + "Known skills: " + knownSkills + ".\n"
-                + "Context:\n" + memoryContext + "\n"
-                + "User input:\n" + userInput;
+                + "Known skills: " + capText(knownSkills, 800) + ".\n"
+                + "Context:\n" + capText(memoryContext, memoryContextMaxChars) + "\n"
+                + "User input:\n" + capText(userInput, 400);
+        prompt = capText(prompt, promptMaxChars);
 
         Map<String, Object> llmContext = new LinkedHashMap<>();
         llmContext.put("userId", userId);
         llmContext.put("memoryContext", memoryContext);
+        llmContext.put("input", userInput);
         llmContext.put("routeStage", "llm-dsl");
         String llmProvider = profileContext == null ? null : asString(profileContext.get("llmProvider"));
         if (llmProvider != null) {
             llmContext.put("llmProvider", llmProvider);
+        }
+        String llmPreset = profileContext == null ? null : asString(profileContext.get("llmPreset"));
+        if (llmPreset != null) {
+            llmContext.put("llmPreset", llmPreset);
         }
         String llmReply = llmClient.generateResponse(prompt, Map.copyOf(llmContext));
         if (llmReply == null || llmReply.isBlank() || "NONE".equalsIgnoreCase(llmReply.trim())) {
@@ -966,13 +1053,124 @@ public class DispatcherService {
                         .append("%)\n");
             }
         }
-        return builder.toString();
+        return capText(builder.toString(), memoryContextMaxChars);
     }
 
     private String buildFallbackPrompt(String memoryContext, String userInput) {
-        return "Answer naturally using the context when helpful.\n"
-                + memoryContext + "\n"
-                + "User input: " + userInput;
+        String prompt = "Answer naturally using the context when helpful.\n"
+                + capText(memoryContext, memoryContextMaxChars) + "\n"
+                + "User input: " + capText(userInput, 400);
+        return capText(prompt, promptMaxChars);
+    }
+
+    private boolean isSkillLoopGuardBlocked(String userId, String skillName, String userInput) {
+        if (skillName == null || skillName.isBlank()) {
+            return false;
+        }
+        List<ProceduralMemoryEntry> history = memoryManager.getSkillUsageHistory(userId);
+        if (isConsecutiveSkillLoop(history, skillName)) {
+            return true;
+        }
+        return isRepeatedInputLoop(history, skillName, userInput);
+    }
+
+    private boolean isConsecutiveSkillLoop(List<ProceduralMemoryEntry> history, String skillName) {
+        int consecutive = 0;
+        for (int i = history.size() - 1; i >= 0; i--) {
+            ProceduralMemoryEntry entry = history.get(i);
+            if (!entry.success() || !skillName.equals(entry.skillName())) {
+                break;
+            }
+            consecutive++;
+            if (consecutive > skillGuardMaxConsecutive) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean isRepeatedInputLoop(List<ProceduralMemoryEntry> history, String skillName, String userInput) {
+        if (skillGuardCooldownSeconds <= 0L) {
+            return false;
+        }
+        String fingerprint = loopGuardFingerprint(userInput);
+        if (fingerprint.isBlank()) {
+            return false;
+        }
+        Instant now = Instant.now();
+        int scanned = 0;
+        int repeatedWithinCooldown = 0;
+        for (int i = history.size() - 1; i >= 0 && scanned < skillGuardRecentWindowSize; i--) {
+            ProceduralMemoryEntry entry = history.get(i);
+            scanned++;
+            if (!entry.success() || !skillName.equals(entry.skillName())) {
+                continue;
+            }
+            if (entry.createdAt() != null) {
+                long ageSeconds = Math.max(0L, Duration.between(entry.createdAt(), now).getSeconds());
+                if (ageSeconds > skillGuardCooldownSeconds) {
+                    continue;
+                }
+            }
+            if (fingerprint.equals(loopGuardFingerprint(entry.input()))) {
+                repeatedWithinCooldown++;
+                if (repeatedWithinCooldown >= skillGuardRepeatInputThreshold) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private String loopGuardFingerprint(String value) {
+        if (value == null || value.isBlank()) {
+            return "";
+        }
+        return normalize(sanitizeContinuationPrefix(value));
+    }
+
+    private Optional<SkillResult> maybeBlockByCapability(String skillName) {
+        if (skillName == null || skillName.isBlank() || skillCapabilityPolicy.isAllowed(skillName)) {
+            return Optional.empty();
+        }
+        String message = "安全策略已阻止 skill 执行: " + skillName
+                + "，缺少能力权限: " + skillCapabilityPolicy.missingCapabilities(skillName);
+        LOGGER.warning("Dispatcher guard=capability-deny, skill=" + skillName
+                + ", missing=" + skillCapabilityPolicy.missingCapabilities(skillName));
+        return Optional.of(SkillResult.success("security.guard", message));
+    }
+
+    private boolean isPromptInjectionAttempt(String userInput) {
+        if (!promptInjectionGuardEnabled || userInput == null || userInput.isBlank()) {
+            return false;
+        }
+        String normalized = normalize(userInput).toLowerCase(Locale.ROOT);
+        for (String term : promptInjectionRiskTerms) {
+            if (normalized.contains(term)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private List<String> parseRiskTerms(String rawTerms) {
+        if (rawTerms == null || rawTerms.isBlank()) {
+            return List.of();
+        }
+        return Arrays.stream(rawTerms.split(","))
+                .map(value -> value == null ? "" : value.trim().toLowerCase(Locale.ROOT))
+                .filter(value -> !value.isBlank())
+                .toList();
+    }
+
+    private String capText(String value, int maxChars) {
+        if (value == null) {
+            return "";
+        }
+        if (value.length() <= maxChars) {
+            return value;
+        }
+        return value.substring(0, Math.max(0, maxChars - 14)) + "\n...[truncated]";
     }
 
     private void maybeStoreSemanticMemory(String userId, String input) {

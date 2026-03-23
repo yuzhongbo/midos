@@ -23,6 +23,7 @@ public class ProfileShowCommand implements Runnable {
         System.out.println("language=" + profile.language());
         System.out.println("timezone=" + profile.timezone());
         System.out.println("llm.provider=" + profile.llmProvider());
+        System.out.println("llm.preset=" + profile.llmPreset());
     }
 }
 

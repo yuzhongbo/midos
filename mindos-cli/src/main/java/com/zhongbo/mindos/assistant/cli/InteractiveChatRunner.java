@@ -929,7 +929,8 @@ class InteractiveChatRunner {
                     parsed.get("style"),
                     parsed.get("language"),
                     parsed.get("timezone"),
-                    parsed.get("llm-provider")
+                    parsed.get("llm-provider"),
+                    parsed.get("llm-preset")
             );
             printInfo(out, "本地 profile 已更新：");
             printProfile(out, updated);
@@ -1870,6 +1871,7 @@ class InteractiveChatRunner {
         out.println("language=" + safe(profile.language()));
         out.println("timezone=" + safe(profile.timezone()));
         out.println("llm.provider=" + safe(profile.llmProvider()));
+        out.println("llm.preset=" + safe(profile.llmPreset()));
     }
 
     private Map<String, String> promptForProfileFields(PrintWriter out,
@@ -1898,6 +1900,9 @@ class InteractiveChatRunner {
         putIfBlank(result, "llm-provider", promptForMemoryValue(out, reader,
                 "llm-provider [当前=" + safe(current == null ? null : current.llmProvider()) + "]",
                 safe(current == null ? null : current.llmProvider()), true));
+        putIfBlank(result, "llm-preset", promptForMemoryValue(out, reader,
+                "llm-preset [当前=" + safe(current == null ? null : current.llmPreset()) + "]",
+                safe(current == null ? null : current.llmPreset()), true));
         return result;
     }
 

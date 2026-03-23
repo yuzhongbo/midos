@@ -4,6 +4,7 @@ import com.zhongbo.mindos.assistant.skill.SkillRegistry;
 import com.zhongbo.mindos.assistant.skill.loader.CustomSkillLoader;
 import com.zhongbo.mindos.assistant.skill.loader.ExternalSkillLoader;
 import com.zhongbo.mindos.assistant.skill.mcp.McpSkillLoader;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -32,15 +33,18 @@ public class SkillController {
     private final CustomSkillLoader customSkillLoader;
     private final ExternalSkillLoader externalSkillLoader;
     private final McpSkillLoader mcpSkillLoader;
+    private final SecurityPolicyGuard securityPolicyGuard;
 
     public SkillController(SkillRegistry skillRegistry,
                            CustomSkillLoader customSkillLoader,
                            ExternalSkillLoader externalSkillLoader,
-                           McpSkillLoader mcpSkillLoader) {
+                           McpSkillLoader mcpSkillLoader,
+                           SecurityPolicyGuard securityPolicyGuard) {
         this.skillRegistry = skillRegistry;
         this.customSkillLoader = customSkillLoader;
         this.externalSkillLoader = externalSkillLoader;
         this.mcpSkillLoader = mcpSkillLoader;
+        this.securityPolicyGuard = securityPolicyGuard;
     }
 
     /**
@@ -83,11 +87,19 @@ public class SkillController {
      * <p>Response: {"loaded": 2, "url": "...", "status": "ok"}</p>
      */
     @PostMapping("/load-jar")
-    public Map<String, Object> loadExternalJar(@RequestBody Map<String, String> request) {
+    public Map<String, Object> loadExternalJar(@RequestBody Map<String, String> request,
+                                               HttpServletRequest servletRequest) {
         String jarUrl = request == null ? null : request.get("url");
+        securityPolicyGuard.verifyRiskyOperationApproval(
+                servletRequest,
+                "skills.load-jar",
+                jarUrl == null ? "" : jarUrl.trim(),
+                "system"
+        );
         if (jarUrl == null || jarUrl.isBlank()) {
             return Map.of("status", "error", "error", "Field 'url' is required.");
         }
+        securityPolicyGuard.verifyExternalSkillUrl(jarUrl, true);
         int count = externalSkillLoader.loadFromJar(jarUrl.trim());
         return Map.of(
                 "loaded", count,
@@ -107,15 +119,24 @@ public class SkillController {
     }
 
     @PostMapping("/load-mcp")
-    public Map<String, Object> loadMcpServer(@RequestBody Map<String, Object> request) {
+    public Map<String, Object> loadMcpServer(@RequestBody Map<String, Object> request,
+                                             HttpServletRequest servletRequest) {
         String alias = request == null ? null : asTrimmedString(request.get("alias"));
         String url = request == null ? null : asTrimmedString(request.get("url"));
+        String resource = (alias == null ? "" : alias) + "@" + (url == null ? "" : url);
+        securityPolicyGuard.verifyRiskyOperationApproval(
+                servletRequest,
+                "skills.load-mcp",
+                resource,
+                "system"
+        );
         if (alias == null || alias.isBlank()) {
             return Map.of("status", "error", "error", "Field 'alias' is required.");
         }
         if (url == null || url.isBlank()) {
             return Map.of("status", "error", "error", "Field 'url' is required.");
         }
+        securityPolicyGuard.verifyExternalSkillUrl(url, false);
         Map<String, String> headers = extractHeaders(request == null ? null : request.get("headers"));
         int count = mcpSkillLoader.loadServer(alias, url, headers);
         Map<String, Object> response = new LinkedHashMap<>();

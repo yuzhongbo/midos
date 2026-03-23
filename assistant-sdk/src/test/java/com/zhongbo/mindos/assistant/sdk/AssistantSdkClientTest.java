@@ -2,6 +2,9 @@ package com.zhongbo.mindos.assistant.sdk;
 
 import com.sun.net.httpserver.HttpServer;
 import com.zhongbo.mindos.assistant.common.dto.ConversationTurnDto;
+import com.zhongbo.mindos.assistant.common.dto.LongTaskCreateRequestDto;
+import com.zhongbo.mindos.assistant.common.dto.LongTaskProgressUpdateDto;
+import com.zhongbo.mindos.assistant.common.dto.LongTaskStatusUpdateDto;
 import com.zhongbo.mindos.assistant.common.dto.MemoryCompressionPlanRequestDto;
 import com.zhongbo.mindos.assistant.common.dto.PersonaProfileDto;
 import com.zhongbo.mindos.assistant.common.dto.PersonaProfileExplainDto;
@@ -15,6 +18,8 @@ import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.List;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -158,6 +163,54 @@ class AssistantSdkClientTest {
             assertEquals(1, response.pendingOverrides().size());
             assertEquals("role", response.pendingOverrides().get(0).field());
             assertTrue(pathRef.get().contains("/api/memory/user+a%2Bb/persona/explain"));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void shouldFetchLlmMetrics() throws IOException {
+        AtomicReference<String> pathRef = new AtomicReference<>("");
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/api/metrics", exchange -> {
+            pathRef.set(exchange.getRequestURI().toString());
+            byte[] response = ("{" +
+                    "\"windowMinutes\":60," +
+                    "\"totalCalls\":3," +
+                    "\"successRate\":0.66," +
+                    "\"fallbackRate\":0.33," +
+                    "\"avgLatencyMs\":120.0," +
+                    "\"totalEstimatedTokens\":120," +
+                    "\"byProvider\":[{" +
+                    "\"provider\":\"openai\"," +
+                    "\"calls\":3," +
+                    "\"successCount\":2," +
+                    "\"failureCount\":1," +
+                    "\"retryCount\":1," +
+                    "\"fallbackCount\":1," +
+                    "\"successRate\":0.66," +
+                    "\"fallbackRate\":0.33," +
+                    "\"avgLatencyMs\":120.0," +
+                    "\"totalEstimatedTokens\":120}]," +
+                    "\"recentCalls\":[]" +
+                    "}").getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+
+        try {
+            server.start();
+            AssistantSdkClient client = new AssistantSdkClient(URI.create("http://127.0.0.1:" + server.getAddress().getPort()));
+            var response = client.getLlmMetrics(60, "openai", true, 5);
+
+            assertEquals(3, response.totalCalls());
+            assertEquals(1, response.byProvider().size());
+            assertEquals("openai", response.byProvider().get(0).provider());
+            assertTrue(pathRef.get().contains("/api/metrics/llm"));
+            assertTrue(pathRef.get().contains("provider=openai"));
+            assertTrue(pathRef.get().contains("includeRecent=true"));
         } finally {
             server.stop(0);
         }
@@ -392,6 +445,124 @@ class AssistantSdkClientTest {
             assertEquals("ok", response.get("status"));
         } finally {
             server.stop(0);
+        }
+    }
+
+    @Test
+    void shouldHandleLongTaskEndpoints() throws IOException {
+        AtomicReference<String> pathRef = new AtomicReference<>("");
+        AtomicReference<String> bodyRef = new AtomicReference<>("");
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/api/tasks", exchange -> {
+            pathRef.set(exchange.getRequestURI().toString());
+            bodyRef.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            String path = pathRef.get();
+            String responseBody;
+            if ("POST".equalsIgnoreCase(exchange.getRequestMethod()) && path.endsWith("/api/tasks/user+a%2Bb")) {
+                responseBody = longTaskJson("task-1", "PENDING", 0, "");
+            } else if ("GET".equalsIgnoreCase(exchange.getRequestMethod()) && path.contains("status=RUNNING")) {
+                responseBody = "[" + longTaskJson("task-1", "RUNNING", 30, "worker-a") + "]";
+            } else if ("POST".equalsIgnoreCase(exchange.getRequestMethod()) && path.endsWith("/auto-run")) {
+                responseBody = "{" +
+                        "\"userId\":\"user a+b\"," +
+                        "\"workerId\":\"auto-runner\"," +
+                        "\"claimedCount\":1," +
+                        "\"advancedCount\":1," +
+                        "\"completedCount\":0" +
+                        "}";
+            } else if ("POST".equalsIgnoreCase(exchange.getRequestMethod()) && path.contains("/claim")) {
+                responseBody = "[" + longTaskJson("task-1", "RUNNING", 30, "worker-a") + "]";
+            } else if ("POST".equalsIgnoreCase(exchange.getRequestMethod()) && path.endsWith("/progress")) {
+                responseBody = longTaskJson("task-1", "RUNNING", 60, "worker-a");
+            } else if ("POST".equalsIgnoreCase(exchange.getRequestMethod()) && path.endsWith("/status")) {
+                responseBody = longTaskJson("task-1", "COMPLETED", 100, "");
+            } else {
+                responseBody = longTaskJson("task-1", "RUNNING", 30, "worker-a");
+            }
+
+            byte[] response = responseBody.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+
+        try {
+            server.start();
+            AssistantSdkClient client = new AssistantSdkClient(URI.create("http://127.0.0.1:" + server.getAddress().getPort()));
+
+            var created = client.createLongTask("user a+b", new LongTaskCreateRequestDto(
+                    "发布新版本",
+                    "三天内发布",
+                    List.of("准备 changelog", "灰度发布"),
+                    null,
+                    null
+            ));
+            assertEquals("task-1", created.taskId());
+            assertEquals("PENDING", created.status());
+            assertTrue(pathRef.get().contains("/api/tasks/user+a%2Bb"));
+            assertTrue(bodyRef.get().contains("\"title\":\"发布新版本\""));
+
+            var listed = client.listLongTasks("user a+b", "RUNNING");
+            assertEquals(1, listed.size());
+            assertEquals("RUNNING", listed.get(0).status());
+            assertTrue(pathRef.get().contains("status=RUNNING"));
+
+            var claimed = client.claimLongTasks("user a+b", "worker-a", 2, 600);
+            assertEquals(1, claimed.size());
+            assertEquals("worker-a", claimed.get(0).leaseOwner());
+            assertTrue(pathRef.get().contains("/claim"));
+
+            var progressed = client.updateLongTaskProgress("user a+b", "task-1", new LongTaskProgressUpdateDto(
+                    "worker-a",
+                    "准备 changelog",
+                    "day1 done",
+                    null,
+                    null,
+                    false
+            ));
+            assertEquals(60, progressed.progressPercent());
+            assertTrue(pathRef.get().endsWith("/progress"));
+
+            var completed = client.updateLongTaskStatus("user a+b", "task-1", new LongTaskStatusUpdateDto(
+                    "COMPLETED",
+                    "all done",
+                    null
+            ));
+            assertEquals("COMPLETED", completed.status());
+            assertTrue(pathRef.get().endsWith("/status"));
+
+            var autoRun = client.runLongTaskAuto("user a+b");
+            assertEquals(1, autoRun.claimedCount());
+            assertEquals(1, autoRun.advancedCount());
+            assertTrue(pathRef.get().endsWith("/auto-run"));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    private String longTaskJson(String taskId, String status, int progress, String leaseOwner) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("taskId", taskId);
+        payload.put("userId", "user a+b");
+        payload.put("title", "发布新版本");
+        payload.put("objective", "三天内发布");
+        payload.put("status", status);
+        payload.put("progressPercent", progress);
+        payload.put("pendingSteps", List.of("灰度发布"));
+        payload.put("completedSteps", List.of("准备 changelog"));
+        payload.put("recentNotes", List.of("worker-a: day1 done"));
+        payload.put("blockedReason", "");
+        payload.put("createdAt", "2026-03-22T00:00:00Z");
+        payload.put("updatedAt", "2026-03-22T00:30:00Z");
+        payload.put("dueAt", "2026-03-25T00:00:00Z");
+        payload.put("nextCheckAt", "2026-03-22T01:00:00Z");
+        payload.put("leaseOwner", leaseOwner);
+        payload.put("leaseUntil", "2026-03-22T01:10:00Z");
+        try {
+            return new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(payload);
+        } catch (IOException ex) {
+            throw new IllegalStateException(ex);
         }
     }
 }

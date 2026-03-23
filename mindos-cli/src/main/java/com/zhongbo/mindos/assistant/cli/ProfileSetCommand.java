@@ -25,6 +25,9 @@ public class ProfileSetCommand implements Runnable {
     @CommandLine.Option(names = {"--llm-provider"}, description = "Preferred LLM provider")
     private String llmProvider;
 
+    @CommandLine.Option(names = {"--llm-preset"}, description = "Preferred LLM routing preset")
+    private String llmPreset;
+
     @CommandLine.Option(names = {"--config"},
             defaultValue = "${sys:user.home}/.mindos/profile.properties",
             description = "Profile config file path")
@@ -37,7 +40,8 @@ public class ProfileSetCommand implements Runnable {
 
     @Override
     public void run() {
-        if (name == null && role == null && style == null && language == null && timezone == null && llmProvider == null) {
+        if (name == null && role == null && style == null && language == null && timezone == null
+                && llmProvider == null && llmPreset == null) {
             throw new CommandLine.ParameterException(spec.commandLine(), "Provide at least one field to update");
         }
 
@@ -48,6 +52,7 @@ public class ProfileSetCommand implements Runnable {
         String nextLanguage = choose(language, current.language());
         String nextTimezone = choose(timezone, current.timezone());
         String nextLlmProvider = choose(llmProvider, current.llmProvider());
+        String nextLlmPreset = choose(llmPreset, current.llmPreset());
 
         ProfileInputValidator.requireNotBlank(nextName, "name", spec.commandLine());
         ProfileInputValidator.requireNotBlank(nextRole, "role", spec.commandLine());
@@ -55,7 +60,7 @@ public class ProfileSetCommand implements Runnable {
         ProfileInputValidator.validateLanguage(nextLanguage, spec.commandLine());
         ProfileInputValidator.validateTimezone(nextTimezone, spec.commandLine());
 
-        AssistantProfile updated = new AssistantProfile(nextName, nextRole, nextStyle, nextLanguage, nextTimezone, nextLlmProvider);
+        AssistantProfile updated = new AssistantProfile(nextName, nextRole, nextStyle, nextLanguage, nextTimezone, nextLlmProvider, nextLlmPreset);
         profileStore.save(configPath, updated);
         System.out.println("Profile updated at: " + configPath);
         System.out.println("assistant=" + updated.assistantName() + ", role=" + updated.role());

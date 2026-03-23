@@ -15,6 +15,7 @@ public class AssistantProfileStore {
     public static final String DEFAULT_LANGUAGE = "zh-CN";
     public static final String DEFAULT_TIMEZONE = "Asia/Shanghai";
     public static final String DEFAULT_LLM_PROVIDER = "";
+    public static final String DEFAULT_LLM_PRESET = "";
 
     public void save(Path configPath, AssistantProfile profile) {
         Properties properties = new Properties();
@@ -24,6 +25,7 @@ public class AssistantProfileStore {
         properties.setProperty("assistant.language", profile.language());
         properties.setProperty("assistant.timezone", profile.timezone());
         properties.setProperty("assistant.llm.provider", profile.llmProvider());
+        properties.setProperty("assistant.llm.preset", profile.llmPreset());
 
         try {
             Path parent = configPath.getParent();
@@ -48,7 +50,8 @@ public class AssistantProfileStore {
                     properties.getProperty("assistant.style", ""),
                     properties.getProperty("assistant.language", ""),
                     properties.getProperty("assistant.timezone", ""),
-                    properties.getProperty("assistant.llm.provider", "")
+                    properties.getProperty("assistant.llm.provider", ""),
+                    properties.getProperty("assistant.llm.preset", "")
             );
         } catch (IOException e) {
             throw new IllegalStateException("Failed to load profile from " + configPath, e);
@@ -69,7 +72,8 @@ public class AssistantProfileStore {
                 DEFAULT_STYLE,
                 DEFAULT_LANGUAGE,
                 DEFAULT_TIMEZONE,
-                DEFAULT_LLM_PROVIDER
+                DEFAULT_LLM_PROVIDER,
+                DEFAULT_LLM_PRESET
         );
     }
 }

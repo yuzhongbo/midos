@@ -22,9 +22,12 @@ This repository is a lightweight, single-user personal AI assistant backend. Opt
 - IM integration flow (optional): `/api/im/feishu/events`, `/api/im/dingtalk/events`, `/api/im/wechat/events` -> dispatcher chat route -> platform text response.
 - IM 文本也支持 memory 自然语言入口：如“查看记忆风格”“按任务聚焦压缩这段记忆：...”“根据这段话微调记忆风格：...”。
 - Multi-terminal memory flow: `/api/memory/{userId}/sync` with cursor-based pull (`GET`) and idempotent push (`POST eventId`).
+- Long-task orchestration flow: `/api/tasks/{userId}` for create/list/detail + `/api/tasks/{userId}/claim` for lease-based worker claiming + `/api/tasks/{userId}/{taskId}/progress|status` for multi-day progress updates.
+- Long-task auto-advancer: `/api/tasks/{userId}/auto-run` manual trigger plus optional background scheduler via `mindos.tasks.auto-run.*` properties.
 - Persona inspection flow: `/api/memory/{userId}/persona` (`GET`) returns the confirmed long-term persona profile learned for that user.
 - Persona explain flow: `/api/memory/{userId}/persona/explain` (`GET`) returns confirmed profile plus pending override candidates for debug visibility.
 - LLM metrics flow: `/api/metrics/llm` (`GET`) returns windowed call stats (provider aggregates, success/fallback rate, latency, estimated token usage, optional recent calls).
+- LLM auto-routing supports optional stage mapping via `mindos.llm.routing.mode` and `mindos.llm.routing.stage-map`; per-request `profile.llmProvider` can still force a single provider or `auto`.
 - Memory compression planning flow: `/api/memory/{userId}/style` (`GET`/`POST`) + `/api/memory/{userId}/compress-plan` (`POST`) for gradual compression with per-user style profile.
 - `compress-plan` 可选 `focus`（learning/task/review）；`style` 更新可选 `autoTune=true&sampleText=...` 做轻量风格微调。
 - MemoryIntentNlu 的 focus/style/tone/format 同义词支持通过系统属性配置（`mindos.memory.nlu.*-terms`，逗号分隔）；若新增或调整键名/默认词，需同步更新 `README.md` 示例。
@@ -33,6 +36,7 @@ This repository is a lightweight, single-user personal AI assistant backend. Opt
 ## Repository map
 - `assistant-api/src/main/java/com/zhongbo/mindos/assistant/api/ChatController.java`: chat HTTP interface.
 - `assistant-api/src/main/java/com/zhongbo/mindos/assistant/api/SkillController.java`: lists/reloads custom skills and loads external JAR skills.
+- `assistant-api/src/main/java/com/zhongbo/mindos/assistant/api/LongTaskController.java`: long-task APIs for multi-worker claiming and progress updates.
 - `assistant-skill/src/main/java/com/zhongbo/mindos/assistant/skill/mcp/McpSkillLoader.java`: maps configured MCP servers to namespaced skills (`mcp.<alias>.<tool>`).
 - `assistant-dispatcher/src/main/java/com/zhongbo/mindos/assistant/dispatcher/DispatcherService.java`: intent routing and memory orchestration.
 - `assistant-skill/src/main/java/com/zhongbo/mindos/assistant/skill/SkillEngine.java`: skill execution + procedural logging.
@@ -55,7 +59,11 @@ This repository is a lightweight, single-user personal AI assistant backend. Opt
 - Keep package root under `com.zhongbo.mindos.assistant...`.
 - Keep cross-module contracts in `assistant-common`; avoid module cycles.
 - Prefer DTO contracts from `assistant-common` for API/SDK boundaries; map to memory model types inside `assistant-api`.
-- Provider routing override for one chat request is passed via `AssistantProfileDto.llmProvider` and forwarded by `ChatController` into dispatcher/LLM context.
+- Provider routing override for one chat request is passed via `AssistantProfileDto.llmProvider`; named cost/quality selection can also use `AssistantProfileDto.llmPreset`, both forwarded by `ChatController` into dispatcher/LLM context.
+- Dispatcher prompt/reply budget and loop guard are configurable via `mindos.dispatcher.prompt.max-chars`, `mindos.dispatcher.memory-context.max-chars`, `mindos.dispatcher.llm-reply.max-chars`, `mindos.dispatcher.skill.guard.max-consecutive`, `mindos.dispatcher.skill.guard.recent-window-size`, `mindos.dispatcher.skill.guard.repeat-input-threshold`, and `mindos.dispatcher.skill.guard.cooldown-seconds`.
+- Prompt-injection guard and risky operation policy are configurable via `mindos.dispatcher.prompt-injection.guard.*` and `mindos.security.risky-ops.*` / `mindos.security.skill.*`.
+- One-time challenge approval uses `/api/security/challenge` and `mindos.security.risky-ops.challenge-*`; skill capability whitelist uses `mindos.security.skill.capability-*`; structured audit logs use `mindos.security.audit.*`.
+- Challenge approval is strict (`operation + resource + actor + IP`, one-time consume); security audit supports traceId and recent-event query via `/api/security/audit` and filtered signed-cursor query via `/api/security/audit/query` (JWT-style cursor + expiry + key-version `kid`).
 - MCP-loaded tools are namespaced as `mcp.<serverAlias>.<toolName>` to avoid collisions with built-in skills.
 - Dispatcher auto-routing can execute registered skills via `Skill.supports(...)`, so MCP tool descriptions/names should stay specific enough to avoid accidental matches.
 - New skills should implement `Skill` and be autodiscovered as Spring components.

@@ -25,6 +25,9 @@ public class InitCommand implements Runnable {
     @CommandLine.Option(names = {"--llm-provider"}, defaultValue = "", description = "Preferred LLM provider (optional)")
     private String llmProvider;
 
+    @CommandLine.Option(names = {"--llm-preset"}, defaultValue = "", description = "Preferred LLM routing preset (optional)")
+    private String llmPreset;
+
     @CommandLine.Option(names = {"--config"},
             defaultValue = "${sys:user.home}/.mindos/profile.properties",
             description = "Profile config file path")
@@ -42,6 +45,7 @@ public class InitCommand implements Runnable {
         language = withDefault(language, AssistantProfileStore.DEFAULT_LANGUAGE);
         timezone = withDefault(timezone, AssistantProfileStore.DEFAULT_TIMEZONE);
         llmProvider = withDefault(llmProvider, AssistantProfileStore.DEFAULT_LLM_PROVIDER);
+        llmPreset = withDefault(llmPreset, AssistantProfileStore.DEFAULT_LLM_PRESET);
 
         validateInput();
 
@@ -51,7 +55,8 @@ public class InitCommand implements Runnable {
                 style.trim(),
                 language.trim(),
                 timezone.trim(),
-                llmProvider.trim()
+                llmProvider.trim(),
+                llmPreset.trim()
         );
         profileStore.save(configPath, profile);
         System.out.println("Profile initialized at: " + configPath);

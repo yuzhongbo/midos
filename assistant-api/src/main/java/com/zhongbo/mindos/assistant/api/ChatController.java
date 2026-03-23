@@ -43,6 +43,7 @@ public class ChatController {
             putIfNotNull(profileContext, "language", request.profile().language());
             putIfNotNull(profileContext, "timezone", request.profile().timezone());
             putIfNotNull(profileContext, "llmProvider", request.profile().llmProvider());
+            putIfNotNull(profileContext, "llmPreset", request.profile().llmPreset());
         }
         DispatchResult result = dispatcherService.dispatch(request.userId(), request.message(), profileContext);
         return new ChatResponseDto(result.reply(), result.channel(), result.executionTrace());

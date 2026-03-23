@@ -133,7 +133,8 @@ class CliChatService {
                 profile.style(),
                 profile.language(),
                 profile.timezone(),
-                resolvedProvider
+                resolvedProvider,
+                profile.llmPreset()
         );
     }
 
@@ -193,7 +194,8 @@ class CliChatService {
                                    String style,
                                    String language,
                                    String timezone,
-                                   String llmProvider) {
+                                   String llmProvider,
+                                   String llmPreset) {
         AssistantProfile current = loadProfile();
         String nextName = name == null ? current.assistantName() : name.trim();
         String nextRole = role == null ? current.role() : role.trim();
@@ -201,6 +203,7 @@ class CliChatService {
         String nextLanguage = language == null ? current.language() : language.trim();
         String nextTimezone = timezone == null ? current.timezone() : timezone.trim();
         String nextProvider = llmProvider == null ? current.llmProvider() : llmProvider.trim();
+        String nextPreset = llmPreset == null ? current.llmPreset() : llmPreset.trim();
 
         ProfileInputValidator.requireNotBlankValue(nextName, "name");
         ProfileInputValidator.requireNotBlankValue(nextRole, "role");
@@ -214,7 +217,8 @@ class CliChatService {
                 nextStyle,
                 nextLanguage,
                 nextTimezone,
-                nextProvider
+                nextProvider,
+                nextPreset
         );
         saveProfile(updated);
         return updated;

@@ -5,6 +5,12 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.zhongbo.mindos.assistant.common.dto.ChatRequestDto;
 import com.zhongbo.mindos.assistant.common.dto.ChatResponseDto;
 import com.zhongbo.mindos.assistant.common.dto.ConversationTurnDto;
+import com.zhongbo.mindos.assistant.common.dto.LlmMetricsResponseDto;
+import com.zhongbo.mindos.assistant.common.dto.LongTaskCreateRequestDto;
+import com.zhongbo.mindos.assistant.common.dto.LongTaskAutoRunResultDto;
+import com.zhongbo.mindos.assistant.common.dto.LongTaskDto;
+import com.zhongbo.mindos.assistant.common.dto.LongTaskProgressUpdateDto;
+import com.zhongbo.mindos.assistant.common.dto.LongTaskStatusUpdateDto;
 import com.zhongbo.mindos.assistant.common.dto.MemoryCompressionPlanRequestDto;
 import com.zhongbo.mindos.assistant.common.dto.MemoryCompressionPlanResponseDto;
 import com.zhongbo.mindos.assistant.common.dto.MemoryStyleProfileDto;
@@ -154,6 +160,36 @@ public class AssistantSdkClient {
         return updateMemoryStyle(userId, request, false, null);
     }
 
+    public LlmMetricsResponseDto getLlmMetrics(int windowMinutes,
+                                               String provider,
+                                               boolean includeRecent,
+                                               int recentLimit) {
+        StringBuilder uriBuilder = new StringBuilder("/api/metrics/llm?windowMinutes=")
+                .append(Math.max(1, windowMinutes))
+                .append("&includeRecent=")
+                .append(includeRecent)
+                .append("&recentLimit=")
+                .append(Math.max(1, recentLimit));
+        if (provider != null && !provider.isBlank()) {
+            uriBuilder.append("&provider=")
+                    .append(URLEncoder.encode(provider, StandardCharsets.UTF_8));
+        }
+        URI uri = baseUri.resolve(uriBuilder.toString());
+
+        try {
+            HttpRequest httpRequest = HttpRequest.newBuilder(uri)
+                    .header("Accept", "application/json")
+                    .GET()
+                    .build();
+            return sendForBody(httpRequest, LlmMetricsResponseDto.class);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new AssistantSdkException(0, "INTERRUPTED", "MindOS LLM metrics fetch call interrupted");
+        } catch (IOException e) {
+            throw new AssistantSdkException(0, "NETWORK_ERROR", "Failed to call MindOS LLM metrics endpoint");
+        }
+    }
+
     public MemoryStyleProfileDto updateMemoryStyle(String userId,
                                                    MemoryStyleProfileDto request,
                                                    boolean autoTune,
@@ -281,6 +317,148 @@ public class AssistantSdkClient {
                 ),
                 "MindOS external skill JAR load call interrupted",
                 "Failed to call MindOS external skill JAR load endpoint");
+    }
+
+    public LongTaskDto createLongTask(String userId, LongTaskCreateRequestDto request) {
+        String encodedUser = encodePathSegment(userId);
+        URI uri = baseUri.resolve("/api/tasks/" + encodedUser);
+        try {
+            String body = objectMapper.writeValueAsString(request);
+            HttpRequest httpRequest = HttpRequest.newBuilder(uri)
+                    .header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(body))
+                    .build();
+            return sendForBody(httpRequest, LongTaskDto.class);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new AssistantSdkException(0, "INTERRUPTED", "MindOS long task create call interrupted");
+        } catch (IOException e) {
+            throw new AssistantSdkException(0, "NETWORK_ERROR", "Failed to call MindOS long task create endpoint");
+        }
+    }
+
+    public List<LongTaskDto> listLongTasks(String userId, String status) {
+        String encodedUser = encodePathSegment(userId);
+        StringBuilder uriBuilder = new StringBuilder("/api/tasks/").append(encodedUser);
+        if (status != null && !status.isBlank()) {
+            uriBuilder.append("?status=")
+                    .append(URLEncoder.encode(status, StandardCharsets.UTF_8));
+        }
+        URI uri = baseUri.resolve(uriBuilder.toString());
+        try {
+            HttpRequest httpRequest = HttpRequest.newBuilder(uri)
+                    .header("Accept", "application/json")
+                    .GET()
+                    .build();
+            HttpResponse<String> response = httpClient.send(httpRequest, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() >= 200 && response.statusCode() < 300) {
+                return objectMapper.readValue(response.body(), new TypeReference<>() {});
+            }
+            throw parseError(response);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new AssistantSdkException(0, "INTERRUPTED", "MindOS long task list call interrupted");
+        } catch (IOException e) {
+            throw new AssistantSdkException(0, "NETWORK_ERROR", "Failed to call MindOS long task list endpoint");
+        }
+    }
+
+    public LongTaskDto getLongTask(String userId, String taskId) {
+        String encodedUser = encodePathSegment(userId);
+        String encodedTaskId = encodePathSegment(taskId);
+        URI uri = baseUri.resolve("/api/tasks/" + encodedUser + "/" + encodedTaskId);
+        try {
+            HttpRequest httpRequest = HttpRequest.newBuilder(uri)
+                    .header("Accept", "application/json")
+                    .GET()
+                    .build();
+            return sendForBody(httpRequest, LongTaskDto.class);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new AssistantSdkException(0, "INTERRUPTED", "MindOS long task detail call interrupted");
+        } catch (IOException e) {
+            throw new AssistantSdkException(0, "NETWORK_ERROR", "Failed to call MindOS long task detail endpoint");
+        }
+    }
+
+    public List<LongTaskDto> claimLongTasks(String userId, String workerId, int limit, long leaseSeconds) {
+        String encodedUser = encodePathSegment(userId);
+        String encodedWorker = URLEncoder.encode(workerId == null ? "assistant-worker" : workerId, StandardCharsets.UTF_8);
+        String uriPath = "/api/tasks/" + encodedUser + "/claim?workerId=" + encodedWorker
+                + "&limit=" + Math.max(1, limit)
+                + "&leaseSeconds=" + Math.max(5L, leaseSeconds);
+        URI uri = baseUri.resolve(uriPath);
+        try {
+            HttpRequest httpRequest = HttpRequest.newBuilder(uri)
+                    .header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(""))
+                    .build();
+            HttpResponse<String> response = httpClient.send(httpRequest, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() >= 200 && response.statusCode() < 300) {
+                return objectMapper.readValue(response.body(), new TypeReference<>() {});
+            }
+            throw parseError(response);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new AssistantSdkException(0, "INTERRUPTED", "MindOS long task claim call interrupted");
+        } catch (IOException e) {
+            throw new AssistantSdkException(0, "NETWORK_ERROR", "Failed to call MindOS long task claim endpoint");
+        }
+    }
+
+    public LongTaskDto updateLongTaskProgress(String userId, String taskId, LongTaskProgressUpdateDto request) {
+        String encodedUser = encodePathSegment(userId);
+        String encodedTaskId = encodePathSegment(taskId);
+        URI uri = baseUri.resolve("/api/tasks/" + encodedUser + "/" + encodedTaskId + "/progress");
+        try {
+            String body = objectMapper.writeValueAsString(request);
+            HttpRequest httpRequest = HttpRequest.newBuilder(uri)
+                    .header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(body))
+                    .build();
+            return sendForBody(httpRequest, LongTaskDto.class);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new AssistantSdkException(0, "INTERRUPTED", "MindOS long task progress update call interrupted");
+        } catch (IOException e) {
+            throw new AssistantSdkException(0, "NETWORK_ERROR", "Failed to call MindOS long task progress endpoint");
+        }
+    }
+
+    public LongTaskDto updateLongTaskStatus(String userId, String taskId, LongTaskStatusUpdateDto request) {
+        String encodedUser = encodePathSegment(userId);
+        String encodedTaskId = encodePathSegment(taskId);
+        URI uri = baseUri.resolve("/api/tasks/" + encodedUser + "/" + encodedTaskId + "/status");
+        try {
+            String body = objectMapper.writeValueAsString(request);
+            HttpRequest httpRequest = HttpRequest.newBuilder(uri)
+                    .header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(body))
+                    .build();
+            return sendForBody(httpRequest, LongTaskDto.class);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new AssistantSdkException(0, "INTERRUPTED", "MindOS long task status update call interrupted");
+        } catch (IOException e) {
+            throw new AssistantSdkException(0, "NETWORK_ERROR", "Failed to call MindOS long task status endpoint");
+        }
+    }
+
+    public LongTaskAutoRunResultDto runLongTaskAuto(String userId) {
+        String encodedUser = encodePathSegment(userId);
+        URI uri = baseUri.resolve("/api/tasks/" + encodedUser + "/auto-run");
+        try {
+            HttpRequest httpRequest = HttpRequest.newBuilder(uri)
+                    .header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(""))
+                    .build();
+            return sendForBody(httpRequest, LongTaskAutoRunResultDto.class);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new AssistantSdkException(0, "INTERRUPTED", "MindOS long task auto-run call interrupted");
+        } catch (IOException e) {
+            throw new AssistantSdkException(0, "NETWORK_ERROR", "Failed to call MindOS long task auto-run endpoint");
+        }
     }
 
     private <T> T sendForBody(HttpRequest request, Class<T> responseClass) throws IOException, InterruptedException {

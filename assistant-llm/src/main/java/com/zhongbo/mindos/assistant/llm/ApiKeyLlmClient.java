@@ -19,10 +19,13 @@ import java.util.Map;
 public class ApiKeyLlmClient implements LlmClient {
 
     private final String provider;
+    private final String routingMode;
     private final String endpoint;
     private final String globalApiKey;
     private final Map<String, String> providerEndpoints;
     private final Map<String, String> providerApiKeys;
+    private final Map<String, String> stageProviderMap;
+    private final Map<String, String> presetProviderMap;
     private final Map<String, String> userApiKeys;
     private final UserApiKeyService userApiKeyService;
     private final LlmMetricsService llmMetricsService;
@@ -31,20 +34,26 @@ public class ApiKeyLlmClient implements LlmClient {
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public ApiKeyLlmClient(@Value("${mindos.llm.provider:openai}") String provider,
+                           @Value("${mindos.llm.routing.mode:fixed}") String routingMode,
                            @Value("${mindos.llm.endpoint:https://api.example.com/v1/chat/completions}") String endpoint,
                            @Value("${mindos.llm.api-key:}") String globalApiKey,
                            @Value("${mindos.llm.provider-endpoints:}") String providerEndpoints,
                            @Value("${mindos.llm.provider-keys:}") String providerKeys,
+                           @Value("${mindos.llm.routing.stage-map:llm-dsl:openai,llm-fallback:openai}") String stageProviderMap,
+                           @Value("${mindos.llm.routing.preset-map:cost:openai,balanced:openai,quality:openai}") String presetProviderMap,
                            @Value("${mindos.llm.user-keys:}") String userKeys,
                            @Value("${mindos.llm.retry.max-attempts:3}") int maxRetries,
                            @Value("${mindos.llm.retry.delay-ms:300}") long retryDelayMs,
                            UserApiKeyService userApiKeyService,
                            LlmMetricsService llmMetricsService) {
         this.provider = provider;
+        this.routingMode = routingMode == null ? "fixed" : routingMode.trim().toLowerCase(Locale.ROOT);
         this.endpoint = endpoint;
         this.globalApiKey = globalApiKey;
         this.providerEndpoints = parseProviderConfig(providerEndpoints);
         this.providerApiKeys = parseProviderConfig(providerKeys);
+        this.stageProviderMap = parseProviderConfig(stageProviderMap);
+        this.presetProviderMap = parseProviderConfig(presetProviderMap);
         this.userApiKeys = parseUserKeys(userKeys);
         this.maxRetries = Math.max(1, maxRetries);
         this.retryDelayMs = Math.max(0L, retryDelayMs);
@@ -190,7 +199,26 @@ public class ApiKeyLlmClient implements LlmClient {
         if (context != null) {
             Object requestedProvider = context.get("llmProvider");
             if (requestedProvider instanceof String providerValue && !providerValue.isBlank()) {
-                return providerValue.trim();
+                String explicit = providerValue.trim();
+                if (!"auto".equalsIgnoreCase(explicit)) {
+                    return explicit;
+                }
+            }
+            Object requestedPreset = context.get("llmPreset");
+            if (requestedPreset instanceof String presetValue && !presetValue.isBlank()) {
+                String mapped = presetProviderMap.get(presetValue.trim().toLowerCase(Locale.ROOT));
+                if (mapped != null && !mapped.isBlank()) {
+                    return mapped;
+                }
+            }
+            if ("auto".equals(routingMode)) {
+                Object routeStage = context.get("routeStage");
+                if (routeStage instanceof String stage && !stage.isBlank()) {
+                    String mapped = stageProviderMap.get(stage.trim().toLowerCase(Locale.ROOT));
+                    if (mapped != null && !mapped.isBlank()) {
+                        return mapped;
+                    }
+                }
             }
         }
         return provider;
