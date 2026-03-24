@@ -53,6 +53,7 @@ This repository is a lightweight, single-user personal AI assistant backend. Opt
 - Build all modules: `./mvnw clean package`
 - Fast SDK/CLI validation: `./mvnw -q -pl assistant-sdk,mindos-cli -am test`
 - Fast memory sync API validation: `./mvnw -q -pl assistant-api -am test -Dtest=MemorySyncControllerTest`
+- Fast memory sync performance baseline validation: `./mvnw -q -pl assistant-memory -am test -Dtest=MemorySyncServiceTest#shouldMeetBasicSyncPerformanceBaseline -Dsurefire.failIfNoSpecifiedTests=false` (optional tuning: `-Dmindos.memory.sync.perf-baseline-ms=5000 -Dmindos.memory.sync.perf-retries=2`)
 - Fast skill management API validation: `./mvnw -q -pl assistant-api -am test -Dtest=SkillControllerTest`
 
 ## Project conventions

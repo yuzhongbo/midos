@@ -161,6 +161,7 @@ public class SecurityAuditLogService {
         ParsedCursor parsedCursor = parseSignedCursor(cursor, actorFilter, operationFilter, resultFilter, traceIdFilter, fromFilter, toFilter);
         int offset = parsedCursor.offset();
         String cursorKeyVersion = parsedCursor.keyVersion();
+        String cursorType = parsedCursor.cursorType();
 
         if (!Files.exists(auditFile)) {
             return new SecurityAuditQueryResponseDto(
@@ -170,6 +171,7 @@ public class SecurityAuditLogService {
                     "",
                     "",
                     cursorKeyVersion,
+                    cursorType,
                     actorFilter,
                     operationFilter,
                     resultFilter,
@@ -209,14 +211,14 @@ public class SecurityAuditLogService {
             String nextCursor = hasMore
                     ? signCursor(offset + matched.size(), actorFilter, operationFilter, resultFilter, traceIdFilter, fromFilter, toFilter, cursorExpiresAt)
                     : "";
-            String responseCursorKeyVersion = hasMore ? activeCursorKeyVersion : cursorKeyVersion;
             return new SecurityAuditQueryResponseDto(
                     List.copyOf(matched),
                     effectiveLimit,
                     safeCursor(cursor),
                     nextCursor,
                     cursorExpiresAt == null ? "" : cursorExpiresAt.toString(),
-                    responseCursorKeyVersion,
+                    cursorKeyVersion,
+                    cursorType,
                     actorFilter,
                     operationFilter,
                     resultFilter,
@@ -233,6 +235,7 @@ public class SecurityAuditLogService {
                     "",
                     "",
                     cursorKeyVersion,
+                    cursorType,
                     actorFilter,
                     operationFilter,
                     resultFilter,
@@ -260,23 +263,9 @@ public class SecurityAuditLogService {
     }
 
     private String normalizeFilter(String value) {
-        if (value == null) {
-            return "";
-        }
-        String normalized = value.trim();
-        return normalized;
+        return value == null ? "" : value.trim();
     }
 
-    private int parseCursor(String cursor) {
-        if (cursor == null || cursor.isBlank()) {
-            return 0;
-        }
-        try {
-            return Math.max(0, Integer.parseInt(cursor.trim()));
-        } catch (NumberFormatException ignored) {
-            return 0;
-        }
-    }
 
     private ParsedCursor parseSignedCursor(String cursor,
                                            String actor,
@@ -286,11 +275,11 @@ public class SecurityAuditLogService {
                                            String from,
                                            String to) {
         if (cursor == null || cursor.isBlank()) {
-            return new ParsedCursor(0, activeCursorKeyVersion);
+            return new ParsedCursor(0, activeCursorKeyVersion, "none");
         }
         String raw = cursor.trim();
         if (raw.matches("\\d+")) {
-            return new ParsedCursor(Math.max(0, Integer.parseInt(raw)), activeCursorKeyVersion);
+            return new ParsedCursor(Math.max(0, Integer.parseInt(raw)), "legacy-numeric", "legacy-numeric");
         }
         String[] parts = raw.split("\\.");
         if (parts.length == 2) {
@@ -309,7 +298,7 @@ public class SecurityAuditLogService {
             throw new IllegalArgumentException("cursor signature mismatch");
         }
         int offset = parseJwtPayload(payloadEncoded, actor, operation, result, traceId, from, to);
-        return new ParsedCursor(offset, keyVersion);
+        return new ParsedCursor(offset, keyVersion, "jwt");
     }
 
     private ParsedCursor parseLegacyCursor(String payloadEncoded,
@@ -325,10 +314,10 @@ public class SecurityAuditLogService {
             throw new IllegalArgumentException("cursor signature mismatch");
         }
         int offset = parsePayload(payloadEncoded, actor, operation, result, traceId, from, to, false);
-        return new ParsedCursor(offset, activeCursorKeyVersion);
+        return new ParsedCursor(offset, "legacy-signature", "legacy-signature");
     }
 
-    private record ParsedCursor(int offset, String keyVersion) {
+    private record ParsedCursor(int offset, String keyVersion, String cursorType) {
     }
 
     private int parseJwtPayload(String payloadEncoded,
@@ -527,13 +516,8 @@ public class SecurityAuditLogService {
     }
 
     private boolean containsIgnoreCase(String value, String filter) {
-        if (filter == null || filter.isBlank()) {
-            return true;
-        }
-        if (value == null) {
-            return false;
-        }
-        return value.toLowerCase(Locale.ROOT).contains(filter.toLowerCase(Locale.ROOT));
+        return filter == null || filter.isBlank()
+                || (value != null && value.toLowerCase(Locale.ROOT).contains(filter.toLowerCase(Locale.ROOT)));
     }
 
     private Instant parseInstant(Object value) {

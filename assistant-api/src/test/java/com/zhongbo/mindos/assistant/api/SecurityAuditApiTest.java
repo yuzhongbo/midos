@@ -9,6 +9,8 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -95,6 +97,7 @@ class SecurityAuditApiTest {
                 .andExpect(jsonPath("$.nextCursor").isString())
                 .andExpect(jsonPath("$.nextCursorExpiresAt").isString())
                 .andExpect(jsonPath("$.cursorKeyVersion").value("v2"))
+                .andExpect(jsonPath("$.cursorType").value("none"))
                 .andReturn()
                 .getResponse()
                 .getContentAsString();
@@ -114,13 +117,44 @@ class SecurityAuditApiTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.items.length()").value(1))
                 .andExpect(jsonPath("$.cursor").value(nextCursor))
-                .andExpect(jsonPath("$.cursorKeyVersion").value("v2"));
+                .andExpect(jsonPath("$.cursorKeyVersion").value("v2"))
+                .andExpect(jsonPath("$.cursorType").value("jwt"));
+
+        mockMvc.perform(get("/api/security/audit/query")
+                        .header("X-MindOS-Admin-Token", "test-admin-token")
+                        .param("limit", "1")
+                        .param("cursor", "0")
+                        .param("traceId", "trace-page")
+                        .param("result", "allowed"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.cursorKeyVersion").value("legacy-numeric"))
+                .andExpect(jsonPath("$.cursorType").value("legacy-numeric"));
+
+        String legacyCursor = createLegacySignatureCursor(0, "allowed", "trace-page");
+        mockMvc.perform(get("/api/security/audit/query")
+                        .header("X-MindOS-Admin-Token", "test-admin-token")
+                        .param("limit", "1")
+                        .param("cursor", legacyCursor)
+                        .param("traceId", "trace-page")
+                        .param("result", "allowed"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.cursor").value(legacyCursor))
+                .andExpect(jsonPath("$.cursorKeyVersion").value("legacy-signature"))
+                .andExpect(jsonPath("$.cursorType").value("legacy-signature"));
 
         mockMvc.perform(get("/api/security/audit/query")
                         .header("X-MindOS-Admin-Token", "test-admin-token")
                         .param("limit", "1")
                         .param("cursor", nextCursor + "tampered")
                         .param("traceId", "trace-page")
+                        .param("result", "allowed"))
+                .andExpect(status().isBadRequest());
+
+        mockMvc.perform(get("/api/security/audit/query")
+                        .header("X-MindOS-Admin-Token", "test-admin-token")
+                        .param("limit", "1")
+                        .param("cursor", nextCursor)
+                        .param("traceId", "trace-page-2")
                         .param("result", "allowed"))
                 .andExpect(status().isBadRequest());
 
@@ -135,6 +169,19 @@ class SecurityAuditApiTest {
                 .andExpect(jsonPath("$.items.length()").value(0))
                 .andExpect(jsonPath("$.from").value("2999-01-01T00:00:00Z"))
                 .andExpect(jsonPath("$.to").value("2999-01-02T00:00:00Z"));
+    }
+
+    private String createLegacySignatureCursor(int offset, String result, String traceId) throws Exception {
+        String payloadJson = "{\"offset\":" + offset
+                + ",\"result\":\"" + result + "\""
+                + ",\"traceId\":\"" + traceId + "\"}";
+        String payloadEncoded = Base64.getUrlEncoder().withoutPadding()
+                .encodeToString(payloadJson.getBytes(StandardCharsets.UTF_8));
+        Mac mac = Mac.getInstance("HmacSHA256");
+        mac.init(new SecretKeySpec("active-secret".getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
+        String signature = Base64.getUrlEncoder().withoutPadding()
+                .encodeToString(mac.doFinal(payloadEncoded.getBytes(StandardCharsets.UTF_8)));
+        return payloadEncoded + "." + signature;
     }
 }
 

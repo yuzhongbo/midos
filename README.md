@@ -292,6 +292,8 @@ curl -X POST http://localhost:8080/api/skills/load-mcp \
       - JWT header includes `kid` for signing key version so key rotation can verify old cursors while new cursors use the active key.
       - `from` / `to` use ISO-8601 UTC timestamps (example: `2026-03-23T10:00:00Z`).
       - `nextCursor` and `nextCursorExpiresAt` are returned when more items exist.
+      - `cursorKeyVersion` returns the key version parsed from the current request cursor (`kid` for JWT cursors, legacy markers for old cursor formats).
+      - `cursorType` returns the current request cursor format: `none|jwt|legacy-numeric|legacy-signature`.
   - cursor key rotation config:
     - `mindos.security.audit.cursor-active-key-version` (example: `v2`)
     - `mindos.security.audit.cursor-signing-keys` (example: `v1:old-secret,v2:new-secret`)
@@ -320,6 +322,10 @@ curl -X POST http://localhost:8080/api/skills/load-mcp \
   - explicit preferred-bucket search cross-bucket fallback cap: `mindos.memory.search.cross-bucket.max` (default `2`)
   - explicit preferred-bucket search cross-bucket fallback ratio: `mindos.memory.search.cross-bucket.ratio` (default `0.5`, range `0..1`)
   - when enabled, low-signal short semantic entries are skipped; retrieval prefers same inferred topic bucket and keeps bounded cross-bucket fallback when preferred bucket is explicit.
+- Memory sync performance regression test knobs (test-only JVM properties):
+  - `mindos.memory.sync.perf-baseline-ms` (default `4000`)
+  - `mindos.memory.sync.perf-retries` (default `1`, CI can raise to `2` on noisy runners)
+  - example: `./mvnw -q -pl assistant-memory -am test -Dtest=MemorySyncServiceTest#shouldMeetBasicSyncPerformanceBaseline -Dsurefire.failIfNoSpecifiedTests=false -Dmindos.memory.sync.perf-baseline-ms=5000 -Dmindos.memory.sync.perf-retries=2`
 - Memory NLU synonyms for style/compress intents are configurable via JVM system properties (`-Dmindos.memory.nlu.*`); values are comma-separated terms and normalize to canonical values used by API/CLI (`focus`: `task|learning|review`, `style`: `action|coach|story|concise`, `tone`: `warm|direct|neutral`, `format`: `bullet|plain`).
 - `eq.coach` supports optional output controls: `style` (`gentle|direct|workplace|intimate`), `mode` (`analysis|reply|both`), `priorityFocus` (`p1|p2|p3`).
 - `eq.coach` risk terms are configurable via JVM properties (comma-separated):

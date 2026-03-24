@@ -13,6 +13,7 @@ import java.util.Map;
 import java.util.Locale;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.regex.Pattern;
 
 @Service
 public class SemanticMemoryService {
@@ -25,6 +26,7 @@ public class SemanticMemoryService {
     private static final String PROP_MEMORY_DECAY_HALF_LIFE_HOURS = "mindos.memory.search.decay-half-life-hours";
     private static final String PROP_SEARCH_CROSS_BUCKET_MAX = "mindos.memory.search.cross-bucket.max";
     private static final String PROP_SEARCH_CROSS_BUCKET_RATIO = "mindos.memory.search.cross-bucket.ratio";
+    private static final Pattern TOKEN_SPLIT_PATTERN = Pattern.compile("[^\\p{L}\\p{N}]+");
 
     private final MemoryConsolidationService memoryConsolidationService;
     private final Map<String, UserSemanticStore> entriesByUser = new ConcurrentHashMap<>();
@@ -115,7 +117,7 @@ public class SemanticMemoryService {
             }
 
             LinkedHashSet<String> tokens = tokenize(entry.text());
-            StoredSemanticEntry stored = new StoredSemanticEntry(entry, tokens, ++sequence, bucket);
+            StoredSemanticEntry stored = new StoredSemanticEntry(entry, normalizeLower(entry.text()), tokens, ++sequence, bucket);
             entries.put(bucketedKey, stored);
             for (String token : tokens) {
                 keysByToken.computeIfAbsent(token, ignored -> new LinkedHashSet<>()).add(bucketedKey);
@@ -151,7 +153,7 @@ public class SemanticMemoryService {
                 }
             }
 
-            String normalizedInput = memoryConsolidationService.normalizeText(entry.text()).toLowerCase(Locale.ROOT);
+            String normalizedInput = normalizeLower(entry.text());
             for (String candidateKey : candidateKeys) {
                 StoredSemanticEntry candidate = entries.get(candidateKey);
                 if (candidate == null) {
@@ -192,7 +194,7 @@ public class SemanticMemoryService {
                 }
             }
 
-            String normalizedQuery = memoryConsolidationService.normalizeText(query).toLowerCase(Locale.ROOT);
+            String normalizedQuery = normalizeLower(query);
             List<StoredSemanticEntry> ranked = candidates.stream()
                     .sorted(Comparator
                             .comparingDouble((StoredSemanticEntry entry) -> score(entry, queryTokens, normalizedQuery, preferredBucket))
@@ -243,37 +245,37 @@ public class SemanticMemoryService {
         }
 
         private int resolveCrossBucketCap(int limit) {
-            int maxCap = parsePositiveInt(System.getProperty(PROP_SEARCH_CROSS_BUCKET_MAX, "2"), 2);
-            double ratio = parseRatio(System.getProperty(PROP_SEARCH_CROSS_BUCKET_RATIO, "0.5"), 0.5);
+            int maxCap = parsePositiveInt(System.getProperty(PROP_SEARCH_CROSS_BUCKET_MAX, "2"));
+            double ratio = parseRatio(System.getProperty(PROP_SEARCH_CROSS_BUCKET_RATIO, "0.5"));
             int ratioCap = (int) Math.floor(limit * ratio);
             int cap = Math.min(maxCap, Math.max(0, ratioCap));
             return Math.min(limit, Math.max(0, cap));
         }
 
-        private int parsePositiveInt(String raw, int fallback) {
+        private int parsePositiveInt(String raw) {
             if (raw == null || raw.isBlank()) {
-                return fallback;
+                return 2;
             }
             try {
                 int value = Integer.parseInt(raw);
-                return value > 0 ? value : fallback;
+                return value > 0 ? value : 2;
             } catch (NumberFormatException ex) {
-                return fallback;
+                return 2;
             }
         }
 
-        private double parseRatio(String raw, double fallback) {
+        private double parseRatio(String raw) {
             if (raw == null || raw.isBlank()) {
-                return fallback;
+                return 0.5;
             }
             try {
                 double value = Double.parseDouble(raw);
                 if (Double.isNaN(value) || Double.isInfinite(value)) {
-                    return fallback;
+                    return 0.5;
                 }
                 return Math.max(0.0, Math.min(1.0, value));
             } catch (NumberFormatException ex) {
-                return fallback;
+                return 0.5;
             }
         }
 
@@ -312,8 +314,7 @@ public class SemanticMemoryService {
                     overlap++;
                 }
             }
-            String normalizedText = memoryConsolidationService.normalizeText(entry.entry().text()).toLowerCase(Locale.ROOT);
-            int containsBonus = normalizedQuery.isBlank() ? 0 : (normalizedText.contains(normalizedQuery) ? 4 : 0);
+            int containsBonus = normalizedQuery.isBlank() ? 0 : (entry.normalizedText().contains(normalizedQuery) ? 4 : 0);
             return overlap * 10
                     + containsBonus
                     + bucketBoost(entry.bucket(), preferredBucket)
@@ -350,8 +351,7 @@ public class SemanticMemoryService {
                                            Set<String> inputTokens,
                                            String normalizedInput,
                                            StoredSemanticEntry candidate) {
-            String normalizedCandidate = memoryConsolidationService.normalizeText(candidate.entry().text())
-                    .toLowerCase(Locale.ROOT);
+            String normalizedCandidate = candidate.normalizedText();
             if (normalizedInput.equals(normalizedCandidate)) {
                 return true;
             }
@@ -419,12 +419,12 @@ public class SemanticMemoryService {
     }
 
     private LinkedHashSet<String> tokenize(String text) {
-        String normalized = memoryConsolidationService.normalizeText(text).toLowerCase(Locale.ROOT);
+        String normalized = normalizeLower(text);
         if (normalized.isBlank()) {
             return new LinkedHashSet<>();
         }
         LinkedHashSet<String> tokens = new LinkedHashSet<>();
-        String[] parts = normalized.split("[^\\p{L}\\p{N}]+", -1);
+        String[] parts = TOKEN_SPLIT_PATTERN.split(normalized, -1);
         for (String part : parts) {
             if (part == null || part.isBlank()) {
                 continue;
@@ -446,7 +446,12 @@ public class SemanticMemoryService {
         return value.codePoints().anyMatch(codePoint -> Character.UnicodeScript.of(codePoint) == Character.UnicodeScript.HAN);
     }
 
+    private String normalizeLower(String text) {
+        return memoryConsolidationService.normalizeText(text).toLowerCase(Locale.ROOT);
+    }
+
     private record StoredSemanticEntry(SemanticMemoryEntry entry,
+                                       String normalizedText,
                                        Set<String> tokens,
                                        long sequence,
                                        String bucket) {

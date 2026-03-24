@@ -25,6 +25,10 @@ public class MemoryConsolidationService {
     private static final String PROP_KEY_SIGNAL_DEADLINE_TERMS = "mindos.memory.key-signal.deadline-terms";
     private static final String PROP_KEY_SIGNAL_CONTACT_TERMS = "mindos.memory.key-signal.contact-terms";
 
+    private static final Pattern CONTROL_EXCEPT_LINE_BREAKS_PATTERN = Pattern.compile("[\\p{Cntrl}&&[^\\n\\t]]");
+    private static final Pattern HORIZONTAL_WHITESPACE_PATTERN = Pattern.compile("[ \\t\\x0B\\f\\r]+");
+    private static final Pattern TRIMMED_NEWLINE_PATTERN = Pattern.compile(" *\\n+ *");
+    private static final Pattern WHITESPACE_SPLIT_PATTERN = Pattern.compile("\\s+");
     private static final Pattern DIGIT_PATTERN = Pattern.compile("\\d");
     private static final Pattern DATE_TIME_PATTERN = Pattern.compile("(\\d{1,2}[:：]\\d{2}|\\d{4}[-/]\\d{1,2}[-/]\\d{1,2}|\\d+\\s*(?:天|周|月|年|小时|分钟)|(?:截止|deadline|due|before|之前|内))", Pattern.CASE_INSENSITIVE);
 
@@ -147,12 +151,11 @@ public class MemoryConsolidationService {
         if (text == null) {
             return "";
         }
-        return text
-                .replace('\u3000', ' ')
-                .replaceAll("[\\p{Cntrl}&&[^\\n\\t]]", " ")
-                .replaceAll("[ \\t\\x0B\\f\\r]+", " ")
-                .replaceAll(" *\\n+ *", "\n")
-                .trim();
+        String normalized = text.replace('\u3000', ' ');
+        normalized = CONTROL_EXCEPT_LINE_BREAKS_PATTERN.matcher(normalized).replaceAll(" ");
+        normalized = HORIZONTAL_WHITESPACE_PATTERN.matcher(normalized).replaceAll(" ");
+        normalized = TRIMMED_NEWLINE_PATTERN.matcher(normalized).replaceAll("\n");
+        return normalized.trim();
     }
 
     private List<SemanticMemoryEntry> deduplicateSemanticEntries(List<SemanticMemoryEntry> entries) {
@@ -218,7 +221,7 @@ public class MemoryConsolidationService {
             return List.of();
         }
         int length = normalized.length();
-        long tokenCount = normalized.split("\\s+").length;
+        long tokenCount = WHITESPACE_SPLIT_PATTERN.split(normalized).length;
         long digitCount = normalized.chars().filter(Character::isDigit).count();
         long cjkCount = normalized.codePoints()
                 .filter(codePoint -> Character.UnicodeScript.of(codePoint) == Character.UnicodeScript.HAN)
@@ -227,8 +230,8 @@ public class MemoryConsolidationService {
         return List.of(
                 round(Math.min(length, 512) / 512.0),
                 round(Math.min(tokenCount, 64) / 64.0),
-                round(length == 0 ? 0.0 : (double) digitCount / length),
-                round(length == 0 ? 0.0 : (double) cjkCount / length),
+                round((double) digitCount / length),
+                round((double) cjkCount / length),
                 round(hashBucket)
         );
     }

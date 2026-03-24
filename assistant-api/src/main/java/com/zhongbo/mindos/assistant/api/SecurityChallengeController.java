@@ -83,7 +83,7 @@ public class SecurityChallengeController {
 
     @GetMapping("/audit/query")
     public SecurityAuditQueryResponseDto queryAudit(@RequestParam(defaultValue = "50") int limit,
-                                                    @RequestParam(defaultValue = "0") String cursor,
+                                                    @RequestParam(defaultValue = "") String cursor,
                                                     @RequestParam(required = false) String actor,
                                                     @RequestParam(required = false) String operation,
                                                     @RequestParam(required = false) String result,

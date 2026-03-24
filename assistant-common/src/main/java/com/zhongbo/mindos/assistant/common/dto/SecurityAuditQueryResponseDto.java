@@ -9,6 +9,7 @@ public record SecurityAuditQueryResponseDto(
         String nextCursor,
         String nextCursorExpiresAt,
         String cursorKeyVersion,
+        String cursorType,
         String actor,
         String operation,
         String result,
