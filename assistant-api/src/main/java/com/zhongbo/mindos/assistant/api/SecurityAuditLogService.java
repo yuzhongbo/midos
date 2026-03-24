@@ -4,11 +4,14 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.zhongbo.mindos.assistant.common.dto.SecurityAuditEventDto;
 import com.zhongbo.mindos.assistant.common.dto.SecurityAuditQueryResponseDto;
+import com.zhongbo.mindos.assistant.common.dto.SecurityAuditWriteMetricsDto;
+import jakarta.annotation.PreDestroy;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
+import java.io.BufferedReader;
 import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
 import java.nio.file.Files;
@@ -16,6 +19,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.ArrayDeque;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -24,6 +28,14 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Future;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.atomic.AtomicLong;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import java.util.Base64;
@@ -39,7 +51,15 @@ public class SecurityAuditLogService {
     private final Map<String, byte[]> cursorSigningKeysByVersion;
     private final String activeCursorKeyVersion;
     private final long cursorTtlSeconds;
+    private final long writeFlushTimeoutMillis;
     private final ObjectMapper objectMapper;
+    private final ThreadPoolExecutor auditWriterExecutor;
+    private final Object auditFileWriteLock = new Object();
+    private final AtomicLong enqueuedCount = new AtomicLong();
+    private final AtomicLong writtenCount = new AtomicLong();
+    private final AtomicLong callerRunsFallbackCount = new AtomicLong();
+    private final AtomicLong flushTimeoutCount = new AtomicLong();
+    private final AtomicLong flushErrorCount = new AtomicLong();
 
     public SecurityAuditLogService(
             @Value("${mindos.security.audit.enabled:true}") boolean enabled,
@@ -48,17 +68,21 @@ public class SecurityAuditLogService {
             @Value("${mindos.security.audit.cursor-signing-key:mindos-audit-cursor-key-change-me}") String cursorSigningKey,
             @Value("${mindos.security.audit.cursor-active-key-version:v1}") String activeCursorKeyVersion,
             @Value("${mindos.security.audit.cursor-signing-keys:}") String cursorSigningKeys,
-            @Value("${mindos.security.audit.cursor-ttl-seconds:300}") long cursorTtlSeconds) {
+            @Value("${mindos.security.audit.cursor-ttl-seconds:300}") long cursorTtlSeconds,
+            @Value("${mindos.security.audit.write-queue-capacity:2048}") int writeQueueCapacity,
+            @Value("${mindos.security.audit.write-flush-timeout-ms:2000}") long writeFlushTimeoutMillis) {
         this.enabled = enabled;
         this.auditFile = Paths.get(auditFile == null || auditFile.isBlank() ? "logs/security-audit.log" : auditFile.trim());
         this.traceIdHeader = traceIdHeader == null || traceIdHeader.isBlank() ? "X-Trace-Id" : traceIdHeader.trim();
         this.activeCursorKeyVersion = normalizeFilter(activeCursorKeyVersion).isBlank() ? "v1" : normalizeFilter(activeCursorKeyVersion);
         this.cursorSigningKeysByVersion = parseSigningKeys(cursorSigningKey, cursorSigningKeys, this.activeCursorKeyVersion);
         this.cursorTtlSeconds = Math.max(30L, cursorTtlSeconds);
+        this.writeFlushTimeoutMillis = Math.max(200L, writeFlushTimeoutMillis);
         this.objectMapper = new ObjectMapper().findAndRegisterModules();
+        this.auditWriterExecutor = createAuditWriterExecutor(Math.max(64, writeQueueCapacity));
     }
 
-    public synchronized void record(String actor,
+    public void record(String actor,
                                     String operation,
                                     String resource,
                                     String result,
@@ -68,7 +92,7 @@ public class SecurityAuditLogService {
         record(null, actor, operation, resource, result, reason, remoteAddress, userAgent);
     }
 
-    public synchronized void record(String traceId,
+    public void record(String traceId,
                                     String actor,
                                     String operation,
                                     String resource,
@@ -91,48 +115,54 @@ public class SecurityAuditLogService {
         event.put("userAgent", safe(userAgent));
 
         try {
-            Path parent = auditFile.getParent();
-            if (parent != null) {
-                Files.createDirectories(parent);
-            }
-            String line = objectMapper.writeValueAsString(event) + System.lineSeparator();
-            Files.writeString(auditFile, line, StandardCharsets.UTF_8,
-                    java.nio.file.StandardOpenOption.CREATE,
-                    java.nio.file.StandardOpenOption.APPEND);
+            String line = objectMapper.writeValueAsString(event);
+            enqueuedCount.incrementAndGet();
+            auditWriterExecutor.execute(() -> appendAuditLineSync(line));
+        } catch (RejectedExecutionException ex) {
+            callerRunsFallbackCount.incrementAndGet();
+            appendAuditLineSync(toAuditLine(event));
         } catch (IOException ex) {
             LOGGER.log(Level.WARNING, "Failed to append security audit log", ex);
         }
     }
 
+    public SecurityAuditWriteMetricsDto getWriteMetrics() {
+        return new SecurityAuditWriteMetricsDto(
+                auditWriterExecutor.getQueue().size(),
+                auditWriterExecutor.getQueue().remainingCapacity(),
+                enqueuedCount.get(),
+                writtenCount.get(),
+                callerRunsFallbackCount.get(),
+                flushTimeoutCount.get(),
+                flushErrorCount.get()
+        );
+    }
+
     public List<SecurityAuditEventDto> readRecent(int limit) {
         int effectiveLimit = Math.max(1, limit);
+        flushPendingAuditWrites();
         if (!Files.exists(auditFile)) {
             return List.of();
         }
-        try {
-            List<String> lines = Files.readAllLines(auditFile, StandardCharsets.UTF_8);
-            List<SecurityAuditEventDto> events = new ArrayList<>();
-            for (int i = lines.size() - 1; i >= 0 && events.size() < effectiveLimit; i--) {
-                String line = lines.get(i);
-                if (line == null || line.isBlank()) {
+        try (BufferedReader reader = Files.newBufferedReader(auditFile, StandardCharsets.UTF_8)) {
+            ArrayDeque<SecurityAuditEventDto> tail = new ArrayDeque<>(effectiveLimit);
+            String line;
+            while ((line = reader.readLine()) != null) {
+                if (line.isBlank()) {
                     continue;
                 }
-                try {
-                    Map<String, Object> parsed = objectMapper.readValue(line, new TypeReference<>() {});
-                    events.add(new SecurityAuditEventDto(
-                            parseInstant(parsed.get("timestamp")),
-                            asText(parsed.get("traceId")),
-                            asText(parsed.get("actor")),
-                            asText(parsed.get("operation")),
-                            asText(parsed.get("resource")),
-                            asText(parsed.get("result")),
-                            asText(parsed.get("reason")),
-                            asText(parsed.get("remoteAddress")),
-                            asText(parsed.get("userAgent"))
-                    ));
-                } catch (Exception ignored) {
-                    // Ignore malformed audit line and continue.
+                SecurityAuditEventDto event = parseAuditEvent(line);
+                if (event == null) {
+                    continue;
                 }
+                tail.addLast(event);
+                if (tail.size() > effectiveLimit) {
+                    tail.removeFirst();
+                }
+            }
+            List<SecurityAuditEventDto> events = new ArrayList<>(tail.size());
+            while (!tail.isEmpty()) {
+                events.add(tail.removeLast());
             }
             return List.copyOf(events);
         } catch (IOException ex) {
@@ -149,6 +179,7 @@ public class SecurityAuditLogService {
                                                      String traceId,
                                                      String from,
                                                      String to) {
+        flushPendingAuditWrites();
         int effectiveLimit = Math.max(1, limit);
         String actorFilter = normalizeFilter(actor);
         String operationFilter = normalizeFilter(operation);
@@ -181,31 +212,39 @@ public class SecurityAuditLogService {
             );
         }
 
-        try {
-            List<String> lines = Files.readAllLines(auditFile, StandardCharsets.UTF_8);
-            List<SecurityAuditEventDto> matched = new ArrayList<>();
-            int matchedSeen = 0;
-            boolean hasMore = false;
+        try (BufferedReader reader = Files.newBufferedReader(auditFile, StandardCharsets.UTF_8)) {
+            int windowSize = Math.max(1, offset + effectiveLimit + 1);
+            ArrayDeque<SecurityAuditEventDto> matchedTail = new ArrayDeque<>(windowSize);
+            int totalMatched = 0;
 
-            for (int i = lines.size() - 1; i >= 0; i--) {
-                String line = lines.get(i);
-                if (line == null || line.isBlank()) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                if (line.isBlank()) {
                     continue;
                 }
                 SecurityAuditEventDto event = parseAuditEvent(line);
                 if (event == null || !matchesFilters(event, actorFilter, operationFilter, resultFilter, traceIdFilter, fromInstant, toInstant)) {
                     continue;
                 }
-                if (matchedSeen++ < offset) {
-                    continue;
-                }
-                if (matched.size() < effectiveLimit) {
-                    matched.add(event);
-                } else {
-                    hasMore = true;
-                    break;
+                totalMatched++;
+                matchedTail.addLast(event);
+                if (matchedTail.size() > windowSize) {
+                    matchedTail.removeFirst();
                 }
             }
+
+            List<SecurityAuditEventDto> tail = new ArrayList<>(matchedTail);
+            int tailBaseIndex = totalMatched - tail.size();
+            int endExclusive = Math.min(totalMatched, offset + effectiveLimit);
+            List<SecurityAuditEventDto> matched = new ArrayList<>(Math.max(0, endExclusive - offset));
+            for (int newestPos = offset; newestPos < endExclusive; newestPos++) {
+                int absoluteIndex = totalMatched - 1 - newestPos;
+                int tailIndex = absoluteIndex - tailBaseIndex;
+                if (tailIndex >= 0 && tailIndex < tail.size()) {
+                    matched.add(tail.get(tailIndex));
+                }
+            }
+            boolean hasMore = totalMatched > endExclusive;
 
             Instant cursorExpiresAt = hasMore ? Instant.now().plusSeconds(cursorTtlSeconds) : null;
             String nextCursor = hasMore
@@ -254,8 +293,89 @@ public class SecurityAuditLogService {
         return UUID.randomUUID().toString();
     }
 
+    @PreDestroy
+    public void shutdownAuditWriter() {
+        auditWriterExecutor.shutdown();
+        try {
+            if (!auditWriterExecutor.awaitTermination(Math.max(500L, writeFlushTimeoutMillis), TimeUnit.MILLISECONDS)) {
+                auditWriterExecutor.shutdownNow();
+            }
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+            auditWriterExecutor.shutdownNow();
+        }
+    }
+
     private String safe(String value) {
         return value == null ? "" : value;
+    }
+
+    private ThreadPoolExecutor createAuditWriterExecutor(int queueCapacity) {
+        ThreadPoolExecutor executor = new ThreadPoolExecutor(
+                1,
+                1,
+                0L,
+                TimeUnit.MILLISECONDS,
+                new LinkedBlockingQueue<>(queueCapacity),
+                runnable -> {
+                    Thread thread = new Thread(runnable, "mindos-security-audit-writer");
+                    thread.setDaemon(true);
+                    return thread;
+                },
+                (runnable, ignoredExecutor) -> {
+                    callerRunsFallbackCount.incrementAndGet();
+                    runnable.run();
+                }
+        );
+        executor.prestartAllCoreThreads();
+        return executor;
+    }
+
+    private void flushPendingAuditWrites() {
+        try {
+            Future<?> barrier = auditWriterExecutor.submit(() -> {
+                // Barrier task to make sure previous writes are flushed before reads.
+            });
+            barrier.get(writeFlushTimeoutMillis, TimeUnit.MILLISECONDS);
+        } catch (TimeoutException ex) {
+            flushTimeoutCount.incrementAndGet();
+            LOGGER.log(Level.WARNING, "Timed out waiting for security audit writer flush", ex);
+        } catch (Exception ex) {
+            flushErrorCount.incrementAndGet();
+            LOGGER.log(Level.WARNING, "Failed to flush security audit writes before read", ex);
+        }
+    }
+
+    private void appendAuditLineSync(String line) {
+        if (line == null || line.isBlank()) {
+            return;
+        }
+        synchronized (auditFileWriteLock) {
+            try {
+                Path parent = auditFile.getParent();
+                if (parent != null) {
+                    Files.createDirectories(parent);
+                }
+                Files.writeString(
+                        auditFile,
+                        line + System.lineSeparator(),
+                        StandardCharsets.UTF_8,
+                        java.nio.file.StandardOpenOption.CREATE,
+                        java.nio.file.StandardOpenOption.APPEND
+                );
+                writtenCount.incrementAndGet();
+            } catch (IOException ex) {
+                LOGGER.log(Level.WARNING, "Failed to append security audit log", ex);
+            }
+        }
+    }
+
+    private String toAuditLine(Map<String, Object> event) {
+        try {
+            return objectMapper.writeValueAsString(event);
+        } catch (Exception ex) {
+            return "";
+        }
     }
 
     private String asText(Object value) {

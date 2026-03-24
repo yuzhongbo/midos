@@ -76,7 +76,8 @@ public class LlmMetricsService implements LlmMetricsReader {
                 totalCalls == 0 ? 0.0 : (double) totalLatency / totalCalls,
                 totalTokens,
                 byProvider,
-                recentCalls
+                recentCalls,
+                null
         );
     }
 

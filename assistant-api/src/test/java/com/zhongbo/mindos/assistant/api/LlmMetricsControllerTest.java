@@ -35,7 +35,10 @@ class LlmMetricsControllerTest {
                 .andExpect(jsonPath("$.totalCalls").isNumber())
                 .andExpect(jsonPath("$.totalCalls").value(org.hamcrest.Matchers.greaterThanOrEqualTo(1)))
                 .andExpect(jsonPath("$.byProvider.length()").value(org.hamcrest.Matchers.greaterThanOrEqualTo(1)))
-                .andExpect(jsonPath("$.recentCalls.length()").value(org.hamcrest.Matchers.greaterThanOrEqualTo(1)));
+                .andExpect(jsonPath("$.recentCalls.length()").value(org.hamcrest.Matchers.greaterThanOrEqualTo(1)))
+                .andExpect(jsonPath("$.securityAudit.queueDepth").isNumber())
+                .andExpect(jsonPath("$.securityAudit.enqueuedCount").isNumber())
+                .andExpect(jsonPath("$.securityAudit.writtenCount").isNumber());
     }
 }
 

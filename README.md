@@ -228,7 +228,7 @@ curl -X POST http://localhost:8080/api/skills/load-mcp \
 - LLM call metrics (token estimate + multi-provider stats):
   - endpoint: `GET /api/metrics/llm?windowMinutes=60&provider=openai&includeRecent=true&recentLimit=20`
   - toggles: `mindos.llm.metrics.enabled` (default `true`), `mindos.llm.metrics.max-recent-calls` (default `500`)
-  - summary includes success/fallback rate, average latency, estimated token totals, provider aggregates, and optional recent calls.
+  - summary includes success/fallback rate, average latency, estimated token totals, provider aggregates, optional recent calls, and `securityAudit` writer metrics (`queueDepth`, `enqueuedCount`, `writtenCount`, `callerRunsFallbackCount`, `flushTimeoutCount`, `flushErrorCount`).
 - Long-task orchestration API (multi-day / multi-worker):
   - create: `POST /api/tasks/{userId}` with `{title, objective, steps[], dueAt?, nextCheckAt?}`
   - list/query: `GET /api/tasks/{userId}?status=PENDING|RUNNING|BLOCKED|COMPLETED|CANCELLED`, `GET /api/tasks/{userId}/{taskId}`
@@ -287,6 +287,7 @@ curl -X POST http://localhost:8080/api/skills/load-mcp \
   - `mindos.security.audit.trace-id-header` (default `X-Trace-Id`)
   - audit query endpoints:
     - `GET /api/security/audit?limit=50` (simple recent list, requires admin token when configured)
+    - `GET /api/security/audit/write-metrics` (writer queue + fallback/flush counters for observability)
     - `GET /api/security/audit/query?limit=50&cursor=<signed_cursor>&actor=&operation=&result=&traceId=&from=&to=` (filtered cursor paging)
       - `cursor` is short JWT-style (`header.payload.signature`), HMAC-signed (tamper-proof), and bound to current filters.
       - JWT header includes `kid` for signing key version so key rotation can verify old cursors while new cursors use the active key.
@@ -294,10 +295,14 @@ curl -X POST http://localhost:8080/api/skills/load-mcp \
       - `nextCursor` and `nextCursorExpiresAt` are returned when more items exist.
       - `cursorKeyVersion` returns the key version parsed from the current request cursor (`kid` for JWT cursors, legacy markers for old cursor formats).
       - `cursorType` returns the current request cursor format: `none|jwt|legacy-numeric|legacy-signature`.
+    - writer metrics fields include `queueDepth`, `queueRemainingCapacity`, `enqueuedCount`, `writtenCount`, `callerRunsFallbackCount`, `flushTimeoutCount`, and `flushErrorCount`.
   - cursor key rotation config:
     - `mindos.security.audit.cursor-active-key-version` (example: `v2`)
     - `mindos.security.audit.cursor-signing-keys` (example: `v1:old-secret,v2:new-secret`)
     - if keyring is empty, fallback key `mindos.security.audit.cursor-signing-key` is used for active version.
+  - audit write pipeline tuning:
+    - `mindos.security.audit.write-queue-capacity` (default `2048`)
+    - `mindos.security.audit.write-flush-timeout-ms` (default `2000`)
   - audit fields include actor, operation, resource, timestamp, traceId, result, reason, remote address, and user-agent.
 - Persona learning safety controls (optional, app/JVM properties):
   - `mindos.dispatcher.persona-core.enabled` (default `true`)

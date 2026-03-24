@@ -10,7 +10,8 @@ public record LlmMetricsResponseDto(
         double avgLatencyMs,
         long totalEstimatedTokens,
         List<LlmProviderAggregateDto> byProvider,
-        List<LlmCallMetricDto> recentCalls
+        List<LlmCallMetricDto> recentCalls,
+        SecurityAuditWriteMetricsDto securityAudit
 ) {
 }
 

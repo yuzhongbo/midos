@@ -68,6 +68,18 @@ class SecurityAuditApiTest {
                 .andExpect(jsonPath("$[0].operation").isString())
                 .andExpect(jsonPath("$[0].resource").isString())
                 .andExpect(jsonPath("$[0].result").isString());
+
+        mockMvc.perform(get("/api/security/audit/write-metrics")
+                        .header("X-MindOS-Admin-Token", "test-admin-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.queueDepth").isNumber())
+                .andExpect(jsonPath("$.queueRemainingCapacity").isNumber())
+                .andExpect(jsonPath("$.enqueuedCount").isNumber())
+                .andExpect(jsonPath("$.writtenCount").isNumber())
+                .andExpect(jsonPath("$.callerRunsFallbackCount").isNumber())
+                .andExpect(jsonPath("$.flushTimeoutCount").isNumber())
+                .andExpect(jsonPath("$.flushErrorCount").isNumber())
+                .andExpect(jsonPath("$.enqueuedCount").value(org.hamcrest.Matchers.greaterThanOrEqualTo(1)));
     }
 
     @Test

@@ -3,6 +3,7 @@ package com.zhongbo.mindos.assistant.api;
 import com.zhongbo.mindos.assistant.common.dto.SecurityChallengeRequestDto;
 import com.zhongbo.mindos.assistant.common.dto.SecurityChallengeResponseDto;
 import com.zhongbo.mindos.assistant.common.dto.SecurityAuditQueryResponseDto;
+import com.zhongbo.mindos.assistant.common.dto.SecurityAuditWriteMetricsDto;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
@@ -97,6 +98,12 @@ public class SecurityChallengeController {
         } catch (IllegalArgumentException ex) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, ex.getMessage());
         }
+    }
+
+    @GetMapping("/audit/write-metrics")
+    public SecurityAuditWriteMetricsDto auditWriteMetrics(HttpServletRequest servletRequest) {
+        verifyAdminToken(servletRequest, "audit-reader", "security.audit.metrics", "security-audit");
+        return securityAuditLogService.getWriteMetrics();
     }
 
     private void verifyAdminToken(HttpServletRequest request,

@@ -12,9 +12,12 @@ import org.springframework.web.bind.annotation.RestController;
 public class LlmMetricsController {
 
     private final LlmMetricsReader llmMetricsReader;
+    private final SecurityAuditLogService securityAuditLogService;
 
-    public LlmMetricsController(LlmMetricsReader llmMetricsReader) {
+    public LlmMetricsController(LlmMetricsReader llmMetricsReader,
+                                SecurityAuditLogService securityAuditLogService) {
         this.llmMetricsReader = llmMetricsReader;
+        this.securityAuditLogService = securityAuditLogService;
     }
 
     @GetMapping
@@ -22,7 +25,18 @@ public class LlmMetricsController {
                                                @RequestParam(required = false) String provider,
                                                @RequestParam(defaultValue = "false") boolean includeRecent,
                                                @RequestParam(defaultValue = "20") int recentLimit) {
-        return llmMetricsReader.snapshot(windowMinutes, provider, includeRecent, recentLimit);
+        LlmMetricsResponseDto snapshot = llmMetricsReader.snapshot(windowMinutes, provider, includeRecent, recentLimit);
+        return new LlmMetricsResponseDto(
+                snapshot.windowMinutes(),
+                snapshot.totalCalls(),
+                snapshot.successRate(),
+                snapshot.fallbackRate(),
+                snapshot.avgLatencyMs(),
+                snapshot.totalEstimatedTokens(),
+                snapshot.byProvider(),
+                snapshot.recentCalls(),
+                securityAuditLogService.getWriteMetrics()
+        );
     }
 }
 
