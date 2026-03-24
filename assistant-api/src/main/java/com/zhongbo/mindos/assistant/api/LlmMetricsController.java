@@ -2,6 +2,8 @@ package com.zhongbo.mindos.assistant.api;
 
 import com.zhongbo.mindos.assistant.common.LlmMetricsReader;
 import com.zhongbo.mindos.assistant.common.dto.LlmMetricsResponseDto;
+import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -11,11 +13,17 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/metrics/llm")
 public class LlmMetricsController {
 
+    private final boolean requireAdminToken;
+    private final AdminTokenGuard adminTokenGuard;
     private final LlmMetricsReader llmMetricsReader;
     private final SecurityAuditLogService securityAuditLogService;
 
-    public LlmMetricsController(LlmMetricsReader llmMetricsReader,
+    public LlmMetricsController(@Value("${mindos.security.metrics.require-admin-token:true}") boolean requireAdminToken,
+                                AdminTokenGuard adminTokenGuard,
+                                LlmMetricsReader llmMetricsReader,
                                 SecurityAuditLogService securityAuditLogService) {
+        this.requireAdminToken = requireAdminToken;
+        this.adminTokenGuard = adminTokenGuard;
         this.llmMetricsReader = llmMetricsReader;
         this.securityAuditLogService = securityAuditLogService;
     }
@@ -24,7 +32,11 @@ public class LlmMetricsController {
     public LlmMetricsResponseDto getLlmMetrics(@RequestParam(defaultValue = "60") int windowMinutes,
                                                @RequestParam(required = false) String provider,
                                                @RequestParam(defaultValue = "false") boolean includeRecent,
-                                               @RequestParam(defaultValue = "20") int recentLimit) {
+                                               @RequestParam(defaultValue = "20") int recentLimit,
+                                               HttpServletRequest request) {
+        if (requireAdminToken) {
+            adminTokenGuard.verify(request, "metrics-reader", "security.metrics.llm.read", "llm-metrics");
+        }
         LlmMetricsResponseDto snapshot = llmMetricsReader.snapshot(windowMinutes, provider, includeRecent, recentLimit);
         return new LlmMetricsResponseDto(
                 snapshot.windowMinutes(),

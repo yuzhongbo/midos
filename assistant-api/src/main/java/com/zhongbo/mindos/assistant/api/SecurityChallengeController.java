@@ -5,7 +5,6 @@ import com.zhongbo.mindos.assistant.common.dto.SecurityChallengeResponseDto;
 import com.zhongbo.mindos.assistant.common.dto.SecurityAuditQueryResponseDto;
 import com.zhongbo.mindos.assistant.common.dto.SecurityAuditWriteMetricsDto;
 import jakarta.servlet.http.HttpServletRequest;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -23,18 +22,15 @@ import java.util.List;
 @RequestMapping("/api/security")
 public class SecurityChallengeController {
 
-    private final String adminTokenHeaderName;
-    private final String adminToken;
+    private final AdminTokenGuard adminTokenGuard;
     private final SecurityChallengeService securityChallengeService;
     private final SecurityAuditLogService securityAuditLogService;
 
     public SecurityChallengeController(
-            @Value("${mindos.security.risky-ops.admin-token-header:X-MindOS-Admin-Token}") String adminTokenHeaderName,
-            @Value("${mindos.security.risky-ops.admin-token:}") String adminToken,
+            AdminTokenGuard adminTokenGuard,
             SecurityChallengeService securityChallengeService,
             SecurityAuditLogService securityAuditLogService) {
-        this.adminTokenHeaderName = adminTokenHeaderName;
-        this.adminToken = adminToken == null ? "" : adminToken.trim();
+        this.adminTokenGuard = adminTokenGuard;
         this.securityChallengeService = securityChallengeService;
         this.securityAuditLogService = securityAuditLogService;
     }
@@ -47,7 +43,7 @@ public class SecurityChallengeController {
         }
         String actor = normalize(request.actor(), "unknown");
         String traceId = securityAuditLogService.resolveTraceId(servletRequest);
-        verifyAdminToken(servletRequest, actor, request.operation(), request.resource());
+        adminTokenGuard.verify(servletRequest, actor, request.operation(), request.resource());
 
         SecurityChallengeService.SecurityChallenge challenge = securityChallengeService.issue(
                 request.operation(),
@@ -78,7 +74,7 @@ public class SecurityChallengeController {
     public List<SecurityAuditEventDto> recentAudit(@RequestParam(defaultValue = "50") int limit,
                                                    HttpServletRequest servletRequest) {
         String actor = "audit-reader";
-        verifyAdminToken(servletRequest, actor, "security.audit.read", "security-audit");
+        adminTokenGuard.verify(servletRequest, actor, "security.audit.read", "security-audit");
         return securityAuditLogService.readRecent(Math.max(1, limit));
     }
 
@@ -92,7 +88,7 @@ public class SecurityChallengeController {
                                                     @RequestParam(required = false) String from,
                                                     @RequestParam(required = false) String to,
                                                     HttpServletRequest servletRequest) {
-        verifyAdminToken(servletRequest, "audit-reader", "security.audit.query", "security-audit");
+        adminTokenGuard.verify(servletRequest, "audit-reader", "security.audit.query", "security-audit");
         try {
             return securityAuditLogService.queryRecent(limit, cursor, actor, operation, result, traceId, from, to);
         } catch (IllegalArgumentException ex) {
@@ -102,31 +98,10 @@ public class SecurityChallengeController {
 
     @GetMapping("/audit/write-metrics")
     public SecurityAuditWriteMetricsDto auditWriteMetrics(HttpServletRequest servletRequest) {
-        verifyAdminToken(servletRequest, "audit-reader", "security.audit.metrics", "security-audit");
+        adminTokenGuard.verify(servletRequest, "audit-reader", "security.audit.metrics", "security-audit");
         return securityAuditLogService.getWriteMetrics();
     }
 
-    private void verifyAdminToken(HttpServletRequest request,
-                                  String actor,
-                                  String operation,
-                                  String resource) {
-        String traceId = securityAuditLogService.resolveTraceId(request);
-        if (adminToken.isBlank()) {
-            return;
-        }
-        String provided = request == null ? "" : normalize(request.getHeader(adminTokenHeaderName), "");
-        if (!adminToken.equals(provided)) {
-            securityAuditLogService.record(traceId,
-                    actor,
-                    operation,
-                    operation + "@" + normalize(resource, "*"),
-                    "denied",
-                    "invalid_admin_token",
-                    request == null ? "" : normalize(request.getRemoteAddr(), ""),
-                    request == null ? "" : normalize(request.getHeader("User-Agent"), ""));
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "invalid admin token");
-        }
-    }
 
     private String normalize(String value, String fallback) {
         if (value == null) {

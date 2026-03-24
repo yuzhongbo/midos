@@ -26,7 +26,7 @@ This repository is a lightweight, single-user personal AI assistant backend. Opt
 - Long-task auto-advancer: `/api/tasks/{userId}/auto-run` manual trigger plus optional background scheduler via `mindos.tasks.auto-run.*` properties.
 - Persona inspection flow: `/api/memory/{userId}/persona` (`GET`) returns the confirmed long-term persona profile learned for that user.
 - Persona explain flow: `/api/memory/{userId}/persona/explain` (`GET`) returns confirmed profile plus pending override candidates for debug visibility.
-- LLM metrics flow: `/api/metrics/llm` (`GET`) returns windowed call stats (provider aggregates, success/fallback rate, latency, estimated token usage, optional recent calls).
+- LLM metrics flow: `/api/metrics/llm` (`GET`) returns windowed call stats (provider aggregates, success/fallback rate, latency, estimated token usage, optional recent calls) plus `securityAudit` writer summary (`queueDepth`, `enqueuedCount`, `writtenCount`, fallback/flush counters).
 - LLM auto-routing supports optional stage mapping via `mindos.llm.routing.mode` and `mindos.llm.routing.stage-map`; per-request `profile.llmProvider` can still force a single provider or `auto`.
 - Memory compression planning flow: `/api/memory/{userId}/style` (`GET`/`POST`) + `/api/memory/{userId}/compress-plan` (`POST`) for gradual compression with per-user style profile.
 - `compress-plan` 可选 `focus`（learning/task/review）；`style` 更新可选 `autoTune=true&sampleText=...` 做轻量风格微调。
@@ -64,6 +64,7 @@ This repository is a lightweight, single-user personal AI assistant backend. Opt
 - Dispatcher prompt/reply budget and loop guard are configurable via `mindos.dispatcher.prompt.max-chars`, `mindos.dispatcher.memory-context.max-chars`, `mindos.dispatcher.llm-reply.max-chars`, `mindos.dispatcher.skill.guard.max-consecutive`, `mindos.dispatcher.skill.guard.recent-window-size`, `mindos.dispatcher.skill.guard.repeat-input-threshold`, and `mindos.dispatcher.skill.guard.cooldown-seconds`.
 - Prompt-injection guard and risky operation policy are configurable via `mindos.dispatcher.prompt-injection.guard.*` and `mindos.security.risky-ops.*` / `mindos.security.skill.*`.
 - One-time challenge approval uses `/api/security/challenge` and `mindos.security.risky-ops.challenge-*`; skill capability whitelist uses `mindos.security.skill.capability-*`; structured audit logs use `mindos.security.audit.*`.
+- Metrics endpoint auth is configurable via `mindos.security.metrics.require-admin-token` (default enabled, validates `mindos.security.risky-ops.admin-token-*`).
 - Challenge approval is strict (`operation + resource + actor + IP`, one-time consume); security audit supports traceId and recent-event query via `/api/security/audit` and filtered signed-cursor query via `/api/security/audit/query` (JWT-style cursor + expiry + key-version `kid`).
 - MCP-loaded tools are namespaced as `mcp.<serverAlias>.<toolName>` to avoid collisions with built-in skills.
 - Dispatcher auto-routing can execute registered skills via `Skill.supports(...)`, so MCP tool descriptions/names should stay specific enough to avoid accidental matches.

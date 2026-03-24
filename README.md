@@ -228,6 +228,7 @@ curl -X POST http://localhost:8080/api/skills/load-mcp \
 - LLM call metrics (token estimate + multi-provider stats):
   - endpoint: `GET /api/metrics/llm?windowMinutes=60&provider=openai&includeRecent=true&recentLimit=20`
   - toggles: `mindos.llm.metrics.enabled` (default `true`), `mindos.llm.metrics.max-recent-calls` (default `500`)
+  - optional auth: `mindos.security.metrics.require-admin-token` (default `true`, validates `mindos.security.risky-ops.admin-token-header` / `mindos.security.risky-ops.admin-token`)
   - summary includes success/fallback rate, average latency, estimated token totals, provider aggregates, optional recent calls, and `securityAudit` writer metrics (`queueDepth`, `enqueuedCount`, `writtenCount`, `callerRunsFallbackCount`, `flushTimeoutCount`, `flushErrorCount`).
 - Long-task orchestration API (multi-day / multi-worker):
   - create: `POST /api/tasks/{userId}` with `{title, objective, steps[], dueAt?, nextCheckAt?}`
@@ -303,6 +304,7 @@ curl -X POST http://localhost:8080/api/skills/load-mcp \
   - audit write pipeline tuning:
     - `mindos.security.audit.write-queue-capacity` (default `2048`)
     - `mindos.security.audit.write-flush-timeout-ms` (default `2000`)
+    - `mindos.security.audit.write-flush-warning-interval-ms` (default `60000`, throttles repeated flush warning logs)
   - audit fields include actor, operation, resource, timestamp, traceId, result, reason, remote address, and user-agent.
 - Persona learning safety controls (optional, app/JVM properties):
   - `mindos.dispatcher.persona-core.enabled` (default `true`)

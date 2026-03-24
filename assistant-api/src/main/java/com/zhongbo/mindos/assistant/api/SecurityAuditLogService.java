@@ -52,6 +52,7 @@ public class SecurityAuditLogService {
     private final String activeCursorKeyVersion;
     private final long cursorTtlSeconds;
     private final long writeFlushTimeoutMillis;
+    private final long writeFlushWarningIntervalMillis;
     private final ObjectMapper objectMapper;
     private final ThreadPoolExecutor auditWriterExecutor;
     private final Object auditFileWriteLock = new Object();
@@ -60,6 +61,7 @@ public class SecurityAuditLogService {
     private final AtomicLong callerRunsFallbackCount = new AtomicLong();
     private final AtomicLong flushTimeoutCount = new AtomicLong();
     private final AtomicLong flushErrorCount = new AtomicLong();
+    private final AtomicLong lastFlushWarningEpochMillis = new AtomicLong();
 
     public SecurityAuditLogService(
             @Value("${mindos.security.audit.enabled:true}") boolean enabled,
@@ -70,7 +72,8 @@ public class SecurityAuditLogService {
             @Value("${mindos.security.audit.cursor-signing-keys:}") String cursorSigningKeys,
             @Value("${mindos.security.audit.cursor-ttl-seconds:300}") long cursorTtlSeconds,
             @Value("${mindos.security.audit.write-queue-capacity:2048}") int writeQueueCapacity,
-            @Value("${mindos.security.audit.write-flush-timeout-ms:2000}") long writeFlushTimeoutMillis) {
+            @Value("${mindos.security.audit.write-flush-timeout-ms:2000}") long writeFlushTimeoutMillis,
+            @Value("${mindos.security.audit.write-flush-warning-interval-ms:60000}") long writeFlushWarningIntervalMillis) {
         this.enabled = enabled;
         this.auditFile = Paths.get(auditFile == null || auditFile.isBlank() ? "logs/security-audit.log" : auditFile.trim());
         this.traceIdHeader = traceIdHeader == null || traceIdHeader.isBlank() ? "X-Trace-Id" : traceIdHeader.trim();
@@ -78,6 +81,7 @@ public class SecurityAuditLogService {
         this.cursorSigningKeysByVersion = parseSigningKeys(cursorSigningKey, cursorSigningKeys, this.activeCursorKeyVersion);
         this.cursorTtlSeconds = Math.max(30L, cursorTtlSeconds);
         this.writeFlushTimeoutMillis = Math.max(200L, writeFlushTimeoutMillis);
+        this.writeFlushWarningIntervalMillis = Math.max(1_000L, writeFlushWarningIntervalMillis);
         this.objectMapper = new ObjectMapper().findAndRegisterModules();
         this.auditWriterExecutor = createAuditWriterExecutor(Math.max(64, writeQueueCapacity));
     }
@@ -114,15 +118,20 @@ public class SecurityAuditLogService {
         event.put("remoteAddress", safe(remoteAddress));
         event.put("userAgent", safe(userAgent));
 
+        final String line;
         try {
-            String line = objectMapper.writeValueAsString(event);
+            line = objectMapper.writeValueAsString(event);
+        } catch (IOException ex) {
+            LOGGER.log(Level.WARNING, "Failed to append security audit log", ex);
+            return;
+        }
+        try {
             enqueuedCount.incrementAndGet();
             auditWriterExecutor.execute(() -> appendAuditLineSync(line));
         } catch (RejectedExecutionException ex) {
+            // If executor is shutting down, persist synchronously to avoid dropping audit events.
             callerRunsFallbackCount.incrementAndGet();
-            appendAuditLineSync(toAuditLine(event));
-        } catch (IOException ex) {
-            LOGGER.log(Level.WARNING, "Failed to append security audit log", ex);
+            appendAuditLineSync(line);
         }
     }
 
@@ -332,6 +341,9 @@ public class SecurityAuditLogService {
     }
 
     private void flushPendingAuditWrites() {
+        if (auditWriterExecutor.getQueue().isEmpty() && auditWriterExecutor.getActiveCount() == 0) {
+            return;
+        }
         try {
             Future<?> barrier = auditWriterExecutor.submit(() -> {
                 // Barrier task to make sure previous writes are flushed before reads.
@@ -339,10 +351,24 @@ public class SecurityAuditLogService {
             barrier.get(writeFlushTimeoutMillis, TimeUnit.MILLISECONDS);
         } catch (TimeoutException ex) {
             flushTimeoutCount.incrementAndGet();
-            LOGGER.log(Level.WARNING, "Timed out waiting for security audit writer flush", ex);
+            logFlushWarningThrottled("Timed out waiting for security audit writer flush", ex);
         } catch (Exception ex) {
             flushErrorCount.incrementAndGet();
-            LOGGER.log(Level.WARNING, "Failed to flush security audit writes before read", ex);
+            logFlushWarningThrottled("Failed to flush security audit writes before read", ex);
+        }
+    }
+
+    private void logFlushWarningThrottled(String message, Exception ex) {
+        long now = System.currentTimeMillis();
+        while (true) {
+            long previous = lastFlushWarningEpochMillis.get();
+            if (previous > 0 && now - previous < writeFlushWarningIntervalMillis) {
+                return;
+            }
+            if (lastFlushWarningEpochMillis.compareAndSet(previous, now)) {
+                LOGGER.log(Level.WARNING, message, ex);
+                return;
+            }
         }
     }
 
@@ -370,13 +396,6 @@ public class SecurityAuditLogService {
         }
     }
 
-    private String toAuditLine(Map<String, Object> event) {
-        try {
-            return objectMapper.writeValueAsString(event);
-        } catch (Exception ex) {
-            return "";
-        }
-    }
 
     private String asText(Object value) {
         return value == null ? "" : String.valueOf(value);

@@ -12,7 +12,11 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-@SpringBootTest
+@SpringBootTest(properties = {
+        "mindos.security.metrics.require-admin-token=true",
+        "mindos.security.risky-ops.admin-token-header=X-MindOS-Admin-Token",
+        "mindos.security.risky-ops.admin-token=test-admin-token"
+})
 @AutoConfigureMockMvc
 class LlmMetricsControllerTest {
 
@@ -28,6 +32,7 @@ class LlmMetricsControllerTest {
                 .andExpect(jsonPath("$.channel").value("llm"));
 
         mockMvc.perform(get("/api/metrics/llm")
+                        .header("X-MindOS-Admin-Token", "test-admin-token")
                         .param("windowMinutes", "120")
                         .param("includeRecent", "true")
                         .param("recentLimit", "5"))
@@ -39,6 +44,18 @@ class LlmMetricsControllerTest {
                 .andExpect(jsonPath("$.securityAudit.queueDepth").isNumber())
                 .andExpect(jsonPath("$.securityAudit.enqueuedCount").isNumber())
                 .andExpect(jsonPath("$.securityAudit.writtenCount").isNumber());
+    }
+
+    @Test
+    void shouldRejectLlmMetricsWhenAdminTokenMissingOrInvalid() throws Exception {
+        mockMvc.perform(get("/api/metrics/llm")
+                        .param("windowMinutes", "60"))
+                .andExpect(status().isForbidden());
+
+        mockMvc.perform(get("/api/metrics/llm")
+                        .header("X-MindOS-Admin-Token", "wrong-token")
+                        .param("windowMinutes", "60"))
+                .andExpect(status().isForbidden());
     }
 }
 
