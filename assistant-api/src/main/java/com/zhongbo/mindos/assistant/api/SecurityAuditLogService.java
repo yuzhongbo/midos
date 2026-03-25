@@ -376,12 +376,16 @@ public class SecurityAuditLogService {
     }
 
     private void flushPendingAuditWrites() {
-        if (auditWriterExecutor.getQueue().isEmpty() && auditWriterExecutor.getActiveCount() == 0) {
-            return;
-        }
+        // Always submit a barrier task so that any in-flight appendAuditLineSync work
+        // completes before we read. The racy getQueue().isEmpty() && getActiveCount()==0
+        // short-circuit was removed: there is a narrow TOCTOU window where the worker has
+        // dequeued a task but getActiveCount() has not yet incremented, causing a false
+        // early return and missed flush-timeout signal. The barrier itself is a trivial
+        // no-op so the overhead when the queue is idle is a single thread-pool roundtrip
+        // (microseconds).
         try {
             Future<?> barrier = auditWriterExecutor.submit(() -> {
-                // Barrier task to make sure previous writes are flushed before reads.
+                // Barrier task: ensures all previously submitted writes complete before reads.
             });
             barrier.get(writeFlushTimeoutMillis, TimeUnit.MILLISECONDS);
         } catch (TimeoutException ex) {
