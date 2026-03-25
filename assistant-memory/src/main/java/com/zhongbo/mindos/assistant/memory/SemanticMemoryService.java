@@ -1,6 +1,7 @@
 package com.zhongbo.mindos.assistant.memory;
 
 import com.zhongbo.mindos.assistant.memory.model.SemanticMemoryEntry;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -13,6 +14,8 @@ import java.util.Map;
 import java.util.Locale;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.regex.Pattern;
 
 @Service
@@ -23,16 +26,21 @@ public class SemanticMemoryService {
     private static final double APPROX_JACCARD_WITH_EMBEDDING_THRESHOLD = 0.65;
     private static final double APPROX_EMBEDDING_SIMILARITY_THRESHOLD = 0.985;
     private static final String DEFAULT_BUCKET = "global";
-    private static final String PROP_MEMORY_DECAY_HALF_LIFE_HOURS = "mindos.memory.search.decay-half-life-hours";
-    private static final String PROP_SEARCH_CROSS_BUCKET_MAX = "mindos.memory.search.cross-bucket.max";
-    private static final String PROP_SEARCH_CROSS_BUCKET_RATIO = "mindos.memory.search.cross-bucket.ratio";
     private static final Pattern TOKEN_SPLIT_PATTERN = Pattern.compile("[^\\p{L}\\p{N}]+");
 
     private final MemoryConsolidationService memoryConsolidationService;
+    private final MemoryRuntimeProperties properties;
     private final Map<String, UserSemanticStore> entriesByUser = new ConcurrentHashMap<>();
 
-    public SemanticMemoryService(MemoryConsolidationService memoryConsolidationService) {
+    @Autowired
+    public SemanticMemoryService(MemoryConsolidationService memoryConsolidationService,
+                                 MemoryRuntimeProperties properties) {
         this.memoryConsolidationService = memoryConsolidationService;
+        this.properties = properties;
+    }
+
+    public SemanticMemoryService(MemoryConsolidationService memoryConsolidationService) {
+        this(memoryConsolidationService, MemoryRuntimeProperties.fromSystemProperties());
     }
 
     public void remember(String userId, String text, List<Double> embedding) {
@@ -106,9 +114,13 @@ public class SemanticMemoryService {
     private final class UserSemanticStore {
         private final LinkedHashMap<String, StoredSemanticEntry> entries = new LinkedHashMap<>();
         private final Map<String, Set<String>> keysByToken = new HashMap<>();
+        private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
         private long sequence;
 
-        synchronized void upsert(String key, SemanticMemoryEntry entry, String bucket) {
+        void upsert(String key, SemanticMemoryEntry entry, String bucket) {
+            Lock writeLock = lock.writeLock();
+            writeLock.lock();
+            try {
             String bucketedKey = bucket + "::" + key;
             StoredSemanticEntry existing = entries.remove(bucketedKey);
             if (existing != null) {
@@ -122,15 +134,17 @@ public class SemanticMemoryService {
             for (String token : tokens) {
                 keysByToken.computeIfAbsent(token, ignored -> new LinkedHashSet<>()).add(bucketedKey);
             }
+            } finally {
+                writeLock.unlock();
+            }
         }
 
-        synchronized boolean containsKey(String key) {
-            return entries.containsKey(key);
-        }
-
-        synchronized boolean containsEquivalent(String key, SemanticMemoryEntry entry, String bucket) {
+        boolean containsEquivalent(String key, SemanticMemoryEntry entry, String bucket) {
+            Lock readLock = lock.readLock();
+            readLock.lock();
+            try {
             String bucketedKey = bucket + "::" + key;
-            if (containsKey(bucketedKey)) {
+            if (entries.containsKey(bucketedKey)) {
                 return true;
             }
 
@@ -167,12 +181,18 @@ public class SemanticMemoryService {
                 }
             }
             return false;
+            } finally {
+                readLock.unlock();
+            }
         }
 
-        synchronized List<SemanticMemoryEntry> search(String query,
+        List<SemanticMemoryEntry> search(String query,
                                                       int limit,
                                                       String preferredBucket,
                                                       boolean enforceCrossBucketCap) {
+            Lock readLock = lock.readLock();
+            readLock.lock();
+            try {
             List<StoredSemanticEntry> candidates = new ArrayList<>();
             LinkedHashSet<String> queryTokens = tokenize(query);
             if (queryTokens.isEmpty()) {
@@ -209,6 +229,9 @@ public class SemanticMemoryService {
             return mixed.stream()
                     .map(StoredSemanticEntry::entry)
                     .toList();
+            } finally {
+                readLock.unlock();
+            }
         }
 
         private List<StoredSemanticEntry> applyPreferredBucketMix(List<StoredSemanticEntry> ranked,
@@ -245,38 +268,22 @@ public class SemanticMemoryService {
         }
 
         private int resolveCrossBucketCap(int limit) {
-            int maxCap = parsePositiveInt(System.getProperty(PROP_SEARCH_CROSS_BUCKET_MAX, "2"));
-            double ratio = parseRatio(System.getProperty(PROP_SEARCH_CROSS_BUCKET_RATIO, "0.5"));
+            int maxCap = parsePositiveInt(properties.getSearch().getCrossBucketMax(), 2);
+            double ratio = parseRatio(properties.getSearch().getCrossBucketRatio(), 0.5);
             int ratioCap = (int) Math.floor(limit * ratio);
             int cap = Math.min(maxCap, Math.max(0, ratioCap));
             return Math.min(limit, Math.max(0, cap));
         }
 
-        private int parsePositiveInt(String raw) {
-            if (raw == null || raw.isBlank()) {
-                return 2;
-            }
-            try {
-                int value = Integer.parseInt(raw);
-                return value > 0 ? value : 2;
-            } catch (NumberFormatException ex) {
-                return 2;
-            }
+        private int parsePositiveInt(int raw, int fallback) {
+            return raw > 0 ? raw : fallback;
         }
 
-        private double parseRatio(String raw) {
-            if (raw == null || raw.isBlank()) {
-                return 0.5;
+        private double parseRatio(double raw, double fallback) {
+            if (Double.isNaN(raw) || Double.isInfinite(raw)) {
+                return fallback;
             }
-            try {
-                double value = Double.parseDouble(raw);
-                if (Double.isNaN(value) || Double.isInfinite(value)) {
-                    return 0.5;
-                }
-                return Math.max(0.0, Math.min(1.0, value));
-            } catch (NumberFormatException ex) {
-                return 0.5;
-            }
+            return Math.max(0.0, Math.min(1.0, raw));
         }
 
         private SemanticMemoryEntry merge(SemanticMemoryEntry existing, SemanticMemoryEntry candidate) {
@@ -339,12 +346,7 @@ public class SemanticMemoryService {
         }
 
         private double parseHalfLifeHours() {
-            String raw = System.getProperty(PROP_MEMORY_DECAY_HALF_LIFE_HOURS, "72");
-            try {
-                return Math.max(1.0, Double.parseDouble(raw));
-            } catch (NumberFormatException ex) {
-                return 72.0;
-            }
+            return Math.max(1.0, properties.getSearch().getDecayHalfLifeHours());
         }
 
         private boolean isApproxEquivalent(SemanticMemoryEntry input,

@@ -1,0 +1,155 @@
+package com.zhongbo.mindos.assistant.memory;
+
+import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.stereotype.Component;
+
+import java.util.LinkedHashMap;
+import java.util.Map;
+
+@Component
+@ConfigurationProperties(prefix = "mindos.memory")
+public class MemoryRuntimeProperties {
+
+    private final WriteGate writeGate = new WriteGate();
+    private final Search search = new Search();
+
+    public WriteGate getWriteGate() {
+        return writeGate;
+    }
+
+    public Search getSearch() {
+        return search;
+    }
+
+    public static MemoryRuntimeProperties fromSystemProperties() {
+        MemoryRuntimeProperties properties = new MemoryRuntimeProperties();
+        properties.getWriteGate().setEnabled(Boolean.parseBoolean(System.getProperty("mindos.memory.write-gate.enabled", "false")));
+        properties.getWriteGate().setMinLength(parsePositiveInt(System.getProperty("mindos.memory.write-gate.min-length"), 10));
+
+        Map<String, Integer> bucketMinLength = new LinkedHashMap<>();
+        System.getProperties().forEach((key, value) -> {
+            String propertyKey = String.valueOf(key);
+            if (!propertyKey.startsWith("mindos.memory.write-gate.min-length.")) {
+                return;
+            }
+            String bucket = propertyKey.substring("mindos.memory.write-gate.min-length.".length()).trim();
+            if (bucket.isBlank()) {
+                return;
+            }
+            bucketMinLength.put(bucket, parsePositiveInt(String.valueOf(value), properties.getWriteGate().getMinLength()));
+        });
+        properties.getWriteGate().setMinLengthByBucket(bucketMinLength);
+
+        properties.getSearch().setDecayHalfLifeHours(parsePositiveDouble(System.getProperty("mindos.memory.search.decay-half-life-hours"), 72.0));
+        properties.getSearch().setCrossBucketMax(parsePositiveInt(System.getProperty("mindos.memory.search.cross-bucket.max"), 2));
+        properties.getSearch().setCrossBucketRatio(parseRatio(System.getProperty("mindos.memory.search.cross-bucket.ratio"), 0.5));
+        return properties;
+    }
+
+    private static int parsePositiveInt(String raw, int fallback) {
+        if (raw == null || raw.isBlank()) {
+            return fallback;
+        }
+        try {
+            int value = Integer.parseInt(raw.trim());
+            return value > 0 ? value : fallback;
+        } catch (NumberFormatException ex) {
+            return fallback;
+        }
+    }
+
+    private static double parsePositiveDouble(String raw, double fallback) {
+        if (raw == null || raw.isBlank()) {
+            return fallback;
+        }
+        try {
+            double value = Double.parseDouble(raw.trim());
+            if (Double.isFinite(value) && value > 0) {
+                return value;
+            }
+            return fallback;
+        } catch (NumberFormatException ex) {
+            return fallback;
+        }
+    }
+
+    private static double parseRatio(String raw, double fallback) {
+        if (raw == null || raw.isBlank()) {
+            return fallback;
+        }
+        try {
+            double value = Double.parseDouble(raw.trim());
+            if (!Double.isFinite(value)) {
+                return fallback;
+            }
+            return Math.max(0.0, Math.min(1.0, value));
+        } catch (NumberFormatException ex) {
+            return fallback;
+        }
+    }
+
+    public static class WriteGate {
+        private boolean enabled = false;
+        private int minLength = 10;
+        private Map<String, Integer> minLengthByBucket = new LinkedHashMap<>();
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
+        }
+
+        public int getMinLength() {
+            return minLength;
+        }
+
+        public void setMinLength(int minLength) {
+            this.minLength = minLength > 0 ? minLength : 10;
+        }
+
+        public Map<String, Integer> getMinLengthByBucket() {
+            return minLengthByBucket;
+        }
+
+        public void setMinLengthByBucket(Map<String, Integer> minLengthByBucket) {
+            this.minLengthByBucket = minLengthByBucket == null ? new LinkedHashMap<>() : new LinkedHashMap<>(minLengthByBucket);
+        }
+    }
+
+    public static class Search {
+        private double decayHalfLifeHours = 72.0;
+        private int crossBucketMax = 2;
+        private double crossBucketRatio = 0.5;
+
+        public double getDecayHalfLifeHours() {
+            return decayHalfLifeHours;
+        }
+
+        public void setDecayHalfLifeHours(double decayHalfLifeHours) {
+            this.decayHalfLifeHours = Double.isFinite(decayHalfLifeHours) && decayHalfLifeHours > 0 ? decayHalfLifeHours : 72.0;
+        }
+
+        public int getCrossBucketMax() {
+            return crossBucketMax;
+        }
+
+        public void setCrossBucketMax(int crossBucketMax) {
+            this.crossBucketMax = crossBucketMax > 0 ? crossBucketMax : 2;
+        }
+
+        public double getCrossBucketRatio() {
+            return crossBucketRatio;
+        }
+
+        public void setCrossBucketRatio(double crossBucketRatio) {
+            if (!Double.isFinite(crossBucketRatio)) {
+                this.crossBucketRatio = 0.5;
+                return;
+            }
+            this.crossBucketRatio = Math.max(0.0, Math.min(1.0, crossBucketRatio));
+        }
+    }
+}
+

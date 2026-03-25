@@ -15,6 +15,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Base64;
+import java.util.stream.Stream;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -40,6 +41,16 @@ class SecurityAuditApiTest {
     @BeforeEach
     void cleanAuditFile() throws Exception {
         Files.deleteIfExists(Path.of("target/security-audit-test.log"));
+        try (Stream<Path> stream = Files.list(Path.of("target"))) {
+            stream.filter(path -> path.getFileName().toString().startsWith("security-audit-test-"))
+                    .forEach(path -> {
+                        try {
+                            Files.deleteIfExists(path);
+                        } catch (Exception ignored) {
+                            // best effort cleanup for test isolation
+                        }
+                    });
+        }
     }
 
     @Test

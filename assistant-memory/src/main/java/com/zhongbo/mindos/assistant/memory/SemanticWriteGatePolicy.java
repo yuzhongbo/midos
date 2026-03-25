@@ -1,22 +1,30 @@
 package com.zhongbo.mindos.assistant.memory;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+
+import java.util.Map;
 
 @Service
 public class SemanticWriteGatePolicy {
 
-    static final String PROP_WRITE_GATE_ENABLED = "mindos.memory.write-gate.enabled";
-    static final String PROP_WRITE_GATE_MIN_LENGTH = "mindos.memory.write-gate.min-length";
-    static final String PROP_WRITE_GATE_MIN_LENGTH_PREFIX = "mindos.memory.write-gate.min-length.";
 
     private final MemoryConsolidationService memoryConsolidationService;
+    private final MemoryRuntimeProperties properties;
+
+    @Autowired
+    public SemanticWriteGatePolicy(MemoryConsolidationService memoryConsolidationService,
+                                   MemoryRuntimeProperties properties) {
+        this.memoryConsolidationService = memoryConsolidationService;
+        this.properties = properties;
+    }
 
     public SemanticWriteGatePolicy(MemoryConsolidationService memoryConsolidationService) {
-        this.memoryConsolidationService = memoryConsolidationService;
+        this(memoryConsolidationService, MemoryRuntimeProperties.fromSystemProperties());
     }
 
     public boolean shouldStore(String text, String bucket) {
-        if (!Boolean.parseBoolean(System.getProperty(PROP_WRITE_GATE_ENABLED, "false"))) {
+        if (!properties.getWriteGate().isEnabled()) {
             return true;
         }
         String normalized = memoryConsolidationService.normalizeText(text);
@@ -31,12 +39,14 @@ public class SemanticWriteGatePolicy {
     }
 
     private int resolveMinLength(String bucket) {
-        int globalMinLength = parsePositiveInt(System.getProperty(PROP_WRITE_GATE_MIN_LENGTH, "10"), 10);
+        int globalMinLength = parsePositiveInt(String.valueOf(properties.getWriteGate().getMinLength()), 10);
         String normalizedBucket = normalizeBucket(bucket);
         if (normalizedBucket == null) {
             return globalMinLength;
         }
-        String rawBucketValue = System.getProperty(PROP_WRITE_GATE_MIN_LENGTH_PREFIX + normalizedBucket);
+        Map<String, Integer> byBucket = properties.getWriteGate().getMinLengthByBucket();
+        Integer bucketValue = byBucket == null ? null : byBucket.get(normalizedBucket);
+        String rawBucketValue = bucketValue == null ? null : String.valueOf(bucketValue);
         return parsePositiveInt(rawBucketValue, globalMinLength);
     }
 

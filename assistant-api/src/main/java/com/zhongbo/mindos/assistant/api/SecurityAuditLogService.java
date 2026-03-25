@@ -18,9 +18,13 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.ArrayDeque;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -44,6 +48,7 @@ import java.util.Base64;
 public class SecurityAuditLogService {
 
     private static final Logger LOGGER = Logger.getLogger(SecurityAuditLogService.class.getName());
+    private static final DateTimeFormatter AUDIT_DAY_FORMATTER = DateTimeFormatter.ISO_LOCAL_DATE;
 
     private final boolean enabled;
     private final Path auditFile;
@@ -51,6 +56,8 @@ public class SecurityAuditLogService {
     private final Map<String, byte[]> cursorSigningKeysByVersion;
     private final String activeCursorKeyVersion;
     private final long cursorTtlSeconds;
+    private final boolean dailyPartitionEnabled;
+    private final boolean queryAssumeChronologicalOrder;
     private final long writeFlushTimeoutMillis;
     private final long writeFlushWarningIntervalMillis;
     private final ObjectMapper objectMapper;
@@ -71,6 +78,8 @@ public class SecurityAuditLogService {
             @Value("${mindos.security.audit.cursor-active-key-version:v1}") String activeCursorKeyVersion,
             @Value("${mindos.security.audit.cursor-signing-keys:}") String cursorSigningKeys,
             @Value("${mindos.security.audit.cursor-ttl-seconds:300}") long cursorTtlSeconds,
+            @Value("${mindos.security.audit.daily-partition-enabled:true}") boolean dailyPartitionEnabled,
+            @Value("${mindos.security.audit.query.assume-chronological-order:true}") boolean queryAssumeChronologicalOrder,
             @Value("${mindos.security.audit.write-queue-capacity:2048}") int writeQueueCapacity,
             @Value("${mindos.security.audit.write-flush-timeout-ms:2000}") long writeFlushTimeoutMillis,
             @Value("${mindos.security.audit.write-flush-warning-interval-ms:60000}") long writeFlushWarningIntervalMillis) {
@@ -80,6 +89,8 @@ public class SecurityAuditLogService {
         this.activeCursorKeyVersion = normalizeFilter(activeCursorKeyVersion).isBlank() ? "v1" : normalizeFilter(activeCursorKeyVersion);
         this.cursorSigningKeysByVersion = parseSigningKeys(cursorSigningKey, cursorSigningKeys, this.activeCursorKeyVersion);
         this.cursorTtlSeconds = Math.max(30L, cursorTtlSeconds);
+        this.dailyPartitionEnabled = dailyPartitionEnabled;
+        this.queryAssumeChronologicalOrder = queryAssumeChronologicalOrder;
         this.writeFlushTimeoutMillis = Math.max(200L, writeFlushTimeoutMillis);
         this.writeFlushWarningIntervalMillis = Math.max(1_000L, writeFlushWarningIntervalMillis);
         this.objectMapper = new ObjectMapper().findAndRegisterModules();
@@ -108,7 +119,8 @@ public class SecurityAuditLogService {
             return;
         }
         Map<String, Object> event = new LinkedHashMap<>();
-        event.put("timestamp", Instant.now());
+        Instant eventTimestamp = Instant.now();
+        event.put("timestamp", eventTimestamp);
         event.put("traceId", safe(traceId));
         event.put("actor", safe(actor));
         event.put("operation", safe(operation));
@@ -127,11 +139,11 @@ public class SecurityAuditLogService {
         }
         try {
             enqueuedCount.incrementAndGet();
-            auditWriterExecutor.execute(() -> appendAuditLineSync(line));
+            auditWriterExecutor.execute(() -> appendAuditLineSync(line, eventTimestamp));
         } catch (RejectedExecutionException ex) {
             // If executor is shutting down, persist synchronously to avoid dropping audit events.
             callerRunsFallbackCount.incrementAndGet();
-            appendAuditLineSync(line);
+            appendAuditLineSync(line, eventTimestamp);
         }
     }
 
@@ -150,23 +162,28 @@ public class SecurityAuditLogService {
     public List<SecurityAuditEventDto> readRecent(int limit) {
         int effectiveLimit = Math.max(1, limit);
         flushPendingAuditWrites();
-        if (!Files.exists(auditFile)) {
+        List<Path> readableFiles = resolveReadableAuditFiles(null, null);
+        if (readableFiles.isEmpty()) {
             return List.of();
         }
-        try (BufferedReader reader = Files.newBufferedReader(auditFile, StandardCharsets.UTF_8)) {
+        try {
             ArrayDeque<SecurityAuditEventDto> tail = new ArrayDeque<>(effectiveLimit);
-            String line;
-            while ((line = reader.readLine()) != null) {
-                if (line.isBlank()) {
-                    continue;
-                }
-                SecurityAuditEventDto event = parseAuditEvent(line);
-                if (event == null) {
-                    continue;
-                }
-                tail.addLast(event);
-                if (tail.size() > effectiveLimit) {
-                    tail.removeFirst();
+            for (Path file : readableFiles) {
+                try (BufferedReader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        if (line.isBlank()) {
+                            continue;
+                        }
+                        SecurityAuditEventDto event = parseAuditEvent(line);
+                        if (event == null) {
+                            continue;
+                        }
+                        tail.addLast(event);
+                        if (tail.size() > effectiveLimit) {
+                            tail.removeFirst();
+                        }
+                    }
                 }
             }
             List<SecurityAuditEventDto> events = new ArrayList<>(tail.size());
@@ -203,7 +220,8 @@ public class SecurityAuditLogService {
         String cursorKeyVersion = parsedCursor.keyVersion();
         String cursorType = parsedCursor.cursorType();
 
-        if (!Files.exists(auditFile)) {
+        List<Path> readableFiles = resolveReadableAuditFiles(fromInstant, toInstant);
+        if (readableFiles.isEmpty()) {
             return new SecurityAuditQueryResponseDto(
                     List.of(),
                     effectiveLimit,
@@ -221,24 +239,38 @@ public class SecurityAuditLogService {
             );
         }
 
-        try (BufferedReader reader = Files.newBufferedReader(auditFile, StandardCharsets.UTF_8)) {
+        try {
             int windowSize = Math.max(1, offset + effectiveLimit + 1);
             ArrayDeque<SecurityAuditEventDto> matchedTail = new ArrayDeque<>(windowSize);
             int totalMatched = 0;
+            boolean hasToBound = toInstant != null;
 
-            String line;
-            while ((line = reader.readLine()) != null) {
-                if (line.isBlank()) {
-                    continue;
-                }
-                SecurityAuditEventDto event = parseAuditEvent(line);
-                if (event == null || !matchesFilters(event, actorFilter, operationFilter, resultFilter, traceIdFilter, fromInstant, toInstant)) {
-                    continue;
-                }
-                totalMatched++;
-                matchedTail.addLast(event);
-                if (matchedTail.size() > windowSize) {
-                    matchedTail.removeFirst();
+            for (Path file : readableFiles) {
+                try (BufferedReader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        if (line.isBlank()) {
+                            continue;
+                        }
+                        SecurityAuditEventDto event = parseAuditEvent(line);
+                        if (event == null) {
+                            continue;
+                        }
+                        if (queryAssumeChronologicalOrder
+                                && hasToBound
+                                && event.timestamp() != null
+                                && event.timestamp().isAfter(toInstant)) {
+                            break;
+                        }
+                        if (!matchesFilters(event, actorFilter, operationFilter, resultFilter, traceIdFilter, fromInstant, toInstant)) {
+                            continue;
+                        }
+                        totalMatched++;
+                        matchedTail.addLast(event);
+                        if (matchedTail.size() > windowSize) {
+                            matchedTail.removeFirst();
+                        }
+                    }
                 }
             }
 
@@ -372,18 +404,19 @@ public class SecurityAuditLogService {
         }
     }
 
-    private void appendAuditLineSync(String line) {
+    private void appendAuditLineSync(String line, Instant timestamp) {
         if (line == null || line.isBlank()) {
             return;
         }
         synchronized (auditFileWriteLock) {
             try {
-                Path parent = auditFile.getParent();
+                Path targetFile = resolveWriteAuditFile(timestamp);
+                Path parent = targetFile.getParent();
                 if (parent != null) {
                     Files.createDirectories(parent);
                 }
                 Files.writeString(
-                        auditFile,
+                        targetFile,
                         line + System.lineSeparator(),
                         StandardCharsets.UTF_8,
                         java.nio.file.StandardOpenOption.CREATE,
@@ -679,6 +712,76 @@ public class SecurityAuditLogService {
         } catch (Exception ex) {
             throw new IllegalArgumentException("invalid time format: " + value);
         }
+    }
+
+    private Path resolveWriteAuditFile(Instant timestamp) {
+        if (!dailyPartitionEnabled) {
+            return auditFile;
+        }
+        LocalDate day = (timestamp == null ? Instant.now() : timestamp).atZone(ZoneOffset.UTC).toLocalDate();
+        return toDailyPartitionFile(day);
+    }
+
+    private List<Path> resolveReadableAuditFiles(Instant fromInclusive, Instant toInclusive) {
+        List<Path> files = new ArrayList<>();
+        if (Files.exists(auditFile)) {
+            files.add(auditFile);
+        }
+        if (!dailyPartitionEnabled) {
+            return List.copyOf(files);
+        }
+
+        Path parent = auditFile.getParent();
+        if (parent == null || !Files.exists(parent)) {
+            return List.copyOf(files);
+        }
+
+        String fileName = auditFile.getFileName().toString();
+        int dot = fileName.lastIndexOf('.');
+        String prefix = dot > 0 ? fileName.substring(0, dot) : fileName;
+        String suffix = dot > 0 ? fileName.substring(dot) : "";
+
+        LocalDate fromDate = fromInclusive == null ? null : fromInclusive.atZone(ZoneOffset.UTC).toLocalDate();
+        LocalDate toDate = toInclusive == null ? null : toInclusive.atZone(ZoneOffset.UTC).toLocalDate();
+
+        try (var stream = Files.list(parent)) {
+            stream.filter(Files::isRegularFile)
+                    .filter(path -> {
+                        String name = path.getFileName().toString();
+                        if (!name.startsWith(prefix + "-")) {
+                            return false;
+                        }
+                        if (!suffix.isEmpty() && !name.endsWith(suffix)) {
+                            return false;
+                        }
+                        String dayPart = suffix.isEmpty()
+                                ? name.substring(prefix.length() + 1)
+                                : name.substring(prefix.length() + 1, name.length() - suffix.length());
+                        try {
+                            LocalDate date = LocalDate.parse(dayPart, AUDIT_DAY_FORMATTER);
+                            return (fromDate == null || !date.isBefore(fromDate))
+                                    && (toDate == null || !date.isAfter(toDate));
+                        } catch (Exception ignored) {
+                            return false;
+                        }
+                    })
+                    .sorted(Comparator.comparing(path -> path.getFileName().toString()))
+                    .forEach(files::add);
+        } catch (IOException ex) {
+            LOGGER.log(Level.WARNING, "Failed to list security audit partitions", ex);
+        }
+
+        return List.copyOf(files);
+    }
+
+    private Path toDailyPartitionFile(LocalDate day) {
+        String name = auditFile.getFileName().toString();
+        int dot = name.lastIndexOf('.');
+        String prefix = dot > 0 ? name.substring(0, dot) : name;
+        String suffix = dot > 0 ? name.substring(dot) : "";
+        String partitionedName = prefix + "-" + AUDIT_DAY_FORMATTER.format(day) + suffix;
+        Path parent = auditFile.getParent();
+        return parent == null ? Paths.get(partitionedName) : parent.resolve(partitionedName);
     }
 }
 
