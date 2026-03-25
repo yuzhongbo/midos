@@ -11,6 +11,39 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class ApiKeyLlmClientTest {
 
     @Test
+    void shouldUseBuiltInMainlandEndpointWhenProviderEndpointNotConfigured() {
+        ApiKeyLlmClient client = newClient(
+                "deepseek",
+                "fixed",
+                "llm-dsl:deepseek,llm-fallback:deepseek",
+                "cost:deepseek,quality:deepseek",
+                "deepseek:key-deepseek"
+        );
+
+        String output = client.generateResponse("hello", Map.of("userId", "u-cn", "llmProvider", "deepseek"));
+
+        assertTrue(output.contains("https://api.deepseek.com/v1/chat/completions"));
+        assertTrue(output.startsWith("[LLM deepseek]"));
+    }
+
+    @Test
+    void shouldResolveProviderKeyByMainlandAlias() {
+        ApiKeyLlmClient client = newClient(
+                "qwen",
+                "fixed",
+                "llm-dsl:qwen,llm-fallback:qwen",
+                "cost:qwen,quality:qwen",
+                "dashscope:key-qwen"
+        );
+
+        String output = client.generateResponse("hello", Map.of("userId", "u-cn", "llmProvider", "tongyi"));
+
+        assertTrue(output.contains("apiKey=key***en"));
+        assertTrue(output.startsWith("[LLM qwen]"));
+        assertTrue(output.contains("https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"));
+    }
+
+    @Test
     void shouldRespectExplicitProviderOverrideInFixedMode() {
         ApiKeyLlmClient client = newClient(
                 "stub",

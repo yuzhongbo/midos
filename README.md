@@ -223,6 +223,9 @@ curl -X POST http://localhost:8080/api/skills/load-mcp \
   - preset mapping: `mindos.llm.routing.preset-map=cost:openai,balanced:openai,quality:openai`
   - provider endpoint map: `mindos.llm.provider-endpoints=openai:https://api.openai.com/v1/chat/completions,local:http://localhost:11434/v1/chat/completions`
   - provider key map: `mindos.llm.provider-keys=openai:sk-xxx,local:dummy-key`
+  - mainland model key map example: `mindos.llm.provider-keys=deepseek:sk-xxx,qwen:sk-yyy,kimi:sk-zzz,doubao:ark-aaa`
+  - mainland aliases are supported (`dashscope/tongyi -> qwen`, `moonshot -> kimi`, `volcengine -> doubao`, `zhipu -> glm`, `baidu -> ernie`).
+  - when endpoint map is empty, built-in mainland defaults are used for `deepseek/qwen/kimi/doubao/hunyuan/ernie/glm`.
   - per-request override: send `profile.llmProvider` (CLI: `profile set --llm-provider openai`; use `auto` to force automatic stage-based routing)
   - per-request/server-profile preset: send `profile.llmPreset` (CLI: `profile set --llm-preset quality`) to pick a named cost/quality preset before stage auto-routing.
 - LLM call metrics (token estimate + multi-provider stats):

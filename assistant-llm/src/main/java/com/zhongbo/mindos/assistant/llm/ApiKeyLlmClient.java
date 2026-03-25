@@ -18,6 +18,33 @@ import java.util.Map;
 @Component
 public class ApiKeyLlmClient implements LlmClient {
 
+    private static final Map<String, String> PROVIDER_ALIASES = Map.ofEntries(
+            Map.entry("qwen", "qwen"),
+            Map.entry("tongyi", "qwen"),
+            Map.entry("dashscope", "qwen"),
+            Map.entry("deepseek", "deepseek"),
+            Map.entry("kimi", "kimi"),
+            Map.entry("moonshot", "kimi"),
+            Map.entry("doubao", "doubao"),
+            Map.entry("volcengine", "doubao"),
+            Map.entry("hunyuan", "hunyuan"),
+            Map.entry("tencent", "hunyuan"),
+            Map.entry("ernie", "ernie"),
+            Map.entry("baidu", "ernie"),
+            Map.entry("glm", "glm"),
+            Map.entry("zhipu", "glm")
+    );
+
+    private static final Map<String, String> BUILTIN_PROVIDER_ENDPOINTS = Map.ofEntries(
+            Map.entry("qwen", "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"),
+            Map.entry("deepseek", "https://api.deepseek.com/v1/chat/completions"),
+            Map.entry("kimi", "https://api.moonshot.cn/v1/chat/completions"),
+            Map.entry("doubao", "https://ark.cn-beijing.volces.com/api/v3/chat/completions"),
+            Map.entry("hunyuan", "https://api.hunyuan.cloud.tencent.com/v1/chat/completions"),
+            Map.entry("ernie", "https://qianfan.baidubce.com/v2/chat/completions"),
+            Map.entry("glm", "https://open.bigmodel.cn/api/paas/v4/chat/completions")
+    );
+
     private final String provider;
     private final String routingMode;
     private final String endpoint;
@@ -154,8 +181,15 @@ public class ApiKeyLlmClient implements LlmClient {
                                 Map<String, Object> context,
                                 String apiKey) {
         String normalized = normalizeProvider(providerName);
-        if (normalized.contains("openai")) {
-            return "[LLM openai] skeleton call to " + endpointValue + " with apiKey=" + mask(apiKey) + ": " + prompt;
+        if (normalized.contains("openai")
+                || "deepseek".equals(normalized)
+                || "qwen".equals(normalized)
+                || "kimi".equals(normalized)
+                || "doubao".equals(normalized)
+                || "hunyuan".equals(normalized)
+                || "ernie".equals(normalized)
+                || "glm".equals(normalized)) {
+            return "[LLM " + normalized + "] skeleton call to " + endpointValue + " with apiKey=" + mask(apiKey) + ": " + prompt;
         }
         if (normalized.contains("local") || normalized.contains("llama") || normalized.contains("mpt")) {
             return "[LLM local] skeleton call to " + endpointValue + " with apiKey=" + mask(apiKey) + ": " + prompt;
@@ -229,6 +263,10 @@ public class ApiKeyLlmClient implements LlmClient {
         if (configured != null && !configured.isBlank()) {
             return configured;
         }
+        String builtin = BUILTIN_PROVIDER_ENDPOINTS.get(normalizeProvider(providerName));
+        if (builtin != null && !builtin.isBlank()) {
+            return builtin;
+        }
         return endpoint;
     }
 
@@ -278,7 +316,8 @@ public class ApiKeyLlmClient implements LlmClient {
         if (value == null || value.isBlank()) {
             return "openai";
         }
-        return value.trim().toLowerCase();
+        String normalized = value.trim().toLowerCase(Locale.ROOT);
+        return PROVIDER_ALIASES.getOrDefault(normalized, normalized);
     }
 
     private void recordMetric(Instant startedAt,
