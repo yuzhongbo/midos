@@ -25,6 +25,10 @@ public class MemoryRuntimeProperties {
         MemoryRuntimeProperties properties = new MemoryRuntimeProperties();
         properties.getWriteGate().setEnabled(Boolean.parseBoolean(System.getProperty("mindos.memory.write-gate.enabled", "false")));
         properties.getWriteGate().setMinLength(parsePositiveInt(System.getProperty("mindos.memory.write-gate.min-length"), 10));
+        properties.getWriteGate().setSemanticDuplicateEnabled(Boolean.parseBoolean(System.getProperty(
+                "mindos.memory.write-gate.semantic-duplicate.enabled", "false")));
+        properties.getWriteGate().setSemanticDuplicateThreshold(parseRatio(
+                System.getProperty("mindos.memory.write-gate.semantic-duplicate.threshold"), 0.82));
 
         Map<String, Integer> bucketMinLength = new LinkedHashMap<>();
         System.getProperties().forEach((key, value) -> {
@@ -43,6 +47,10 @@ public class MemoryRuntimeProperties {
         properties.getSearch().setDecayHalfLifeHours(parsePositiveDouble(System.getProperty("mindos.memory.search.decay-half-life-hours"), 72.0));
         properties.getSearch().setCrossBucketMax(parsePositiveInt(System.getProperty("mindos.memory.search.cross-bucket.max"), 2));
         properties.getSearch().setCrossBucketRatio(parseRatio(System.getProperty("mindos.memory.search.cross-bucket.ratio"), 0.5));
+        properties.getSearch().setCoarseMinCandidates(parsePositiveInt(
+                System.getProperty("mindos.memory.search.coarse.min-candidates"), 128));
+        properties.getSearch().setCoarseMultiplier(parsePositiveInt(
+                System.getProperty("mindos.memory.search.coarse.multiplier"), 8));
         return properties;
     }
 
@@ -91,6 +99,8 @@ public class MemoryRuntimeProperties {
     public static class WriteGate {
         private boolean enabled = false;
         private int minLength = 10;
+        private boolean semanticDuplicateEnabled = false;
+        private double semanticDuplicateThreshold = 0.82;
         private Map<String, Integer> minLengthByBucket = new LinkedHashMap<>();
 
         public boolean isEnabled() {
@@ -116,10 +126,32 @@ public class MemoryRuntimeProperties {
         public void setMinLengthByBucket(Map<String, Integer> minLengthByBucket) {
             this.minLengthByBucket = minLengthByBucket == null ? new LinkedHashMap<>() : new LinkedHashMap<>(minLengthByBucket);
         }
+
+        public boolean isSemanticDuplicateEnabled() {
+            return semanticDuplicateEnabled;
+        }
+
+        public void setSemanticDuplicateEnabled(boolean semanticDuplicateEnabled) {
+            this.semanticDuplicateEnabled = semanticDuplicateEnabled;
+        }
+
+        public double getSemanticDuplicateThreshold() {
+            return semanticDuplicateThreshold;
+        }
+
+        public void setSemanticDuplicateThreshold(double semanticDuplicateThreshold) {
+            if (!Double.isFinite(semanticDuplicateThreshold)) {
+                this.semanticDuplicateThreshold = 0.82;
+                return;
+            }
+            this.semanticDuplicateThreshold = Math.max(0.0, Math.min(1.0, semanticDuplicateThreshold));
+        }
     }
 
     public static class Search {
         private double decayHalfLifeHours = 72.0;
+        private int coarseMinCandidates = 128;
+        private int coarseMultiplier = 8;
         private final CrossBucket crossBucket = new CrossBucket();
 
         public double getDecayHalfLifeHours() {
@@ -128,6 +160,22 @@ public class MemoryRuntimeProperties {
 
         public void setDecayHalfLifeHours(double decayHalfLifeHours) {
             this.decayHalfLifeHours = Double.isFinite(decayHalfLifeHours) && decayHalfLifeHours > 0 ? decayHalfLifeHours : 72.0;
+        }
+
+        public int getCoarseMinCandidates() {
+            return coarseMinCandidates;
+        }
+
+        public void setCoarseMinCandidates(int coarseMinCandidates) {
+            this.coarseMinCandidates = coarseMinCandidates > 0 ? coarseMinCandidates : 128;
+        }
+
+        public int getCoarseMultiplier() {
+            return coarseMultiplier;
+        }
+
+        public void setCoarseMultiplier(int coarseMultiplier) {
+            this.coarseMultiplier = coarseMultiplier > 0 ? coarseMultiplier : 8;
         }
 
         public CrossBucket getCrossBucket() {

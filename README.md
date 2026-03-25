@@ -223,6 +223,10 @@ curl -X POST http://localhost:8080/api/skills/load-mcp \
   - preset mapping: `mindos.llm.routing.preset-map=cost:openai,balanced:openai,quality:openai`
   - provider endpoint map: `mindos.llm.provider-endpoints=openai:https://api.openai.com/v1/chat/completions,local:http://localhost:11434/v1/chat/completions`
   - provider key map: `mindos.llm.provider-keys=openai:sk-xxx,local:dummy-key`
+  - short TTL response cache (optional):
+    - `mindos.llm.cache.enabled` (default `false`)
+    - `mindos.llm.cache.ttl-seconds` (default `60`)
+    - `mindos.llm.cache.max-entries` (default `256`)
   - mainland model key map example: `mindos.llm.provider-keys=deepseek:sk-xxx,qwen:sk-yyy,kimi:sk-zzz,doubao:ark-aaa`
   - mainland aliases are supported (`dashscope/tongyi -> qwen`, `moonshot -> kimi`, `volcengine -> doubao`, `zhipu -> glm`, `baidu -> ernie`).
   - when endpoint map is empty, built-in mainland defaults are used for `deepseek/qwen/kimi/doubao/hunyuan/ernie/glm`.
@@ -331,7 +335,11 @@ curl -X POST http://localhost:8080/api/skills/load-mcp \
   - write gate toggle: `mindos.memory.write-gate.enabled` (default `false`)
   - write gate min length: `mindos.memory.write-gate.min-length` (default `10`)
   - bucket min length override: `mindos.memory.write-gate.min-length.<bucket>` (optional, falls back to global min length)
+  - secondary semantic-duplicate gate toggle: `mindos.memory.write-gate.semantic-duplicate.enabled` (default `false`)
+  - secondary semantic-duplicate token threshold: `mindos.memory.write-gate.semantic-duplicate.threshold` (default `0.82`, range `0..1`)
   - search recency decay half-life hours: `mindos.memory.search.decay-half-life-hours` (default `72`)
+  - two-stage retrieval coarse candidate floor: `mindos.memory.search.coarse.min-candidates` (default `128`)
+  - two-stage retrieval coarse candidate multiplier: `mindos.memory.search.coarse.multiplier` (default `8`, final coarse cap = `max(min-candidates, limit*multiplier)`)
   - explicit preferred-bucket search cross-bucket fallback cap: `mindos.memory.search.cross-bucket.max` (default `2`)
   - explicit preferred-bucket search cross-bucket fallback ratio: `mindos.memory.search.cross-bucket.ratio` (default `0.5`, range `0..1`)
   - precedence for `mindos.memory.*`: system properties (`-D`) > `application.properties` > built-in defaults.

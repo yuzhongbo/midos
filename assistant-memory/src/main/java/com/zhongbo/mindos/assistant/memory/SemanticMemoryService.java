@@ -57,11 +57,17 @@ public class SemanticMemoryService {
         if (consolidated == null || consolidated.text().isBlank()) {
             return;
         }
-        entriesByUser.computeIfAbsent(userId, key -> new UserSemanticStore()).upsert(
-                memoryConsolidationService.semanticKey(consolidated.text()),
+        String normalizedBucket = normalizeBucket(bucket);
+        String semanticKey = memoryConsolidationService.semanticKey(consolidated.text());
+        UserSemanticStore store = entriesByUser.computeIfAbsent(userId, key -> new UserSemanticStore());
+        if (properties.getWriteGate().isSemanticDuplicateEnabled()
+                && store.containsEquivalentForWrite(semanticKey,
                 consolidated,
-                normalizeBucket(bucket)
-        );
+                normalizedBucket,
+                properties.getWriteGate().getSemanticDuplicateThreshold())) {
+            return;
+        }
+        store.upsert(semanticKey, consolidated, normalizedBucket);
     }
 
     public List<SemanticMemoryEntry> search(String userId, int limit) {
@@ -149,6 +155,20 @@ public class SemanticMemoryService {
         }
 
         boolean containsEquivalent(String key, SemanticMemoryEntry entry, String bucket) {
+            return containsEquivalentInternal(key, entry, bucket, null);
+        }
+
+        boolean containsEquivalentForWrite(String key,
+                                           SemanticMemoryEntry entry,
+                                           String bucket,
+                                           double tokenThresholdOverride) {
+            return containsEquivalentInternal(key, entry, bucket, tokenThresholdOverride);
+        }
+
+        private boolean containsEquivalentInternal(String key,
+                                                   SemanticMemoryEntry entry,
+                                                   String bucket,
+                                                   Double tokenThresholdOverride) {
             Lock readLock = lock.readLock();
             readLock.lock();
             try {
@@ -189,7 +209,12 @@ public class SemanticMemoryService {
                 if (!candidate.bucket().equals(bucket)) {
                     continue;
                 }
-                if (isApproxEquivalent(entry, queryTokens, normalizedInput, inputHasKeySignal, candidate)) {
+                if (isApproxEquivalent(entry,
+                        queryTokens,
+                        normalizedInput,
+                        inputHasKeySignal,
+                        candidate,
+                        tokenThresholdOverride)) {
                     return true;
                 }
             }
@@ -211,10 +236,7 @@ public class SemanticMemoryService {
             if (queryTokens.isEmpty()) {
                 candidates.addAll(entries.values());
             } else {
-                LinkedHashSet<String> candidateKeys = new LinkedHashSet<>();
-                for (String token : queryTokens) {
-                    candidateKeys.addAll(keysByToken.getOrDefault(token, Set.of()));
-                }
+                LinkedHashSet<String> candidateKeys = collectCoarseCandidateKeys(queryTokens, limit);
                 if (candidateKeys.isEmpty()) {
                     candidates.addAll(entries.values());
                 } else {
@@ -248,6 +270,34 @@ public class SemanticMemoryService {
             } finally {
                 readLock.unlock();
             }
+        }
+
+        private LinkedHashSet<String> collectCoarseCandidateKeys(Set<String> queryTokens, int limit) {
+            LinkedHashSet<String> candidateKeys = new LinkedHashSet<>();
+            int coarseCap = resolveCoarseCandidateCap(limit);
+            for (String token : queryTokens) {
+                Set<String> keys = keysByToken.getOrDefault(token, Set.of());
+                for (String key : keys) {
+                    candidateKeys.add(key);
+                }
+            }
+            if (candidateKeys.size() <= coarseCap) {
+                return candidateKeys;
+            }
+            List<String> ordered = new ArrayList<>(candidateKeys);
+            LinkedHashSet<String> trimmed = new LinkedHashSet<>();
+            int start = Math.max(0, ordered.size() - coarseCap);
+            for (int i = start; i < ordered.size(); i++) {
+                trimmed.add(ordered.get(i));
+            }
+            return trimmed;
+        }
+
+        private int resolveCoarseCandidateCap(int limit) {
+            int minCandidates = Math.max(1, properties.getSearch().getCoarseMinCandidates());
+            int multiplier = Math.max(1, properties.getSearch().getCoarseMultiplier());
+            int byLimit = Math.max(1, limit) * multiplier;
+            return Math.max(minCandidates, byLimit);
         }
 
         private List<StoredSemanticEntry> rankTopK(List<StoredSemanticEntry> candidates,
@@ -393,7 +443,8 @@ public class SemanticMemoryService {
                                            Set<String> inputTokens,
                                            String normalizedInput,
                                            boolean inputHasKeySignal,
-                                           StoredSemanticEntry candidate) {
+                                           StoredSemanticEntry candidate,
+                                           Double tokenThresholdOverride) {
             String normalizedCandidate = candidate.normalizedText();
             if (normalizedInput.equals(normalizedCandidate)) {
                 return true;
@@ -408,13 +459,23 @@ public class SemanticMemoryService {
             double tokenSimilarity = jaccard(inputTokens, candidate.tokens());
             double embeddingSimilarity = cosineSimilarity(input.embedding(), candidate.entry().embedding());
             boolean hasKeySignal = inputHasKeySignal || candidate.hasKeySignal();
-            double strictTokenThreshold = hasKeySignal ? 0.9 : APPROX_JACCARD_THRESHOLD;
+            double thresholdOverride = sanitizeThreshold(tokenThresholdOverride);
+            double strictTokenThreshold = hasKeySignal
+                    ? Math.max(thresholdOverride, 0.9)
+                    : thresholdOverride;
 
             if (tokenSimilarity >= strictTokenThreshold) {
                 return true;
             }
             return tokenSimilarity >= APPROX_JACCARD_WITH_EMBEDDING_THRESHOLD
                     && embeddingSimilarity >= APPROX_EMBEDDING_SIMILARITY_THRESHOLD;
+        }
+
+        private double sanitizeThreshold(Double threshold) {
+            if (threshold == null || !Double.isFinite(threshold)) {
+                return APPROX_JACCARD_THRESHOLD;
+            }
+            return Math.max(0.0, Math.min(1.0, threshold));
         }
 
         private double jaccard(Set<String> left, Set<String> right) {

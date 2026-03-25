@@ -5,8 +5,10 @@ import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.support.DefaultListableBeanFactory;
 
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
 class ApiKeyLlmClientTest {
 
@@ -17,7 +19,10 @@ class ApiKeyLlmClientTest {
                 "fixed",
                 "llm-dsl:deepseek,llm-fallback:deepseek",
                 "cost:deepseek,quality:deepseek",
-                "deepseek:key-deepseek"
+                "deepseek:key-deepseek",
+                false,
+                60,
+                256
         );
 
         String output = client.generateResponse("hello", Map.of("userId", "u-cn", "llmProvider", "deepseek"));
@@ -33,7 +38,10 @@ class ApiKeyLlmClientTest {
                 "fixed",
                 "llm-dsl:qwen,llm-fallback:qwen",
                 "cost:qwen,quality:qwen",
-                "dashscope:key-qwen"
+                "dashscope:key-qwen",
+                false,
+                60,
+                256
         );
 
         String output = client.generateResponse("hello", Map.of("userId", "u-cn", "llmProvider", "tongyi"));
@@ -50,7 +58,10 @@ class ApiKeyLlmClientTest {
                 "fixed",
                 "llm-dsl:openai,llm-fallback:local",
                 "cost:local,quality:openai",
-                "openai:key-openai,local:key-local"
+                "openai:key-openai,local:key-local",
+                false,
+                60,
+                256
         );
 
         String output = client.generateResponse("hello", Map.of("userId", "u1", "llmProvider", "local", "routeStage", "llm-dsl"));
@@ -65,7 +76,10 @@ class ApiKeyLlmClientTest {
                 "auto",
                 "llm-dsl:openai,llm-fallback:local",
                 "cost:local,quality:openai",
-                "openai:key-openai,local:key-local"
+                "openai:key-openai,local:key-local",
+                false,
+                60,
+                256
         );
 
         String output = client.generateResponse("hello", Map.of("userId", "u1", "llmProvider", "auto", "routeStage", "llm-fallback"));
@@ -80,7 +94,10 @@ class ApiKeyLlmClientTest {
                 "auto",
                 "llm-dsl:openai,llm-fallback:local",
                 "cost:local,quality:openai",
-                "openai:key-openai,local:key-local"
+                "openai:key-openai,local:key-local",
+                false,
+                60,
+                256
         );
 
         String output = client.generateResponse("hello", Map.of("userId", "u1", "llmProvider", "auto", "routeStage", "custom-stage"));
@@ -95,7 +112,10 @@ class ApiKeyLlmClientTest {
                 "auto",
                 "llm-dsl:openai,llm-fallback:openai",
                 "cost:local,quality:openai",
-                "openai:key-openai,local:key-local"
+                "openai:key-openai,local:key-local",
+                false,
+                60,
+                256
         );
 
         String output = client.generateResponse("hello", Map.of("userId", "u1", "llmPreset", "cost", "routeStage", "llm-fallback"));
@@ -110,7 +130,10 @@ class ApiKeyLlmClientTest {
                 "auto",
                 "llm-dsl:openai,llm-fallback:local",
                 "cost:local,quality:openai",
-                "openai:key-openai,local:key-local"
+                "openai:key-openai,local:key-local",
+                false,
+                60,
+                256
         );
 
         String output = client.generateResponse("hello", Map.of("userId", "u1", "llmPreset", "unknown", "llmProvider", "auto", "routeStage", "llm-fallback"));
@@ -118,11 +141,74 @@ class ApiKeyLlmClientTest {
         assertTrue(output.startsWith("[LLM local]"));
     }
 
+    @Test
+    void shouldCacheShortTtlResponsesWhenEnabled() throws Exception {
+        ApiKeyLlmClient client = newClient(
+                "openai",
+                "fixed",
+                "llm-dsl:openai,llm-fallback:openai",
+                "cost:openai,quality:openai",
+                "openai:key-openai",
+                true,
+                60,
+                256
+        );
+
+        client.generateResponse("same prompt", Map.of("userId", "u-cache", "routeStage", "llm-dsl"));
+        client.generateResponse("same prompt", Map.of("userId", "u-cache", "routeStage", "llm-dsl"));
+
+        assertEquals(1, readCacheSize(client));
+    }
+
+    @Test
+    void shouldExpireCachedResponsesAfterTtl() throws Exception {
+        ApiKeyLlmClient client = newClient(
+                "openai",
+                "fixed",
+                "llm-dsl:openai,llm-fallback:openai",
+                "cost:openai,quality:openai",
+                "openai:key-openai",
+                true,
+                1,
+                256
+        );
+
+        client.generateResponse("same prompt", Map.of("userId", "u-cache", "routeStage", "llm-dsl"));
+        long createdAtFirst = readSingleCacheCreatedAt(client);
+        Thread.sleep(1_150L);
+        client.generateResponse("same prompt", Map.of("userId", "u-cache", "routeStage", "llm-dsl"));
+        long createdAtSecond = readSingleCacheCreatedAt(client);
+
+        assertEquals(1, readCacheSize(client));
+        assertTrue(createdAtSecond > createdAtFirst);
+    }
+
+    @SuppressWarnings("unchecked")
+    private int readCacheSize(ApiKeyLlmClient client) throws Exception {
+        var field = ApiKeyLlmClient.class.getDeclaredField("responseCache");
+        field.setAccessible(true);
+        return ((ConcurrentHashMap<String, ?>) field.get(client)).size();
+    }
+
+    @SuppressWarnings("unchecked")
+    private long readSingleCacheCreatedAt(ApiKeyLlmClient client) throws Exception {
+        var field = ApiKeyLlmClient.class.getDeclaredField("responseCache");
+        field.setAccessible(true);
+        ConcurrentHashMap<String, Object> cache = (ConcurrentHashMap<String, Object>) field.get(client);
+        Object value = cache.values().iterator().next();
+        var accessor = value.getClass().getDeclaredMethod("createdAtEpochMillis");
+        accessor.setAccessible(true);
+        return (long) accessor.invoke(value);
+    }
+
     private ApiKeyLlmClient newClient(String defaultProvider,
                                       String routingMode,
                                       String stageMap,
                                       String presetMap,
-                                      String providerKeys) {
+                                      String providerKeys,
+                                      boolean cacheEnabled,
+                                      long cacheTtlSeconds,
+                                      int cacheMaxEntries) {
         ObjectProvider<UserApiKeyRepository> provider = new DefaultListableBeanFactory().getBeanProvider(UserApiKeyRepository.class);
         UserApiKeyService userApiKeyService = new UserApiKeyService(provider, new AesApiKeyCryptoService(""));
         LlmMetricsService metricsService = new LlmMetricsService(true, 200);
@@ -138,6 +224,9 @@ class ApiKeyLlmClientTest {
                 "",
                 1,
                 0L,
+                cacheEnabled,
+                cacheTtlSeconds,
+                cacheMaxEntries,
                 userApiKeyService,
                 metricsService
         );

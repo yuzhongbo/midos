@@ -10,10 +10,12 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 @Component
 public class ApiKeyLlmClient implements LlmClient {
@@ -58,6 +60,10 @@ public class ApiKeyLlmClient implements LlmClient {
     private final LlmMetricsService llmMetricsService;
     private final int maxRetries;
     private final long retryDelayMs;
+    private final boolean responseCacheEnabled;
+    private final long responseCacheTtlMillis;
+    private final int responseCacheMaxEntries;
+    private final ConcurrentHashMap<String, CachedResponse> responseCache = new ConcurrentHashMap<>();
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public ApiKeyLlmClient(@Value("${mindos.llm.provider:openai}") String provider,
@@ -71,6 +77,9 @@ public class ApiKeyLlmClient implements LlmClient {
                            @Value("${mindos.llm.user-keys:}") String userKeys,
                            @Value("${mindos.llm.retry.max-attempts:3}") int maxRetries,
                            @Value("${mindos.llm.retry.delay-ms:300}") long retryDelayMs,
+                           @Value("${mindos.llm.cache.enabled:false}") boolean responseCacheEnabled,
+                           @Value("${mindos.llm.cache.ttl-seconds:60}") long responseCacheTtlSeconds,
+                           @Value("${mindos.llm.cache.max-entries:256}") int responseCacheMaxEntries,
                            UserApiKeyService userApiKeyService,
                            LlmMetricsService llmMetricsService) {
         this.provider = provider;
@@ -84,6 +93,9 @@ public class ApiKeyLlmClient implements LlmClient {
         this.userApiKeys = parseUserKeys(userKeys);
         this.maxRetries = Math.max(1, maxRetries);
         this.retryDelayMs = Math.max(0L, retryDelayMs);
+        this.responseCacheEnabled = responseCacheEnabled;
+        this.responseCacheTtlMillis = Math.max(1_000L, responseCacheTtlSeconds * 1_000L);
+        this.responseCacheMaxEntries = Math.max(16, responseCacheMaxEntries);
         this.userApiKeyService = userApiKeyService;
         this.llmMetricsService = llmMetricsService;
     }
@@ -107,10 +119,18 @@ public class ApiKeyLlmClient implements LlmClient {
             return output;
         }
 
+        String cacheKey = buildCacheKey(prompt, safeContext, selectedProvider, selectedEndpoint);
+        String cached = getCachedResponse(cacheKey);
+        if (cached != null) {
+            recordMetric(startedAt, safeContext, selectedProvider, selectedEndpoint, true, false, prompt, cached, null);
+            return cached;
+        }
+
         RuntimeException lastError = null;
         for (int attempt = 1; attempt <= maxRetries; attempt++) {
             try {
                 String output = callProvider(selectedProvider, selectedEndpoint, prompt, safeContext, apiKey);
+                putCachedResponse(cacheKey, output);
                 recordMetric(startedAt, safeContext, selectedProvider, selectedEndpoint, true, attempt > 1, prompt, output, null);
                 return output;
             } catch (RuntimeException ex) {
@@ -367,7 +387,7 @@ public class ApiKeyLlmClient implements LlmClient {
 
     private String simplifyErrorType(RuntimeException ex) {
         String simple = ex.getClass().getSimpleName();
-        if (simple == null || simple.isBlank()) {
+        if (simple.isBlank()) {
             return "runtime_error";
         }
         return simple.toLowerCase(Locale.ROOT);
@@ -406,5 +426,74 @@ public class ApiKeyLlmClient implements LlmClient {
             return "***";
         }
         return apiKey.substring(0, 3) + "***" + apiKey.substring(apiKey.length() - 2);
+    }
+
+    private String buildCacheKey(String prompt,
+                                 Map<String, Object> context,
+                                 String providerName,
+                                 String endpointValue) {
+        if (!responseCacheEnabled) {
+            return null;
+        }
+        String userId = asText(context.get("userId"));
+        String routeStage = asText(context.get("routeStage"));
+        String profileProvider = asText(context.get("llmProvider"));
+        String profilePreset = asText(context.get("llmPreset"));
+        return String.join("\u001F",
+                normalizeProvider(providerName),
+                endpointValue == null ? "" : endpointValue,
+                userId == null ? "" : userId,
+                routeStage == null ? "" : routeStage,
+                profileProvider == null ? "" : profileProvider,
+                profilePreset == null ? "" : profilePreset,
+                prompt == null ? "" : prompt);
+    }
+
+    private String getCachedResponse(String cacheKey) {
+        if (!responseCacheEnabled || cacheKey == null || cacheKey.isBlank()) {
+            return null;
+        }
+        CachedResponse cached = responseCache.get(cacheKey);
+        if (cached == null) {
+            return null;
+        }
+        if ((System.currentTimeMillis() - cached.createdAtEpochMillis()) > responseCacheTtlMillis) {
+            responseCache.remove(cacheKey, cached);
+            return null;
+        }
+        return cached.output();
+    }
+
+    private void putCachedResponse(String cacheKey, String output) {
+        if (!responseCacheEnabled || cacheKey == null || cacheKey.isBlank() || output == null || output.isBlank()) {
+            return;
+        }
+        responseCache.put(cacheKey, new CachedResponse(output, System.currentTimeMillis()));
+        evictCacheIfNeeded();
+    }
+
+    private void evictCacheIfNeeded() {
+        if (responseCache.size() <= responseCacheMaxEntries) {
+            return;
+        }
+        long now = System.currentTimeMillis();
+        for (Map.Entry<String, CachedResponse> entry : responseCache.entrySet()) {
+            if ((now - entry.getValue().createdAtEpochMillis()) > responseCacheTtlMillis) {
+                responseCache.remove(entry.getKey(), entry.getValue());
+            }
+        }
+        if (responseCache.size() <= responseCacheMaxEntries) {
+            return;
+        }
+        List<Map.Entry<String, CachedResponse>> snapshot = new ArrayList<>(responseCache.entrySet());
+        snapshot.sort(Map.Entry.comparingByValue((a, b) -> Long.compare(a.createdAtEpochMillis(), b.createdAtEpochMillis())));
+        int overflow = responseCache.size() - responseCacheMaxEntries;
+        for (int i = 0; i < overflow && i < snapshot.size(); i++) {
+            Map.Entry<String, CachedResponse> candidate = snapshot.get(i);
+            responseCache.remove(candidate.getKey(), candidate.getValue());
+        }
+    }
+
+    private record CachedResponse(String output, long createdAtEpochMillis) {
     }
 }
