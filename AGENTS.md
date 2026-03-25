@@ -31,12 +31,18 @@ This repository is a lightweight, single-user personal AI assistant backend. Opt
 - Memory compression planning flow: `/api/memory/{userId}/style` (`GET`/`POST`) + `/api/memory/{userId}/compress-plan` (`POST`) for gradual compression with per-user style profile.
 - `compress-plan` 可选 `focus`（learning/task/review）；`style` 更新可选 `autoTune=true&sampleText=...` 做轻量风格微调。
 - MemoryIntentNlu 的 focus/style/tone/format 同义词支持通过系统属性配置（`mindos.memory.nlu.*-terms`，逗号分隔）；若新增或调整键名/默认词，需同步更新 `README.md` 示例。
+- MemoryConsolidationService 的 key-signal 词表支持系统属性配置（`mindos.memory.key-signal.*-terms`，逗号分隔）；若新增或调整键名/默认词，需同步更新 `README.md` 示例。
 - 语义记忆防污染支持可选系统属性：`mindos.memory.write-gate.enabled`、`mindos.memory.write-gate.min-length`、`mindos.memory.search.decay-half-life-hours`；若调整键名/默认值，需同步更新 `README.md`。
+- `eq.coach` 风险词支持系统属性覆盖（`mindos.eq.coach.risk.high-terms`、`mindos.eq.coach.risk.medium-terms`，逗号分隔）。
 
 ## Repository map
 - `assistant-api/src/main/java/com/zhongbo/mindos/assistant/api/ChatController.java`: chat HTTP interface.
+- `assistant-api/src/main/java/com/zhongbo/mindos/assistant/api/MemorySyncController.java`: memory sync/style/compress-plan/persona APIs.
 - `assistant-api/src/main/java/com/zhongbo/mindos/assistant/api/SkillController.java`: lists/reloads custom skills and loads external JAR skills.
 - `assistant-api/src/main/java/com/zhongbo/mindos/assistant/api/LongTaskController.java`: long-task APIs for multi-worker claiming and progress updates.
+- `assistant-api/src/main/java/com/zhongbo/mindos/assistant/api/LlmMetricsController.java`: LLM metrics API and recent-call window query.
+- `assistant-api/src/main/java/com/zhongbo/mindos/assistant/api/SecurityChallengeController.java`: challenge issuing + security audit query/read APIs.
+- `assistant-api/src/main/java/com/zhongbo/mindos/assistant/api/im/ImWebhookController.java`: Feishu/DingTalk/WeChat webhook adapter entrypoints.
 - `assistant-skill/src/main/java/com/zhongbo/mindos/assistant/skill/mcp/McpSkillLoader.java`: maps configured MCP servers to namespaced skills (`mcp.<alias>.<tool>`).
 - `assistant-dispatcher/src/main/java/com/zhongbo/mindos/assistant/dispatcher/DispatcherService.java`: intent routing and memory orchestration.
 - `assistant-skill/src/main/java/com/zhongbo/mindos/assistant/skill/SkillEngine.java`: skill execution + procedural logging.
@@ -55,6 +61,8 @@ This repository is a lightweight, single-user personal AI assistant backend. Opt
 - Fast memory sync API validation: `./mvnw -q -pl assistant-api -am test -Dtest=MemorySyncControllerTest`
 - Fast memory sync performance baseline validation: `./mvnw -q -pl assistant-memory -am test -Dtest=MemorySyncServiceTest#shouldMeetBasicSyncPerformanceBaseline -Dsurefire.failIfNoSpecifiedTests=false` (optional tuning: `-Dmindos.memory.sync.perf-baseline-ms=5000 -Dmindos.memory.sync.perf-retries=2`)
 - Fast skill management API validation: `./mvnw -q -pl assistant-api -am test -Dtest=SkillControllerTest`
+- Fast security audit API validation: `./mvnw -q -pl assistant-api -am test -Dtest=SecurityAuditApiTest`
+- Fast IM webhook validation: `./mvnw -q -pl assistant-api -am test -Dtest=im.ImWebhookControllerTest`
 
 ## Project conventions
 - Keep package root under `com.zhongbo.mindos.assistant...`.
@@ -105,6 +113,15 @@ This repository is a lightweight, single-user personal AI assistant backend. Opt
 - teaching.plan 优先用 LLM 生成 JSON 结构，schema 校验失败自动降级为本地模板。
 - LLM prompt 见 TeachingPlanSkill.java，输出仅允许 JSON。
 
+#### 情商沟通（eq.coach）Skill
+- 入口：`assistant-skill/src/main/java/com/zhongbo/mindos/assistant/skill/examples/EmotionalCoachSkill.java`
+- 支持输入字段（CLI 自然语言会抽取）：
+  - `query`：场景描述（必填语义）
+  - `style`：`gentle|direct|workplace|intimate`
+  - `mode`：`analysis|reply|both`
+  - `priorityFocus`：`p1|p2|p3`
+- 风险等级词表可由 `mindos.eq.coach.risk.high-terms`、`mindos.eq.coach.risk.medium-terms` 覆盖（默认词见 EmotionalCoachSkill.java）。
+
 ---
 
 ### CLI 交互与自然语言指令
@@ -115,6 +132,7 @@ This repository is a lightweight, single-user personal AI assistant backend. Opt
 - 也可在会话中直接说“打开排障模式/关闭排障模式”切换显示细节，无需记忆参数。
 - `/help` 默认给自然语言操作提示；技术命令与参数放在 `/help full`。
 - memory 也支持自然语言入口：如“查看我的记忆风格”“按我的风格压缩这段记忆：...”。
+- todo 策略支持会话内命令 `/todo policy show|set|reset`，并可通过 `mindos.todo.*` 系统属性设置默认阈值与文案。
 
 #### 教学规划自然语言触发
 - 支持直接在 CLI 对话窗口输入如：
@@ -128,7 +146,9 @@ This repository is a lightweight, single-user personal AI assistant backend. Opt
 #### 回归测试
 - 相关测试用例：
   - `assistant-skill/src/test/java/com/zhongbo/mindos/assistant/skill/examples/TeachingPlanSkillTest.java`
+  - `assistant-skill/src/test/java/com/zhongbo/mindos/assistant/skill/examples/EmotionalCoachSkillTest.java`
   - `assistant-api/src/test/java/com/zhongbo/mindos/assistant/api/ChatControllerTest.java`
+  - `assistant-api/src/test/java/com/zhongbo/mindos/assistant/api/im/ImWebhookControllerTest.java`
   - `mindos-cli/src/test/java/com/zhongbo/mindos/assistant/cli/CommandNluParserTest.java`
   - `mindos-cli/src/test/java/com/zhongbo/mindos/assistant/cli/MindosCliApplicationTest.java`
 
@@ -150,5 +170,8 @@ This repository is a lightweight, single-user personal AI assistant backend. Opt
 - Dispatcher/CLI 端自然语言教学规划路由与参数抽取说明
 - CLI `/teach plan` 命令与自然语言触发说明
 - 相关测试与兼容性注意事项
+- Repository map 增补 memory/metrics/security/im 关键控制器
+- 增补 `eq.coach` skill 输入字段、风险词配置与回归测试入口
+- 增补 CLI `/todo policy` 与 `mindos.todo.*` 默认策略来源说明
 
 如需完整 AGENTS.md 文件或有其他模块变更，请告知！

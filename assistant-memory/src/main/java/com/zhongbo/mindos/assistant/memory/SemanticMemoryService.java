@@ -12,6 +12,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Locale;
+import java.util.PriorityQueue;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.Lock;
@@ -129,7 +130,15 @@ public class SemanticMemoryService {
             }
 
             LinkedHashSet<String> tokens = tokenize(entry.text());
-            StoredSemanticEntry stored = new StoredSemanticEntry(entry, normalizeLower(entry.text()), tokens, ++sequence, bucket);
+            String normalizedText = normalizeLower(entry.text());
+            StoredSemanticEntry stored = new StoredSemanticEntry(
+                    entry,
+                    normalizedText,
+                    tokens,
+                    ++sequence,
+                    bucket,
+                    memoryConsolidationService.containsKeySignal(normalizedText)
+            );
             entries.put(bucketedKey, stored);
             for (String token : tokens) {
                 keysByToken.computeIfAbsent(token, ignored -> new LinkedHashSet<>()).add(bucketedKey);
@@ -157,17 +166,21 @@ public class SemanticMemoryService {
                 }
             }
             if (candidateKeys.isEmpty()) {
-                int scanned = 0;
-                for (String candidateKey : entries.keySet()) {
-                    candidateKeys.add(candidateKey);
-                    scanned++;
-                    if (scanned >= MAX_APPROX_CANDIDATES) {
+                int added = 0;
+                for (Map.Entry<String, StoredSemanticEntry> candidateEntry : entries.entrySet()) {
+                    if (!bucket.equals(candidateEntry.getValue().bucket())) {
+                        continue;
+                    }
+                    candidateKeys.add(candidateEntry.getKey());
+                    added++;
+                    if (added >= MAX_APPROX_CANDIDATES) {
                         break;
                     }
                 }
             }
 
             String normalizedInput = normalizeLower(entry.text());
+            boolean inputHasKeySignal = memoryConsolidationService.containsKeySignal(normalizedInput);
             for (String candidateKey : candidateKeys) {
                 StoredSemanticEntry candidate = entries.get(candidateKey);
                 if (candidate == null) {
@@ -176,7 +189,7 @@ public class SemanticMemoryService {
                 if (!candidate.bucket().equals(bucket)) {
                     continue;
                 }
-                if (isApproxEquivalent(entry, queryTokens, normalizedInput, candidate)) {
+                if (isApproxEquivalent(entry, queryTokens, normalizedInput, inputHasKeySignal, candidate)) {
                     return true;
                 }
             }
@@ -215,12 +228,15 @@ public class SemanticMemoryService {
             }
 
             String normalizedQuery = normalizeLower(query);
-            List<StoredSemanticEntry> ranked = candidates.stream()
-                    .sorted(Comparator
-                            .comparingDouble((StoredSemanticEntry entry) -> score(entry, queryTokens, normalizedQuery, preferredBucket))
-                            .thenComparingLong(StoredSemanticEntry::sequence)
-                            .reversed())
-                    .toList();
+            long nowMillis = System.currentTimeMillis();
+            Comparator<StoredSemanticEntry> comparator = Comparator
+                    .comparingDouble((StoredSemanticEntry entry) -> score(entry, queryTokens, normalizedQuery, preferredBucket, nowMillis))
+                    .thenComparingLong(StoredSemanticEntry::sequence)
+                    .reversed();
+
+            List<StoredSemanticEntry> ranked = enforceCrossBucketCap
+                    ? candidates.stream().sorted(comparator).toList()
+                    : rankTopK(candidates, limit, comparator);
 
             List<StoredSemanticEntry> mixed = enforceCrossBucketCap
                     ? applyPreferredBucketMix(ranked, limit, preferredBucket)
@@ -232,6 +248,29 @@ public class SemanticMemoryService {
             } finally {
                 readLock.unlock();
             }
+        }
+
+        private List<StoredSemanticEntry> rankTopK(List<StoredSemanticEntry> candidates,
+                                                    int limit,
+                                                    Comparator<StoredSemanticEntry> comparator) {
+            if (limit <= 0 || candidates.isEmpty()) {
+                return List.of();
+            }
+            PriorityQueue<StoredSemanticEntry> top = new PriorityQueue<>(limit, comparator.reversed());
+            for (StoredSemanticEntry candidate : candidates) {
+                if (top.size() < limit) {
+                    top.offer(candidate);
+                    continue;
+                }
+                StoredSemanticEntry weakest = top.peek();
+                if (weakest != null && comparator.compare(candidate, weakest) > 0) {
+                    top.poll();
+                    top.offer(candidate);
+                }
+            }
+            List<StoredSemanticEntry> ranked = new ArrayList<>(top);
+            ranked.sort(comparator);
+            return ranked;
         }
 
         private List<StoredSemanticEntry> applyPreferredBucketMix(List<StoredSemanticEntry> ranked,
@@ -311,9 +350,10 @@ public class SemanticMemoryService {
         private double score(StoredSemanticEntry entry,
                              Set<String> queryTokens,
                              String normalizedQuery,
-                             String preferredBucket) {
+                             String preferredBucket,
+                             long nowMillis) {
             if (queryTokens.isEmpty()) {
-                return 1 + bucketBoost(entry.bucket(), preferredBucket) + recencyBoost(entry.entry());
+                return 1 + bucketBoost(entry.bucket(), preferredBucket) + recencyBoost(entry.entry(), nowMillis);
             }
             int overlap = 0;
             for (String token : queryTokens) {
@@ -325,7 +365,7 @@ public class SemanticMemoryService {
             return overlap * 10
                     + containsBonus
                     + bucketBoost(entry.bucket(), preferredBucket)
-                    + recencyBoost(entry.entry());
+                    + recencyBoost(entry.entry(), nowMillis);
         }
 
         private double bucketBoost(String bucket, String preferredBucket) {
@@ -335,13 +375,13 @@ public class SemanticMemoryService {
             return preferredBucket.equals(bucket) ? 8.0 : 0.0;
         }
 
-        private double recencyBoost(SemanticMemoryEntry entry) {
+        private double recencyBoost(SemanticMemoryEntry entry, long nowMillis) {
             double halfLifeHours = parseHalfLifeHours();
             if (halfLifeHours <= 0) {
                 return 0.0;
             }
             double ageHours = Math.max(0.0,
-                    (double) (System.currentTimeMillis() - entry.createdAt().toEpochMilli()) / 3_600_000d);
+                    (double) (nowMillis - entry.createdAt().toEpochMilli()) / 3_600_000d);
             return Math.exp(-ageHours / halfLifeHours) * 3.0;
         }
 
@@ -352,6 +392,7 @@ public class SemanticMemoryService {
         private boolean isApproxEquivalent(SemanticMemoryEntry input,
                                            Set<String> inputTokens,
                                            String normalizedInput,
+                                           boolean inputHasKeySignal,
                                            StoredSemanticEntry candidate) {
             String normalizedCandidate = candidate.normalizedText();
             if (normalizedInput.equals(normalizedCandidate)) {
@@ -366,8 +407,7 @@ public class SemanticMemoryService {
 
             double tokenSimilarity = jaccard(inputTokens, candidate.tokens());
             double embeddingSimilarity = cosineSimilarity(input.embedding(), candidate.entry().embedding());
-            boolean hasKeySignal = memoryConsolidationService.containsKeySignal(normalizedInput)
-                    || memoryConsolidationService.containsKeySignal(normalizedCandidate);
+            boolean hasKeySignal = inputHasKeySignal || candidate.hasKeySignal();
             double strictTokenThreshold = hasKeySignal ? 0.9 : APPROX_JACCARD_THRESHOLD;
 
             if (tokenSimilarity >= strictTokenThreshold) {
@@ -456,7 +496,8 @@ public class SemanticMemoryService {
                                        String normalizedText,
                                        Set<String> tokens,
                                        long sequence,
-                                       String bucket) {
+                                       String bucket,
+                                       boolean hasKeySignal) {
     }
 }
 

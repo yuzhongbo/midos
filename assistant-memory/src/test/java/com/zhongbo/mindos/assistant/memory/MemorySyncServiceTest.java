@@ -9,9 +9,17 @@ import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class MemorySyncServiceTest {
@@ -207,6 +215,108 @@ class MemorySyncServiceTest {
         assertEquals(1, result.acceptedCount());
         assertEquals(1, result.skippedCount());
         assertEquals(1, entries.size());
+    }
+
+    @Test
+    void shouldHandleLargeSemanticPayloadsInSingleBatch() {
+        MemoryConsolidationService consolidationService = new MemoryConsolidationService();
+        CentralMemoryRepository repository = new InMemoryCentralMemoryRepository();
+        EpisodicMemoryService episodicMemoryService = new EpisodicMemoryService();
+        SemanticMemoryService semanticMemoryService = new SemanticMemoryService(consolidationService);
+        ProceduralMemoryService proceduralMemoryService = new ProceduralMemoryService();
+        SemanticWriteGatePolicy writeGatePolicy = new SemanticWriteGatePolicy(consolidationService);
+        MemorySyncService service = new MemorySyncService(
+                repository,
+                episodicMemoryService,
+                semanticMemoryService,
+                proceduralMemoryService,
+                consolidationService,
+                writeGatePolicy
+        );
+
+        List<SemanticMemoryEntry> semanticEntries = new ArrayList<>();
+        for (int i = 0; i < 2_000; i++) {
+            semanticEntries.add(new SemanticMemoryEntry(
+                    "大型批量语义条目-" + i + " 包含唯一锚点 token-" + i + " date-2026-" + (i % 12 + 1),
+                    List.of(i * 1.0, i * 2.0 + 1, i * 3.0 + 2),
+                    Instant.now()
+            ));
+        }
+
+        MemoryApplyResult result = service.applyUpdates("large-batch-user",
+                new MemorySyncBatch("evt-large", List.of(), semanticEntries, List.of()));
+
+        assertTrue(result.acceptedCount() > 0);
+        int stored = repository.fetchSince("large-batch-user", 0L, 3_000).semantic().size();
+        assertEquals(result.acceptedCount(), stored);
+    }
+
+    @Test
+    void shouldSupportConcurrentApplyAndFetch() throws Exception {
+        MemoryConsolidationService consolidationService = new MemoryConsolidationService();
+        CentralMemoryRepository repository = new InMemoryCentralMemoryRepository();
+        EpisodicMemoryService episodicMemoryService = new EpisodicMemoryService();
+        SemanticMemoryService semanticMemoryService = new SemanticMemoryService(consolidationService);
+        ProceduralMemoryService proceduralMemoryService = new ProceduralMemoryService();
+        SemanticWriteGatePolicy writeGatePolicy = new SemanticWriteGatePolicy(consolidationService);
+        MemorySyncService service = new MemorySyncService(
+                repository,
+                episodicMemoryService,
+                semanticMemoryService,
+                proceduralMemoryService,
+                consolidationService,
+                writeGatePolicy
+        );
+
+        int writers = 6;
+        int perWriter = 120;
+        ExecutorService pool = Executors.newFixedThreadPool(writers + 2);
+        CountDownLatch start = new CountDownLatch(1);
+        List<Callable<Void>> tasks = new ArrayList<>();
+
+        for (int w = 0; w < writers; w++) {
+            int worker = w;
+            tasks.add(() -> {
+                assertTrue(start.await(5, TimeUnit.SECONDS));
+                for (int i = 0; i < perWriter; i++) {
+                    String suffix = worker + "-" + i;
+                    service.applyUpdates("concurrent-user", new MemorySyncBatch(
+                            "evt-concurrent-" + suffix,
+                            List.of(new ConversationTurn("user", "msg-" + suffix, Instant.now())),
+                            List.of(new SemanticMemoryEntry("semantic-" + suffix, List.of(0.1 + i, 0.2 + i), Instant.now())),
+                            List.of(new ProceduralMemoryEntry("skill.demo", "input-" + suffix, true, Instant.now()))
+                    ));
+                }
+                return null;
+            });
+        }
+
+        tasks.add(() -> {
+            assertTrue(start.await(5, TimeUnit.SECONDS));
+            long cursor = 0;
+            for (int i = 0; i < 60; i++) {
+                cursor = service.fetchUpdates("concurrent-user", cursor, 50).cursor();
+            }
+            return null;
+        });
+
+        List<Future<Void>> futures = new ArrayList<>();
+        for (Callable<Void> task : tasks) {
+            futures.add(pool.submit(task));
+        }
+        start.countDown();
+
+        for (Future<Void> future : futures) {
+            future.get(20, TimeUnit.SECONDS);
+        }
+        pool.shutdown();
+        assertTrue(pool.awaitTermination(5, TimeUnit.SECONDS));
+
+        int expected = writers * perWriter;
+        int observed = repository.fetchSince("concurrent-user", 0L, expected * 4).episodic().size();
+        assertTrue(observed > 0);
+        assertTrue(observed <= expected);
+        assertFalse(semanticMemoryService.search("concurrent-user", 10).isEmpty());
     }
 
     @Test

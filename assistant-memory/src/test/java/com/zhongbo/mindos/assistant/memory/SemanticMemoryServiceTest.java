@@ -3,10 +3,18 @@ package com.zhongbo.mindos.assistant.memory;
 import com.zhongbo.mindos.assistant.memory.model.SemanticMemoryEntry;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SemanticMemoryServiceTest {
@@ -112,11 +120,75 @@ class SemanticMemoryServiceTest {
             List<SemanticMemoryEntry> results = service.search("ratio-user", "数学复习", 4, "task");
             assertEquals(1, results.size());
             String texts = results.stream().map(SemanticMemoryEntry::text).collect(Collectors.joining(","));
-            assertTrue(!texts.isBlank());
+            assertFalse(texts.isBlank());
         } finally {
             restoreProperty("mindos.memory.search.cross-bucket.max", oldMax);
             restoreProperty("mindos.memory.search.cross-bucket.ratio", oldRatio);
         }
+    }
+
+    @Test
+    void shouldSearchLargeDatasetWithoutFullSortRegression() {
+        MemoryConsolidationService consolidationService = new MemoryConsolidationService();
+        SemanticMemoryService service = new SemanticMemoryService(consolidationService);
+
+        for (int i = 0; i < 6_000; i++) {
+            String bucket = i % 3 == 0 ? "task" : (i % 3 == 1 ? "learning" : "global");
+            service.addEntry("large-search-user",
+                    SemanticMemoryEntry.of("项目计划条目 " + i + " 涉及里程碑 review", List.of(0.1 + i, 0.2 + i)),
+                    bucket);
+        }
+
+        List<SemanticMemoryEntry> results = service.search("large-search-user", "项目计划 review", 20);
+        assertEquals(20, results.size());
+        assertTrue(results.get(0).text().contains("项目计划条目"));
+    }
+
+    @Test
+    void shouldRemainConsistentUnderConcurrentWriteAndSearch() throws Exception {
+        MemoryConsolidationService consolidationService = new MemoryConsolidationService();
+        SemanticMemoryService service = new SemanticMemoryService(consolidationService);
+
+        ExecutorService pool = Executors.newFixedThreadPool(6);
+        CountDownLatch start = new CountDownLatch(1);
+        List<Callable<Void>> tasks = new ArrayList<>();
+
+        for (int writer = 0; writer < 4; writer++) {
+            int worker = writer;
+            tasks.add(() -> {
+                assertTrue(start.await(5, TimeUnit.SECONDS));
+                for (int i = 0; i < 500; i++) {
+                    String text = "并发语义-" + worker + "-" + i + " deadline 2026-12-31";
+                    service.addEntry("concurrent-semantic-user", SemanticMemoryEntry.of(text, List.of(0.1 + i, 0.2 + i)), "task");
+                }
+                return null;
+            });
+        }
+
+        for (int searcher = 0; searcher < 2; searcher++) {
+            tasks.add(() -> {
+                assertTrue(start.await(5, TimeUnit.SECONDS));
+                for (int i = 0; i < 200; i++) {
+                    List<SemanticMemoryEntry> results = service.search("concurrent-semantic-user", "并发语义 deadline", 10, "task");
+                    assertTrue(results.size() <= 10);
+                }
+                return null;
+            });
+        }
+
+        List<Future<Void>> futures = new ArrayList<>();
+        for (Callable<Void> task : tasks) {
+            futures.add(pool.submit(task));
+        }
+        start.countDown();
+
+        for (Future<Void> future : futures) {
+            future.get(20, TimeUnit.SECONDS);
+        }
+        pool.shutdown();
+        assertTrue(pool.awaitTermination(5, TimeUnit.SECONDS));
+
+        assertFalse(service.search("concurrent-semantic-user", 10).isEmpty());
     }
 
     private void restoreProperty(String key, String value) {

@@ -102,6 +102,7 @@ public class MemoryConsolidationService {
         if (normalized.isBlank()) {
             return 0;
         }
+        String normalizedLower = normalized.toLowerCase(Locale.ROOT);
         int score = 0;
         if (DIGIT_PATTERN.matcher(normalized).find()) {
             score += 2;
@@ -109,13 +110,13 @@ public class MemoryConsolidationService {
         if (DATE_TIME_PATTERN.matcher(normalized).find()) {
             score += 3;
         }
-        if (containsAnyTerm(normalized, constraintTerms)) {
+        if (containsAnyTermNormalized(normalizedLower, constraintTerms)) {
             score += 3;
         }
-        if (containsAnyTerm(normalized, deadlineTerms)) {
+        if (containsAnyTermNormalized(normalizedLower, deadlineTerms)) {
             score += 2;
         }
-        if (containsAnyTerm(normalized, contactTerms)) {
+        if (containsAnyTermNormalized(normalizedLower, contactTerms)) {
             score += 1;
         }
         return score;
@@ -137,10 +138,9 @@ public class MemoryConsolidationService {
         return Set.copyOf(terms);
     }
 
-    private boolean containsAnyTerm(String text, Set<String> terms) {
-        String normalized = normalizeText(text).toLowerCase(Locale.ROOT);
+    private boolean containsAnyTermNormalized(String normalizedLower, Set<String> terms) {
         for (String term : terms) {
-            if (normalized.contains(term)) {
+            if (normalizedLower.contains(term)) {
                 return true;
             }
         }
@@ -159,6 +159,9 @@ public class MemoryConsolidationService {
     }
 
     private List<SemanticMemoryEntry> deduplicateSemanticEntries(List<SemanticMemoryEntry> entries) {
+        if (entries == null || entries.isEmpty()) {
+            return List.of();
+        }
         Map<String, SemanticMemoryEntry> unique = new LinkedHashMap<>();
         for (SemanticMemoryEntry rawEntry : entries) {
             SemanticMemoryEntry entry = consolidateSemanticEntry(rawEntry);
