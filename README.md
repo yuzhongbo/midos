@@ -306,6 +306,7 @@ curl -X POST http://localhost:8080/api/skills/load-mcp \
     - if keyring is empty, fallback key `mindos.security.audit.cursor-signing-key` is used for active version.
   - storage partition toggle: `mindos.security.audit.daily-partition-enabled` (default `true`, writes to daily files like `security-audit-2026-03-25.log` and enables window-based file pruning during queries).
   - query optimization toggle: `mindos.security.audit.query.assume-chronological-order` (default `true`, allows early stop when `to` is set and log timestamps have passed upper bound).
+  - query guardrail: `mindos.security.audit.query.max-scanned-files` (default `400`, caps partition files scanned per request to avoid unbounded historical scans).
   - audit write pipeline tuning:
     - `mindos.security.audit.write-queue-capacity` (default `2048`)
     - `mindos.security.audit.write-flush-timeout-ms` (default `2000`)

@@ -58,6 +58,7 @@ public class SecurityAuditLogService {
     private final long cursorTtlSeconds;
     private final boolean dailyPartitionEnabled;
     private final boolean queryAssumeChronologicalOrder;
+    private final int queryMaxScannedFiles;
     private final long writeFlushTimeoutMillis;
     private final long writeFlushWarningIntervalMillis;
     private final ObjectMapper objectMapper;
@@ -80,6 +81,7 @@ public class SecurityAuditLogService {
             @Value("${mindos.security.audit.cursor-ttl-seconds:300}") long cursorTtlSeconds,
             @Value("${mindos.security.audit.daily-partition-enabled:true}") boolean dailyPartitionEnabled,
             @Value("${mindos.security.audit.query.assume-chronological-order:true}") boolean queryAssumeChronologicalOrder,
+            @Value("${mindos.security.audit.query.max-scanned-files:400}") int queryMaxScannedFiles,
             @Value("${mindos.security.audit.write-queue-capacity:2048}") int writeQueueCapacity,
             @Value("${mindos.security.audit.write-flush-timeout-ms:2000}") long writeFlushTimeoutMillis,
             @Value("${mindos.security.audit.write-flush-warning-interval-ms:60000}") long writeFlushWarningIntervalMillis) {
@@ -91,6 +93,7 @@ public class SecurityAuditLogService {
         this.cursorTtlSeconds = Math.max(30L, cursorTtlSeconds);
         this.dailyPartitionEnabled = dailyPartitionEnabled;
         this.queryAssumeChronologicalOrder = queryAssumeChronologicalOrder;
+        this.queryMaxScannedFiles = Math.max(1, queryMaxScannedFiles);
         this.writeFlushTimeoutMillis = Math.max(200L, writeFlushTimeoutMillis);
         this.writeFlushWarningIntervalMillis = Math.max(1_000L, writeFlushWarningIntervalMillis);
         this.objectMapper = new ObjectMapper().findAndRegisterModules();
@@ -724,7 +727,8 @@ public class SecurityAuditLogService {
 
     private List<Path> resolveReadableAuditFiles(Instant fromInclusive, Instant toInclusive) {
         List<Path> files = new ArrayList<>();
-        if (Files.exists(auditFile)) {
+        boolean hasBaseFile = Files.exists(auditFile);
+        if (hasBaseFile) {
             files.add(auditFile);
         }
         if (!dailyPartitionEnabled) {
@@ -744,6 +748,7 @@ public class SecurityAuditLogService {
         LocalDate fromDate = fromInclusive == null ? null : fromInclusive.atZone(ZoneOffset.UTC).toLocalDate();
         LocalDate toDate = toInclusive == null ? null : toInclusive.atZone(ZoneOffset.UTC).toLocalDate();
 
+        List<Path> partitions = new ArrayList<>();
         try (var stream = Files.list(parent)) {
             stream.filter(Files::isRegularFile)
                     .filter(path -> {
@@ -766,10 +771,16 @@ public class SecurityAuditLogService {
                         }
                     })
                     .sorted(Comparator.comparing(path -> path.getFileName().toString()))
-                    .forEach(files::add);
+                    .forEach(partitions::add);
         } catch (IOException ex) {
             LOGGER.log(Level.WARNING, "Failed to list security audit partitions", ex);
         }
+
+        int allowedPartitionFiles = Math.max(0, queryMaxScannedFiles - (hasBaseFile ? 1 : 0));
+        if (partitions.size() > allowedPartitionFiles) {
+            partitions = partitions.subList(partitions.size() - allowedPartitionFiles, partitions.size());
+        }
+        files.addAll(partitions);
 
         return List.copyOf(files);
     }

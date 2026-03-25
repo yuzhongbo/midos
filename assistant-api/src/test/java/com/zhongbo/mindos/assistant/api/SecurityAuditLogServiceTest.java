@@ -36,6 +36,7 @@ class SecurityAuditLogServiceTest {
                 300,
                 false,
                 false,
+                400,
                 64,
                 100,
                 60_000
@@ -62,6 +63,7 @@ class SecurityAuditLogServiceTest {
                 300,
                 false,
                 true,
+                400,
                 64,
                 5,
                 60_000
