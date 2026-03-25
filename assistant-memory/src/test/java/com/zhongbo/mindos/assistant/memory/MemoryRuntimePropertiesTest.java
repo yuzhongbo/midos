@@ -37,7 +37,6 @@ class MemoryRuntimePropertiesTest {
                 Map.of(
                         "mindos.memory.write-gate.enabled", "true",
                         "mindos.memory.write-gate.min-length", "16",
-                        "mindos.memory.write-gate.min-length.task", "6",
                         "mindos.memory.write-gate.semantic-duplicate.enabled", "true",
                         "mindos.memory.write-gate.semantic-duplicate.threshold", "0.9",
                         "mindos.memory.search.decay-half-life-hours", "96",
@@ -51,7 +50,6 @@ class MemoryRuntimePropertiesTest {
 
         assertTrue(properties.getWriteGate().isEnabled());
         assertEquals(16, properties.getWriteGate().getMinLength());
-        assertEquals(6, properties.getWriteGate().getMinLengthByBucket().get("task"));
         assertTrue(properties.getWriteGate().isSemanticDuplicateEnabled());
         assertEquals(0.9, properties.getWriteGate().getSemanticDuplicateThreshold());
 
@@ -68,7 +66,6 @@ class MemoryRuntimePropertiesTest {
                 Map.of(
                         "mindos.memory.write-gate.enabled", "false",
                         "mindos.memory.write-gate.min-length", "12",
-                        "mindos.memory.write-gate.min-length.task", "5",
                         "mindos.memory.write-gate.semantic-duplicate.enabled", "false",
                         "mindos.memory.write-gate.semantic-duplicate.threshold", "0.7",
                         "mindos.memory.search.decay-half-life-hours", "80",
@@ -80,7 +77,6 @@ class MemoryRuntimePropertiesTest {
                 Map.of(
                         "mindos.memory.write-gate.enabled", "true",
                         "mindos.memory.write-gate.min-length", "20",
-                        "mindos.memory.write-gate.min-length.task", "8",
                         "mindos.memory.write-gate.semantic-duplicate.enabled", "true",
                         "mindos.memory.write-gate.semantic-duplicate.threshold", "0.95",
                         "mindos.memory.search.decay-half-life-hours", "48",
@@ -93,7 +89,6 @@ class MemoryRuntimePropertiesTest {
 
         assertTrue(properties.getWriteGate().isEnabled());
         assertEquals(20, properties.getWriteGate().getMinLength());
-        assertEquals(8, properties.getWriteGate().getMinLengthByBucket().get("task"));
         assertTrue(properties.getWriteGate().isSemanticDuplicateEnabled());
         assertEquals(0.95, properties.getWriteGate().getSemanticDuplicateThreshold());
 

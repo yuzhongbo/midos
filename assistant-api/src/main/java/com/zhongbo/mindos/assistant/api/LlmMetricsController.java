@@ -1,6 +1,8 @@
 package com.zhongbo.mindos.assistant.api;
 
 import com.zhongbo.mindos.assistant.common.LlmMetricsReader;
+import com.zhongbo.mindos.assistant.common.LlmCacheMetricsReader;
+import com.zhongbo.mindos.assistant.common.MemoryWriteGateMetricsReader;
 import com.zhongbo.mindos.assistant.common.dto.LlmMetricsResponseDto;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Value;
@@ -16,15 +18,21 @@ public class LlmMetricsController {
     private final boolean requireAdminToken;
     private final AdminTokenGuard adminTokenGuard;
     private final LlmMetricsReader llmMetricsReader;
+    private final LlmCacheMetricsReader llmCacheMetricsReader;
+    private final MemoryWriteGateMetricsReader memoryWriteGateMetricsReader;
     private final SecurityAuditLogService securityAuditLogService;
 
     public LlmMetricsController(@Value("${mindos.security.metrics.require-admin-token:true}") boolean requireAdminToken,
                                 AdminTokenGuard adminTokenGuard,
                                 LlmMetricsReader llmMetricsReader,
+                                LlmCacheMetricsReader llmCacheMetricsReader,
+                                MemoryWriteGateMetricsReader memoryWriteGateMetricsReader,
                                 SecurityAuditLogService securityAuditLogService) {
         this.requireAdminToken = requireAdminToken;
         this.adminTokenGuard = adminTokenGuard;
         this.llmMetricsReader = llmMetricsReader;
+        this.llmCacheMetricsReader = llmCacheMetricsReader;
+        this.memoryWriteGateMetricsReader = memoryWriteGateMetricsReader;
         this.securityAuditLogService = securityAuditLogService;
     }
 
@@ -47,7 +55,9 @@ public class LlmMetricsController {
                 snapshot.totalEstimatedTokens(),
                 snapshot.byProvider(),
                 snapshot.recentCalls(),
-                securityAuditLogService.getWriteMetrics()
+                securityAuditLogService.getWriteMetrics(),
+                llmCacheMetricsReader.snapshotCacheMetrics(),
+                memoryWriteGateMetricsReader.snapshotWriteGateMetrics()
         );
     }
 }

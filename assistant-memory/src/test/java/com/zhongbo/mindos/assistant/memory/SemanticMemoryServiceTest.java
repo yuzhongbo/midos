@@ -244,6 +244,32 @@ class SemanticMemoryServiceTest {
         }
     }
 
+    @Test
+    void shouldExposeSecondaryDuplicateGateMetrics() {
+        String oldEnabled = System.getProperty("mindos.memory.write-gate.semantic-duplicate.enabled");
+        String oldThreshold = System.getProperty("mindos.memory.write-gate.semantic-duplicate.threshold");
+        try {
+            System.setProperty("mindos.memory.write-gate.semantic-duplicate.enabled", "true");
+            System.setProperty("mindos.memory.write-gate.semantic-duplicate.threshold", "0.7");
+
+            MemoryConsolidationService consolidationService = new MemoryConsolidationService();
+            SemanticMemoryService service = new SemanticMemoryService(consolidationService);
+
+            service.addEntry("metrics-user", SemanticMemoryEntry.of("alpha beta gamma sprint task", List.of(0.1, 0.2)), "task");
+            service.addEntry("metrics-user", SemanticMemoryEntry.of("alpha beta sprint task", List.of(0.11, 0.19)), "task");
+            service.addEntry("metrics-user", SemanticMemoryEntry.of("release checklist owner and due date", List.of(0.2, 0.4)), "task");
+
+            var metrics = service.snapshotWriteGateMetrics();
+            assertTrue(metrics.secondaryDuplicateGateEnabled());
+            assertEquals(3, metrics.secondaryDuplicateChecks());
+            assertEquals(1, metrics.secondaryDuplicateIntercepted());
+            assertEquals(1.0 / 3.0, metrics.secondaryDuplicateInterceptRate());
+        } finally {
+            restoreProperty("mindos.memory.write-gate.semantic-duplicate.enabled", oldEnabled);
+            restoreProperty("mindos.memory.write-gate.semantic-duplicate.threshold", oldThreshold);
+        }
+    }
+
     private void restoreProperty(String key, String value) {
         if (value == null) {
             System.clearProperty(key);

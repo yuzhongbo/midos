@@ -158,6 +158,8 @@ class ApiKeyLlmClientTest {
         client.generateResponse("same prompt", Map.of("userId", "u-cache", "routeStage", "llm-dsl"));
 
         assertEquals(1, readCacheSize(client));
+        assertEquals(0.5, client.snapshotCacheMetrics().hitRate());
+        assertEquals(1, client.snapshotCacheMetrics().hitCount());
     }
 
     @Test

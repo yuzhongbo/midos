@@ -1,5 +1,7 @@
 package com.zhongbo.mindos.assistant.memory;
 
+import com.zhongbo.mindos.assistant.common.MemoryWriteGateMetricsReader;
+import com.zhongbo.mindos.assistant.common.dto.MemoryWriteGateMetricsDto;
 import com.zhongbo.mindos.assistant.memory.model.SemanticMemoryEntry;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -18,9 +20,10 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.regex.Pattern;
+import java.util.concurrent.atomic.AtomicLong;
 
 @Service
-public class SemanticMemoryService {
+public class SemanticMemoryService implements MemoryWriteGateMetricsReader {
 
     private static final int MAX_APPROX_CANDIDATES = 64;
     private static final double APPROX_JACCARD_THRESHOLD = 0.82;
@@ -32,6 +35,8 @@ public class SemanticMemoryService {
     private final MemoryConsolidationService memoryConsolidationService;
     private final MemoryRuntimeProperties properties;
     private final Map<String, UserSemanticStore> entriesByUser = new ConcurrentHashMap<>();
+    private final AtomicLong secondaryDuplicateCheckCount = new AtomicLong();
+    private final AtomicLong secondaryDuplicateInterceptCount = new AtomicLong();
 
     @Autowired
     public SemanticMemoryService(MemoryConsolidationService memoryConsolidationService,
@@ -60,12 +65,15 @@ public class SemanticMemoryService {
         String normalizedBucket = normalizeBucket(bucket);
         String semanticKey = memoryConsolidationService.semanticKey(consolidated.text());
         UserSemanticStore store = entriesByUser.computeIfAbsent(userId, key -> new UserSemanticStore());
-        if (properties.getWriteGate().isSemanticDuplicateEnabled()
-                && store.containsEquivalentForWrite(semanticKey,
-                consolidated,
-                normalizedBucket,
-                properties.getWriteGate().getSemanticDuplicateThreshold())) {
-            return;
+        if (properties.getWriteGate().isSemanticDuplicateEnabled()) {
+            secondaryDuplicateCheckCount.incrementAndGet();
+            if (store.containsEquivalentForWrite(semanticKey,
+                    consolidated,
+                    normalizedBucket,
+                    properties.getWriteGate().getSemanticDuplicateThreshold())) {
+                secondaryDuplicateInterceptCount.incrementAndGet();
+                return;
+            }
         }
         store.upsert(semanticKey, consolidated, normalizedBucket);
     }
@@ -108,6 +116,19 @@ public class SemanticMemoryService {
                 memoryConsolidationService.semanticKey(consolidated.text()),
                 consolidated,
                 normalizeBucket(bucket)
+        );
+    }
+
+    @Override
+    public MemoryWriteGateMetricsDto snapshotWriteGateMetrics() {
+        long checks = secondaryDuplicateCheckCount.get();
+        long intercepted = secondaryDuplicateInterceptCount.get();
+        double interceptRate = checks <= 0 ? 0.0 : (double) intercepted / checks;
+        return new MemoryWriteGateMetricsDto(
+                properties.getWriteGate().isSemanticDuplicateEnabled(),
+                checks,
+                intercepted,
+                interceptRate
         );
     }
 
@@ -561,4 +582,6 @@ public class SemanticMemoryService {
                                        boolean hasKeySignal) {
     }
 }
+
+
 

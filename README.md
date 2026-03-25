@@ -237,6 +237,9 @@ curl -X POST http://localhost:8080/api/skills/load-mcp \
   - toggles: `mindos.llm.metrics.enabled` (default `true`), `mindos.llm.metrics.max-recent-calls` (default `500`)
   - optional auth: `mindos.security.metrics.require-admin-token` (default `true`, validates `mindos.security.risky-ops.admin-token-header` / `mindos.security.risky-ops.admin-token`)
   - summary includes success/fallback rate, average latency, estimated token totals, provider aggregates, optional recent calls, and `securityAudit` writer metrics (`queueDepth`, `enqueuedCount`, `writtenCount`, `callerRunsFallbackCount`, `flushTimeoutCount`, `flushErrorCount`).
+  - summary also includes:
+    - `llmCache`: short TTL response cache status and effectiveness (`enabled`, `hitCount`, `missCount`, `hitRate`, `entryCount`, `ttlSeconds`, `maxEntries`)
+    - `memoryWriteGate`: secondary semantic-duplicate write gate effectiveness (`secondaryDuplicateGateEnabled`, `secondaryDuplicateChecks`, `secondaryDuplicateIntercepted`, `secondaryDuplicateInterceptRate`)
 - Long-task orchestration API (multi-day / multi-worker):
   - create: `POST /api/tasks/{userId}` with `{title, objective, steps[], dueAt?, nextCheckAt?}`
   - list/query: `GET /api/tasks/{userId}?status=PENDING|RUNNING|BLOCKED|COMPLETED|CANCELLED`, `GET /api/tasks/{userId}/{taskId}`

@@ -43,7 +43,11 @@ class LlmMetricsControllerTest {
                 .andExpect(jsonPath("$.recentCalls.length()").value(org.hamcrest.Matchers.greaterThanOrEqualTo(1)))
                 .andExpect(jsonPath("$.securityAudit.queueDepth").isNumber())
                 .andExpect(jsonPath("$.securityAudit.enqueuedCount").isNumber())
-                .andExpect(jsonPath("$.securityAudit.writtenCount").isNumber());
+                .andExpect(jsonPath("$.securityAudit.writtenCount").isNumber())
+                .andExpect(jsonPath("$.llmCache.enabled").isBoolean())
+                .andExpect(jsonPath("$.llmCache.hitRate").isNumber())
+                .andExpect(jsonPath("$.memoryWriteGate.secondaryDuplicateGateEnabled").isBoolean())
+                .andExpect(jsonPath("$.memoryWriteGate.secondaryDuplicateInterceptRate").isNumber());
     }
 
     @Test

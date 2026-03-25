@@ -3,8 +3,10 @@ package com.zhongbo.mindos.assistant.llm;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.zhongbo.mindos.assistant.common.LlmCacheMetricsReader;
 import com.zhongbo.mindos.assistant.common.LlmClient;
 import com.zhongbo.mindos.assistant.common.dto.LlmCallMetricDto;
+import com.zhongbo.mindos.assistant.common.dto.LlmCacheMetricsDto;
 import com.zhongbo.mindos.assistant.common.dsl.SkillDSL;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -16,9 +18,10 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 
 @Component
-public class ApiKeyLlmClient implements LlmClient {
+public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
 
     private static final Map<String, String> PROVIDER_ALIASES = Map.ofEntries(
             Map.entry("qwen", "qwen"),
@@ -64,6 +67,8 @@ public class ApiKeyLlmClient implements LlmClient {
     private final long responseCacheTtlMillis;
     private final int responseCacheMaxEntries;
     private final ConcurrentHashMap<String, CachedResponse> responseCache = new ConcurrentHashMap<>();
+    private final AtomicLong cacheHitCount = new AtomicLong();
+    private final AtomicLong cacheMissCount = new AtomicLong();
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public ApiKeyLlmClient(@Value("${mindos.llm.provider:openai}") String provider,
@@ -193,6 +198,23 @@ public class ApiKeyLlmClient implements LlmClient {
         }
 
         return null;
+    }
+
+    @Override
+    public LlmCacheMetricsDto snapshotCacheMetrics() {
+        long hits = cacheHitCount.get();
+        long misses = cacheMissCount.get();
+        long total = hits + misses;
+        double hitRate = total == 0 ? 0.0 : (double) hits / total;
+        return new LlmCacheMetricsDto(
+                responseCacheEnabled,
+                hits,
+                misses,
+                hitRate,
+                responseCache.size(),
+                Math.max(1L, responseCacheTtlMillis / 1_000L),
+                responseCacheMaxEntries
+        );
     }
 
     private String callProvider(String providerName,
@@ -455,12 +477,15 @@ public class ApiKeyLlmClient implements LlmClient {
         }
         CachedResponse cached = responseCache.get(cacheKey);
         if (cached == null) {
+            cacheMissCount.incrementAndGet();
             return null;
         }
         if ((System.currentTimeMillis() - cached.createdAtEpochMillis()) > responseCacheTtlMillis) {
             responseCache.remove(cacheKey, cached);
+            cacheMissCount.incrementAndGet();
             return null;
         }
+        cacheHitCount.incrementAndGet();
         return cached.output();
     }
 

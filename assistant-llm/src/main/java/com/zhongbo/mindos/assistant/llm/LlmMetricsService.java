@@ -77,6 +77,8 @@ public class LlmMetricsService implements LlmMetricsReader {
                 totalTokens,
                 byProvider,
                 recentCalls,
+                null,
+                null,
                 null
         );
     }

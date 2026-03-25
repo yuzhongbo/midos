@@ -11,7 +11,9 @@ public record LlmMetricsResponseDto(
         long totalEstimatedTokens,
         List<LlmProviderAggregateDto> byProvider,
         List<LlmCallMetricDto> recentCalls,
-        SecurityAuditWriteMetricsDto securityAudit
+        SecurityAuditWriteMetricsDto securityAudit,
+        LlmCacheMetricsDto llmCache,
+        MemoryWriteGateMetricsDto memoryWriteGate
 ) {
 }
 

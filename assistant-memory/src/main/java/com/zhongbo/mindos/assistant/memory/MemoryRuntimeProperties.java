@@ -99,8 +99,7 @@ public class MemoryRuntimeProperties {
     public static class WriteGate {
         private boolean enabled = false;
         private int minLength = 10;
-        private boolean semanticDuplicateEnabled = false;
-        private double semanticDuplicateThreshold = 0.82;
+        private final SemanticDuplicate semanticDuplicate = new SemanticDuplicate();
         private Map<String, Integer> minLengthByBucket = new LinkedHashMap<>();
 
         public boolean isEnabled() {
@@ -128,30 +127,54 @@ public class MemoryRuntimeProperties {
         }
 
         public boolean isSemanticDuplicateEnabled() {
-            return semanticDuplicateEnabled;
+            return semanticDuplicate.isEnabled();
         }
 
         public void setSemanticDuplicateEnabled(boolean semanticDuplicateEnabled) {
-            this.semanticDuplicateEnabled = semanticDuplicateEnabled;
+            semanticDuplicate.setEnabled(semanticDuplicateEnabled);
         }
 
         public double getSemanticDuplicateThreshold() {
-            return semanticDuplicateThreshold;
+            return semanticDuplicate.getThreshold();
         }
 
         public void setSemanticDuplicateThreshold(double semanticDuplicateThreshold) {
-            if (!Double.isFinite(semanticDuplicateThreshold)) {
-                this.semanticDuplicateThreshold = 0.82;
-                return;
+            semanticDuplicate.setThreshold(semanticDuplicateThreshold);
+        }
+
+        public SemanticDuplicate getSemanticDuplicate() {
+            return semanticDuplicate;
+        }
+
+        public static class SemanticDuplicate {
+            private boolean enabled = false;
+            private double threshold = 0.82;
+
+            public boolean isEnabled() {
+                return enabled;
             }
-            this.semanticDuplicateThreshold = Math.max(0.0, Math.min(1.0, semanticDuplicateThreshold));
+
+            public void setEnabled(boolean enabled) {
+                this.enabled = enabled;
+            }
+
+            public double getThreshold() {
+                return threshold;
+            }
+
+            public void setThreshold(double threshold) {
+                if (!Double.isFinite(threshold)) {
+                    this.threshold = 0.82;
+                    return;
+                }
+                this.threshold = Math.max(0.0, Math.min(1.0, threshold));
+            }
         }
     }
 
     public static class Search {
         private double decayHalfLifeHours = 72.0;
-        private int coarseMinCandidates = 128;
-        private int coarseMultiplier = 8;
+        private final Coarse coarse = new Coarse();
         private final CrossBucket crossBucket = new CrossBucket();
 
         public double getDecayHalfLifeHours() {
@@ -163,19 +186,23 @@ public class MemoryRuntimeProperties {
         }
 
         public int getCoarseMinCandidates() {
-            return coarseMinCandidates;
+            return coarse.getMinCandidates();
         }
 
         public void setCoarseMinCandidates(int coarseMinCandidates) {
-            this.coarseMinCandidates = coarseMinCandidates > 0 ? coarseMinCandidates : 128;
+            coarse.setMinCandidates(coarseMinCandidates);
         }
 
         public int getCoarseMultiplier() {
-            return coarseMultiplier;
+            return coarse.getMultiplier();
         }
 
         public void setCoarseMultiplier(int coarseMultiplier) {
-            this.coarseMultiplier = coarseMultiplier > 0 ? coarseMultiplier : 8;
+            coarse.setMultiplier(coarseMultiplier);
+        }
+
+        public Coarse getCoarse() {
+            return coarse;
         }
 
         public CrossBucket getCrossBucket() {
@@ -220,6 +247,27 @@ public class MemoryRuntimeProperties {
                     return;
                 }
                 this.ratio = Math.max(0.0, Math.min(1.0, ratio));
+            }
+        }
+
+        public static class Coarse {
+            private int minCandidates = 128;
+            private int multiplier = 8;
+
+            public int getMinCandidates() {
+                return minCandidates;
+            }
+
+            public void setMinCandidates(int minCandidates) {
+                this.minCandidates = minCandidates > 0 ? minCandidates : 128;
+            }
+
+            public int getMultiplier() {
+                return multiplier;
+            }
+
+            public void setMultiplier(int multiplier) {
+                this.multiplier = multiplier > 0 ? multiplier : 8;
             }
         }
     }
