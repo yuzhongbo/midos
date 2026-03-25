@@ -120,8 +120,7 @@ public class MemoryRuntimeProperties {
 
     public static class Search {
         private double decayHalfLifeHours = 72.0;
-        private int crossBucketMax = 2;
-        private double crossBucketRatio = 0.5;
+        private final CrossBucket crossBucket = new CrossBucket();
 
         public double getDecayHalfLifeHours() {
             return decayHalfLifeHours;
@@ -131,24 +130,49 @@ public class MemoryRuntimeProperties {
             this.decayHalfLifeHours = Double.isFinite(decayHalfLifeHours) && decayHalfLifeHours > 0 ? decayHalfLifeHours : 72.0;
         }
 
+        public CrossBucket getCrossBucket() {
+            return crossBucket;
+        }
+
         public int getCrossBucketMax() {
-            return crossBucketMax;
+            return crossBucket.getMax();
         }
 
         public void setCrossBucketMax(int crossBucketMax) {
-            this.crossBucketMax = crossBucketMax > 0 ? crossBucketMax : 2;
+            crossBucket.setMax(crossBucketMax);
         }
 
         public double getCrossBucketRatio() {
-            return crossBucketRatio;
+            return crossBucket.getRatio();
         }
 
         public void setCrossBucketRatio(double crossBucketRatio) {
-            if (!Double.isFinite(crossBucketRatio)) {
-                this.crossBucketRatio = 0.5;
-                return;
+            crossBucket.setRatio(crossBucketRatio);
+        }
+
+        public static class CrossBucket {
+            private int max = 2;
+            private double ratio = 0.5;
+
+            public int getMax() {
+                return max;
             }
-            this.crossBucketRatio = Math.max(0.0, Math.min(1.0, crossBucketRatio));
+
+            public void setMax(int max) {
+                this.max = max > 0 ? max : 2;
+            }
+
+            public double getRatio() {
+                return ratio;
+            }
+
+            public void setRatio(double ratio) {
+                if (!Double.isFinite(ratio)) {
+                    this.ratio = 0.5;
+                    return;
+                }
+                this.ratio = Math.max(0.0, Math.min(1.0, ratio));
+            }
         }
     }
 }

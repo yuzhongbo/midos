@@ -334,6 +334,7 @@ curl -X POST http://localhost:8080/api/skills/load-mcp \
   - search recency decay half-life hours: `mindos.memory.search.decay-half-life-hours` (default `72`)
   - explicit preferred-bucket search cross-bucket fallback cap: `mindos.memory.search.cross-bucket.max` (default `2`)
   - explicit preferred-bucket search cross-bucket fallback ratio: `mindos.memory.search.cross-bucket.ratio` (default `0.5`, range `0..1`)
+  - precedence for `mindos.memory.*`: system properties (`-D`) > `application.properties` > built-in defaults.
   - when enabled, low-signal short semantic entries are skipped; retrieval prefers same inferred topic bucket and keeps bounded cross-bucket fallback when preferred bucket is explicit.
 - Memory sync performance regression test knobs (test-only JVM properties):
   - `mindos.memory.sync.perf-baseline-ms` (default `4000`)
