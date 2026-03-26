@@ -160,6 +160,9 @@ class ApiKeyLlmClientTest {
         assertEquals(1, readCacheSize(client));
         assertEquals(0.5, client.snapshotCacheMetrics().hitRate());
         assertEquals(1, client.snapshotCacheMetrics().hitCount());
+        assertEquals(0.5, client.snapshotWindowCacheHitRate(60));
+        assertEquals(1, client.snapshotWindowCacheMetrics(60).hits());
+        assertEquals(1, client.snapshotWindowCacheMetrics(60).misses());
     }
 
     @Test

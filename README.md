@@ -240,6 +240,10 @@ curl -X POST http://localhost:8080/api/skills/load-mcp \
   - summary also includes:
     - `llmCache`: short TTL response cache status and effectiveness (`enabled`, `hitCount`, `missCount`, `hitRate`, `entryCount`, `ttlSeconds`, `maxEntries`)
     - `memoryWriteGate`: secondary semantic-duplicate write gate effectiveness (`secondaryDuplicateGateEnabled`, `secondaryDuplicateChecks`, `secondaryDuplicateIntercepted`, `secondaryDuplicateInterceptRate`)
+    - `llmCacheWindowHitRate`: cache hit rate within current `windowMinutes` only (better for release-over-release online effectiveness tracking)
+    - `llmCacheWindowHits` / `llmCacheWindowMisses`: sample size of cache decisions inside current window, used together with `llmCacheWindowHitRate` to avoid small-sample misread.
+    - `llmCacheWindowLowSample`: true when window sample size (`hits + misses`) is below threshold.
+  - low-sample threshold config: `mindos.llm.metrics.cache.window-low-sample-threshold` (default `20`)
 - Long-task orchestration API (multi-day / multi-worker):
   - create: `POST /api/tasks/{userId}` with `{title, objective, steps[], dueAt?, nextCheckAt?}`
   - list/query: `GET /api/tasks/{userId}?status=PENDING|RUNNING|BLOCKED|COMPLETED|CANCELLED`, `GET /api/tasks/{userId}/{taskId}`

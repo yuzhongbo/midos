@@ -13,7 +13,11 @@ public record LlmMetricsResponseDto(
         List<LlmCallMetricDto> recentCalls,
         SecurityAuditWriteMetricsDto securityAudit,
         LlmCacheMetricsDto llmCache,
-        MemoryWriteGateMetricsDto memoryWriteGate
+        MemoryWriteGateMetricsDto memoryWriteGate,
+        double llmCacheWindowHitRate,
+        long llmCacheWindowHits,
+        long llmCacheWindowMisses,
+        boolean llmCacheWindowLowSample
 ) {
 }
 

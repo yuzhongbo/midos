@@ -47,7 +47,12 @@ class LlmMetricsControllerTest {
                 .andExpect(jsonPath("$.llmCache.enabled").isBoolean())
                 .andExpect(jsonPath("$.llmCache.hitRate").isNumber())
                 .andExpect(jsonPath("$.memoryWriteGate.secondaryDuplicateGateEnabled").isBoolean())
-                .andExpect(jsonPath("$.memoryWriteGate.secondaryDuplicateInterceptRate").isNumber());
+                .andExpect(jsonPath("$.memoryWriteGate.secondaryDuplicateInterceptRate").isNumber())
+                .andExpect(jsonPath("$.llmCacheWindowHitRate").isNumber())
+                .andExpect(jsonPath("$.llmCacheWindowHits").isNumber())
+                .andExpect(jsonPath("$.llmCacheWindowMisses").isNumber())
+                .andExpect(jsonPath("$.llmCacheWindowLowSample").isBoolean())
+                .andExpect(jsonPath("$.llmCacheWindowLowSample").value(true));
     }
 
     @Test

@@ -79,7 +79,11 @@ public class LlmMetricsService implements LlmMetricsReader {
                 recentCalls,
                 null,
                 null,
-                null
+                null,
+                0.0,
+                0L,
+                0L,
+                true
         );
     }
 

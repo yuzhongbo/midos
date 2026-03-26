@@ -7,12 +7,15 @@ import com.zhongbo.mindos.assistant.common.LlmCacheMetricsReader;
 import com.zhongbo.mindos.assistant.common.LlmClient;
 import com.zhongbo.mindos.assistant.common.dto.LlmCallMetricDto;
 import com.zhongbo.mindos.assistant.common.dto.LlmCacheMetricsDto;
+import com.zhongbo.mindos.assistant.common.dto.LlmCacheWindowMetricsDto;
 import com.zhongbo.mindos.assistant.common.dsl.SkillDSL;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.ArrayDeque;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -69,6 +72,9 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
     private final ConcurrentHashMap<String, CachedResponse> responseCache = new ConcurrentHashMap<>();
     private final AtomicLong cacheHitCount = new AtomicLong();
     private final AtomicLong cacheMissCount = new AtomicLong();
+    private final Object cacheAccessWindowLock = new Object();
+    private final ArrayDeque<CacheAccessEvent> cacheAccessEvents = new ArrayDeque<>();
+    private static final int MAX_CACHE_ACCESS_EVENTS = 10_000;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public ApiKeyLlmClient(@Value("${mindos.llm.provider:openai}") String provider,
@@ -215,6 +221,34 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
                 Math.max(1L, responseCacheTtlMillis / 1_000L),
                 responseCacheMaxEntries
         );
+    }
+
+    @Override
+    public double snapshotWindowCacheHitRate(int windowMinutes) {
+        return snapshotWindowCacheMetrics(windowMinutes).hitRate();
+    }
+
+    @Override
+    public LlmCacheWindowMetricsDto snapshotWindowCacheMetrics(int windowMinutes) {
+        int effectiveWindowMinutes = Math.max(1, windowMinutes);
+        long cutoffEpochMillis = System.currentTimeMillis() - (effectiveWindowMinutes * 60_000L);
+        long windowHits = 0L;
+        long windowMisses = 0L;
+        synchronized (cacheAccessWindowLock) {
+            while (!cacheAccessEvents.isEmpty() && cacheAccessEvents.peekFirst().epochMillis() < cutoffEpochMillis) {
+                cacheAccessEvents.pollFirst();
+            }
+            for (CacheAccessEvent event : cacheAccessEvents) {
+                if (event.hit()) {
+                    windowHits++;
+                } else {
+                    windowMisses++;
+                }
+            }
+        }
+        long total = windowHits + windowMisses;
+        double hitRate = total == 0 ? 0.0 : (double) windowHits / total;
+        return new LlmCacheWindowMetricsDto(windowHits, windowMisses, hitRate);
     }
 
     private String callProvider(String providerName,
@@ -478,14 +512,17 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
         CachedResponse cached = responseCache.get(cacheKey);
         if (cached == null) {
             cacheMissCount.incrementAndGet();
+            recordCacheAccess(false);
             return null;
         }
         if ((System.currentTimeMillis() - cached.createdAtEpochMillis()) > responseCacheTtlMillis) {
             responseCache.remove(cacheKey, cached);
             cacheMissCount.incrementAndGet();
+            recordCacheAccess(false);
             return null;
         }
         cacheHitCount.incrementAndGet();
+        recordCacheAccess(true);
         return cached.output();
     }
 
@@ -511,7 +548,7 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
             return;
         }
         List<Map.Entry<String, CachedResponse>> snapshot = new ArrayList<>(responseCache.entrySet());
-        snapshot.sort(Map.Entry.comparingByValue((a, b) -> Long.compare(a.createdAtEpochMillis(), b.createdAtEpochMillis())));
+        snapshot.sort(Comparator.comparingLong(entry -> entry.getValue().createdAtEpochMillis()));
         int overflow = responseCache.size() - responseCacheMaxEntries;
         for (int i = 0; i < overflow && i < snapshot.size(); i++) {
             Map.Entry<String, CachedResponse> candidate = snapshot.get(i);
@@ -520,5 +557,17 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
     }
 
     private record CachedResponse(String output, long createdAtEpochMillis) {
+    }
+
+    private void recordCacheAccess(boolean hit) {
+        synchronized (cacheAccessWindowLock) {
+            cacheAccessEvents.addLast(new CacheAccessEvent(System.currentTimeMillis(), hit));
+            while (cacheAccessEvents.size() > MAX_CACHE_ACCESS_EVENTS) {
+                cacheAccessEvents.pollFirst();
+            }
+        }
+    }
+
+    private record CacheAccessEvent(long epochMillis, boolean hit) {
     }
 }
