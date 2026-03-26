@@ -76,6 +76,27 @@ class DispatcherServiceTest {
     }
 
     @Test
+    void shouldKeepGenericFallbackShortlistWhenNoSkillScoresPositive() {
+        MemoryManager memoryManager = createMemoryManager();
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of(
+                "{\"skill\":\"echo\",\"input\":{\"text\":\"auto-routed by llm-dsl\"}}"
+        ));
+        DispatcherService service = createDispatcher(memoryManager, llmClient, List.of(
+                new FixedSkill("echo", "Echo text for generic confirmation requests", "auto-routed by llm-dsl"),
+                new FixedSkill("eq.coach", "Coach emotional communication conflicts", "沟通建议"),
+                new FixedSkill("time", "Return current time", "12:00")
+        ), 2);
+
+        DispatchResult result = service.dispatch("generic-route-user", "请帮我自动处理这个请求");
+
+        assertEquals("echo", result.channel());
+        assertEquals(1, llmClient.routingCallCount());
+        assertFalse(llmClient.routingPrompts().isEmpty());
+        assertTrue(llmClient.routingPrompts().get(0).contains("echo - Echo text for generic confirmation requests"));
+        assertEquals("llm-dsl", result.executionTrace().routing().route());
+    }
+
+    @Test
     void shouldStoreRememberCommandFromChinesePrefixIntoTaskBucket() {
         MemoryManager memoryManager = createMemoryManager();
         RecordingLlmClient llmClient = new RecordingLlmClient(List.of("已记住"));

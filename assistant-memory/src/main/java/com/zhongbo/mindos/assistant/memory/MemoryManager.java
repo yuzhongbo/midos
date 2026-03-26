@@ -275,12 +275,17 @@ public class MemoryManager {
             return;
         }
         List<ConversationTurn> hotConversation = episodicMemoryService.getConversation(userId);
-        if (hotConversation.size() <= conversationRollupThresholdTurns) {
+        if (hotConversation.size() <= conversationRollupKeepRecentTurns) {
+            return;
+        }
+        boolean alreadyRolledUp = hasConversationRollup(userId);
+        if (!alreadyRolledUp && hotConversation.size() <= conversationRollupThresholdTurns) {
             return;
         }
         int keepRecent = Math.min(Math.max(1, conversationRollupKeepRecentTurns), hotConversation.size() - 1);
         int splitIndex = Math.max(0, hotConversation.size() - keepRecent);
-        if (splitIndex < conversationRollupMinRollupTurns) {
+        int requiredRollupTurns = alreadyRolledUp ? 1 : conversationRollupMinRollupTurns;
+        if (splitIndex < requiredRollupTurns) {
             return;
         }
         List<ConversationTurn> toRollup = hotConversation.subList(0, splitIndex);
@@ -311,6 +316,10 @@ public class MemoryManager {
                 List.of((double) source.length(), Math.abs(source.hashCode() % 1000) / 1000.0),
                 "conversation-rollup");
         episodicMemoryService.replaceConversation(userId, hotConversation.subList(splitIndex, hotConversation.size()));
+    }
+
+    private boolean hasConversationRollup(String userId) {
+        return !semanticMemoryService.search(userId, "", 1, "conversation-rollup").isEmpty();
     }
 
 }

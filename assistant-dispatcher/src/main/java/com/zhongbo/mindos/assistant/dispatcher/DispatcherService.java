@@ -1176,18 +1176,19 @@ public class DispatcherService implements ContextCompressionMetricsReader {
         int habitsBudget = Math.max(80, memoryContextMaxChars - historyBudget - knowledgeBudget);
 
         String rawConversationContext = buildRawConversationContext(recentConversation);
+        String compressedConversationContext = buildConversationContext(userId, recentConversation, conversationRollups);
         String rawKnowledgeContext = buildKnowledgeContext(knowledge);
         String rawHabitContext = buildHabitContext(usageStats);
 
         StringBuilder builder = new StringBuilder();
-        appendContextSection(builder, "Recent conversation", buildConversationContext(userId, recentConversation, conversationRollups), historyBudget);
+        appendContextSection(builder, "Recent conversation", compressedConversationContext, historyBudget);
         appendContextSection(builder, "Relevant knowledge", rawKnowledgeContext, knowledgeBudget);
         appendContextSection(builder, "User skill habits", rawHabitContext, habitsBudget);
         String finalContext = capText(builder.toString(), memoryContextMaxChars);
         recordContextCompressionMetrics(
-                rawConversationContext.length() + rawKnowledgeContext.length() + rawHabitContext.length(),
-                finalContext.length(),
-                recentConversation.size() > memoryContextKeepRecentTurns,
+                rawConversationContext.length(),
+                compressedConversationContext.length(),
+                compressedConversationContext.length() < rawConversationContext.length() || !conversationRollups.isEmpty(),
                 Math.max(0, recentConversation.size() - memoryContextKeepRecentTurns)
         );
         return finalContext;
@@ -1497,7 +1498,7 @@ public class DispatcherService implements ContextCompressionMetricsReader {
         Optional<String> preferredFromStats = preferredSkillFromStats(userId);
         Optional<String> preferredFromHistory = preferredSkillFromHistory(memoryManager.getSkillUsageHistory(userId));
 
-        return summaries.stream()
+        List<SkillRoutingCandidate> rankedCandidates = summaries.stream()
                 .map(summary -> new SkillRoutingCandidate(summary, skillRoutingScore(
                         summary,
                         normalize(userInput),
@@ -1505,11 +1506,23 @@ public class DispatcherService implements ContextCompressionMetricsReader {
                         memoryBucket,
                         preferredFromStats,
                         preferredFromHistory)))
-                .filter(candidate -> candidate.score() > 0)
                 .sorted(Comparator.comparingInt(SkillRoutingCandidate::score).reversed()
                         .thenComparing(SkillRoutingCandidate::summary))
+                .toList();
+
+        List<String> shortlisted = rankedCandidates.stream()
+                .filter(candidate -> candidate.score() > 0)
                 .limit(llmRoutingShortlistMaxSkills)
                 .map(SkillRoutingCandidate::summary)
+                .toList();
+        if (shortlisted.isEmpty()) {
+            shortlisted = rankedCandidates.stream()
+                    .limit(llmRoutingShortlistMaxSkills)
+                    .map(SkillRoutingCandidate::summary)
+                    .toList();
+        }
+
+        return shortlisted.stream()
                 .reduce((left, right) -> left + ", " + right)
                 .orElse("");
     }
