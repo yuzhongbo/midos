@@ -48,6 +48,7 @@ This repository is a lightweight, single-user personal AI assistant backend. Opt
 - `assistant-skill/src/main/java/com/zhongbo/mindos/assistant/skill/SkillEngine.java`: skill execution + procedural logging.
 - `assistant-memory/src/main/java/com/zhongbo/mindos/assistant/memory/`: in-memory stores plus optional JDBC-backed central memory repository selection (`CentralMemoryRepositoryConfig`).
 - `assistant-api/src/main/resources/application.properties`: app and LLM settings.
+- `assistant-api/src/main/resources/application-solo.properties`: single-user experience profile overrides (cache/context/rollup/metrics token requirement).
 - `assistant-sdk/src/main/java/com/zhongbo/mindos/assistant/sdk/AssistantSdkClient.java`: client-side HTTP SDK skeleton.
 - `mindos-cli/src/main/java/com/zhongbo/mindos/assistant/cli/MindosCliApplication.java`: CLI entrypoint.
 - `mindos-cli` also exposes `profile persona show` for inspecting the server-side learned persona profile.
@@ -56,6 +57,8 @@ This repository is a lightweight, single-user personal AI assistant backend. Opt
 ## Developer workflows
 - Run all tests: `./mvnw -q test`
 - Run API locally: `./mvnw -pl assistant-api -am spring-boot:run`
+- Run API locally in solo profile: `./mvnw -pl assistant-api -am spring-boot:run -Dspring-boot.run.profiles=solo`
+- Solo helper scripts: `./run-mindos-solo.sh`, `./solo-cli.sh`, `./solo-smoke.sh`, `./solo-stop.sh` (CLI semantics unchanged; wrappers only set defaults/check health)
 - Build all modules: `./mvnw clean package`
 - Fast SDK/CLI validation: `./mvnw -q -pl assistant-sdk,mindos-cli -am test`
 - Fast memory sync API validation: `./mvnw -q -pl assistant-api -am test -Dtest=MemorySyncControllerTest`
@@ -63,6 +66,7 @@ This repository is a lightweight, single-user personal AI assistant backend. Opt
 - Fast skill management API validation: `./mvnw -q -pl assistant-api -am test -Dtest=SkillControllerTest`
 - Fast security audit API validation: `./mvnw -q -pl assistant-api -am test -Dtest=SecurityAuditApiTest`
 - Fast IM webhook validation: `./mvnw -q -pl assistant-api -am test -Dtest=im.ImWebhookControllerTest`
+- Fast solo profile smoke validation: `./mvnw -q -pl assistant-api -am test -Dtest=SoloProfileSmokeTest`
 
 ## Project conventions
 - Keep package root under `com.zhongbo.mindos.assistant...`.

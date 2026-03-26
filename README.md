@@ -23,6 +23,63 @@ MindOS is a lightweight, single-user personal AI assistant backend built with Ja
 ./mvnw -pl assistant-api -am spring-boot:run
 ```
 
+## Solo experience mode
+
+Use the built-in `solo` Spring profile when you are the only user and want better day-to-day experience without changing CLI command behavior.
+
+```bash
+./mvnw -pl assistant-api -am spring-boot:run -Dspring-boot.run.profiles=solo
+```
+
+Or use the one-click launcher:
+
+```bash
+chmod +x ./run-mindos-solo.sh
+./run-mindos-solo.sh
+```
+
+Reusable solo helper scripts:
+
+```bash
+chmod +x ./solo-cli.sh ./solo-smoke.sh ./solo-stop.sh
+./solo-cli.sh --help
+./solo-smoke.sh --help
+./solo-stop.sh --help
+```
+
+- `solo-cli.sh`: starts `mindos-cli` with default `--server`/`--user` only (no command semantics change)
+- `solo-smoke.sh`: lightweight local checks for `/chat` echo route and `/api/metrics/llm`
+- `solo-stop.sh`: stops local service by port and/or process-name pattern
+
+`solo` profile highlights:
+- enables short-TTL LLM cache for repeated prompts
+- keeps richer prompt context and slightly longer replies
+- delays conversation rollup so recent dialogue stays hot longer
+- disables admin token requirement for `GET /api/metrics/llm` on local single-user setups
+
+CLI command mode remains unchanged. You can keep using the current interaction style and slash commands.
+
+### Solo daily commands (CLI mode unchanged)
+
+```bash
+./solo-cli.sh
+```
+
+Optional overrides:
+
+```bash
+MINDOS_SERVER=http://localhost:8080 MINDOS_USER=local-user ./solo-cli.sh --show-routing-details
+MINDOS_SERVER=http://localhost:8080 ./solo-smoke.sh
+./solo-stop.sh --port 8080
+```
+
+In chat window:
+- `我有哪些技能`
+- `查看我的记忆风格`
+- `按我的风格压缩这段记忆：明天先拆任务再推进联调`
+- `创建任务：整理接口清单，截止周五`
+- `打开排障模式`
+
 ## CLI quick try
 
 ### 新手快速上手（3 分钟，自然语言，推荐）
