@@ -1,11 +1,16 @@
 package com.zhongbo.mindos.assistant.dispatcher;
 
+import com.zhongbo.mindos.assistant.common.ContextCompressionMetricsReader;
 import com.zhongbo.mindos.assistant.common.LlmClient;
 import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.common.SkillDsl;
 import com.zhongbo.mindos.assistant.common.SkillResult;
+import com.zhongbo.mindos.assistant.common.dto.ContextCompressionMetricsDto;
 import com.zhongbo.mindos.assistant.common.dto.ExecutionTraceDto;
+import com.zhongbo.mindos.assistant.common.dto.RoutingDecisionDto;
 import com.zhongbo.mindos.assistant.memory.MemoryManager;
+import com.zhongbo.mindos.assistant.memory.model.MemoryCompressionPlan;
+import com.zhongbo.mindos.assistant.memory.model.MemoryStyleProfile;
 import com.zhongbo.mindos.assistant.memory.model.ConversationTurn;
 import com.zhongbo.mindos.assistant.memory.model.ProceduralMemoryEntry;
 import com.zhongbo.mindos.assistant.memory.model.SemanticMemoryEntry;
@@ -20,17 +25,20 @@ import java.util.Arrays;
 import java.util.concurrent.CompletableFuture;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.concurrent.atomic.AtomicLong;
 
 @Service
-public class DispatcherService {
+public class DispatcherService implements ContextCompressionMetricsReader {
 
     private static final Logger LOGGER = Logger.getLogger(DispatcherService.class.getName());
 
@@ -62,6 +70,17 @@ public class DispatcherService {
     private static final Pattern RESOURCE_PATTERN = Pattern.compile("(?:资源偏好|资源|教材偏好)\\s*[:：]?\\s*([^，。；;\\n]+)");
     private static final Pattern FILE_PATH_PATTERN = Pattern.compile("(?:路径|path|目录)\\s*[:：]?\\s*([^，。；;\\n]+)", Pattern.CASE_INSENSITIVE);
     private static final Pattern TODO_DUE_DATE_PATTERN = Pattern.compile("(?:截止|due|到期|deadline)\\s*(?:时间|日期|date)?\\s*[:：]?\\s*([^，。；;\\n]+)", Pattern.CASE_INSENSITIVE);
+    private static final Pattern ROUTING_TOKEN_SPLIT_PATTERN = Pattern.compile("[^\\p{L}\\p{N}.#_-]+");
+    private static final Pattern EXPLICIT_MEMORY_STORE_PATTERN = Pattern.compile(
+            "^(?:remember\\s*[:：]?|please remember\\s*[:：]?|请记住\\s*[:：]?|帮我记住\\s*[:：]?|记住\\s*[:：]?|记一下\\s*[:：]?)(.+)$",
+            Pattern.CASE_INSENSITIVE);
+    private static final Pattern EXPLICIT_MEMORY_BUCKET_PATTERN = Pattern.compile(
+            "^(task|learning|eq|coding|general|任务|学习|情商|沟通|代码|编程|通用)\\s*[:：]\\s*(.+)$",
+            Pattern.CASE_INSENSITIVE);
+    private static final Set<String> SMALL_TALK_INPUTS = Set.of(
+            "hi", "hello", "hey", "thanks", "thank you", "ok", "okay", "got it", "roger",
+            "你好", "您好", "嗨", "谢谢", "多谢", "收到", "好的", "好", "嗯", "嗯嗯", "晚安", "早上好"
+    );
 
     private final SkillEngine skillEngine;
     private final SkillDslParser skillDslParser;
@@ -89,6 +108,15 @@ public class DispatcherService {
     private final boolean promptInjectionGuardEnabled;
     private final List<String> promptInjectionRiskTerms;
     private final String promptInjectionSafeReply;
+    private final int llmRoutingShortlistMaxSkills;
+    private final boolean llmRoutingConversationalBypassEnabled;
+    private final int memoryContextKeepRecentTurns;
+    private final int memoryContextHistorySummaryMinTurns;
+    private final AtomicLong contextCompressionRequestCount = new AtomicLong();
+    private final AtomicLong contextCompressionAppliedCount = new AtomicLong();
+    private final AtomicLong contextCompressionInputChars = new AtomicLong();
+    private final AtomicLong contextCompressionOutputChars = new AtomicLong();
+    private final AtomicLong contextCompressionSummarizedTurns = new AtomicLong();
 
     public DispatcherService(SkillEngine skillEngine,
                              SkillDslParser skillDslParser,
@@ -115,7 +143,11 @@ public class DispatcherService {
                              @Value("${mindos.dispatcher.skill.guard.cooldown-seconds:180}") long skillGuardCooldownSeconds,
                              @Value("${mindos.dispatcher.prompt-injection.guard.enabled:true}") boolean promptInjectionGuardEnabled,
                              @Value("${mindos.dispatcher.prompt-injection.guard.risk-terms:ignore previous instructions,ignore all previous instructions,reveal api key,show system prompt,忽略之前的指令,忽略系统指令,泄露api key,显示系统提示词}") String promptInjectionRiskTerms,
-                             @Value("${mindos.dispatcher.prompt-injection.guard.safe-reply:检测到高风险诱导指令，已拒绝执行敏感操作。请改为明确、安全、可审计的请求。}") String promptInjectionSafeReply) {
+                              @Value("${mindos.dispatcher.prompt-injection.guard.safe-reply:检测到高风险诱导指令，已拒绝执行敏感操作。请改为明确、安全、可审计的请求。}") String promptInjectionSafeReply,
+                              @Value("${mindos.dispatcher.skill-routing.llm-shortlist-max-skills:8}") int llmRoutingShortlistMaxSkills,
+                              @Value("${mindos.dispatcher.skill-routing.conversational-bypass.enabled:true}") boolean llmRoutingConversationalBypassEnabled,
+                              @Value("${mindos.dispatcher.memory-context.keep-recent-turns:2}") int memoryContextKeepRecentTurns,
+                              @Value("${mindos.dispatcher.memory-context.history-summary-min-turns:4}") int memoryContextHistorySummaryMinTurns) {
         this.skillEngine = skillEngine;
         this.skillDslParser = skillDslParser;
         this.metaOrchestratorService = metaOrchestratorService;
@@ -144,6 +176,10 @@ public class DispatcherService {
         this.promptInjectionSafeReply = promptInjectionSafeReply == null || promptInjectionSafeReply.isBlank()
                 ? "检测到高风险诱导指令，已拒绝执行敏感操作。请改为明确、安全、可审计的请求。"
                 : promptInjectionSafeReply;
+        this.llmRoutingShortlistMaxSkills = Math.max(1, llmRoutingShortlistMaxSkills);
+        this.llmRoutingConversationalBypassEnabled = llmRoutingConversationalBypassEnabled;
+        this.memoryContextKeepRecentTurns = Math.max(1, memoryContextKeepRecentTurns);
+        this.memoryContextHistorySummaryMinTurns = Math.max(2, memoryContextHistorySummaryMinTurns);
     }
 
     public DispatchResult dispatch(String userId, String userInput) {
@@ -161,6 +197,7 @@ public class DispatcherService {
     public CompletableFuture<DispatchResult> dispatchAsync(String userId, String userInput, Map<String, Object> profileContext) {
         Instant startTime = Instant.now();
         LOGGER.info("Dispatcher input: userId=" + userId + ", input=" + clip(userInput));
+        java.util.concurrent.atomic.AtomicReference<RoutingDecisionDto> routingDecisionRef = new java.util.concurrent.atomic.AtomicReference<>();
 
         memoryManager.storeUserConversation(userId, userInput);
         maybeStoreSemanticMemory(userId, userInput);
@@ -168,7 +205,18 @@ public class DispatcherService {
         if (isPromptInjectionAttempt(userInput)) {
             LOGGER.warning("Dispatcher guard=prompt-injection, userId=" + userId + ", input=" + clip(userInput));
             memoryManager.storeAssistantConversation(userId, promptInjectionSafeReply);
-            return CompletableFuture.completedFuture(new DispatchResult(promptInjectionSafeReply, "security.guard"));
+            routingDecisionRef.set(new RoutingDecisionDto(
+                    "security.guard",
+                    "security.guard",
+                    1.0,
+                    List.of("prompt injection guard matched configured risky terms"),
+                    List.of()
+            ));
+            return CompletableFuture.completedFuture(new DispatchResult(
+                    promptInjectionSafeReply,
+                    "security.guard",
+                    new ExecutionTraceDto("single-pass", 0, null, List.of(), routingDecisionRef.get())
+            ));
         }
 
         Map<String, Object> resolvedProfileContext = personaCoreService.resolveProfileContext(
@@ -193,7 +241,7 @@ public class DispatcherService {
         }
 
         return metaOrchestratorService.orchestrate(
-                        () -> executeSinglePass(userId, userInput, context, memoryContext, llmContext),
+                        () -> executeSinglePass(userId, userInput, context, memoryContext, llmContext, routingDecisionRef),
                         () -> CompletableFuture.completedFuture(buildLlmFallbackResult(memoryContext, userInput, llmContext))
                 )
                 .thenApply(orchestration -> {
@@ -201,7 +249,7 @@ public class DispatcherService {
                     if ("llm".equals(result.skillName())) {
                         result = SkillResult.success("llm", capText(result.output(), llmReplyMaxChars));
                     }
-                    ExecutionTraceDto trace = orchestration.trace();
+                    ExecutionTraceDto trace = enrichTraceWithRouting(orchestration.trace(), routingDecisionRef.get());
                     memoryManager.storeAssistantConversation(userId, result.output());
                     personaCoreService.learnFromTurn(userId, resolvedProfileContext, result);
                     maybeStoreExecutionTraceMemory(userId, trace);
@@ -226,10 +274,14 @@ public class DispatcherService {
                                                              String userInput,
                                                              SkillContext context,
                                                              String memoryContext,
-                                                             Map<String, Object> llmContext) {
+                                                             Map<String, Object> llmContext,
+                                                             java.util.concurrent.atomic.AtomicReference<RoutingDecisionDto> routingDecisionRef) {
         return routeToSkillAsync(userId, userInput, context, memoryContext)
-                .thenApply(optionalResult -> optionalResult.orElseGet(() ->
-                        buildLlmFallbackResult(memoryContext, userInput, llmContext)));
+                .thenApply(routingOutcome -> {
+                    routingDecisionRef.set(routingOutcome.routingDecision());
+                    return routingOutcome.result().orElseGet(() ->
+                        buildLlmFallbackResult(memoryContext, userInput, llmContext));
+                });
     }
 
     private SkillResult buildLlmFallbackResult(String memoryContext,
@@ -255,82 +307,162 @@ public class DispatcherService {
         memoryManager.storeKnowledge(userId, summary, embedding, "meta");
     }
 
-    private CompletableFuture<Optional<SkillResult>> routeToSkillAsync(String userId,
-                                                                       String userInput,
-                                                                       SkillContext context,
-                                                                       String memoryContext) {
+    private CompletableFuture<RoutingOutcome> routeToSkillAsync(String userId,
+                                                                String userInput,
+                                                                SkillContext context,
+                                                                String memoryContext) {
+        List<String> rejectedReasons = new java.util.ArrayList<>();
         Optional<SkillDsl> explicitDsl = skillDslParser.parse(userInput);
         if (explicitDsl.isPresent()) {
             Optional<SkillResult> blocked = maybeBlockByCapability(explicitDsl.get().skill());
             if (blocked.isPresent()) {
-                return CompletableFuture.completedFuture(blocked);
+                return CompletableFuture.completedFuture(new RoutingOutcome(blocked, new RoutingDecisionDto(
+                        "security.guard",
+                        explicitDsl.get().skill(),
+                        1.0,
+                        List.of("explicit skill DSL requested but capability guard blocked execution"),
+                        List.copyOf(rejectedReasons)
+                )));
             }
             LOGGER.info("Dispatcher route=explicit-dsl, userId=" + userId + ", skill=" + explicitDsl.get().skill());
-            return explicitDsl.map(dsl -> skillEngine.executeDslAsync(dsl, context).thenApply(Optional::of))
-                    .orElseGet(() -> CompletableFuture.completedFuture(Optional.empty()));
+            return explicitDsl.map(dsl -> skillEngine.executeDslAsync(dsl, context)
+                            .thenApply(result -> new RoutingOutcome(Optional.of(result), new RoutingDecisionDto(
+                                    "explicit-dsl",
+                                    dsl.skill(),
+                                    1.0,
+                                    List.of("input parsed as explicit SkillDSL"),
+                                    List.copyOf(rejectedReasons)
+                            ))))
+                    .orElseGet(() -> CompletableFuture.completedFuture(new RoutingOutcome(Optional.empty(), fallbackRoutingDecision(rejectedReasons))));
         }
+        rejectedReasons.add("no explicit SkillDSL detected");
 
         Optional<SkillDsl> ruleDsl = detectSkillWithRules(userInput);
         if (ruleDsl.isPresent()) {
             Optional<SkillResult> blocked = maybeBlockByCapability(ruleDsl.get().skill());
             if (blocked.isPresent()) {
-                return CompletableFuture.completedFuture(blocked);
+                return CompletableFuture.completedFuture(new RoutingOutcome(blocked, new RoutingDecisionDto(
+                        "security.guard",
+                        ruleDsl.get().skill(),
+                        0.99,
+                        List.of("rule-based route matched but capability guard blocked execution"),
+                        List.copyOf(rejectedReasons)
+                )));
             }
             LOGGER.info("Dispatcher route=rule, userId=" + userId + ", skill=" + ruleDsl.get().skill());
-            return ruleDsl.map(dsl -> skillEngine.executeDslAsync(dsl, context).thenApply(Optional::of))
-                    .orElseGet(() -> CompletableFuture.completedFuture(Optional.empty()));
+            return ruleDsl.map(dsl -> skillEngine.executeDslAsync(dsl, context)
+                            .thenApply(result -> new RoutingOutcome(Optional.of(result), new RoutingDecisionDto(
+                                    "rule",
+                                    dsl.skill(),
+                                    0.98,
+                                    List.of("matched deterministic built-in routing rule"),
+                                    List.copyOf(rejectedReasons)
+                            ))))
+                    .orElseGet(() -> CompletableFuture.completedFuture(new RoutingOutcome(Optional.empty(), fallbackRoutingDecision(rejectedReasons))));
         }
+        rejectedReasons.add("no deterministic rule matched");
 
         Optional<SkillResult> metaReply = answerMetaQuestion(userInput);
         if (metaReply.isPresent()) {
             LOGGER.info("Dispatcher route=meta-help, userId=" + userId + ", channel=" + SKILL_HELP_CHANNEL);
-            return CompletableFuture.completedFuture(metaReply);
+            return CompletableFuture.completedFuture(new RoutingOutcome(metaReply, new RoutingDecisionDto(
+                    "meta-help",
+                    SKILL_HELP_CHANNEL,
+                    0.97,
+                    List.of("input matched a built-in meta help question"),
+                    List.copyOf(rejectedReasons)
+            )));
         }
+        rejectedReasons.add("input is not a meta help question");
 
         return skillEngine.executeDetectedSkillAsync(context)
                 .thenCompose(detectedSkill -> {
                     if (detectedSkill.isPresent()) {
                         Optional<SkillResult> blocked = maybeBlockByCapability(detectedSkill.get().skillName());
                         if (blocked.isPresent()) {
-                            return CompletableFuture.completedFuture(blocked);
+                            return CompletableFuture.completedFuture(new RoutingOutcome(blocked, new RoutingDecisionDto(
+                                    "security.guard",
+                                    detectedSkill.get().skillName(),
+                                    0.95,
+                                    List.of("auto-detected skill matched but capability guard blocked execution"),
+                                    List.copyOf(rejectedReasons)
+                            )));
                         }
                         if (isSkillLoopGuardBlocked(userId, detectedSkill.get().skillName(), userInput)) {
                             LOGGER.info("Dispatcher guard=loop-skip, userId=" + userId + ", skill=" + detectedSkill.get().skillName());
-                            return CompletableFuture.completedFuture(Optional.empty());
+                            rejectedReasons.add("detected skill blocked by loop guard");
+                            return CompletableFuture.completedFuture(new RoutingOutcome(Optional.empty(), fallbackRoutingDecision(rejectedReasons)));
                         }
                         LOGGER.info("Dispatcher route=detected-skill, userId=" + userId + ", skill=" + detectedSkill.get().skillName());
-                        return CompletableFuture.completedFuture(detectedSkill);
+                        return CompletableFuture.completedFuture(new RoutingOutcome(detectedSkill, new RoutingDecisionDto(
+                                "detected-skill",
+                                detectedSkill.get().skillName(),
+                                0.92,
+                                List.of("registered skill.supports matched the input"),
+                                List.copyOf(rejectedReasons)
+                        )));
                     }
+                    rejectedReasons.add("no registered skill.supports match");
 
                     Optional<SkillDsl> habitDsl = detectSkillWithMemoryHabits(userId, userInput, context.attributes());
                     if (habitDsl.isPresent()) {
                         Optional<SkillResult> blocked = maybeBlockByCapability(habitDsl.get().skill());
                         if (blocked.isPresent()) {
-                            return CompletableFuture.completedFuture(blocked);
+                            return CompletableFuture.completedFuture(new RoutingOutcome(blocked, new RoutingDecisionDto(
+                                    "security.guard",
+                                    habitDsl.get().skill(),
+                                    0.90,
+                                    List.of("habit route selected but capability guard blocked execution"),
+                                    List.copyOf(rejectedReasons)
+                            )));
                         }
                         LOGGER.info("Dispatcher route=memory-habit, userId=" + userId + ", skill=" + habitDsl.get().skill());
                         return habitDsl.map(dsl -> skillEngine.executeDslAsync(dsl, context)
-                                        .thenApply(result -> Optional.of(enrichMemoryHabitResult(result, dsl.skill(), context.attributes()))))
-                                .orElseGet(() -> CompletableFuture.completedFuture(Optional.empty()));
+                                        .thenApply(result -> new RoutingOutcome(
+                                                Optional.of(enrichMemoryHabitResult(result, dsl.skill(), context.attributes())),
+                                                new RoutingDecisionDto(
+                                                        "memory-habit",
+                                                        dsl.skill(),
+                                                        0.88,
+                                                        List.of("recent successful skill history matched continuation intent"),
+                                                        List.copyOf(rejectedReasons)
+                                                ))))
+                                .orElseGet(() -> CompletableFuture.completedFuture(new RoutingOutcome(Optional.empty(), fallbackRoutingDecision(rejectedReasons))));
                     }
+                    rejectedReasons.add("habit route confidence gate not satisfied");
 
                     Optional<SkillDsl> llmDsl = detectSkillWithLlm(userId, userInput, memoryContext, context.attributes());
                     if (llmDsl.isPresent()) {
                         Optional<SkillResult> blocked = maybeBlockByCapability(llmDsl.get().skill());
                         if (blocked.isPresent()) {
-                            return CompletableFuture.completedFuture(blocked);
+                            return CompletableFuture.completedFuture(new RoutingOutcome(blocked, new RoutingDecisionDto(
+                                    "security.guard",
+                                    llmDsl.get().skill(),
+                                    0.80,
+                                    List.of("LLM routing selected a skill but capability guard blocked execution"),
+                                    List.copyOf(rejectedReasons)
+                            )));
                         }
                         if (isSkillLoopGuardBlocked(userId, llmDsl.get().skill(), userInput)) {
                             LOGGER.info("Dispatcher guard=loop-skip, userId=" + userId + ", skill=" + llmDsl.get().skill());
-                            return CompletableFuture.completedFuture(Optional.empty());
+                            rejectedReasons.add("LLM-routed skill blocked by loop guard");
+                            return CompletableFuture.completedFuture(new RoutingOutcome(Optional.empty(), fallbackRoutingDecision(rejectedReasons)));
                         }
                         LOGGER.info("Dispatcher route=llm-dsl, userId=" + userId + ", skill=" + llmDsl.get().skill());
-                        return llmDsl.map(dsl -> skillEngine.executeDslAsync(dsl, context).thenApply(Optional::of))
-                                .orElseGet(() -> CompletableFuture.completedFuture(Optional.empty()));
+                        return llmDsl.map(dsl -> skillEngine.executeDslAsync(dsl, context)
+                                        .thenApply(result -> new RoutingOutcome(Optional.of(result), new RoutingDecisionDto(
+                                                "llm-dsl",
+                                                dsl.skill(),
+                                                0.76,
+                                                List.of("LLM router selected one of the shortlisted candidate skills"),
+                                                List.copyOf(rejectedReasons)
+                                        ))))
+                                .orElseGet(() -> CompletableFuture.completedFuture(new RoutingOutcome(Optional.empty(), fallbackRoutingDecision(rejectedReasons))));
                     }
 
                     LOGGER.info("Dispatcher route=llm-fallback, userId=" + userId);
-                    return CompletableFuture.completedFuture(Optional.empty());
+                    rejectedReasons.add("LLM router returned NONE or no shortlist candidate was selected");
+                    return CompletableFuture.completedFuture(new RoutingOutcome(Optional.empty(), fallbackRoutingDecision(rejectedReasons)));
                 });
     }
 
@@ -897,10 +1029,17 @@ public class DispatcherService {
                                                   String userInput,
                                                   String memoryContext,
                                                   Map<String, Object> profileContext) {
-        String knownSkills = skillEngine.describeAvailableSkills();
+        String normalizedInput = normalize(userInput);
+        if (llmRoutingConversationalBypassEnabled && isConversationalBypassInput(normalizedInput)) {
+            return Optional.empty();
+        }
+        String knownSkills = describeSkillRoutingCandidates(userId, userInput);
+        if (knownSkills.isBlank()) {
+            return Optional.empty();
+        }
         String prompt = "You are a dispatcher. Decide whether a skill is needed. "
                 + "Return ONLY JSON with schema {\"skill\":\"name\",\"input\":{...}} or NONE.\n"
-                + "Known skills: " + capText(knownSkills, 800) + ".\n"
+                + "Only choose from these candidate skills: " + capText(knownSkills, 800) + ".\n"
                 + "Context:\n" + capText(memoryContext, memoryContextMaxChars) + "\n"
                 + "User input:\n" + capText(userInput, 400);
         prompt = capText(prompt, promptMaxChars);
@@ -1015,6 +1154,12 @@ public class DispatcherService {
     private String buildMemoryContext(String userId, String userInput) {
         String memoryBucket = inferMemoryBucket(userInput);
         List<ConversationTurn> recentConversation = memoryManager.getRecentConversation(userId, CONTEXT_HISTORY_LIMIT);
+        List<SemanticMemoryEntry> conversationRollups = memoryManager.searchKnowledge(
+                userId,
+                userInput,
+                1,
+                "conversation-rollup"
+        );
         List<SemanticMemoryEntry> knowledge = memoryManager.searchKnowledge(
                 userId,
                 userInput,
@@ -1026,34 +1171,26 @@ public class DispatcherService {
                 .limit(HABIT_SKILL_STATS_LIMIT)
                 .toList();
 
+        int historyBudget = Math.max(160, (int) (memoryContextMaxChars * 0.5));
+        int knowledgeBudget = Math.max(120, (int) (memoryContextMaxChars * 0.3));
+        int habitsBudget = Math.max(80, memoryContextMaxChars - historyBudget - knowledgeBudget);
+
+        String rawConversationContext = buildRawConversationContext(recentConversation);
+        String rawKnowledgeContext = buildKnowledgeContext(knowledge);
+        String rawHabitContext = buildHabitContext(usageStats);
+
         StringBuilder builder = new StringBuilder();
-        builder.append("Recent conversation:\n");
-        for (ConversationTurn turn : recentConversation) {
-            builder.append("- ").append(turn.role()).append(": ").append(turn.content()).append('\n');
-        }
-        builder.append("Relevant knowledge:\n");
-        for (SemanticMemoryEntry entry : knowledge) {
-            builder.append("- ").append(entry.text()).append('\n');
-        }
-        builder.append("User skill habits:\n");
-        if (usageStats.isEmpty()) {
-            builder.append("- none\n");
-        } else {
-            for (SkillUsageStats stats : usageStats) {
-                long total = Math.max(1L, stats.totalCount());
-                long successRate = Math.round(stats.successCount() * 100.0 / total);
-                builder.append("- ")
-                        .append(stats.skillName())
-                        .append(" (success=")
-                        .append(stats.successCount())
-                        .append("/")
-                        .append(stats.totalCount())
-                        .append(", rate=")
-                        .append(successRate)
-                        .append("%)\n");
-            }
-        }
-        return capText(builder.toString(), memoryContextMaxChars);
+        appendContextSection(builder, "Recent conversation", buildConversationContext(userId, recentConversation, conversationRollups), historyBudget);
+        appendContextSection(builder, "Relevant knowledge", rawKnowledgeContext, knowledgeBudget);
+        appendContextSection(builder, "User skill habits", rawHabitContext, habitsBudget);
+        String finalContext = capText(builder.toString(), memoryContextMaxChars);
+        recordContextCompressionMetrics(
+                rawConversationContext.length() + rawKnowledgeContext.length() + rawHabitContext.length(),
+                finalContext.length(),
+                recentConversation.size() > memoryContextKeepRecentTurns,
+                Math.max(0, recentConversation.size() - memoryContextKeepRecentTurns)
+        );
+        return finalContext;
     }
 
     private String buildFallbackPrompt(String memoryContext, String userInput) {
@@ -1174,12 +1311,19 @@ public class DispatcherService {
     }
 
     private void maybeStoreSemanticMemory(String userId, String input) {
-        if (input == null || !input.toLowerCase().startsWith("remember ")) {
+        String knowledge = extractRememberedKnowledge(input);
+        if (knowledge == null || knowledge.isBlank()) {
             return;
         }
 
-        String knowledge = input.substring("remember ".length()).trim();
-        String memoryBucket = inferMemoryBucket(knowledge);
+        String explicitBucket = extractExplicitMemoryBucket(knowledge);
+        if (explicitBucket != null) {
+            knowledge = stripExplicitMemoryBucket(knowledge);
+        }
+        if (knowledge.isBlank()) {
+            return;
+        }
+        String memoryBucket = explicitBucket == null ? inferMemoryBucket(knowledge) : explicitBucket;
         Map<String, Object> embeddingSeed = new LinkedHashMap<>();
         embeddingSeed.put("length", knowledge.length());
         embeddingSeed.put("hash", Math.abs(knowledge.hashCode() % 1000));
@@ -1189,6 +1333,348 @@ public class DispatcherService {
                 ((Integer) embeddingSeed.get("hash")) / 1000.0
         );
         memoryManager.storeKnowledge(userId, knowledge, embedding, memoryBucket);
+    }
+
+    private String buildConversationContext(String userId,
+                                            List<ConversationTurn> recentConversation,
+                                            List<SemanticMemoryEntry> conversationRollups) {
+        if (recentConversation.isEmpty()) {
+            return buildConversationRollupPrefix(conversationRollups) + "- none\n";
+        }
+        int keepRecent = Math.min(memoryContextKeepRecentTurns, recentConversation.size());
+        int splitIndex = Math.max(0, recentConversation.size() - keepRecent);
+        List<ConversationTurn> olderTurns = recentConversation.size() >= memoryContextHistorySummaryMinTurns
+                ? recentConversation.subList(0, splitIndex)
+                : List.of();
+        List<ConversationTurn> preservedTurns = recentConversation.subList(splitIndex, recentConversation.size());
+
+        StringBuilder builder = new StringBuilder(buildConversationRollupPrefix(conversationRollups));
+        String olderSummary = summarizeOlderConversation(userId, olderTurns);
+        if (!olderSummary.isBlank()) {
+            builder.append("- earlier summary: ").append(olderSummary).append('\n');
+        }
+        for (ConversationTurn turn : preservedTurns) {
+            builder.append("- ").append(turn.role()).append(": ").append(turn.content()).append('\n');
+        }
+        return builder.toString();
+    }
+
+    private String buildConversationRollupPrefix(List<SemanticMemoryEntry> conversationRollups) {
+        if (conversationRollups == null || conversationRollups.isEmpty()) {
+            return "";
+        }
+        return conversationRollups.stream()
+                .map(SemanticMemoryEntry::text)
+                .filter(text -> text != null && !text.isBlank())
+                .findFirst()
+                .map(text -> "- persisted rollup: " + text + '\n')
+                .orElse("");
+    }
+
+    private String buildRawConversationContext(List<ConversationTurn> recentConversation) {
+        if (recentConversation.isEmpty()) {
+            return "- none\n";
+        }
+        StringBuilder builder = new StringBuilder();
+        for (ConversationTurn turn : recentConversation) {
+            builder.append("- ").append(turn.role()).append(": ").append(turn.content()).append('\n');
+        }
+        return builder.toString();
+    }
+
+    private String summarizeOlderConversation(String userId, List<ConversationTurn> olderTurns) {
+        if (olderTurns == null || olderTurns.isEmpty()) {
+            return "";
+        }
+        String source = olderTurns.stream()
+                .map(turn -> turn.role() + ": " + turn.content())
+                .reduce((left, right) -> left + "\n" + right)
+                .orElse("");
+        if (source.isBlank()) {
+            return "";
+        }
+        MemoryCompressionPlan plan = memoryManager.buildMemoryCompressionPlan(
+                userId,
+                source,
+                new MemoryStyleProfile("concise", "direct", "bullet"),
+                "review"
+        );
+        return plan.steps().stream()
+                .filter(step -> "BRIEF".equals(step.stage()))
+                .map(step -> step.content().replace('\n', ' '))
+                .filter(value -> !value.isBlank())
+                .findFirst()
+                .orElse("");
+    }
+
+    private String buildKnowledgeContext(List<SemanticMemoryEntry> knowledge) {
+        if (knowledge.isEmpty()) {
+            return "- none\n";
+        }
+        LinkedHashSet<String> unique = new LinkedHashSet<>();
+        for (SemanticMemoryEntry entry : knowledge) {
+            if (entry != null && entry.text() != null && !entry.text().isBlank()) {
+                unique.add(entry.text());
+            }
+        }
+        if (unique.isEmpty()) {
+            return "- none\n";
+        }
+        StringBuilder builder = new StringBuilder();
+        for (String text : unique) {
+            builder.append("- ").append(text).append('\n');
+        }
+        return builder.toString();
+    }
+
+    private String buildHabitContext(List<SkillUsageStats> usageStats) {
+        if (usageStats.isEmpty()) {
+            return "- none\n";
+        }
+        StringBuilder builder = new StringBuilder();
+        for (SkillUsageStats stats : usageStats) {
+            long total = Math.max(1L, stats.totalCount());
+            long successRate = Math.round(stats.successCount() * 100.0 / total);
+            builder.append("- ")
+                    .append(stats.skillName())
+                    .append(" (success=")
+                    .append(stats.successCount())
+                    .append("/")
+                    .append(stats.totalCount())
+                    .append(", rate=")
+                    .append(successRate)
+                    .append("%)\n");
+        }
+        return builder.toString();
+    }
+
+    private void appendContextSection(StringBuilder builder, String title, String content, int budget) {
+        builder.append(title).append(":\n");
+        builder.append(capText(content == null || content.isBlank() ? "- none\n" : content, budget));
+        if (builder.length() == 0 || builder.charAt(builder.length() - 1) != '\n') {
+            builder.append('\n');
+        }
+    }
+
+    private void recordContextCompressionMetrics(int rawChars,
+                                                 int finalChars,
+                                                 boolean compressed,
+                                                 int summarizedTurns) {
+        long input = Math.max(0, rawChars);
+        long output = Math.max(0, finalChars);
+        contextCompressionRequestCount.incrementAndGet();
+        contextCompressionInputChars.addAndGet(input);
+        contextCompressionOutputChars.addAndGet(output);
+        if (compressed) {
+            contextCompressionAppliedCount.incrementAndGet();
+        }
+        contextCompressionSummarizedTurns.addAndGet(Math.max(0, summarizedTurns));
+    }
+
+    @Override
+    public ContextCompressionMetricsDto snapshotContextCompressionMetrics() {
+        long requests = contextCompressionRequestCount.get();
+        long inputChars = contextCompressionInputChars.get();
+        long outputChars = contextCompressionOutputChars.get();
+        double ratio = inputChars <= 0 ? 0.0 : (double) outputChars / inputChars;
+        return new ContextCompressionMetricsDto(
+                requests,
+                contextCompressionAppliedCount.get(),
+                inputChars,
+                outputChars,
+                ratio,
+                contextCompressionSummarizedTurns.get()
+        );
+    }
+
+    private String describeSkillRoutingCandidates(String userId, String userInput) {
+        List<String> summaries = skillEngine.listAvailableSkillSummaries();
+        if (summaries.isEmpty()) {
+            return "";
+        }
+        Set<String> inputTokens = routingTokens(userInput);
+        String memoryBucket = inferMemoryBucket(userInput);
+        Optional<String> preferredFromStats = preferredSkillFromStats(userId);
+        Optional<String> preferredFromHistory = preferredSkillFromHistory(memoryManager.getSkillUsageHistory(userId));
+
+        return summaries.stream()
+                .map(summary -> new SkillRoutingCandidate(summary, skillRoutingScore(
+                        summary,
+                        normalize(userInput),
+                        inputTokens,
+                        memoryBucket,
+                        preferredFromStats,
+                        preferredFromHistory)))
+                .filter(candidate -> candidate.score() > 0)
+                .sorted(Comparator.comparingInt(SkillRoutingCandidate::score).reversed()
+                        .thenComparing(SkillRoutingCandidate::summary))
+                .limit(llmRoutingShortlistMaxSkills)
+                .map(SkillRoutingCandidate::summary)
+                .reduce((left, right) -> left + ", " + right)
+                .orElse("");
+    }
+
+    private int skillRoutingScore(String summary,
+                                  String normalizedInput,
+                                  Set<String> inputTokens,
+                                  String memoryBucket,
+                                  Optional<String> preferredFromStats,
+                                  Optional<String> preferredFromHistory) {
+        String skillName = summary;
+        String description = "";
+        int separator = summary.indexOf(" - ");
+        if (separator >= 0) {
+            skillName = summary.substring(0, separator).trim();
+            description = summary.substring(separator + 3).trim();
+        }
+        String normalizedSkillName = normalize(skillName);
+        int score = 0;
+        if (!normalizedSkillName.isBlank() && normalizedInput.contains(normalizedSkillName)) {
+            score += 80;
+        }
+        Set<String> skillTokens = routingTokens(skillName + " " + description);
+        for (String token : inputTokens) {
+            if (skillTokens.contains(token)) {
+                score += 12;
+            }
+        }
+        if (preferredFromStats.filter(normalizedSkillName::equals).isPresent()) {
+            score += 30;
+        }
+        if (preferredFromHistory.filter(normalizedSkillName::equals).isPresent()) {
+            score += 20;
+        }
+        score += bucketRoutingBoost(memoryBucket, normalizedSkillName);
+        return score;
+    }
+
+    private int bucketRoutingBoost(String memoryBucket, String skillName) {
+        return switch (memoryBucket) {
+            case "learning" -> "teaching.plan".equals(skillName) ? 80 : 0;
+            case "eq" -> "eq.coach".equals(skillName) ? 80 : 0;
+            case "task" -> "todo.create".equals(skillName) ? 60 : 0;
+            case "coding" -> {
+                if ("code.generate".equals(skillName)) {
+                    yield 80;
+                }
+                yield "file.search".equals(skillName) ? 40 : 0;
+            }
+            default -> 0;
+        };
+    }
+
+    private Set<String> routingTokens(String text) {
+        String normalized = normalize(text);
+        if (normalized.isBlank()) {
+            return Set.of();
+        }
+        LinkedHashSet<String> tokens = new LinkedHashSet<>();
+        String[] parts = ROUTING_TOKEN_SPLIT_PATTERN.split(normalized, -1);
+        for (String part : parts) {
+            if (part == null || part.isBlank()) {
+                continue;
+            }
+            if (part.length() == 1 && !containsHan(part)) {
+                continue;
+            }
+            tokens.add(part);
+        }
+        return tokens.isEmpty() ? Set.of() : Set.copyOf(tokens);
+    }
+
+    private boolean isConversationalBypassInput(String normalizedInput) {
+        if (normalizedInput == null || normalizedInput.isBlank()) {
+            return true;
+        }
+        if (SMALL_TALK_INPUTS.contains(normalizedInput)) {
+            return true;
+        }
+        return normalizedInput.length() <= 12
+                && (normalizedInput.startsWith("谢谢")
+                || normalizedInput.startsWith("收到")
+                || normalizedInput.startsWith("好的")
+                || normalizedInput.startsWith("hello")
+                || normalizedInput.startsWith("thanks"));
+    }
+
+    private String extractRememberedKnowledge(String input) {
+        if (input == null || input.isBlank()) {
+            return null;
+        }
+        Matcher matcher = EXPLICIT_MEMORY_STORE_PATTERN.matcher(input.trim());
+        if (!matcher.matches()) {
+            return null;
+        }
+        String knowledge = matcher.group(1);
+        return knowledge == null ? null : knowledge.trim();
+    }
+
+    private String extractExplicitMemoryBucket(String knowledge) {
+        if (knowledge == null || knowledge.isBlank()) {
+            return null;
+        }
+        Matcher matcher = EXPLICIT_MEMORY_BUCKET_PATTERN.matcher(knowledge.trim());
+        if (!matcher.matches()) {
+            return null;
+        }
+        return normalizeExplicitMemoryBucket(matcher.group(1));
+    }
+
+    private String stripExplicitMemoryBucket(String knowledge) {
+        Matcher matcher = EXPLICIT_MEMORY_BUCKET_PATTERN.matcher(knowledge.trim());
+        if (!matcher.matches()) {
+            return knowledge.trim();
+        }
+        return matcher.group(2) == null ? "" : matcher.group(2).trim();
+    }
+
+    private String normalizeExplicitMemoryBucket(String bucket) {
+        if (bucket == null || bucket.isBlank()) {
+            return null;
+        }
+        return switch (bucket.trim().toLowerCase(Locale.ROOT)) {
+            case "task", "任务" -> "task";
+            case "learning", "学习" -> "learning";
+            case "eq", "情商", "沟通" -> "eq";
+            case "coding", "代码", "编程" -> "coding";
+            default -> "general";
+        };
+    }
+
+    private boolean containsHan(String value) {
+        if (value == null || value.isBlank()) {
+            return false;
+        }
+        return value.codePoints().anyMatch(codePoint -> Character.UnicodeScript.of(codePoint) == Character.UnicodeScript.HAN);
+    }
+
+    private RoutingDecisionDto fallbackRoutingDecision(List<String> rejectedReasons) {
+        return new RoutingDecisionDto(
+                "llm-fallback",
+                "llm",
+                0.0,
+                List.of("no safe skill route satisfied the current request"),
+                rejectedReasons == null ? List.of() : List.copyOf(rejectedReasons)
+        );
+    }
+
+    private ExecutionTraceDto enrichTraceWithRouting(ExecutionTraceDto trace, RoutingDecisionDto routingDecision) {
+        if (trace == null) {
+            return new ExecutionTraceDto("single-pass", 0, null, List.of(), routingDecision);
+        }
+        return new ExecutionTraceDto(
+                trace.strategy(),
+                trace.replanCount(),
+                trace.critique(),
+                trace.steps(),
+                routingDecision
+        );
+    }
+
+    private record SkillRoutingCandidate(String summary, int score) {
+    }
+
+    private record RoutingOutcome(Optional<SkillResult> result, RoutingDecisionDto routingDecision) {
     }
 
     private String inferMemoryBucket(String input) {

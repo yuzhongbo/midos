@@ -126,5 +126,25 @@ class MemoryCompressionPlanningServiceTest {
         assertTrue(condensed.contains("不能遗漏高风险模块"));
         assertTrue(brief.contains("截止时间是2026-04-01 20:00") || brief.contains("不能遗漏高风险模块"));
     }
+
+    @Test
+    void shouldPreferRecentActionLinesAfterKeepingKeySignals() {
+        MemoryConsolidationService consolidationService = new MemoryConsolidationService();
+        MemoryCompressionPlanningService service = new MemoryCompressionPlanningService(consolidationService);
+
+        String source = "背景说明。\n"
+                + "列出可选方案。\n"
+                + "拆解学习任务。\n"
+                + "同步依赖人。\n"
+                + "截止时间是2026-04-01 20:00。\n"
+                + "复核上线清单。\n"
+                + "确认最终负责人。\n"
+                + "发送最新周报。";
+        MemoryCompressionPlan plan = service.buildPlan("u8", source, new MemoryStyleProfile("concise", "direct", "plain"));
+
+        String brief = contentByStage(plan, "BRIEF");
+        assertTrue(brief.contains("截止时间是2026-04-01 20:00"));
+        assertTrue(brief.contains("确认最终负责人") || brief.contains("发送最新周报"));
+    }
 }
 

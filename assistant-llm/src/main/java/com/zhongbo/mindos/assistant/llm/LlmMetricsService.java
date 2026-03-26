@@ -80,6 +80,7 @@ public class LlmMetricsService implements LlmMetricsReader {
                 null,
                 null,
                 null,
+                null,
                 0.0,
                 0L,
                 0L,

@@ -68,7 +68,7 @@ public class MemorySyncService {
             if (keySignalEntry) {
                 keySignalInput++;
             }
-            if (semanticMemoryService.containsEquivalentEntry(userId, entry)) {
+            if (!semanticMemoryService.storeAcceptedEntry(userId, entry)) {
                 skipped++;
                 deduplicated++;
                 continue;
@@ -76,7 +76,6 @@ public class MemorySyncService {
             MemoryAppendResult result = centralMemoryRepository.appendSemantic(userId, entry, withSuffix(eventId, "semantic", accepted + skipped));
             cursor = Math.max(cursor, result.cursor());
             if (result.accepted()) {
-                semanticMemoryService.addEntry(userId, entry);
                 accepted++;
                 if (keySignalEntry) {
                     keySignalStored++;
@@ -115,6 +114,17 @@ public class MemorySyncService {
     }
 
     public long recordSemantic(String userId, SemanticMemoryEntry entry, String bucket) {
+        return appendSemanticRecord(userId, entry, bucket, false);
+    }
+
+    public long recordAcceptedSemantic(String userId, SemanticMemoryEntry entry, String bucket) {
+        return appendSemanticRecord(userId, entry, bucket, true);
+    }
+
+    private long appendSemanticRecord(String userId,
+                                      SemanticMemoryEntry entry,
+                                      String bucket,
+                                      boolean skipLocalDuplicateCheck) {
         SemanticMemoryEntry consolidated = memoryConsolidationService.consolidateSemanticEntry(entry);
         if (consolidated == null || consolidated.text().isBlank()) {
             return 0L;
@@ -122,7 +132,7 @@ public class MemorySyncService {
         if (!semanticWriteGatePolicy.shouldStore(consolidated.text(), bucket)) {
             return 0L;
         }
-        if (semanticMemoryService.containsEquivalentEntry(userId, consolidated, bucket)) {
+        if (!skipLocalDuplicateCheck && semanticMemoryService.containsEquivalentEntry(userId, consolidated, bucket)) {
             return 0L;
         }
         return centralMemoryRepository.appendSemantic(userId, consolidated, null).cursor();

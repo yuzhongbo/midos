@@ -139,22 +139,20 @@ public class MemoryCompressionPlanningService {
 
         List<String> selected = new ArrayList<>(maxLines);
         int keyLimit = Math.min(MAX_KEY_LINES_PREFERRED, maxLines);
-        for (String line : lines) {
-            if (selected.size() >= keyLimit) {
-                break;
-            }
-            if (memoryConsolidationService.containsKeySignal(line)) {
-                selected.add(line);
+        for (int i = lines.size() - 1; i >= 0 && selected.size() < keyLimit; i--) {
+            String line = lines.get(i);
+            if (memoryConsolidationService.containsKeySignal(line) && !selected.contains(line)) {
+                selected.add(0, line);
             }
         }
-        for (String line : lines) {
-            if (selected.size() >= maxLines) {
-                break;
-            }
-            if (!selected.contains(line)) {
-                selected.add(line);
+        List<String> recentTail = new ArrayList<>(maxLines);
+        for (int i = lines.size() - 1; i >= 0 && selected.size() + recentTail.size() < maxLines; i--) {
+            String line = lines.get(i);
+            if (!selected.contains(line) && !recentTail.contains(line)) {
+                recentTail.add(0, line);
             }
         }
+        selected.addAll(recentTail);
         return selected;
     }
 

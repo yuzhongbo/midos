@@ -240,6 +240,7 @@ curl -X POST http://localhost:8080/api/skills/load-mcp \
   - summary also includes:
     - `llmCache`: short TTL response cache status and effectiveness (`enabled`, `hitCount`, `missCount`, `hitRate`, `entryCount`, `ttlSeconds`, `maxEntries`)
     - `memoryWriteGate`: secondary semantic-duplicate write gate effectiveness (`secondaryDuplicateGateEnabled`, `secondaryDuplicateChecks`, `secondaryDuplicateIntercepted`, `secondaryDuplicateInterceptRate`)
+    - `contextCompression`: dispatcher prompt-context compression effectiveness (`requests`, `compressedRequests`, `totalInputChars`, `totalOutputChars`, `avgCompressionRatio`, `summarizedTurns`)
     - `llmCacheWindowHitRate`: cache hit rate within current `windowMinutes` only (better for release-over-release online effectiveness tracking)
     - `llmCacheWindowHits` / `llmCacheWindowMisses`: sample size of cache decisions inside current window, used together with `llmCacheWindowHitRate` to avoid small-sample misread.
     - `llmCacheWindowLowSample`: true when window sample size (`hits + misses`) is below threshold.
@@ -259,7 +260,7 @@ curl -X POST http://localhost:8080/api/skills/load-mcp \
     - `mindos.tasks.auto-run.claim-limit`
     - `mindos.tasks.auto-run.lease-seconds`
     - `mindos.tasks.auto-run.next-check-delay-seconds`
-- Semantic memory is stored when input starts with `remember `.
+- Semantic memory can be stored explicitly with `remember ...`, `remember task: ...`, `记住：...`, or `记住任务：...`; explicit bucket prefixes such as `task/learning/eq/coding` override automatic bucket inference.
 - Dispatcher habit-routing confidence controls (optional, app/JVM properties):
   - `mindos.dispatcher.habit-routing.enabled` (default `true`)
   - `mindos.dispatcher.habit-routing.min-total-count` (default `2`)
@@ -268,9 +269,15 @@ curl -X POST http://localhost:8080/api/skills/load-mcp \
   - `mindos.dispatcher.habit-routing.recent-min-success-count` (default `2`)
   - `mindos.dispatcher.habit-routing.recent-success-max-age-hours` (default `72`)
   - continuation auto-routing now requires leading continuation cues (like `继续/按之前`) and stable recent success history.
+- Dispatcher LLM skill-routing optimization controls:
+  - `mindos.dispatcher.skill-routing.llm-shortlist-max-skills` (default `8`): only the top candidate skills are exposed to the LLM router prompt, reducing false positives and token cost when the skill catalog grows.
+  - `mindos.dispatcher.skill-routing.conversational-bypass.enabled` (default `true`): short small-talk inputs such as `谢谢/好的/hello` skip the LLM skill-selection pass and go straight to normal chat fallback.
+  - chat `executionTrace.routing` now includes `route`, `selectedSkill`, `confidence`, `reasons`, and `rejectedReasons` for diagnosing why a skill was chosen or why the request fell back to plain LLM chat.
 - Dispatcher token/loop guards:
   - `mindos.dispatcher.prompt.max-chars` (default `2800`)
   - `mindos.dispatcher.memory-context.max-chars` (default `1800`)
+  - `mindos.dispatcher.memory-context.keep-recent-turns` (default `2`): keep the last N raw turns verbatim in prompt context.
+  - `mindos.dispatcher.memory-context.history-summary-min-turns` (default `4`): once recent conversation reaches this threshold, older turns are compressed into a short review summary before entering the prompt.
   - `mindos.dispatcher.llm-reply.max-chars` (default `1200`)
   - `mindos.dispatcher.skill.guard.max-consecutive` (default `2`), blocks repeated same-skill loop routing and falls back to broader reasoning.
   - `mindos.dispatcher.skill.guard.recent-window-size` (default `6`), recent procedural entries scanned for loop fingerprints.
@@ -349,8 +356,10 @@ curl -X POST http://localhost:8080/api/skills/load-mcp \
   - two-stage retrieval coarse candidate multiplier: `mindos.memory.search.coarse.multiplier` (default `8`, final coarse cap = `max(min-candidates, limit*multiplier)`)
   - explicit preferred-bucket search cross-bucket fallback cap: `mindos.memory.search.cross-bucket.max` (default `2`)
   - explicit preferred-bucket search cross-bucket fallback ratio: `mindos.memory.search.cross-bucket.ratio` (default `0.5`, range `0..1`)
+  - conversation rollup: `mindos.memory.conversation-rollup.enabled` (default `true`), `mindos.memory.conversation-rollup.threshold-turns` (default `24`), `mindos.memory.conversation-rollup.keep-recent-turns` (default `8`), `mindos.memory.conversation-rollup.min-turns` (default `6`)
   - precedence for `mindos.memory.*`: system properties (`-D`) > `application.properties` > built-in defaults.
   - when enabled, low-signal short semantic entries are skipped; retrieval prefers same inferred topic bucket and keeps bounded cross-bucket fallback when preferred bucket is explicit.
+  - conversation rollup stores a semantic summary under bucket `conversation-rollup` once hot episodic turns exceed the threshold; older turns are then kept in the sync log while recent turns remain hot in local episodic memory for prompt construction.
 - Memory sync performance regression test knobs (test-only JVM properties):
   - `mindos.memory.sync.perf-baseline-ms` (default `4000`)
   - `mindos.memory.sync.perf-retries` (default `1`, CI can raise to `2` on noisy runners)

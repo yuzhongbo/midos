@@ -14,6 +14,7 @@ public record LlmMetricsResponseDto(
         SecurityAuditWriteMetricsDto securityAudit,
         LlmCacheMetricsDto llmCache,
         MemoryWriteGateMetricsDto memoryWriteGate,
+        ContextCompressionMetricsDto contextCompression,
         double llmCacheWindowHitRate,
         long llmCacheWindowHits,
         long llmCacheWindowMisses,

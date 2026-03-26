@@ -53,6 +53,27 @@ public class SemanticMemoryService implements MemoryWriteGateMetricsReader {
         addEntry(userId, SemanticMemoryEntry.of(text, embedding));
     }
 
+    public boolean storeAcceptedEntry(String userId, SemanticMemoryEntry entry) {
+        return storeAcceptedEntry(userId, entry, null);
+    }
+
+    public boolean storeAcceptedEntry(String userId, SemanticMemoryEntry entry, String bucket) {
+        SemanticMemoryEntry consolidated = memoryConsolidationService.consolidateSemanticEntry(entry);
+        if (consolidated == null || consolidated.text().isBlank()) {
+            return false;
+        }
+        String normalizedBucket = normalizeBucket(bucket);
+        String semanticKey = memoryConsolidationService.semanticKey(consolidated.text());
+        UserSemanticStore store = entriesByUser.computeIfAbsent(userId, key -> new UserSemanticStore());
+        return store.storeAccepted(
+                semanticKey,
+                consolidated,
+                normalizedBucket,
+                properties.getWriteGate().isSemanticDuplicateEnabled(),
+                properties.getWriteGate().getSemanticDuplicateThreshold()
+        );
+    }
+
     public void addEntry(String userId, SemanticMemoryEntry entry) {
         addEntry(userId, entry, null);
     }
@@ -170,6 +191,31 @@ public class SemanticMemoryService implements MemoryWriteGateMetricsReader {
             for (String token : tokens) {
                 keysByToken.computeIfAbsent(token, ignored -> new LinkedHashSet<>()).add(bucketedKey);
             }
+            } finally {
+                writeLock.unlock();
+            }
+        }
+
+        boolean storeAccepted(String key,
+                              SemanticMemoryEntry entry,
+                              String bucket,
+                              boolean duplicateGateEnabled,
+                              double tokenThresholdOverride) {
+            Lock writeLock = lock.writeLock();
+            writeLock.lock();
+            try {
+                if (containsEquivalentInternal(key, entry, bucket, null)) {
+                    return false;
+                }
+                if (duplicateGateEnabled) {
+                    secondaryDuplicateCheckCount.incrementAndGet();
+                    if (containsEquivalentInternal(key, entry, bucket, tokenThresholdOverride)) {
+                        secondaryDuplicateInterceptCount.incrementAndGet();
+                        return false;
+                    }
+                }
+                upsertUnsafe(key, entry, bucket);
+                return true;
             } finally {
                 writeLock.unlock();
             }
@@ -415,6 +461,30 @@ public class SemanticMemoryService implements MemoryWriteGateMetricsReader {
                 if (keys.isEmpty()) {
                     keysByToken.remove(token);
                 }
+            }
+        }
+
+        private void upsertUnsafe(String key, SemanticMemoryEntry entry, String bucket) {
+            String bucketedKey = bucket + "::" + key;
+            StoredSemanticEntry existing = entries.remove(bucketedKey);
+            if (existing != null) {
+                removeTokens(bucketedKey, existing.tokens());
+                entry = merge(existing.entry(), entry);
+            }
+
+            LinkedHashSet<String> tokens = tokenize(entry.text());
+            String normalizedText = normalizeLower(entry.text());
+            StoredSemanticEntry stored = new StoredSemanticEntry(
+                    entry,
+                    normalizedText,
+                    tokens,
+                    ++sequence,
+                    bucket,
+                    memoryConsolidationService.containsKeySignal(normalizedText)
+            );
+            entries.put(bucketedKey, stored);
+            for (String token : tokens) {
+                keysByToken.computeIfAbsent(token, ignored -> new LinkedHashSet<>()).add(bucketedKey);
             }
         }
 

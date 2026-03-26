@@ -38,6 +38,10 @@ public class EpisodicMemoryService {
         return List.copyOf(conversation.subList(start, conversation.size()));
     }
 
+    public void replaceConversation(String userId, List<ConversationTurn> turns) {
+        historyByUser.put(userId, new ArrayList<>(turns == null ? List.of() : turns));
+    }
+
     private void append(String userId, ConversationTurn turn) {
         historyByUser.computeIfAbsent(userId, key -> new ArrayList<>()).add(turn);
     }
