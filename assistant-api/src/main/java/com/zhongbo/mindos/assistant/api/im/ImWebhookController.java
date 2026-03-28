@@ -24,10 +24,13 @@ import java.security.MessageDigest;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.logging.Logger;
 
 @RestController
 @RequestMapping("/api/im")
 public class ImWebhookController {
+
+    private static final Logger LOGGER = Logger.getLogger(ImWebhookController.class.getName());
 
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final ImGatewayService imGatewayService;
@@ -97,7 +100,7 @@ public class ImWebhookController {
             String text = extractFeishuText(message.path("content").asText(""));
             String senderId = event.path("sender").path("sender_id").path("open_id").asText("");
             String chatId = message.path("chat_id").asText("");
-            String reply = imGatewayService.chat(ImPlatform.FEISHU, senderId, chatId, text);
+            String reply = ImReplySanitizer.sanitize(imGatewayService.chat(ImPlatform.FEISHU, senderId, chatId, text));
 
             Map<String, Object> content = new LinkedHashMap<>();
             content.put("text", reply);
@@ -124,7 +127,7 @@ public class ImWebhookController {
 
         // DingTalk validation probes may send empty or non-standard payloads.
         String bodyForLog = rawBody == null ? "" : rawBody;
-        System.out.println("DingTalk Check: " + bodyForLog);
+        LOGGER.fine("DingTalk event received, bodyLength=" + bodyForLog.length());
 
         String text = "";
         String senderId = "";
@@ -139,7 +142,7 @@ public class ImWebhookController {
             // Keep empty defaults for malformed payload; still return 200 for platform checks.
         }
 
-        String reply = imGatewayService.chat(ImPlatform.DINGTALK, senderId, chatId, text);
+        String reply = ImReplySanitizer.sanitize(imGatewayService.chat(ImPlatform.DINGTALK, senderId, chatId, text));
 
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("msgtype", "text");
@@ -177,7 +180,7 @@ public class ImWebhookController {
             if (!"text".equalsIgnoreCase(message.msgType)) {
                 return ResponseEntity.ok("success");
             }
-            String reply = imGatewayService.chat(ImPlatform.WECHAT, message.fromUser, message.toUser, message.content);
+            String reply = ImReplySanitizer.sanitize(imGatewayService.chat(ImPlatform.WECHAT, message.fromUser, message.toUser, message.content));
             String responseXml = "<xml>"
                     + "<ToUserName><![CDATA[" + message.fromUser + "]]></ToUserName>"
                     + "<FromUserName><![CDATA[" + message.toUser + "]]></FromUserName>"
@@ -185,7 +188,9 @@ public class ImWebhookController {
                     + "<MsgType><![CDATA[text]]></MsgType>"
                     + "<Content><![CDATA[" + escapeCdata(reply) + "]]></Content>"
                     + "</xml>";
-            return ResponseEntity.ok(responseXml);
+            return ResponseEntity.ok()
+                    .contentType(new MediaType("text", "xml", StandardCharsets.UTF_8))
+                    .body(responseXml);
         } catch (Exception ex) {
             return ResponseEntity.ok("success");
         }
@@ -198,6 +203,7 @@ public class ImWebhookController {
     private ResponseEntity<Map<String, Object>> disabled() {
         return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(Map.of("message", "im integration disabled"));
     }
+
 
     private boolean verifyFeishu(String rawBody, String timestamp, String nonce, String signature) {
         if (isBlank(feishuSecret)) {

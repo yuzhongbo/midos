@@ -231,6 +231,7 @@ public class DispatcherService implements ContextCompressionMetricsReader {
         llmContext.put("input", userInput);
         llmContext.put("routeStage", "llm-fallback");
         llmContext.put("profile", resolvedProfileContext);
+        copyInteractionContext(resolvedProfileContext, llmContext);
         String llmProvider = asString(resolvedProfileContext.get("llmProvider"));
         if (llmProvider != null) {
             llmContext.put("llmProvider", llmProvider);
@@ -805,6 +806,26 @@ public class DispatcherService implements ContextCompressionMetricsReader {
         return normalized.isBlank() ? null : normalized;
     }
 
+    private void copyInteractionContext(Map<String, Object> profileContext, Map<String, Object> llmContext) {
+        if (profileContext == null || profileContext.isEmpty() || llmContext == null) {
+            return;
+        }
+        String imPlatform = asString(profileContext.get("imPlatform"));
+        if (imPlatform == null) {
+            return;
+        }
+        llmContext.put("interactionChannel", "im");
+        llmContext.put("imPlatform", imPlatform);
+        String imSenderId = asString(profileContext.get("imSenderId"));
+        if (imSenderId != null) {
+            llmContext.put("imSenderId", imSenderId);
+        }
+        String imChatId = asString(profileContext.get("imChatId"));
+        if (imChatId != null) {
+            llmContext.put("imChatId", imChatId);
+        }
+    }
+
     private boolean isContinuationOnlyInput(String userInput) {
         String normalized = normalize(userInput);
         return isContinuationIntent(normalized)
@@ -1049,6 +1070,7 @@ public class DispatcherService implements ContextCompressionMetricsReader {
         llmContext.put("memoryContext", memoryContext);
         llmContext.put("input", userInput);
         llmContext.put("routeStage", "llm-dsl");
+        copyInteractionContext(profileContext, llmContext);
         String llmProvider = profileContext == null ? null : asString(profileContext.get("llmProvider"));
         if (llmProvider != null) {
             llmContext.put("llmProvider", llmProvider);

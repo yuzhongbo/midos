@@ -1,16 +1,142 @@
 package com.zhongbo.mindos.assistant.llm;
 
+import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.support.DefaultListableBeanFactory;
 
+import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
-import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ApiKeyLlmClientTest {
+
+    @Test
+    void shouldCallHttpAndReturnAssistantContentWhenHttpEnabled() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
+        server.createContext("/v1/chat/completions", exchange -> {
+            byte[] body = "{\"choices\":[{\"message\":{\"content\":\"hello from proxy\"}}]}"
+                    .getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+        try {
+            ApiKeyLlmClient client = newClient(
+                    "gemini",
+                    "fixed",
+                    "llm-dsl:gemini,llm-fallback:gemini",
+                    "cost:gemini,quality:gemini",
+                    "gemini:key-gemini",
+                    false,
+                    60,
+                    true,
+                    "gemini:http://127.0.0.1:" + server.getAddress().getPort() + "/v1/chat/completions"
+            );
+
+            String output = client.generateResponse("hello", Map.of("userId", "u-http", "llmProvider", "gemini"));
+
+            assertEquals("hello from proxy", output);
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void shouldReturnErrorWhenHttpStatusIsNon2xx() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
+        server.createContext("/v1/chat/completions", exchange -> {
+            byte[] body = "upstream boom".getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(502, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+        try {
+            ApiKeyLlmClient client = newClient(
+                    "openai",
+                    "fixed",
+                    "llm-dsl:openai,llm-fallback:openai",
+                    "cost:openai,quality:openai",
+                    "openai:key-openai",
+                    false,
+                    60,
+                    true,
+                    "openai:http://127.0.0.1:" + server.getAddress().getPort() + "/v1/chat/completions"
+            );
+
+            String output = client.generateResponse("hello", Map.of("userId", "u-http", "llmProvider", "openai"));
+
+            assertEquals("[LLM openai] request failed after 1 attempt(s). Please retry later.", output);
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void shouldReturnFriendlyFallbackForImWhenHttpStatusIsNon2xx() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
+        server.createContext("/v1/chat/completions", exchange -> {
+            byte[] body = "upstream boom".getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(502, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+        try {
+            ApiKeyLlmClient client = newClient(
+                    "openai",
+                    "fixed",
+                    "llm-dsl:openai,llm-fallback:openai",
+                    "cost:openai,quality:openai",
+                    "openai:key-openai",
+                    false,
+                    60,
+                    true,
+                    "openai:http://127.0.0.1:" + server.getAddress().getPort() + "/v1/chat/completions"
+            );
+
+            String output = client.generateResponse("hello", Map.of(
+                    "userId", "u-http",
+                    "llmProvider", "openai",
+                    "interactionChannel", "im",
+                    "imPlatform", "dingtalk"
+            ));
+
+            assertEquals("抱歉，我这边的智能回复暂时有点忙。你可以稍后再试，或换一种更明确的说法发我，我继续帮你。", output);
+            assertFalse(output.contains("hello"));
+            assertFalse(output.contains("upstream boom"));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void shouldUseSkeletonWhenHttpDisabled() {
+        ApiKeyLlmClient client = newClient(
+                "gemini",
+                "fixed",
+                "llm-dsl:gemini,llm-fallback:gemini",
+                "cost:gemini,quality:gemini",
+                "gemini:key-gemini",
+                false,
+                60,
+                false,
+                "gemini:http://127.0.0.1:65534/v1/chat/completions"
+        );
+
+        String output = client.generateResponse("hello", Map.of("userId", "u-http", "llmProvider", "gemini"));
+
+        assertTrue(output.startsWith("[LLM gemini] fallback mode active."));
+        assertFalse(output.contains("hello"));
+    }
 
     @Test
     void shouldUseBuiltInMainlandEndpointWhenProviderEndpointNotConfigured() {
@@ -27,7 +153,8 @@ class ApiKeyLlmClientTest {
         String output = client.generateResponse("hello", Map.of("userId", "u-cn", "llmProvider", "deepseek"));
 
         assertTrue(output.contains("https://api.deepseek.com/v1/chat/completions"));
-        assertTrue(output.startsWith("[LLM deepseek]"));
+        assertTrue(output.startsWith("[LLM deepseek] fallback mode active."));
+        assertFalse(output.contains("hello"));
     }
 
     @Test
@@ -45,8 +172,9 @@ class ApiKeyLlmClientTest {
         String output = client.generateResponse("hello", Map.of("userId", "u-cn", "llmProvider", "tongyi"));
 
         assertTrue(output.contains("apiKey=key***en"));
-        assertTrue(output.startsWith("[LLM qwen]"));
+        assertTrue(output.startsWith("[LLM qwen] fallback mode active."));
         assertTrue(output.contains("https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"));
+        assertFalse(output.contains("hello"));
     }
 
     @Test
@@ -63,7 +191,7 @@ class ApiKeyLlmClientTest {
 
         String output = client.generateResponse("hello", Map.of("userId", "u1", "llmProvider", "local", "routeStage", "llm-dsl"));
 
-        assertTrue(output.startsWith("[LLM local]"));
+        assertTrue(output.startsWith("[LLM local] fallback mode active."));
     }
 
     @Test
@@ -80,7 +208,7 @@ class ApiKeyLlmClientTest {
 
         String output = client.generateResponse("hello", Map.of("userId", "u1", "llmProvider", "auto", "routeStage", "llm-fallback"));
 
-        assertTrue(output.startsWith("[LLM local]"));
+        assertTrue(output.startsWith("[LLM local] fallback mode active."));
     }
 
     @Test
@@ -97,7 +225,7 @@ class ApiKeyLlmClientTest {
 
         String output = client.generateResponse("hello", Map.of("userId", "u1", "llmProvider", "auto", "routeStage", "custom-stage"));
 
-        assertTrue(output.startsWith("[LLM openai]"));
+        assertTrue(output.startsWith("[LLM openai] fallback mode active."));
     }
 
     @Test
@@ -114,7 +242,7 @@ class ApiKeyLlmClientTest {
 
         String output = client.generateResponse("hello", Map.of("userId", "u1", "llmPreset", "cost", "routeStage", "llm-fallback"));
 
-        assertTrue(output.startsWith("[LLM local]"));
+        assertTrue(output.startsWith("[LLM local] fallback mode active."));
     }
 
     @Test
@@ -131,7 +259,32 @@ class ApiKeyLlmClientTest {
 
         String output = client.generateResponse("hello", Map.of("userId", "u1", "llmPreset", "unknown", "llmProvider", "auto", "routeStage", "llm-fallback"));
 
-        assertTrue(output.startsWith("[LLM local]"));
+        assertTrue(output.startsWith("[LLM local] fallback mode active."));
+    }
+
+    @Test
+    void shouldReturnFriendlyFallbackForImWhenApiKeyMissing() {
+        ApiKeyLlmClient client = newClient(
+                "stub",
+                "fixed",
+                "llm-dsl:openai,llm-fallback:openai",
+                "cost:openai,quality:openai",
+                "",
+                false,
+                60,
+                "",
+                false,
+                ""
+        );
+
+        String output = client.generateResponse("hello", Map.of(
+                "userId", "u-im",
+                "interactionChannel", "im",
+                "imPlatform", "feishu"
+        ));
+
+        assertEquals("抱歉，我这边的智能回复暂时有点忙。你可以稍后再试，或换一种更明确的说法发我，我继续帮你。", output);
+        assertFalse(output.contains("hello"));
     }
 
     @Test
@@ -204,6 +357,33 @@ class ApiKeyLlmClientTest {
                                       String providerKeys,
                                       boolean cacheEnabled,
                                       long cacheTtlSeconds) {
+        return newClient(defaultProvider, routingMode, stageMap, presetMap, providerKeys, cacheEnabled, cacheTtlSeconds,
+                false, "");
+    }
+
+    private ApiKeyLlmClient newClient(String defaultProvider,
+                                      String routingMode,
+                                      String stageMap,
+                                      String presetMap,
+                                      String providerKeys,
+                                      boolean cacheEnabled,
+                                      long cacheTtlSeconds,
+                                      boolean httpEnabled,
+                                      String providerEndpoints) {
+        return newClient(defaultProvider, routingMode, stageMap, presetMap, providerKeys, cacheEnabled, cacheTtlSeconds,
+                "fallback-global-key", httpEnabled, providerEndpoints);
+    }
+
+    private ApiKeyLlmClient newClient(String defaultProvider,
+                                      String routingMode,
+                                      String stageMap,
+                                      String presetMap,
+                                      String providerKeys,
+                                      boolean cacheEnabled,
+                                      long cacheTtlSeconds,
+                                      String globalApiKey,
+                                      boolean httpEnabled,
+                                      String providerEndpoints) {
         ObjectProvider<UserApiKeyRepository> provider = new DefaultListableBeanFactory().getBeanProvider(UserApiKeyRepository.class);
         UserApiKeyService userApiKeyService = new UserApiKeyService(provider, new AesApiKeyCryptoService(""));
         LlmMetricsService metricsService = new LlmMetricsService(true, 200);
@@ -211,15 +391,15 @@ class ApiKeyLlmClientTest {
                 defaultProvider,
                 routingMode,
                 "https://api.example.com/v1/chat/completions",
-                "fallback-global-key",
-                "",
+                globalApiKey,
+                providerEndpoints,
                 providerKeys,
                 stageMap,
                 presetMap,
                 "",
                 1,
                 0L,
-                false,
+                httpEnabled,
                 cacheEnabled,
                 cacheTtlSeconds,
                 256,

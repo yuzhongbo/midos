@@ -59,6 +59,7 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
             Map.entry("ernie", "https://qianfan.baidubce.com/v2/chat/completions"),
             Map.entry("glm", "https://open.bigmodel.cn/api/paas/v4/chat/completions")
     );
+    private static final String IM_FRIENDLY_DEGRADED_REPLY = "抱歉，我这边的智能回复暂时有点忙。你可以稍后再试，或换一种更明确的说法发我，我继续帮你。";
 
     private final String provider;
     private final String routingMode;
@@ -139,7 +140,7 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
         String selectedEndpoint = resolveEndpoint(selectedProvider);
         String apiKey = resolveApiKey(safeContext, selectedProvider);
         if (apiKey == null || apiKey.isBlank()) {
-            String output = "[LLM stub] No API key resolved. Configure mindos.llm.api-key, mindos.llm.provider-keys, or mindos.llm.user-keys.";
+            String output = buildMissingApiKeyReply(safeContext, selectedProvider);
             recordMetric(startedAt, safeContext, selectedProvider, selectedEndpoint, false, false, prompt, output, "missing_api_key");
             return output;
         }
@@ -166,8 +167,7 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
             }
         }
 
-        String reason = lastError == null ? "unknown" : lastError.getMessage();
-        String output = "[LLM error] Failed after " + maxRetries + " attempt(s): " + reason;
+        String output = buildRequestFailureReply(safeContext, selectedProvider, maxRetries);
         recordMetric(startedAt, safeContext, selectedProvider, selectedEndpoint, false, maxRetries > 1, prompt, output,
                 lastError == null ? "runtime_error" : simplifyErrorType(lastError));
         return output;
@@ -284,14 +284,13 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
                 || "glm".equals(normalized)
                 || "gemini".equals(normalized)
                 || "grok".equals(normalized)) {
-            return "[LLM " + normalized + "] skeleton call to " + endpointValue + " with apiKey=" + mask(apiKey) + ": " + prompt;
+            return buildSkeletonReply(context, normalized, endpointValue, apiKey);
         }
         if (normalized.contains("local") || normalized.contains("llama") || normalized.contains("mpt")) {
-            return "[LLM local] skeleton call to " + endpointValue + " with apiKey=" + mask(apiKey) + ": " + prompt;
+            return buildSkeletonReply(context, "local", endpointValue, apiKey);
         }
 
-        String userId = context == null ? "unknown" : String.valueOf(context.getOrDefault("userId", "unknown"));
-        return "[LLM " + providerName + "] skeleton response for user " + userId + ": " + prompt;
+        return buildSkeletonReply(context, providerName, endpointValue, apiKey);
     }
 
     private boolean isOpenAiCompatibleProvider(String normalizedProvider, String endpointValue) {
@@ -376,13 +375,13 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
                 for (JsonNode item : contentNode) {
                     String text = item.path("text").asText("");
                     if (!text.isBlank()) {
-                        if (builder.length() > 0) {
+                        if (!builder.isEmpty()) {
                             builder.append('\n');
                         }
                         builder.append(text.trim());
                     }
                 }
-                if (builder.length() > 0) {
+                if (!builder.isEmpty()) {
                     return builder.toString();
                 }
             }
@@ -454,6 +453,68 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
             return trimmed;
         }
         return trimmed.substring(0, maxLength) + "...";
+    }
+
+    private String buildMissingApiKeyReply(Map<String, Object> context, String providerName) {
+        if (isImContext(context)) {
+            return IM_FRIENDLY_DEGRADED_REPLY;
+        }
+        return "[LLM " + normalizeProvider(providerName) + "] unavailable: missing API key.";
+    }
+
+    private String buildRequestFailureReply(Map<String, Object> context, String providerName, int attempts) {
+        if (isImContext(context)) {
+            return IM_FRIENDLY_DEGRADED_REPLY;
+        }
+        return "[LLM " + normalizeProvider(providerName) + "] request failed after " + Math.max(1, attempts)
+                + " attempt(s). Please retry later.";
+    }
+
+    private String buildSkeletonReply(Map<String, Object> context,
+                                      String providerName,
+                                      String endpointValue,
+                                      String apiKey) {
+        if (isImContext(context)) {
+            return IM_FRIENDLY_DEGRADED_REPLY;
+        }
+        String normalizedProvider = normalizeProvider(providerName);
+        String resolvedEndpoint = endpointValue == null || endpointValue.isBlank() ? "n/a" : endpointValue;
+        return "[LLM " + normalizedProvider + "] fallback mode active. endpoint=" + resolvedEndpoint
+                + ", apiKey=" + mask(apiKey);
+    }
+
+    private boolean isImContext(Map<String, Object> context) {
+        if (context == null || context.isEmpty()) {
+            return false;
+        }
+        String interactionChannel = asText(context.get("interactionChannel"));
+        if ("im".equalsIgnoreCase(interactionChannel)) {
+            return true;
+        }
+        if (asText(context.get("imPlatform")) != null
+                || asText(context.get("imSenderId")) != null
+                || asText(context.get("imChatId")) != null) {
+            return true;
+        }
+        Map<String, Object> profile = asObjectMap(context.get("profile"));
+        return asText(profile.get("imPlatform")) != null
+                || asText(profile.get("imSenderId")) != null
+                || asText(profile.get("imChatId")) != null;
+    }
+
+    private String resolveInteractionCacheKey(Map<String, Object> context) {
+        if (context == null || context.isEmpty()) {
+            return "default";
+        }
+        if (isImContext(context)) {
+            String imPlatform = asText(context.get("imPlatform"));
+            if (imPlatform == null) {
+                imPlatform = asText(asObjectMap(context.get("profile")).get("imPlatform"));
+            }
+            return "im:" + (imPlatform == null ? "unknown" : imPlatform.toLowerCase(Locale.ROOT));
+        }
+        String interactionChannel = asText(context.get("interactionChannel"));
+        return interactionChannel == null ? "default" : interactionChannel.toLowerCase(Locale.ROOT);
     }
 
     private String resolveApiKey(Map<String, Object> context, String providerName) {
@@ -676,6 +737,7 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
         String routeStage = asText(context.get("routeStage"));
         String profileProvider = asText(context.get("llmProvider"));
         String profilePreset = asText(context.get("llmPreset"));
+        String interactionCacheKey = resolveInteractionCacheKey(context);
         return String.join("\u001F",
                 normalizeProvider(providerName),
                 endpointValue == null ? "" : endpointValue,
@@ -683,6 +745,7 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
                 routeStage == null ? "" : routeStage,
                 profileProvider == null ? "" : profileProvider,
                 profilePreset == null ? "" : profilePreset,
+                interactionCacheKey,
                 prompt == null ? "" : prompt);
     }
 

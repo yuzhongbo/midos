@@ -1,5 +1,6 @@
 package com.zhongbo.mindos.assistant.api.im;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zhongbo.mindos.assistant.common.nlu.MemoryIntentNlu;
 import com.zhongbo.mindos.assistant.dispatcher.DispatchResult;
 import com.zhongbo.mindos.assistant.dispatcher.DispatcherService;
@@ -10,16 +11,22 @@ import com.zhongbo.mindos.assistant.memory.model.MemoryCompressionStep;
 import com.zhongbo.mindos.assistant.memory.model.MemoryStyleProfile;
 import org.springframework.stereotype.Service;
 
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 @Service
 public class ImGatewayService {
 
+    private static final Logger LOGGER = Logger.getLogger(ImGatewayService.class.getName());
     private static final String PROP_TODO_P1_THRESHOLD = "mindos.todo.priority.p1-threshold";
     private static final String PROP_TODO_P2_THRESHOLD = "mindos.todo.priority.p2-threshold";
     private static final String PROP_TODO_WINDOW_P1 = "mindos.todo.window.p1";
@@ -27,6 +34,7 @@ public class ImGatewayService {
     private static final String PROP_TODO_WINDOW_P3 = "mindos.todo.window.p3";
     private static final String PROP_TODO_LEGEND = "mindos.todo.legend";
 
+    private final ObjectMapper objectMapper = new ObjectMapper();
     private final DispatcherService dispatcherService;
     private final MemoryManager memoryManager;
     private final MemoryConsolidationService memoryConsolidationService;
@@ -55,11 +63,71 @@ public class ImGatewayService {
 
         String memoryReply = tryHandleMemoryPlanningIntent(userId, normalizedText);
         if (memoryReply != null) {
-            return memoryReply;
+            return sanitizeAndObserve(platform, senderId, chatId, userId, "memory-intent", memoryReply);
         }
 
         DispatchResult result = dispatcherService.dispatch(userId, normalizedText, profileContext);
-        return result.reply();
+        String replySource = result.channel() == null || result.channel().isBlank()
+                ? "dispatcher"
+                : "dispatcher:" + result.channel().trim();
+        return sanitizeAndObserve(platform, senderId, chatId, userId, replySource, result.reply());
+    }
+
+    private String sanitizeAndObserve(ImPlatform platform,
+                                      String senderId,
+                                      String chatId,
+                                      String userId,
+                                      String replySource,
+                                      String rawReply) {
+        ImReplySanitizer.Decision decision = ImReplySanitizer.inspect(rawReply);
+        if (decision.sanitized()) {
+            logReplyDegradation(platform, senderId, chatId, userId, replySource, decision);
+        }
+        return decision.sanitizedReply();
+    }
+
+    private void logReplyDegradation(ImPlatform platform,
+                                     String senderId,
+                                     String chatId,
+                                     String userId,
+                                     String replySource,
+                                     ImReplySanitizer.Decision decision) {
+        Map<String, Object> event = new LinkedHashMap<>();
+        event.put("event", "im.reply.degraded");
+        event.put("platform", platform == null ? "unknown" : platform.name().toLowerCase());
+        event.put("replySource", safe(replySource));
+        event.put("fallbackKind", decision.fallbackKind());
+        event.put("reasons", decision.reasons());
+        event.put("rawLength", decision.originalReply() == null ? 0 : decision.originalReply().trim().length());
+        event.put("sanitizedLength", decision.sanitizedReply().length());
+        event.put("senderHash", hashForLog(senderId));
+        event.put("chatHash", hashForLog(chatId));
+        event.put("userHash", hashForLog(userId));
+        try {
+            LOGGER.warning(objectMapper.writeValueAsString(event));
+        } catch (IOException ex) {
+            LOGGER.log(Level.WARNING, "Failed to serialize im.reply.degraded log: " + event, ex);
+        }
+    }
+
+    private String hashForLog(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return "n/a";
+        }
+        try {
+            byte[] hash = MessageDigest.getInstance("SHA-256").digest(raw.trim().getBytes(StandardCharsets.UTF_8));
+            StringBuilder builder = new StringBuilder();
+            for (int i = 0; i < Math.min(6, hash.length); i++) {
+                builder.append(String.format("%02x", hash[i]));
+            }
+            return builder.toString();
+        } catch (Exception ex) {
+            return Integer.toHexString(raw.hashCode());
+        }
+    }
+
+    private String safe(String value) {
+        return value == null || value.isBlank() ? "n/a" : value.trim();
     }
 
     private String tryHandleMemoryPlanningIntent(String userId, String message) {

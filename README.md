@@ -356,14 +356,17 @@ curl -X POST http://localhost:8080/api/skills/load-mcp \
 ```
 
 ## Notes
-- LLM calls are stubbed unless `mindos.llm.api-key` is set in `assistant-api/src/main/resources/application.properties`.
+- Base profile keeps LLM calls in skeleton mode unless `mindos.llm.http.enabled=true` is enabled together with a valid key/endpoint map.
+- `solo` profile enables real OpenAI-compatible HTTP calls by default; other profiles can opt in with `mindos.llm.http.enabled=true`.
 - Optional multi-provider routing:
   - default provider: `mindos.llm.provider=stub`
   - routing mode: `mindos.llm.routing.mode=fixed|auto` (default `fixed`)
+  - real HTTP switch: `mindos.llm.http.enabled=true|false` (default `false` in base profile)
   - auto stage mapping: `mindos.llm.routing.stage-map=llm-dsl:openai,llm-fallback:openai`
   - preset mapping: `mindos.llm.routing.preset-map=cost:openai,balanced:openai,quality:openai`
   - provider endpoint map: `mindos.llm.provider-endpoints=openai:https://api.openai.com/v1/chat/completions,local:http://localhost:11434/v1/chat/completions`
   - provider key map: `mindos.llm.provider-keys=openai:sk-xxx,local:dummy-key`
+  - retry controls: `mindos.llm.retry.max-attempts` (default `3`), `mindos.llm.retry.delay-ms` (default `300`)
   - short TTL response cache (optional):
     - `mindos.llm.cache.enabled` (default `false`)
     - `mindos.llm.cache.ttl-seconds` (default `60`)

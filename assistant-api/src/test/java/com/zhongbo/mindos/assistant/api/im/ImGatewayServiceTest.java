@@ -11,8 +11,14 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.logging.Handler;
+import java.util.logging.Level;
+import java.util.logging.LogRecord;
+import java.util.logging.Logger;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
@@ -85,6 +91,51 @@ class ImGatewayServiceTest {
     }
 
     @Test
+    void shouldSanitizeLeakedSkeletonPromptFromDispatcherReply() {
+        DispatcherService dispatcherService = mock(DispatcherService.class);
+        MemoryManager memoryManager = mock(MemoryManager.class);
+        MemoryConsolidationService consolidationService = new MemoryConsolidationService();
+        ImGatewayService service = new ImGatewayService(dispatcherService, memoryManager, consolidationService);
+
+        when(dispatcherService.dispatch(eq("im:dingtalk:u4"), eq("优化记忆"), any()))
+                .thenReturn(new DispatchResult(
+                        "[LLM gemini] skeleton response for user im:dingtalk:u4: Answer naturally using the context when helpful.\n"
+                                + "Recent conversation:\n"
+                                + "- user: 你好测试一下\n"
+                                + "Relevant knowledge:\n"
+                                + "- none\n"
+                                + "User skill habits:\n"
+                                + "- none\n"
+                                + "User input: 优化记忆",
+                        "llm"
+                ));
+
+        Logger logger = Logger.getLogger(ImGatewayService.class.getName());
+        CapturingHandler handler = new CapturingHandler();
+        Level previousLevel = logger.getLevel();
+        logger.setLevel(Level.ALL);
+        logger.addHandler(handler);
+
+        String reply;
+        try {
+            reply = service.chat(ImPlatform.DINGTALK, "u4", "c4", "优化记忆");
+        } finally {
+            logger.removeHandler(handler);
+            logger.setLevel(previousLevel);
+        }
+
+        assertEquals(ImReplySanitizer.FRIENDLY_IM_FALLBACK_REPLY, reply);
+        String logs = handler.joinedMessages();
+        assertTrue(logs.contains("\"event\":\"im.reply.degraded\""));
+        assertTrue(logs.contains("\"platform\":\"dingtalk\""));
+        assertTrue(logs.contains("\"replySource\":\"dispatcher:llm\""));
+        assertTrue(logs.contains("\"fallbackKind\":\"friendly\""));
+        assertTrue(logs.contains("llm_marker"));
+        assertTrue(logs.contains("skeleton_mode"));
+        assertTrue(logs.contains("prompt_template_leak"));
+    }
+
+    @Test
     void shouldApplyConfiguredTodoPolicy() {
         System.setProperty("mindos.todo.priority.p1-threshold", "100");
         System.setProperty("mindos.todo.priority.p2-threshold", "10");
@@ -111,6 +162,30 @@ class ImGatewayServiceTest {
         assertTrue(todo.contains("当前待办策略：P1>= 100，P2>= 10"));
         assertTrue(todo.contains("P2"));
         assertTrue(todo.contains("建议两天内完成"));
+    }
+
+    private static final class CapturingHandler extends Handler {
+
+        private final List<String> messages = new ArrayList<>();
+
+        @Override
+        public void publish(LogRecord record) {
+            if (record != null && record.getMessage() != null) {
+                messages.add(record.getMessage());
+            }
+        }
+
+        @Override
+        public void flush() {
+        }
+
+        @Override
+        public void close() {
+        }
+
+        private String joinedMessages() {
+            return String.join("\n", messages);
+        }
     }
 }
 

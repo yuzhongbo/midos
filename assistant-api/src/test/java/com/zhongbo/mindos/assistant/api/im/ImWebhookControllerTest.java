@@ -134,6 +134,24 @@ class ImWebhookControllerTest {
     }
 
     @Test
+    void shouldReturnFriendlyFallbackWhenImLlmIsUnavailable() throws Exception {
+        String payload = "{" +
+                "\"senderId\":\"ding-llm-user\"," +
+                "\"conversationId\":\"conv-llm\"," +
+                "\"text\":{\"content\":\"继续按之前方式\"}" +
+                "}";
+
+        mockMvc.perform(post("/api/im/dingtalk/events")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(payload))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.msgtype").value("text"))
+                .andExpect(jsonPath("$.text.content").value("抱歉，我这边的智能回复暂时有点忙。你可以稍后再试，或换一种更明确的说法发我，我继续帮你。"))
+                .andExpect(jsonPath("$.text.content").value(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("[LLM"))))
+                .andExpect(jsonPath("$.text.content").value(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("继续按之前方式"))));
+    }
+
+    @Test
     void shouldHandleWechatVerifyAndTextEvent() throws Exception {
         mockMvc.perform(get("/api/im/wechat/events")
                         .param("signature", "any")
