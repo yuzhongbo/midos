@@ -6,6 +6,8 @@ import org.springframework.stereotype.Component;
 @Component
 class DingtalkIntegrationSettings {
 
+    static final String BOT_MESSAGE_TOPIC = "/v1.0/im/bot/messages/get";
+
     private final boolean imEnabled;
     private final boolean dingtalkEnabled;
     private final boolean streamEnabled;
@@ -37,7 +39,7 @@ class DingtalkIntegrationSettings {
         this.streamEnabled = streamEnabled;
         this.streamClientId = trim(streamClientId);
         this.streamClientSecret = trim(streamClientSecret);
-        this.streamTopic = trim(streamTopic).isBlank() ? "chatbot" : trim(streamTopic);
+        this.streamTopic = normalizeStreamTopic(streamTopic);
         this.streamWaitingDelayMs = Math.max(0L, streamWaitingDelayMs);
         this.streamWaitingText = trim(streamWaitingText).isBlank()
                 ? "我正在处理这条消息，请稍等，我会继续回复你。"
@@ -116,6 +118,16 @@ class DingtalkIntegrationSettings {
 
     private String trim(String value) {
         return value == null ? "" : value.trim();
+    }
+
+    private String normalizeStreamTopic(String value) {
+        String normalized = trim(value);
+        if (normalized.isBlank()
+                || "chatbot".equalsIgnoreCase(normalized)
+                || "bot".equalsIgnoreCase(normalized)) {
+            return BOT_MESSAGE_TOPIC;
+        }
+        return normalized;
     }
 }
 

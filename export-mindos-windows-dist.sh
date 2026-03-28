@@ -85,6 +85,9 @@ cp "$JAR_PATH" "$OUTPUT_DIR/$JAR_NAME"
 cat > "$OUTPUT_DIR/mindos-server.env.bat" <<'BAT'
 @echo off
 REM Edit this file on Windows before starting MindOS.
+REM Keep the set "KEY=value" format unchanged.
+REM Only edit the text to the right of the first '='.
+REM Avoid unescaped special characters such as: & | < > % ^ !
 
 REM Core runtime
 set "MINDOS_SPRING_PROFILE=solo"
@@ -95,10 +98,13 @@ set "MINDOS_SMOKE_TIMEOUT_SECONDS=8"
 set "MINDOS_PAUSE_ON_EXIT=true"
 
 REM LLM routing / provider selection
-set "MINDOS_LLM_HTTP_ENABLED=true"
-set "MINDOS_LLM_PROVIDER=qwen"
-set "MINDOS_LLM_PROVIDER_ENDPOINTS=qwen:https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
-set "MINDOS_LLM_PROVIDER_KEYS=qwen:sk-qwen"
+set "MINDOS_LLM_HTTP_ENABLED=false"
+set "MINDOS_LLM_PROVIDER=stub"
+REM Enable exactly one provider first; copy more complex multi-provider examples from mindos-server.full.env.bat only when needed.
+REM set "MINDOS_LLM_HTTP_ENABLED=true"
+REM set "MINDOS_LLM_PROVIDER=qwen"
+REM set "MINDOS_LLM_PROVIDER_ENDPOINTS=qwen:https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+REM set "MINDOS_LLM_PROVIDER_KEYS=qwen:paste-your-qwen-key-here"
 
 REM Optional cache overrides
 REM set "MINDOS_LLM_CACHE_ENABLED=true"
@@ -106,23 +112,23 @@ REM set "MINDOS_LLM_CACHE_TTL_SECONDS=120"
 REM set "MINDOS_LLM_CACHE_MAX_ENTRIES=512"
 
 REM DingTalk / WeChat bot integration
-set "MINDOS_IM_ENABLED=true"
-set "MINDOS_IM_DINGTALK_ENABLED=true"
+set "MINDOS_IM_ENABLED=false"
+set "MINDOS_IM_DINGTALK_ENABLED=false"
 set "MINDOS_IM_DINGTALK_VERIFY_SIGNATURE=false"
-set "MINDOS_IM_DINGTALK_SECRET=replace-with-your-dingtalk-signing-secret"
+set "MINDOS_IM_DINGTALK_SECRET="
 set "MINDOS_IM_DINGTALK_REPLY_TIMEOUT_MS=2500"
 REM Optional DingTalk stream mode for slow replies
 REM set "MINDOS_IM_DINGTALK_STREAM_ENABLED=true"
 REM set "MINDOS_IM_DINGTALK_STREAM_CLIENT_ID=ding-app-key"
 REM set "MINDOS_IM_DINGTALK_STREAM_CLIENT_SECRET=ding-app-secret"
-REM set "MINDOS_IM_DINGTALK_STREAM_TOPIC=chatbot"
+REM set "MINDOS_IM_DINGTALK_STREAM_TOPIC=/v1.0/im/bot/messages/get"
 REM set "MINDOS_IM_DINGTALK_STREAM_WAITING_DELAY_MS=800"
-REM set "MINDOS_IM_DINGTALK_STREAM_WAITING_TEXT=我正在处理这条消息，请稍等，我会继续回复你。"
+REM set "MINDOS_IM_DINGTALK_STREAM_WAITING_TEXT=MindOS is still working on this message. Please wait a moment."
 REM set "MINDOS_IM_DINGTALK_OUTBOUND_ENABLED=true"
 REM set "MINDOS_IM_DINGTALK_OUTBOUND_ROBOT_CODE=dingrobotcode"
 set "MINDOS_IM_WECHAT_ENABLED=false"
 set "MINDOS_IM_WECHAT_VERIFY_SIGNATURE=true"
-set "MINDOS_IM_WECHAT_TOKEN=replace-with-your-wechat-token"
+set "MINDOS_IM_WECHAT_TOKEN="
 
 REM Metrics endpoint auth for local single-user usage
 set "MINDOS_SECURITY_METRICS_REQUIRE_ADMIN_TOKEN=false"
@@ -132,6 +138,9 @@ cat > "$OUTPUT_DIR/mindos-server.full.env.bat" <<'BAT'
 @echo off
 REM Full multi-provider reference for Windows.
 REM Copy only the lines you need into mindos-server.env.bat.
+REM Keep the set "KEY=value" format unchanged.
+REM In provider maps, commas split entries and the first colon splits provider name from value.
+REM Edit one line at a time and avoid unescaped special characters such as: & | < > % ^ !
 
 REM Core runtime
 set "MINDOS_SPRING_PROFILE=solo"
@@ -147,10 +156,12 @@ set "MINDOS_LLM_PROVIDER=qwen"
 set "MINDOS_LLM_ROUTING_MODE=fixed"
 set "MINDOS_LLM_ROUTING_STAGE_MAP=llm-dsl:qwen,llm-fallback:qwen"
 set "MINDOS_LLM_ROUTING_PRESET_MAP=cost:qwen,balanced:qwen,quality:qwen"
-set "MINDOS_LLM_PROVIDER_ENDPOINTS=openai:https://ai.2756online.com/openai/v1/chat/completions,gemini:https://ai.2756online.com/gemini/v1beta/models/gemini-2.0-flash:generateContent,qwen:https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions,grok:https://ai.2756online.com/grok/v1/chat/completions"
-REM Fill in only the providers you really use, for example:
-REM set "MINDOS_LLM_PROVIDER_KEYS=qwen:your-qwen-key"
-REM set "MINDOS_LLM_PROVIDER_KEYS=deepseek:sk-xxx,openai:sk-yyy,gemini:AIzaSy-zzz,qwen:sk-qwen,grok:sk-aaa"
+REM Safer single-provider example:
+REM set "MINDOS_LLM_PROVIDER_ENDPOINTS=qwen:https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+REM set "MINDOS_LLM_PROVIDER_KEYS=qwen:paste-your-qwen-key-here"
+REM Multi-provider map example (more fragile because commas split entries):
+REM set "MINDOS_LLM_PROVIDER_ENDPOINTS=openai:https://ai.example.com/openai/v1/chat/completions,gemini:https://ai.example.com/gemini/v1beta/models/gemini-2.0-flash:generateContent,qwen:https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+REM set "MINDOS_LLM_PROVIDER_KEYS=openai:paste-openai-key-here,gemini:paste-gemini-key-here,qwen:paste-qwen-key-here"
 
 REM Optional cache overrides
 REM set "MINDOS_LLM_CACHE_ENABLED=true"
@@ -158,23 +169,23 @@ REM set "MINDOS_LLM_CACHE_TTL_SECONDS=120"
 REM set "MINDOS_LLM_CACHE_MAX_ENTRIES=512"
 
 REM DingTalk / WeChat bot integration
-set "MINDOS_IM_ENABLED=true"
-set "MINDOS_IM_DINGTALK_ENABLED=true"
+set "MINDOS_IM_ENABLED=false"
+set "MINDOS_IM_DINGTALK_ENABLED=false"
 set "MINDOS_IM_DINGTALK_VERIFY_SIGNATURE=false"
-set "MINDOS_IM_DINGTALK_SECRET=replace-with-your-dingtalk-signing-secret"
+set "MINDOS_IM_DINGTALK_SECRET="
 set "MINDOS_IM_DINGTALK_REPLY_TIMEOUT_MS=2500"
 REM Optional DingTalk stream mode for slow replies
 REM set "MINDOS_IM_DINGTALK_STREAM_ENABLED=true"
 REM set "MINDOS_IM_DINGTALK_STREAM_CLIENT_ID=ding-app-key"
 REM set "MINDOS_IM_DINGTALK_STREAM_CLIENT_SECRET=ding-app-secret"
-REM set "MINDOS_IM_DINGTALK_STREAM_TOPIC=chatbot"
+REM set "MINDOS_IM_DINGTALK_STREAM_TOPIC=/v1.0/im/bot/messages/get"
 REM set "MINDOS_IM_DINGTALK_STREAM_WAITING_DELAY_MS=800"
-REM set "MINDOS_IM_DINGTALK_STREAM_WAITING_TEXT=我正在处理这条消息，请稍等，我会继续回复你。"
+REM set "MINDOS_IM_DINGTALK_STREAM_WAITING_TEXT=MindOS is still working on this message. Please wait a moment."
 REM set "MINDOS_IM_DINGTALK_OUTBOUND_ENABLED=true"
 REM set "MINDOS_IM_DINGTALK_OUTBOUND_ROBOT_CODE=dingrobotcode"
 set "MINDOS_IM_WECHAT_ENABLED=false"
 set "MINDOS_IM_WECHAT_VERIFY_SIGNATURE=true"
-set "MINDOS_IM_WECHAT_TOKEN=replace-with-your-wechat-token"
+set "MINDOS_IM_WECHAT_TOKEN="
 
 REM Metrics endpoint auth for local single-user usage
 set "MINDOS_SECURITY_METRICS_REQUIRE_ADMIN_TOKEN=false"
@@ -236,11 +247,26 @@ BAT
 
 cat > "$OUTPUT_DIR/mindos-server-debug.bat" <<'BAT'
 @echo off
-setlocal
+setlocal EnableExtensions EnableDelayedExpansion
+
+if not defined MINDOS_DEBUG_SHELL (
+  set "MINDOS_DEBUG_SHELL=1"
+  cmd /k ""%~f0" %*"
+  exit /b
+)
 
 set "ROOT_DIR=%~dp0"
 cd /d "%ROOT_DIR%"
-if exist "%ROOT_DIR%mindos-server.env.bat" call "%ROOT_DIR%mindos-server.env.bat"
+if exist "%ROOT_DIR%mindos-server.env.bat" (
+  echo [INFO] Loading config from mindos-server.env.bat...
+  call "%ROOT_DIR%mindos-server.env.bat"
+  set "ENV_EXIT_CODE=!ERRORLEVEL!"
+  if "!ENV_EXIT_CODE!"=="" set "ENV_EXIT_CODE=1"
+  if not "!ENV_EXIT_CODE!"=="0" (
+    echo [FAIL] mindos-server.env.bat exited with code !ENV_EXIT_CODE!.
+    exit /b !ENV_EXIT_CODE!
+  )
+)
 
 set "JAR_NAME=assistant-api-0.1.0-SNAPSHOT.jar"
 set "JAR_PATH=%ROOT_DIR%%JAR_NAME%"
@@ -267,7 +293,6 @@ echo [INFO] Profile=%SPRING_PROFILE% Port=%SERVER_PORT%
 java -jar "%JAR_PATH%" --spring.profiles.active=%SPRING_PROFILE% --server.port=%SERVER_PORT%
 set "EXIT_CODE=%ERRORLEVEL%"
 echo [INFO] Process exited with code %EXIT_CODE%
-pause
 exit /b %EXIT_CODE%
 BAT
 
@@ -364,9 +389,11 @@ MindOS Windows server bundle
 ============================
 
 1) Edit mindos-server.env.bat before startup:
-   - MINDOS_LLM_PROVIDER / MINDOS_LLM_PROVIDER_ENDPOINTS / MINDOS_LLM_PROVIDER_KEYS for the default Qwen setup
-   - if you need a broader reference, open mindos-server.full.env.bat and copy the needed lines back
-   - MINDOS_IM_DINGTALK_* / MINDOS_IM_WECHAT_* for bot integration
+   - keep each line in the form: set "KEY=value"
+   - edit only the text to the right of the first '='
+   - start from the safe defaults in mindos-server.env.bat
+   - enable one LLM provider first; use mindos-server.full.env.bat only when you really need multi-provider maps
+   - MINDOS_IM_DINGTALK_* / MINDOS_IM_WECHAT_* stay disabled until you have real bot credentials
    - MINDOS_SERVER_PORT for local port
 
 2) Start service:
@@ -374,6 +401,8 @@ MindOS Windows server bundle
 
    If the startup window flashes and closes, run:
    mindos-server-debug.bat
+   - the debug launcher now reopens itself in a persistent cmd window
+   - if mindos-server.env.bat has an error, the debug window will stay open and print the failing exit code
 
 3) Health check:
    mindos-server-smoke.bat
@@ -387,6 +416,8 @@ Notes:
 - Default Spring profile is solo.
 - All launcher scripts auto-load mindos-server.env.bat from the same directory.
 - mindos-server.full.env.bat is a commented reference file only; it is NOT auto-loaded.
+- In provider maps, commas split entries and the first colon splits provider name from value.
+- Avoid unescaped special characters in values: & | < > % ^ !
 TXT
 
 echo "[DONE] Windows bundle exported to: $OUTPUT_DIR"

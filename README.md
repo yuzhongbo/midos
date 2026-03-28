@@ -136,12 +136,13 @@ mindos-server-stop.bat
 ```
 
 `mindos-server.env.bat` is the single place to edit self-hosted variables such as:
-- `MINDOS_LLM_PROVIDER` / `MINDOS_LLM_PROVIDER_ENDPOINTS` / `MINDOS_LLM_PROVIDER_KEYS` for the default Qwen setup
+- keep each line in the form `set "KEY=value"` and edit only the text to the right of the first `=`
+- enable one LLM provider first with `MINDOS_LLM_HTTP_ENABLED=true`, `MINDOS_LLM_PROVIDER=qwen`, and one `MINDOS_LLM_PROVIDER_KEYS=qwen:...` line
 - add other providers only when you actually need cross-provider switching
-- `MINDOS_IM_DINGTALK_*` / `MINDOS_IM_WECHAT_*` for bot callbacks and signature toggles
+- keep `MINDOS_IM_DINGTALK_*` / `MINDOS_IM_WECHAT_*` disabled until you have real bot credentials
 - `MINDOS_SERVER_PORT` for local service port
 
-The exported Windows bundle also includes `mindos-server.full.env.bat` as a commented multi-provider reference. It is not auto-loaded; copy only the lines you want from it back into `mindos-server.env.bat` when needed.
+The exported Windows bundle also includes `mindos-server.full.env.bat` as a commented multi-provider reference. It is not auto-loaded; copy only the lines you want from it back into `mindos-server.env.bat` when needed. In provider maps, commas split entries and the first colon splits provider name from value, so edit those lines carefully.
 
 ## Cloud deploy (single-user)
 
@@ -642,7 +643,7 @@ mindos.im.dingtalk.enabled=true
 mindos.im.dingtalk.stream.enabled=true
 mindos.im.dingtalk.stream.client-id=ding-app-key
 mindos.im.dingtalk.stream.client-secret=ding-app-secret
-mindos.im.dingtalk.stream.topic=chatbot
+mindos.im.dingtalk.stream.topic=/v1.0/im/bot/messages/get
 mindos.im.dingtalk.stream.waiting-delay-ms=800
 mindos.im.dingtalk.stream.waiting-text=我正在处理这条消息，请稍等，我会继续回复你。
 mindos.im.dingtalk.outbound.enabled=true
@@ -686,7 +687,7 @@ Useful stream-mode log events:
 
 - open the target app/bot in DingTalk developer console;
 - enable **事件订阅** and switch it to **Stream 模式推送**;
-- make sure the subscribed topic matches `mindos.im.dingtalk.stream.topic` (default `chatbot`);
+- make sure the subscribed topic matches `mindos.im.dingtalk.stream.topic` (default `/v1.0/im/bot/messages/get`; legacy `chatbot` alias is auto-mapped);
 - confirm the bot/app uses the same `clientId` / `clientSecret` you configure in MindOS;
 - record the bot `robotCode` used for outbound message push.
 

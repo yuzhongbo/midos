@@ -39,7 +39,7 @@ class DingtalkStreamMessageDispatcherTest {
                 true,
                 "client-id",
                 "client-secret",
-                "chatbot",
+                DingtalkIntegrationSettings.BOT_MESSAGE_TOPIC,
                 10L,
                 "我正在处理中，请稍等。",
                 true,
@@ -90,7 +90,7 @@ class DingtalkStreamMessageDispatcherTest {
                 true,
                 "client-id",
                 "client-secret",
-                "chatbot",
+                DingtalkIntegrationSettings.BOT_MESSAGE_TOPIC,
                 200L,
                 "我正在处理中，请稍等。",
                 true,
@@ -125,7 +125,7 @@ class DingtalkStreamMessageDispatcherTest {
                 true,
                 "client-id",
                 "client-secret",
-                "chatbot",
+                DingtalkIntegrationSettings.BOT_MESSAGE_TOPIC,
                 0L,
                 "处理中",
                 true,
@@ -153,6 +153,42 @@ class DingtalkStreamMessageDispatcherTest {
 
         assertEquals(1, sender.messages.size());
         assertTrue(sender.messages.contains("最终回复"));
+    }
+
+    @Test
+    void shouldReadConversationPayloadFromWrappedDataNode() throws Exception {
+        ImGatewayService gatewayService = mock(ImGatewayService.class);
+        RecordingConversationSender sender = new RecordingConversationSender(true);
+        DingtalkIntegrationSettings settings = new DingtalkIntegrationSettings(
+                true,
+                true,
+                true,
+                "client-id",
+                "client-secret",
+                DingtalkIntegrationSettings.BOT_MESSAGE_TOPIC,
+                200L,
+                "我正在处理中，请稍等。",
+                true,
+                "robot-code",
+                "",
+                ""
+        );
+        when(gatewayService.chatAsync(ImPlatform.DINGTALK, "staff-4", "cid-4", "帮我列待办"))
+                .thenReturn(CompletableFuture.completedFuture("好的，给你三条待办"));
+        dispatcher = new DingtalkStreamMessageDispatcher(gatewayService, sender, settings);
+
+        dispatcher.handleIncomingPayload(Map.of(
+                "eventType", "chatbot.message",
+                "data", Map.of(
+                        "conversationId", "cid-4",
+                        "senderStaffId", "staff-4",
+                        "text", Map.of("content", "帮我列待办")
+                )
+        ));
+
+        waitUntil(() -> !sender.messages.isEmpty(), 1000);
+        assertEquals(1, sender.messages.size());
+        assertEquals("好的，给你三条待办", sender.messages.get(0));
     }
 
     private void waitUntil(CheckedCondition condition, long timeoutMs) throws Exception {

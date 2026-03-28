@@ -48,21 +48,34 @@ class DingtalkStreamMessageDispatcher {
         if (payload == null || payload.isEmpty()) {
             return;
         }
+        Map<String, Object> eventData = nestedMapValue(payload.get("data"));
         String conversationId = firstNonBlank(
                 stringValue(payload.get("conversationId")),
-                stringValue(payload.get("openConversationId"))
+                stringValue(payload.get("openConversationId")),
+                stringValue(eventData.get("conversationId")),
+                stringValue(eventData.get("openConversationId"))
         );
         String senderId = firstNonBlank(
                 stringValue(payload.get("senderId")),
                 stringValue(payload.get("senderStaffId")),
                 stringValue(payload.get("staffId")),
                 nestedStringValue(payload, "sender", "staffId"),
-                nestedStringValue(payload, "sender", "senderId")
+                nestedStringValue(payload, "sender", "senderId"),
+                stringValue(eventData.get("senderId")),
+                stringValue(eventData.get("senderStaffId")),
+                stringValue(eventData.get("staffId")),
+                nestedStringValue(eventData, "sender", "staffId"),
+                nestedStringValue(eventData, "sender", "senderId")
         );
         String text = firstNonBlank(
                 nestedStringValue(payload, "text", "content"),
+                nestedStringValue(payload, "content", "content"),
                 stringValue(payload.get("content")),
-                stringValue(payload.get("msgContent"))
+                stringValue(payload.get("msgContent")),
+                nestedStringValue(eventData, "text", "content"),
+                nestedStringValue(eventData, "content", "content"),
+                stringValue(eventData.get("content")),
+                stringValue(eventData.get("msgContent"))
         );
         if (conversationId.isBlank() || text.isBlank()) {
             logEvent(Level.WARNING, "dingtalk.stream.received.invalid", Map.of(
@@ -191,6 +204,15 @@ class DingtalkStreamMessageDispatcher {
         }
         Object value = nestedMap.get(childKey);
         return stringValue(value);
+    }
+
+    private Map<String, Object> nestedMapValue(Object value) {
+        if (!(value instanceof Map<?, ?> rawMap)) {
+            return Map.of();
+        }
+        Map<String, Object> converted = new LinkedHashMap<>();
+        rawMap.forEach((key, nestedValue) -> converted.put(String.valueOf(key), nestedValue));
+        return converted;
     }
 
     private String stringValue(Object value) {
