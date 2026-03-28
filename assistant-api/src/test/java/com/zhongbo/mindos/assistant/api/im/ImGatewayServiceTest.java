@@ -1,5 +1,6 @@
 package com.zhongbo.mindos.assistant.api.im;
 
+import com.zhongbo.mindos.assistant.common.ImDegradedReplyMarker;
 import com.zhongbo.mindos.assistant.dispatcher.DispatchResult;
 import com.zhongbo.mindos.assistant.dispatcher.DispatcherService;
 import com.zhongbo.mindos.assistant.memory.MemoryConsolidationService;
@@ -13,6 +14,7 @@ import org.junit.jupiter.api.Test;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 import java.util.logging.Handler;
 import java.util.logging.Level;
 import java.util.logging.LogRecord;
@@ -129,10 +131,30 @@ class ImGatewayServiceTest {
         assertTrue(logs.contains("\"event\":\"im.reply.degraded\""));
         assertTrue(logs.contains("\"platform\":\"dingtalk\""));
         assertTrue(logs.contains("\"replySource\":\"dispatcher:llm\""));
+        assertTrue(logs.contains("\"provider\":\"gemini\""));
+        assertTrue(logs.contains("\"errorCategory\":\"unavailable\""));
         assertTrue(logs.contains("\"fallbackKind\":\"friendly\""));
         assertTrue(logs.contains("llm_marker"));
         assertTrue(logs.contains("skeleton_mode"));
         assertTrue(logs.contains("prompt_template_leak"));
+    }
+
+    @Test
+    void shouldCompleteAsyncDingtalkReplyThroughDispatcher() throws Exception {
+        DispatcherService dispatcherService = mock(DispatcherService.class);
+        MemoryManager memoryManager = mock(MemoryManager.class);
+        MemoryConsolidationService consolidationService = new MemoryConsolidationService();
+        ImGatewayService service = new ImGatewayService(dispatcherService, memoryManager, consolidationService);
+
+        when(dispatcherService.dispatchAsync(eq("im:dingtalk:u5"), eq("继续生成"), any()))
+                .thenReturn(java.util.concurrent.CompletableFuture.completedFuture(new DispatchResult(
+                        ImDegradedReplyMarker.encode("gemini", "timeout"),
+                        "llm"
+                )));
+
+        String reply = service.chatAsync(ImPlatform.DINGTALK, "u5", "c5", "继续生成").get(1, TimeUnit.SECONDS);
+
+        assertEquals(ImReplySanitizer.TIMEOUT_IM_FALLBACK_REPLY, reply);
     }
 
     @Test

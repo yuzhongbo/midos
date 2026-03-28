@@ -1,5 +1,6 @@
 package com.zhongbo.mindos.assistant.api.im;
 
+import com.zhongbo.mindos.assistant.common.ImDegradedReplyMarker;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -7,6 +8,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import java.nio.charset.StandardCharsets;
+import java.util.concurrent.CompletableFuture;
 
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.containsString;
@@ -25,6 +27,8 @@ class ImWebhookControllerSanitizationTest {
 
     private static final String FRIENDLY_FALLBACK = ImReplySanitizer.FRIENDLY_IM_FALLBACK_REPLY;
     private static final String BLANK_FALLBACK = ImReplySanitizer.BLANK_IM_FALLBACK_REPLY;
+    private static final String TIMEOUT_FALLBACK = ImReplySanitizer.TIMEOUT_IM_FALLBACK_REPLY;
+    private static final String AUTH_FALLBACK = ImReplySanitizer.AUTH_IM_FALLBACK_REPLY;
 
     private ImGatewayService imGatewayService;
     private MockMvc mockMvc;
@@ -40,13 +44,14 @@ class ImWebhookControllerSanitizationTest {
         ReflectionTestUtils.setField(controller, "feishuVerifySignature", false);
         ReflectionTestUtils.setField(controller, "dingtalkVerifySignature", false);
         ReflectionTestUtils.setField(controller, "wechatVerifySignature", false);
+        ReflectionTestUtils.setField(controller, "dingtalkReplyTimeoutMs", 100L);
         mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
     }
 
     @Test
     void shouldHideInternalLlmErrorDetailsForDingtalk() throws Exception {
-        when(imGatewayService.chat(ImPlatform.DINGTALK, "ding-safe-user", "conv-safe", "帮我总结今天安排"))
-                .thenReturn("[LLM error] Failed after 2 attempts. http_call_failed: timeout while calling provider");
+        when(imGatewayService.chatAsync(ImPlatform.DINGTALK, "ding-safe-user", "conv-safe", "帮我总结今天安排"))
+                .thenReturn(CompletableFuture.completedFuture("[LLM error] Failed after 2 attempts. http_call_failed: timeout while calling provider"));
 
         String payload = "{"
                 + "\"senderId\":\"ding-safe-user\","
@@ -59,7 +64,7 @@ class ImWebhookControllerSanitizationTest {
                         .content(payload))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.msgtype").value("text"))
-                .andExpect(jsonPath("$.text.content").value(FRIENDLY_FALLBACK))
+                .andExpect(jsonPath("$.text.content").value(TIMEOUT_FALLBACK))
                 .andExpect(jsonPath("$.text.content").value(not(containsString("[LLM"))))
                 .andExpect(jsonPath("$.text.content").value(not(containsString("http_call_failed"))));
     }
@@ -92,8 +97,8 @@ class ImWebhookControllerSanitizationTest {
 
     @Test
     void shouldHideNestedSkeletonPromptLeakForDingtalk() throws Exception {
-        when(imGatewayService.chat(ImPlatform.DINGTALK, "$:LWCP_v1:$BH2F4jdf+SOZIDe3ZmsHqA==", "conv-leak", "优化记忆"))
-                .thenReturn("[LLM gemini] skeleton response for user im:dingtalk:$:LWCP_v1:$BH2F4jdf+SOZIDe3ZmsHqA==: "
+        when(imGatewayService.chatAsync(ImPlatform.DINGTALK, "$:LWCP_v1:$BH2F4jdf+SOZIDe3ZmsHqA==", "conv-leak", "优化记忆"))
+                .thenReturn(CompletableFuture.completedFuture("[LLM gemini] skeleton response for user im:dingtalk:$:LWCP_v1:$BH2F4jdf+SOZIDe3ZmsHqA==: "
                         + "Answer naturally using the context when helpful.\n"
                         + "Recent conversation:\n"
                         + "- user: 你好测试一下\n"
@@ -101,7 +106,7 @@ class ImWebhookControllerSanitizationTest {
                         + "- none\n"
                         + "User skill habits:\n"
                         + "- none\n"
-                        + "User input: 优化记忆");
+                        + "User input: 优化记忆"));
 
         String payload = "{"
                 + "\"senderId\":\"$:LWCP_v1:$BH2F4jdf+SOZIDe3ZmsHqA==\","
@@ -117,6 +122,66 @@ class ImWebhookControllerSanitizationTest {
                 .andExpect(jsonPath("$.text.content").value(not(containsString("Recent conversation:"))))
                 .andExpect(jsonPath("$.text.content").value(not(containsString("Relevant knowledge:"))))
                 .andExpect(jsonPath("$.text.content").value(not(containsString("User skill habits:"))));
+    }
+
+    @Test
+    void shouldMapTimeoutMarkerToTimeoutFriendlyReplyForDingtalk() throws Exception {
+        when(imGatewayService.chatAsync(ImPlatform.DINGTALK, "ding-timeout-user", "conv-timeout", "继续生成"))
+                .thenReturn(CompletableFuture.completedFuture(ImDegradedReplyMarker.encode("gemini", "timeout")));
+
+        String payload = "{"
+                + "\"senderId\":\"ding-timeout-user\","
+                + "\"conversationId\":\"conv-timeout\","
+                + "\"text\":{\"content\":\"继续生成\"}"
+                + "}";
+
+        mockMvc.perform(post("/api/im/dingtalk/events")
+                        .contentType(APPLICATION_JSON)
+                        .content(payload))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.text.content").value(TIMEOUT_FALLBACK));
+    }
+
+    @Test
+    void shouldReturnTimeoutFallbackWhenDingtalkReplyExceedsWebhookBudget() throws Exception {
+        CompletableFuture<String> slowReply = new CompletableFuture<>();
+        when(imGatewayService.chatAsync(ImPlatform.DINGTALK, "ding-slow-user", "conv-slow", "你咋没有返回我信息"))
+                .thenReturn(slowReply);
+
+        String payload = "{"
+                + "\"senderId\":\"ding-slow-user\","
+                + "\"conversationId\":\"conv-slow\","
+                + "\"text\":{\"content\":\"你咋没有返回我信息\"}"
+                + "}";
+
+        mockMvc.perform(post("/api/im/dingtalk/events")
+                        .contentType(APPLICATION_JSON)
+                        .content(payload))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.text.content").value(TIMEOUT_FALLBACK));
+    }
+
+    @Test
+    void shouldMapAuthFailureMarkerToAuthFriendlyReplyForFeishu() throws Exception {
+        when(imGatewayService.chat(ImPlatform.FEISHU, "ou_auth", "oc_auth", "继续上一条"))
+                .thenReturn(ImDegradedReplyMarker.encode("openai", "auth_failure"));
+
+        String payload = "{"
+                + "\"header\":{\"event_type\":\"im.message.receive_v1\"},"
+                + "\"event\":{"
+                + "\"sender\":{\"sender_id\":{\"open_id\":\"ou_auth\"}},"
+                + "\"message\":{"
+                + "\"chat_id\":\"oc_auth\","
+                + "\"message_type\":\"text\","
+                + "\"content\":\"{\\\"text\\\":\\\"继续上一条\\\"}\""
+                + "}}"
+                + "}";
+
+        mockMvc.perform(post("/api/im/feishu/events")
+                        .contentType(APPLICATION_JSON)
+                        .content(payload))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content.text").value(AUTH_FALLBACK));
     }
 
     @Test
@@ -150,8 +215,8 @@ class ImWebhookControllerSanitizationTest {
 
     @Test
     void shouldReturnBlankFallbackWhenGatewayReplyIsEmpty() throws Exception {
-        when(imGatewayService.chat(ImPlatform.DINGTALK, "ding-empty-user", "conv-empty", "你好"))
-                .thenReturn("   ");
+        when(imGatewayService.chatAsync(ImPlatform.DINGTALK, "ding-empty-user", "conv-empty", "你好"))
+                .thenReturn(CompletableFuture.completedFuture("   "));
 
         String payload = "{"
                 + "\"senderId\":\"ding-empty-user\","

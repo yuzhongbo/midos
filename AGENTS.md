@@ -19,7 +19,7 @@ This repository is a lightweight, single-user personal AI assistant backend. Opt
   - `assistant-sdk`: Java SDK for client-side server calls
   - `mindos-cli`: Picocli command-line client using `assistant-sdk`; default entrypoint opens an interactive chat session and slash commands handle common session/profile/memory actions in one window
 - Runtime flow: `/chat` (backward compatible with `/api/chat`) -> dispatcher -> (DSL/skill engine or LLM fallback) -> memory updates.
-- IM integration flow (optional): `/api/im/feishu/events`, `/api/im/dingtalk/events`, `/api/im/wechat/events` -> dispatcher chat route -> platform text response.
+- IM integration flow (optional): `/api/im/feishu/events`, `/api/im/dingtalk/events`, `/api/im/wechat/events` -> dispatcher chat route -> platform text response. DingTalk also supports optional robot Stream 模式推送 for slow replies; when enabled, MindOS sends a short waiting status and then pushes the final answer asynchronously.
 - IM 文本也支持 memory 自然语言入口：如“查看记忆风格”“按任务聚焦压缩这段记忆：...”“根据这段话微调记忆风格：...”。
 - Multi-terminal memory flow: `/api/memory/{userId}/sync` with cursor-based pull (`GET`) and idempotent push (`POST eventId`).
 - Long-task orchestration flow: `/api/tasks/{userId}` for create/list/detail + `/api/tasks/{userId}/claim` for lease-based worker claiming + `/api/tasks/{userId}/{taskId}/progress|status` for multi-day progress updates.
@@ -43,6 +43,7 @@ This repository is a lightweight, single-user personal AI assistant backend. Opt
 - `assistant-api/src/main/java/com/zhongbo/mindos/assistant/api/LlmMetricsController.java`: LLM metrics API and recent-call window query.
 - `assistant-api/src/main/java/com/zhongbo/mindos/assistant/api/SecurityChallengeController.java`: challenge issuing + security audit query/read APIs.
 - `assistant-api/src/main/java/com/zhongbo/mindos/assistant/api/im/ImWebhookController.java`: Feishu/DingTalk/WeChat webhook adapter entrypoints.
+- `assistant-api/src/main/java/com/zhongbo/mindos/assistant/api/im/`: also contains DingTalk stream-mode lifecycle / outbound sender helpers.
 - `assistant-skill/src/main/java/com/zhongbo/mindos/assistant/skill/mcp/McpSkillLoader.java`: maps configured MCP servers to namespaced skills (`mcp.<alias>.<tool>`).
 - `assistant-dispatcher/src/main/java/com/zhongbo/mindos/assistant/dispatcher/DispatcherService.java`: intent routing and memory orchestration.
 - `assistant-skill/src/main/java/com/zhongbo/mindos/assistant/skill/SkillEngine.java`: skill execution + procedural logging.
@@ -69,6 +70,7 @@ This repository is a lightweight, single-user personal AI assistant backend. Opt
 - Fast security audit API validation: `./mvnw -q -pl assistant-api -am test -Dtest=SecurityAuditApiTest`
 - Fast IM webhook validation: `./mvnw -q -pl assistant-api -am test -Dtest=im.ImWebhookControllerTest`
 - Signed DingTalk webhook quick call (when signature verification enabled): `./dingtalk-signed-call.sh --base-url https://bot.example.com --secret '<dingtalk-sign-secret>' --text 'echo hi'`
+- DingTalk stream mode config keys: `mindos.im.dingtalk.stream.*` and `mindos.im.dingtalk.outbound.*`; if新增或调整键名/默认值，需同步更新 `README.md` 与 Windows/env 模板。
 - Fast solo profile smoke validation: `./mvnw -q -pl assistant-api -am test -Dtest=SoloProfileSmokeTest`
 
 ## Project conventions

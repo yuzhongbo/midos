@@ -24,6 +24,10 @@ import java.security.MessageDigest;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.logging.Level;
 import java.util.logging.Logger;
 
 @RestController
@@ -61,6 +65,9 @@ public class ImWebhookController {
 
     @Value("${mindos.im.dingtalk.secret:}")
     private String dingtalkSecret;
+
+    @Value("${mindos.im.dingtalk.reply-timeout-ms:2500}")
+    private long dingtalkReplyTimeoutMs;
 
     @Value("${mindos.im.wechat.token:}")
     private String wechatToken;
@@ -142,7 +149,7 @@ public class ImWebhookController {
             // Keep empty defaults for malformed payload; still return 200 for platform checks.
         }
 
-        String reply = ImReplySanitizer.sanitize(imGatewayService.chat(ImPlatform.DINGTALK, senderId, chatId, text));
+        String reply = resolveDingtalkReply(senderId, chatId, text);
 
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("msgtype", "text");
@@ -202,6 +209,32 @@ public class ImWebhookController {
 
     private ResponseEntity<Map<String, Object>> disabled() {
         return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(Map.of("message", "im integration disabled"));
+    }
+
+    private String resolveDingtalkReply(String senderId, String chatId, String text) {
+        long timeoutMs = Math.max(300L, dingtalkReplyTimeoutMs);
+        CompletableFuture<String> replyFuture = imGatewayService.chatAsync(ImPlatform.DINGTALK, senderId, chatId, text);
+        try {
+            return ImReplySanitizer.sanitize(replyFuture.get(timeoutMs, TimeUnit.MILLISECONDS));
+        } catch (TimeoutException ex) {
+            replyFuture.cancel(true);
+            LOGGER.warning("DingTalk reply timed out before webhook response: senderHash="
+                    + safeHash(senderId) + ", chatHash=" + safeHash(chatId) + ", timeoutMs=" + timeoutMs);
+            return ImReplySanitizer.TIMEOUT_IM_FALLBACK_REPLY;
+        } catch (Exception ex) {
+            LOGGER.log(Level.WARNING,
+                    "DingTalk reply failed before webhook response: senderHash=" + safeHash(senderId)
+                            + ", chatHash=" + safeHash(chatId),
+                    ex);
+            return ImReplySanitizer.FRIENDLY_IM_FALLBACK_REPLY;
+        }
+    }
+
+    private String safeHash(String value) {
+        if (value == null || value.isBlank()) {
+            return "n/a";
+        }
+        return Integer.toHexString(value.trim().hashCode());
     }
 
 

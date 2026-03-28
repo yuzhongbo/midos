@@ -65,6 +65,7 @@ install-mindos-server.bat
 
 `solo` profile highlights:
 - enables short-TTL LLM cache for repeated prompts
+- defaults to `qwen` as the main provider (`qwen3.5-plus` when no explicit model is supplied)
 - keeps richer prompt context and slightly longer replies
 - delays conversation rollup so recent dialogue stays hot longer
 - disables admin token requirement for `GET /api/metrics/llm` on local single-user setups
@@ -90,12 +91,22 @@ MINDOS_SERVER=http://localhost:8080 ./solo-smoke.sh
 Requirements: Java 17 in `PATH`.
 
 ```bat
-set MINDOS_LLM_PROVIDER_KEYS=deepseek:sk-xxx,openai:sk-yyy,gemini:sk-zzz,grok:sk-aaa
+set MINDOS_LLM_PROVIDER_KEYS=qwen:sk-qwen
 set MINDOS_IM_DINGTALK_SECRET=your-dingtalk-secret
+set MINDOS_IM_DINGTALK_REPLY_TIMEOUT_MS=2500
+set MINDOS_IM_DINGTALK_STREAM_ENABLED=true
+set MINDOS_IM_DINGTALK_STREAM_CLIENT_ID=ding-app-key
+set MINDOS_IM_DINGTALK_STREAM_CLIENT_SECRET=ding-app-secret
+set MINDOS_IM_DINGTALK_OUTBOUND_ENABLED=true
+set MINDOS_IM_DINGTALK_OUTBOUND_ROBOT_CODE=dingrobotcode
 install-mindos-server.bat
 %USERPROFILE%\.mindos-server\mindos-server.bat
 %USERPROFILE%\.mindos-server\mindos-server-smoke.bat
 ```
+
+`MINDOS_IM_DINGTALK_REPLY_TIMEOUT_MS` is the synchronous webhook wait budget. Keep it modest; raising it too high does not make DingTalk wait forever, it only increases the chance that the platform times out first.
+
+To switch a DingTalk bot to long-connection stream mode, also enable `MINDOS_IM_DINGTALK_STREAM_ENABLED=true`, fill in the stream `clientId/clientSecret`, and provide `MINDOS_IM_DINGTALK_OUTBOUND_ROBOT_CODE` so MindOS can push the waiting status and the final answer back into the conversation.
 
 Source-run option (without packaging):
 
@@ -125,10 +136,12 @@ mindos-server-stop.bat
 ```
 
 `mindos-server.env.bat` is the single place to edit self-hosted variables such as:
-- `MINDOS_LLM_PROVIDER` / `MINDOS_LLM_ROUTING_*` for model switching and routing
-- `MINDOS_LLM_PROVIDER_KEYS` for multi-provider keys
+- `MINDOS_LLM_PROVIDER` / `MINDOS_LLM_PROVIDER_ENDPOINTS` / `MINDOS_LLM_PROVIDER_KEYS` for the default Qwen setup
+- add other providers only when you actually need cross-provider switching
 - `MINDOS_IM_DINGTALK_*` / `MINDOS_IM_WECHAT_*` for bot callbacks and signature toggles
 - `MINDOS_SERVER_PORT` for local service port
+
+The exported Windows bundle also includes `mindos-server.full.env.bat` as a commented multi-provider reference. It is not auto-loaded; copy only the lines you want from it back into `mindos-server.env.bat` when needed.
 
 ## Cloud deploy (single-user)
 
@@ -358,14 +371,20 @@ curl -X POST http://localhost:8080/api/skills/load-mcp \
 ## Notes
 - Base profile keeps LLM calls in skeleton mode unless `mindos.llm.http.enabled=true` is enabled together with a valid key/endpoint map.
 - `solo` profile enables real OpenAI-compatible HTTP calls by default; other profiles can opt in with `mindos.llm.http.enabled=true`.
+- `gemini` supports both OpenAI-compatible proxy endpoints (for example `/v1/chat/completions`) and Google's native `.../v1beta/models/<model>:generateContent` endpoint.
+- `qwen` uses DashScope's OpenAI-compatible endpoint: `https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions`.
+- When no explicit `model` is supplied, `qwen` defaults to `qwen3.5-plus`.
+- For native Gemini, prefer configuring the base endpoint in `mindos.llm.provider-endpoints` and keep the secret in `mindos.llm.provider-keys`; the client will append `?key=...` automatically and mask it in metrics.
+- DingTalk webhook replies are synchronous; `mindos.im.dingtalk.reply-timeout-ms` (default `2500`) caps the wait budget so slow LLM replies degrade to a timeout-friendly message instead of vanishing from the chat window.
+- DingTalk stream mode is optional and intended for slow replies: enable `mindos.im.dingtalk.stream.enabled=true`, provide `mindos.im.dingtalk.stream.client-id`, `mindos.im.dingtalk.stream.client-secret`, and outbound settings (`mindos.im.dingtalk.outbound.enabled=true`, `mindos.im.dingtalk.outbound.robot-code`). When a reply is slow, MindOS sends a waiting status after `mindos.im.dingtalk.stream.waiting-delay-ms` (default `800`) and then pushes the final answer when it is ready.
 - Optional multi-provider routing:
   - default provider: `mindos.llm.provider=stub`
   - routing mode: `mindos.llm.routing.mode=fixed|auto` (default `fixed`)
   - real HTTP switch: `mindos.llm.http.enabled=true|false` (default `false` in base profile)
   - auto stage mapping: `mindos.llm.routing.stage-map=llm-dsl:openai,llm-fallback:openai`
   - preset mapping: `mindos.llm.routing.preset-map=cost:openai,balanced:openai,quality:openai`
-  - provider endpoint map: `mindos.llm.provider-endpoints=openai:https://api.openai.com/v1/chat/completions,local:http://localhost:11434/v1/chat/completions`
-  - provider key map: `mindos.llm.provider-keys=openai:sk-xxx,local:dummy-key`
+  - provider endpoint map: `mindos.llm.provider-endpoints=openai:https://api.openai.com/v1/chat/completions,local:http://localhost:11434/v1/chat/completions,gemini:https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent,qwen:https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions`
+  - provider key map: `mindos.llm.provider-keys=openai:sk-xxx,local:dummy-key,qwen:sk-qwen`
   - retry controls: `mindos.llm.retry.max-attempts` (default `3`), `mindos.llm.retry.delay-ms` (default `300`)
   - short TTL response cache (optional):
     - `mindos.llm.cache.enabled` (default `false`)
@@ -376,6 +395,20 @@ curl -X POST http://localhost:8080/api/skills/load-mcp \
   - when endpoint map is empty, built-in mainland defaults are used for `deepseek/qwen/kimi/doubao/hunyuan/ernie/glm`.
   - per-request override: send `profile.llmProvider` (CLI: `profile set --llm-provider openai`; use `auto` to force automatic stage-based routing)
   - per-request/server-profile preset: send `profile.llmPreset` (CLI: `profile set --llm-preset quality`) to pick a named cost/quality preset before stage auto-routing.
+
+### Production-ready multi-provider example
+
+```properties
+mindos.llm.http.enabled=true
+mindos.llm.provider=qwen
+mindos.llm.routing.mode=fixed
+mindos.llm.routing.stage-map=llm-dsl:qwen,llm-fallback:qwen
+mindos.llm.routing.preset-map=cost:qwen,balanced:qwen,quality:qwen
+mindos.llm.provider-endpoints=openai:https://ai.2756online.com/openai/v1/chat/completions,gemini:https://ai.2756online.com/gemini/v1beta/models/gemini-2.0-flash:generateContent,qwen:https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions,grok:https://ai.2756online.com/grok/v1/chat/completions
+mindos.llm.provider-keys=deepseek:sk-xxx,openai:sk-yyy,gemini:AIzaSy-zzz,qwen:sk-qwen,grok:sk-aaa
+```
+
+If you prefer cleaner secret handling for Gemini, use the same endpoint without `?key=` and keep the Gemini secret only in `mindos.llm.provider-keys`.
 - LLM call metrics (token estimate + multi-provider stats):
   - endpoint: `GET /api/metrics/llm?windowMinutes=60&provider=openai&includeRecent=true&recentLimit=20`
   - toggles: `mindos.llm.metrics.enabled` (default `true`), `mindos.llm.metrics.max-recent-calls` (default `500`)
@@ -549,6 +582,7 @@ curl -X POST http://localhost:8080/api/skills/load-mcp \
     - `按我的风格压缩这段记忆：记录今日复盘，聚焦到retrospective` -> focus `review`
     - `把记忆风格改成 行动派，语气 gentle，格式 markdown list` -> `action/warm/bullet`
 - IM webhook integration (disabled by default) supports Feishu/DingTalk/WeChat text chat via `/api/im/feishu/events`, `/api/im/dingtalk/events`, `/api/im/wechat/events`; all platforms can enable signature verification independently in `application.properties`.
+- DingTalk can also run in robot stream mode. In that setup, DingTalk pushes messages over the long-lived stream connection instead of the `/api/im/dingtalk/events` webhook, and MindOS proactively sends a short “请稍等” status before the final reply when processing is slow.
 - IM 文本可直接触发 memory 能力：`查看记忆风格`、`按任务聚焦压缩这段记忆：...`、`根据这段话微调记忆风格：...`。
 - 若压缩结果提示“关键约束可能被弱化”，可直接回复“要/好的/ok”继续获取原文关键点清单并逐条复核（IM 与 CLI 交互窗口均支持）；复核后回复“生成待办”可一键转成按 `today / this week / later` 分组的执行清单。
 - 生成待办时会同步显示“当前待办策略”预览（阈值与建议时段），方便在对话里确认当前生效配置。
@@ -595,6 +629,119 @@ curl -X POST http://localhost:8080/api/skills/load-mcp \
 ./mvnw -q -pl assistant-api -am test -Dtest=MemorySyncControllerTest
 ./mvnw -q test
 ```
+
+## DingTalk robot stream mode
+
+Use stream mode when webhook replies are too slow for the platform callback window and you still want users to see a waiting status before the final answer arrives.
+
+Recommended properties:
+
+```properties
+mindos.im.enabled=true
+mindos.im.dingtalk.enabled=true
+mindos.im.dingtalk.stream.enabled=true
+mindos.im.dingtalk.stream.client-id=ding-app-key
+mindos.im.dingtalk.stream.client-secret=ding-app-secret
+mindos.im.dingtalk.stream.topic=chatbot
+mindos.im.dingtalk.stream.waiting-delay-ms=800
+mindos.im.dingtalk.stream.waiting-text=我正在处理这条消息，请稍等，我会继续回复你。
+mindos.im.dingtalk.outbound.enabled=true
+mindos.im.dingtalk.outbound.robot-code=dingrobotcode
+# Optional: override outbound app credentials; when omitted, MindOS reuses the stream client credentials.
+# mindos.im.dingtalk.outbound.app-key=ding-app-key
+# mindos.im.dingtalk.outbound.app-secret=ding-app-secret
+```
+
+Behavior in stream mode:
+
+- if the reply finishes before `mindos.im.dingtalk.stream.waiting-delay-ms`, MindOS sends only the final answer;
+- if the reply is still running after that delay, MindOS first sends the waiting text, then pushes the final answer when the dispatcher finishes;
+- webhook timeout settings still apply to `/api/im/dingtalk/events`, but they are no longer the primary receive path once DingTalk is switched to `Stream 模式推送` in the developer console.
+
+Useful stream-mode log events:
+
+- healthy receive/send path
+  - `dingtalk.stream.lifecycle.starting`
+  - `dingtalk.stream.lifecycle.client-starting`
+  - `dingtalk.stream.lifecycle.started`
+  - `dingtalk.stream.received`
+  - `dingtalk.stream.waiting.sent`
+  - `dingtalk.stream.final.sent`
+  - `dingtalk.stream.outbound.sent`
+  - `dingtalk.stream.token.refreshed`
+- warnings to investigate
+  - `dingtalk.stream.lifecycle.not-started`
+  - `dingtalk.stream.lifecycle.start-failed`
+  - `dingtalk.stream.received.dropped`
+  - `dingtalk.stream.waiting.failed`
+  - `dingtalk.stream.final.failed`
+  - `dingtalk.stream.outbound.failed`
+  - `dingtalk.stream.outbound.rejected`
+  - `dingtalk.stream.outbound.exception`
+  - `dingtalk.stream.token.failed`
+
+## DingTalk stream mode rollout checklist
+
+### 1. DingTalk developer console
+
+- open the target app/bot in DingTalk developer console;
+- enable **事件订阅** and switch it to **Stream 模式推送**;
+- make sure the subscribed topic matches `mindos.im.dingtalk.stream.topic` (default `chatbot`);
+- confirm the bot/app uses the same `clientId` / `clientSecret` you configure in MindOS;
+- record the bot `robotCode` used for outbound message push.
+
+### 2. Required MindOS config
+
+- `mindos.im.enabled=true`
+- `mindos.im.dingtalk.enabled=true`
+- `mindos.im.dingtalk.stream.enabled=true`
+- `mindos.im.dingtalk.stream.client-id=<ding app key>`
+- `mindos.im.dingtalk.stream.client-secret=<ding app secret>`
+- `mindos.im.dingtalk.outbound.enabled=true`
+- `mindos.im.dingtalk.outbound.robot-code=<ding robot code>`
+
+Optional but recommended:
+
+- `mindos.im.dingtalk.stream.waiting-delay-ms=800`
+- `mindos.im.dingtalk.stream.waiting-text=我正在处理这条消息，请稍等，我会继续回复你。`
+- `mindos.im.dingtalk.outbound.app-key` / `mindos.im.dingtalk.outbound.app-secret` if outbound sending should not reuse the stream credentials.
+
+### 3. Permissions to confirm
+
+- the DingTalk app can establish Stream mode connections;
+- the app/bot has permission to send bot messages into the target conversation scope;
+- the configured `robotCode` belongs to the same app/bot you are enabling for stream mode;
+- the app credentials can obtain an access token successfully.
+
+### 4. First-run verification
+
+After startup, confirm logs show this sequence:
+
+1. `dingtalk.stream.lifecycle.starting`
+2. `dingtalk.stream.lifecycle.client-starting`
+3. `dingtalk.stream.lifecycle.started`
+
+Then send one slow test question from DingTalk and confirm:
+
+1. MindOS logs `dingtalk.stream.received`
+2. after the waiting delay, logs `dingtalk.stream.waiting.sent`
+3. DingTalk chat window shows the waiting text
+4. when the reply finishes, logs `dingtalk.stream.final.sent`
+5. sender logs `dingtalk.stream.outbound.sent`
+6. DingTalk chat window receives the final answer
+
+### 5. Failure diagnosis
+
+- if startup never happens, look for `dingtalk.stream.lifecycle.not-started` and fix the `reason` field;
+- if stream starts but no message is delivered, look for `dingtalk.stream.received.dropped`;
+- if waiting/final messages are not delivered, inspect `dingtalk.stream.waiting.failed`, `dingtalk.stream.final.failed`, `dingtalk.stream.outbound.failed`, and `dingtalk.stream.outbound.rejected`;
+- if authentication is wrong, `dingtalk.stream.token.failed` will include the failure category and the DingTalk `errmsg` when available.
+
+### 6. Rollback path
+
+- switch DingTalk event subscription back from Stream 模式推送 if needed;
+- set `mindos.im.dingtalk.stream.enabled=false`;
+- keep webhook mode enabled with `mindos.im.dingtalk.reply-timeout-ms` as the safety fallback.
 
 ## DingTalk signed webhook quick check
 

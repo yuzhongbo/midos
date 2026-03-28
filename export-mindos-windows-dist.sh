@@ -15,6 +15,7 @@ Environment overrides:
 Output contents:
   assistant-api-0.1.0-SNAPSHOT.jar
   mindos-server.env.bat
+  mindos-server.full.env.bat
   mindos-server.bat
   mindos-server-debug.bat
   mindos-server-smoke.bat
@@ -95,12 +96,9 @@ set "MINDOS_PAUSE_ON_EXIT=true"
 
 REM LLM routing / provider selection
 set "MINDOS_LLM_HTTP_ENABLED=true"
-set "MINDOS_LLM_PROVIDER=gemini"
-set "MINDOS_LLM_ROUTING_MODE=fixed"
-set "MINDOS_LLM_ROUTING_STAGE_MAP=llm-dsl:deepseek,llm-fallback:openai"
-set "MINDOS_LLM_ROUTING_PRESET_MAP=cost:deepseek,balanced:openai,quality:grok"
-set "MINDOS_LLM_PROVIDER_ENDPOINTS=openai:https://ai.2756online.com/openai/v1/chat/completions,gemini:https://ai.2756online.com/gemini/v1/chat/completions,grok:https://ai.2756online.com/grok/v1/chat/completions"
-set "MINDOS_LLM_PROVIDER_KEYS=deepseek:sk-xxx,openai:sk-yyy,gemini:sk-zzz,grok:sk-aaa"
+set "MINDOS_LLM_PROVIDER=qwen"
+set "MINDOS_LLM_PROVIDER_ENDPOINTS=qwen:https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+set "MINDOS_LLM_PROVIDER_KEYS=qwen:sk-qwen"
 
 REM Optional cache overrides
 REM set "MINDOS_LLM_CACHE_ENABLED=true"
@@ -112,6 +110,68 @@ set "MINDOS_IM_ENABLED=true"
 set "MINDOS_IM_DINGTALK_ENABLED=true"
 set "MINDOS_IM_DINGTALK_VERIFY_SIGNATURE=false"
 set "MINDOS_IM_DINGTALK_SECRET=replace-with-your-dingtalk-signing-secret"
+set "MINDOS_IM_DINGTALK_REPLY_TIMEOUT_MS=2500"
+REM Optional DingTalk stream mode for slow replies
+REM set "MINDOS_IM_DINGTALK_STREAM_ENABLED=true"
+REM set "MINDOS_IM_DINGTALK_STREAM_CLIENT_ID=ding-app-key"
+REM set "MINDOS_IM_DINGTALK_STREAM_CLIENT_SECRET=ding-app-secret"
+REM set "MINDOS_IM_DINGTALK_STREAM_TOPIC=chatbot"
+REM set "MINDOS_IM_DINGTALK_STREAM_WAITING_DELAY_MS=800"
+REM set "MINDOS_IM_DINGTALK_STREAM_WAITING_TEXT=我正在处理这条消息，请稍等，我会继续回复你。"
+REM set "MINDOS_IM_DINGTALK_OUTBOUND_ENABLED=true"
+REM set "MINDOS_IM_DINGTALK_OUTBOUND_ROBOT_CODE=dingrobotcode"
+set "MINDOS_IM_WECHAT_ENABLED=false"
+set "MINDOS_IM_WECHAT_VERIFY_SIGNATURE=true"
+set "MINDOS_IM_WECHAT_TOKEN=replace-with-your-wechat-token"
+
+REM Metrics endpoint auth for local single-user usage
+set "MINDOS_SECURITY_METRICS_REQUIRE_ADMIN_TOKEN=false"
+BAT
+
+cat > "$OUTPUT_DIR/mindos-server.full.env.bat" <<'BAT'
+@echo off
+REM Full multi-provider reference for Windows.
+REM Copy only the lines you need into mindos-server.env.bat.
+
+REM Core runtime
+set "MINDOS_SPRING_PROFILE=solo"
+set "MINDOS_SERVER_PORT=8080"
+set "MINDOS_SERVER=http://localhost:8080"
+set "MINDOS_USER=solo-smoke-user"
+set "MINDOS_SMOKE_TIMEOUT_SECONDS=8"
+set "MINDOS_PAUSE_ON_EXIT=true"
+
+REM LLM routing / provider selection
+set "MINDOS_LLM_HTTP_ENABLED=true"
+set "MINDOS_LLM_PROVIDER=qwen"
+set "MINDOS_LLM_ROUTING_MODE=fixed"
+set "MINDOS_LLM_ROUTING_STAGE_MAP=llm-dsl:qwen,llm-fallback:qwen"
+set "MINDOS_LLM_ROUTING_PRESET_MAP=cost:qwen,balanced:qwen,quality:qwen"
+set "MINDOS_LLM_PROVIDER_ENDPOINTS=openai:https://ai.2756online.com/openai/v1/chat/completions,gemini:https://ai.2756online.com/gemini/v1beta/models/gemini-2.0-flash:generateContent,qwen:https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions,grok:https://ai.2756online.com/grok/v1/chat/completions"
+REM Fill in only the providers you really use, for example:
+REM set "MINDOS_LLM_PROVIDER_KEYS=qwen:your-qwen-key"
+REM set "MINDOS_LLM_PROVIDER_KEYS=deepseek:sk-xxx,openai:sk-yyy,gemini:AIzaSy-zzz,qwen:sk-qwen,grok:sk-aaa"
+
+REM Optional cache overrides
+REM set "MINDOS_LLM_CACHE_ENABLED=true"
+REM set "MINDOS_LLM_CACHE_TTL_SECONDS=120"
+REM set "MINDOS_LLM_CACHE_MAX_ENTRIES=512"
+
+REM DingTalk / WeChat bot integration
+set "MINDOS_IM_ENABLED=true"
+set "MINDOS_IM_DINGTALK_ENABLED=true"
+set "MINDOS_IM_DINGTALK_VERIFY_SIGNATURE=false"
+set "MINDOS_IM_DINGTALK_SECRET=replace-with-your-dingtalk-signing-secret"
+set "MINDOS_IM_DINGTALK_REPLY_TIMEOUT_MS=2500"
+REM Optional DingTalk stream mode for slow replies
+REM set "MINDOS_IM_DINGTALK_STREAM_ENABLED=true"
+REM set "MINDOS_IM_DINGTALK_STREAM_CLIENT_ID=ding-app-key"
+REM set "MINDOS_IM_DINGTALK_STREAM_CLIENT_SECRET=ding-app-secret"
+REM set "MINDOS_IM_DINGTALK_STREAM_TOPIC=chatbot"
+REM set "MINDOS_IM_DINGTALK_STREAM_WAITING_DELAY_MS=800"
+REM set "MINDOS_IM_DINGTALK_STREAM_WAITING_TEXT=我正在处理这条消息，请稍等，我会继续回复你。"
+REM set "MINDOS_IM_DINGTALK_OUTBOUND_ENABLED=true"
+REM set "MINDOS_IM_DINGTALK_OUTBOUND_ROBOT_CODE=dingrobotcode"
 set "MINDOS_IM_WECHAT_ENABLED=false"
 set "MINDOS_IM_WECHAT_VERIFY_SIGNATURE=true"
 set "MINDOS_IM_WECHAT_TOKEN=replace-with-your-wechat-token"
@@ -304,8 +364,8 @@ MindOS Windows server bundle
 ============================
 
 1) Edit mindos-server.env.bat before startup:
-   - MINDOS_LLM_PROVIDER / MINDOS_LLM_ROUTING_* to switch AI routing
-   - MINDOS_LLM_PROVIDER_KEYS for model keys
+   - MINDOS_LLM_PROVIDER / MINDOS_LLM_PROVIDER_ENDPOINTS / MINDOS_LLM_PROVIDER_KEYS for the default Qwen setup
+   - if you need a broader reference, open mindos-server.full.env.bat and copy the needed lines back
    - MINDOS_IM_DINGTALK_* / MINDOS_IM_WECHAT_* for bot integration
    - MINDOS_SERVER_PORT for local port
 
@@ -326,6 +386,7 @@ Notes:
 - PID file is stored in run\assistant-api.pid.
 - Default Spring profile is solo.
 - All launcher scripts auto-load mindos-server.env.bat from the same directory.
+- mindos-server.full.env.bat is a commented reference file only; it is NOT auto-loaded.
 TXT
 
 echo "[DONE] Windows bundle exported to: $OUTPUT_DIR"

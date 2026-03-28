@@ -19,6 +19,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -56,10 +57,7 @@ public class ImGatewayService {
         }
 
         String userId = buildUserId(platform, senderId);
-        Map<String, Object> profileContext = new LinkedHashMap<>();
-        profileContext.put("imPlatform", platform.name().toLowerCase());
-        profileContext.put("imSenderId", senderId == null ? "" : senderId);
-        profileContext.put("imChatId", chatId == null ? "" : chatId);
+        Map<String, Object> profileContext = buildProfileContext(platform, senderId, chatId);
 
         String memoryReply = tryHandleMemoryPlanningIntent(userId, normalizedText);
         if (memoryReply != null) {
@@ -71,6 +69,37 @@ public class ImGatewayService {
                 ? "dispatcher"
                 : "dispatcher:" + result.channel().trim();
         return sanitizeAndObserve(platform, senderId, chatId, userId, replySource, result.reply());
+    }
+
+    CompletableFuture<String> chatAsync(ImPlatform platform, String senderId, String chatId, String text) {
+        String normalizedText = text == null ? "" : text.trim();
+        if (normalizedText.isBlank()) {
+            return CompletableFuture.completedFuture("请发送文本消息，我会继续协助你。");
+        }
+
+        String userId = buildUserId(platform, senderId);
+        Map<String, Object> profileContext = buildProfileContext(platform, senderId, chatId);
+
+        String memoryReply = tryHandleMemoryPlanningIntent(userId, normalizedText);
+        if (memoryReply != null) {
+            return CompletableFuture.completedFuture(sanitizeAndObserve(platform, senderId, chatId, userId, "memory-intent", memoryReply));
+        }
+
+        return dispatcherService.dispatchAsync(userId, normalizedText, profileContext)
+                .thenApply(result -> {
+                    String replySource = result.channel() == null || result.channel().isBlank()
+                            ? "dispatcher"
+                            : "dispatcher:" + result.channel().trim();
+                    return sanitizeAndObserve(platform, senderId, chatId, userId, replySource, result.reply());
+                });
+    }
+
+    private Map<String, Object> buildProfileContext(ImPlatform platform, String senderId, String chatId) {
+        Map<String, Object> profileContext = new LinkedHashMap<>();
+        profileContext.put("imPlatform", platform.name().toLowerCase());
+        profileContext.put("imSenderId", senderId == null ? "" : senderId);
+        profileContext.put("imChatId", chatId == null ? "" : chatId);
+        return profileContext;
     }
 
     private String sanitizeAndObserve(ImPlatform platform,
@@ -96,6 +125,8 @@ public class ImGatewayService {
         event.put("event", "im.reply.degraded");
         event.put("platform", platform == null ? "unknown" : platform.name().toLowerCase());
         event.put("replySource", safe(replySource));
+        event.put("provider", safe(decision.provider()));
+        event.put("errorCategory", safe(decision.errorCategory()));
         event.put("fallbackKind", decision.fallbackKind());
         event.put("reasons", decision.reasons());
         event.put("rawLength", decision.originalReply() == null ? 0 : decision.originalReply().trim().length());

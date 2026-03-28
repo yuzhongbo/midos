@@ -146,7 +146,7 @@ class ImWebhookControllerTest {
                         .content(payload))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.msgtype").value("text"))
-                .andExpect(jsonPath("$.text.content").value("抱歉，我这边的智能回复暂时有点忙。你可以稍后再试，或换一种更明确的说法发我，我继续帮你。"))
+                .andExpect(jsonPath("$.text.content").value(ImReplySanitizer.AUTH_IM_FALLBACK_REPLY))
                 .andExpect(jsonPath("$.text.content").value(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("[LLM"))))
                 .andExpect(jsonPath("$.text.content").value(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("继续按之前方式"))));
     }
