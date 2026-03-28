@@ -112,7 +112,7 @@ public class ImWebhookController {
 
     @PostMapping(value = "/dingtalk/events", produces = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<Map<String, Object>> dingtalkEvents(
-            @RequestBody Map<String, Object> body,
+            @RequestBody(required = false) String rawBody,
             @RequestParam(value = "timestamp", required = false) String timestamp,
             @RequestParam(value = "sign", required = false) String sign) {
         if (!isPlatformEnabled(dingtalkEnabled)) {
@@ -122,14 +122,23 @@ public class ImWebhookController {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of("message", "invalid signature"));
         }
 
-        Object textNode = body.get("text");
+        // DingTalk validation probes may send empty or non-standard payloads.
+        String bodyForLog = rawBody == null ? "" : rawBody;
+        System.out.println("DingTalk Check: " + bodyForLog);
+
         String text = "";
-        if (textNode instanceof Map<?, ?> map) {
-            Object content = map.get("content");
-            text = content == null ? "" : String.valueOf(content);
+        String senderId = "";
+        String chatId = "";
+        try {
+            JsonNode body = rawBody == null || rawBody.isBlank() ? objectMapper.createObjectNode() : objectMapper.readTree(rawBody);
+            JsonNode textNode = body.path("text");
+            text = textNode.path("content").asText("");
+            senderId = body.path("senderId").asText("");
+            chatId = body.path("conversationId").asText("");
+        } catch (Exception ignored) {
+            // Keep empty defaults for malformed payload; still return 200 for platform checks.
         }
-        String senderId = String.valueOf(body.getOrDefault("senderId", ""));
-        String chatId = String.valueOf(body.getOrDefault("conversationId", ""));
+
         String reply = imGatewayService.chat(ImPlatform.DINGTALK, senderId, chatId, text);
 
         Map<String, Object> payload = new LinkedHashMap<>();

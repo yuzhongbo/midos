@@ -51,6 +51,18 @@ chmod +x ./solo-cli.sh ./solo-smoke.sh ./solo-stop.sh
 - `solo-smoke.sh`: lightweight local checks for `/chat` echo route and `/api/metrics/llm`
 - `solo-stop.sh`: stops local service by port and/or process-name pattern
 
+Windows self-hosted equivalents:
+
+```bat
+run-mindos-solo.bat
+solo-smoke.bat
+install-mindos-server.bat
+```
+
+- `run-mindos-solo.bat`: runs `assistant-api` from source with `solo` profile via `mvnw.cmd`
+- `solo-smoke.bat`: checks `/chat` echo route and `/api/metrics/llm` using PowerShell
+- `install-mindos-server.bat`: builds `assistant-api`, installs `%USERPROFILE%\.mindos-server`, and generates `mindos-server.bat` / `mindos-server-smoke.bat`
+
 `solo` profile highlights:
 - enables short-TTL LLM cache for repeated prompts
 - keeps richer prompt context and slightly longer replies
@@ -72,6 +84,78 @@ MINDOS_SERVER=http://localhost:8080 MINDOS_USER=local-user ./solo-cli.sh --show-
 MINDOS_SERVER=http://localhost:8080 ./solo-smoke.sh
 ./solo-stop.sh --port 8080
 ```
+
+### Windows quick start (package + run)
+
+Requirements: Java 17 in `PATH`.
+
+```bat
+set MINDOS_LLM_PROVIDER_KEYS=deepseek:sk-xxx,openai:sk-yyy,gemini:sk-zzz,grok:sk-aaa
+set MINDOS_IM_DINGTALK_SECRET=your-dingtalk-secret
+install-mindos-server.bat
+%USERPROFILE%\.mindos-server\mindos-server.bat
+%USERPROFILE%\.mindos-server\mindos-server-smoke.bat
+```
+
+Source-run option (without packaging):
+
+```bat
+run-mindos-solo.bat
+solo-smoke.bat
+```
+
+### Export a portable Windows server bundle from the dev machine
+
+Build a copy-ready bundle containing the executable JAR plus `mindos-server.bat`, `mindos-server-smoke.bat`, and `mindos-server-stop.bat`:
+
+```bash
+chmod +x ./export-mindos-windows-dist.sh
+./export-mindos-windows-dist.sh ./dist/mindos-windows-server
+```
+
+The command above writes the bundle to the project root at `dist/mindos-windows-server`.
+
+Copy the whole output directory to the Windows host, then run:
+
+```bat
+notepad mindos-server.env.bat
+mindos-server.bat
+mindos-server-smoke.bat
+mindos-server-stop.bat
+```
+
+`mindos-server.env.bat` is the single place to edit self-hosted variables such as:
+- `MINDOS_LLM_PROVIDER` / `MINDOS_LLM_ROUTING_*` for model switching and routing
+- `MINDOS_LLM_PROVIDER_KEYS` for multi-provider keys
+- `MINDOS_IM_DINGTALK_*` / `MINDOS_IM_WECHAT_*` for bot callbacks and signature toggles
+- `MINDOS_SERVER_PORT` for local service port
+
+## Cloud deploy (single-user)
+
+Recommended flow: initialize SSH key once, then deploy without password.
+
+```bash
+chmod +x ./init-authorized-keys.sh ./cloud-init.sh ./cloud-check.sh ./deploy-cloud.sh ./rollback-cloud.sh
+CLOUD_HOST=1.2.3.4 CLOUD_USER=root ./init-authorized-keys.sh
+CLOUD_HOST=1.2.3.4 CLOUD_USER=root ./cloud-init.sh
+CLOUD_HOST=1.2.3.4 CLOUD_USER=root ./deploy-cloud.sh
+CLOUD_HOST=1.2.3.4 CLOUD_USER=root ./cloud-check.sh
+CLOUD_HOST=1.2.3.4 CLOUD_USER=root ./rollback-cloud.sh
+CLOUD_HOST=1.2.3.4 CLOUD_USER=root ./cloud-check.sh
+```
+
+Temporary fallback (not recommended for long-term use):
+
+```bash
+CLOUD_HOST=1.2.3.4 CLOUD_USER=root CLOUD_PASS='***' ./deploy-cloud.sh
+```
+
+Notes:
+- Deploy keeps `releases/<timestamp>` and updates `current` / `previous` symlinks for quick rollback.
+- `rollback-cloud.sh` switches `current` to `previous` and restarts `assistant-api`.
+- `cloud-init.sh` initializes remote directories/permissions and runs baseline checks.
+- `cloud-check.sh` prints `[PASS]/[WARN]/[FAIL]` with `SUMMARY`; exits `1` when FAIL exists.
+- Remote logs are written to `$REMOTE_BASE_DIR/logs/assistant-api.out`.
 
 In chat window:
 - `我有哪些技能`
@@ -509,3 +593,22 @@ curl -X POST http://localhost:8080/api/skills/load-mcp \
 ./mvnw -q test
 ```
 
+## DingTalk signed webhook quick check
+
+When `mindos.im.dingtalk.verify-signature=true`, use the helper script to generate `timestamp/sign` and send a signed POST:
+
+```bash
+chmod +x ./dingtalk-signed-call.sh
+./dingtalk-signed-call.sh \
+  --base-url https://bot.2756online.com \
+  --secret "$MINDOS_IM_DINGTALK_SECRET" \
+  --text "echo hi"
+```
+
+Unsigned connectivity check (only for temporary debug when signature verification is disabled):
+
+```bash
+curl -i -X POST "https://bot.2756online.com/api/im/dingtalk/events" \
+  -H "Content-Type: application/json" \
+  -d '{"senderId":"u1","conversationId":"c1","text":{"content":"echo hi"}}'
+```

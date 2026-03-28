@@ -59,6 +59,8 @@ This repository is a lightweight, single-user personal AI assistant backend. Opt
 - Run API locally: `./mvnw -pl assistant-api -am spring-boot:run`
 - Run API locally in solo profile: `./mvnw -pl assistant-api -am spring-boot:run -Dspring-boot.run.profiles=solo`
 - Solo helper scripts: `./run-mindos-solo.sh`, `./solo-cli.sh`, `./solo-smoke.sh`, `./solo-stop.sh` (CLI semantics unchanged; wrappers only set defaults/check health)
+- Windows self-use helpers: `run-mindos-solo.bat`, `solo-smoke.bat`, `install-mindos-server.bat` (package `assistant-api`, run solo profile, smoke-check `/chat` + `/api/metrics/llm`)
+- Portable Windows bundle export: `./export-mindos-windows-dist.sh /path/to/output-dir` (builds `assistant-api` and writes copy-ready `mindos-server.bat` / `mindos-server-smoke.bat` / `mindos-server-stop.bat` next to the jar)
 - Build all modules: `./mvnw clean package`
 - Fast SDK/CLI validation: `./mvnw -q -pl assistant-sdk,mindos-cli -am test`
 - Fast memory sync API validation: `./mvnw -q -pl assistant-api -am test -Dtest=MemorySyncControllerTest`
@@ -66,6 +68,7 @@ This repository is a lightweight, single-user personal AI assistant backend. Opt
 - Fast skill management API validation: `./mvnw -q -pl assistant-api -am test -Dtest=SkillControllerTest`
 - Fast security audit API validation: `./mvnw -q -pl assistant-api -am test -Dtest=SecurityAuditApiTest`
 - Fast IM webhook validation: `./mvnw -q -pl assistant-api -am test -Dtest=im.ImWebhookControllerTest`
+- Signed DingTalk webhook quick call (when signature verification enabled): `./dingtalk-signed-call.sh --base-url https://bot.example.com --secret '<dingtalk-sign-secret>' --text 'echo hi'`
 - Fast solo profile smoke validation: `./mvnw -q -pl assistant-api -am test -Dtest=SoloProfileSmokeTest`
 
 ## Project conventions

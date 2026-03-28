@@ -21,8 +21,7 @@ class ApiKeyLlmClientTest {
                 "cost:deepseek,quality:deepseek",
                 "deepseek:key-deepseek",
                 false,
-                60,
-                256
+                60
         );
 
         String output = client.generateResponse("hello", Map.of("userId", "u-cn", "llmProvider", "deepseek"));
@@ -40,8 +39,7 @@ class ApiKeyLlmClientTest {
                 "cost:qwen,quality:qwen",
                 "dashscope:key-qwen",
                 false,
-                60,
-                256
+                60
         );
 
         String output = client.generateResponse("hello", Map.of("userId", "u-cn", "llmProvider", "tongyi"));
@@ -60,8 +58,7 @@ class ApiKeyLlmClientTest {
                 "cost:local,quality:openai",
                 "openai:key-openai,local:key-local",
                 false,
-                60,
-                256
+                60
         );
 
         String output = client.generateResponse("hello", Map.of("userId", "u1", "llmProvider", "local", "routeStage", "llm-dsl"));
@@ -78,8 +75,7 @@ class ApiKeyLlmClientTest {
                 "cost:local,quality:openai",
                 "openai:key-openai,local:key-local",
                 false,
-                60,
-                256
+                60
         );
 
         String output = client.generateResponse("hello", Map.of("userId", "u1", "llmProvider", "auto", "routeStage", "llm-fallback"));
@@ -96,8 +92,7 @@ class ApiKeyLlmClientTest {
                 "cost:local,quality:openai",
                 "openai:key-openai,local:key-local",
                 false,
-                60,
-                256
+                60
         );
 
         String output = client.generateResponse("hello", Map.of("userId", "u1", "llmProvider", "auto", "routeStage", "custom-stage"));
@@ -114,8 +109,7 @@ class ApiKeyLlmClientTest {
                 "cost:local,quality:openai",
                 "openai:key-openai,local:key-local",
                 false,
-                60,
-                256
+                60
         );
 
         String output = client.generateResponse("hello", Map.of("userId", "u1", "llmPreset", "cost", "routeStage", "llm-fallback"));
@@ -132,8 +126,7 @@ class ApiKeyLlmClientTest {
                 "cost:local,quality:openai",
                 "openai:key-openai,local:key-local",
                 false,
-                60,
-                256
+                60
         );
 
         String output = client.generateResponse("hello", Map.of("userId", "u1", "llmPreset", "unknown", "llmProvider", "auto", "routeStage", "llm-fallback"));
@@ -150,8 +143,7 @@ class ApiKeyLlmClientTest {
                 "cost:openai,quality:openai",
                 "openai:key-openai",
                 true,
-                60,
-                256
+                60
         );
 
         client.generateResponse("same prompt", Map.of("userId", "u-cache", "routeStage", "llm-dsl"));
@@ -174,8 +166,7 @@ class ApiKeyLlmClientTest {
                 "cost:openai,quality:openai",
                 "openai:key-openai",
                 true,
-                1,
-                256
+                1
         );
 
         client.generateResponse("same prompt", Map.of("userId", "u-cache", "routeStage", "llm-dsl"));
@@ -212,8 +203,7 @@ class ApiKeyLlmClientTest {
                                       String presetMap,
                                       String providerKeys,
                                       boolean cacheEnabled,
-                                      long cacheTtlSeconds,
-                                      int cacheMaxEntries) {
+                                      long cacheTtlSeconds) {
         ObjectProvider<UserApiKeyRepository> provider = new DefaultListableBeanFactory().getBeanProvider(UserApiKeyRepository.class);
         UserApiKeyService userApiKeyService = new UserApiKeyService(provider, new AesApiKeyCryptoService(""));
         LlmMetricsService metricsService = new LlmMetricsService(true, 200);
@@ -229,9 +219,10 @@ class ApiKeyLlmClientTest {
                 "",
                 1,
                 0L,
+                false,
                 cacheEnabled,
                 cacheTtlSeconds,
-                cacheMaxEntries,
+                256,
                 userApiKeyService,
                 metricsService
         );

@@ -2,6 +2,7 @@ package com.zhongbo.mindos.assistant.llm;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zhongbo.mindos.assistant.common.LlmCacheMetricsReader;
 import com.zhongbo.mindos.assistant.common.LlmClient;
@@ -12,6 +13,12 @@ import com.zhongbo.mindos.assistant.common.dsl.SkillDSL;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
+import java.io.IOException;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.ArrayDeque;
@@ -66,6 +73,7 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
     private final LlmMetricsService llmMetricsService;
     private final int maxRetries;
     private final long retryDelayMs;
+    private final boolean httpEnabled;
     private final boolean responseCacheEnabled;
     private final long responseCacheTtlMillis;
     private final int responseCacheMaxEntries;
@@ -75,7 +83,11 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
     private final Object cacheAccessWindowLock = new Object();
     private final ArrayDeque<CacheAccessEvent> cacheAccessEvents = new ArrayDeque<>();
     private static final int MAX_CACHE_ACCESS_EVENTS = 10_000;
+    private static final Duration HTTP_TIMEOUT = Duration.ofSeconds(30);
     private final ObjectMapper objectMapper = new ObjectMapper();
+    private final HttpClient httpClient = HttpClient.newBuilder()
+            .connectTimeout(Duration.ofSeconds(10))
+            .build();
 
     public ApiKeyLlmClient(@Value("${mindos.llm.provider:openai}") String provider,
                            @Value("${mindos.llm.routing.mode:fixed}") String routingMode,
@@ -88,6 +100,7 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
                            @Value("${mindos.llm.user-keys:}") String userKeys,
                            @Value("${mindos.llm.retry.max-attempts:3}") int maxRetries,
                            @Value("${mindos.llm.retry.delay-ms:300}") long retryDelayMs,
+                           @Value("${mindos.llm.http.enabled:false}") boolean httpEnabled,
                            @Value("${mindos.llm.cache.enabled:false}") boolean responseCacheEnabled,
                            @Value("${mindos.llm.cache.ttl-seconds:60}") long responseCacheTtlSeconds,
                            @Value("${mindos.llm.cache.max-entries:256}") int responseCacheMaxEntries,
@@ -104,6 +117,7 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
         this.userApiKeys = parseUserKeys(userKeys);
         this.maxRetries = Math.max(1, maxRetries);
         this.retryDelayMs = Math.max(0L, retryDelayMs);
+        this.httpEnabled = httpEnabled;
         this.responseCacheEnabled = responseCacheEnabled;
         this.responseCacheTtlMillis = Math.max(1_000L, responseCacheTtlSeconds * 1_000L);
         this.responseCacheMaxEntries = Math.max(16, responseCacheMaxEntries);
@@ -257,6 +271,9 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
                                 Map<String, Object> context,
                                 String apiKey) {
         String normalized = normalizeProvider(providerName);
+        if (httpEnabled && isOpenAiCompatibleProvider(normalized, endpointValue)) {
+            return callOpenAiCompatibleProvider(normalized, endpointValue, prompt, context, apiKey);
+        }
         if (normalized.contains("openai")
                 || "deepseek".equals(normalized)
                 || "qwen".equals(normalized)
@@ -264,7 +281,9 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
                 || "doubao".equals(normalized)
                 || "hunyuan".equals(normalized)
                 || "ernie".equals(normalized)
-                || "glm".equals(normalized)) {
+                || "glm".equals(normalized)
+                || "gemini".equals(normalized)
+                || "grok".equals(normalized)) {
             return "[LLM " + normalized + "] skeleton call to " + endpointValue + " with apiKey=" + mask(apiKey) + ": " + prompt;
         }
         if (normalized.contains("local") || normalized.contains("llama") || normalized.contains("mpt")) {
@@ -273,6 +292,168 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
 
         String userId = context == null ? "unknown" : String.valueOf(context.getOrDefault("userId", "unknown"));
         return "[LLM " + providerName + "] skeleton response for user " + userId + ": " + prompt;
+    }
+
+    private boolean isOpenAiCompatibleProvider(String normalizedProvider, String endpointValue) {
+        if (normalizedProvider.contains("local") || normalizedProvider.contains("llama") || normalizedProvider.contains("mpt")) {
+            return false;
+        }
+        if (normalizedProvider.contains("openai")
+                || "deepseek".equals(normalizedProvider)
+                || "qwen".equals(normalizedProvider)
+                || "kimi".equals(normalizedProvider)
+                || "doubao".equals(normalizedProvider)
+                || "hunyuan".equals(normalizedProvider)
+                || "ernie".equals(normalizedProvider)
+                || "glm".equals(normalizedProvider)
+                || "gemini".equals(normalizedProvider)
+                || "grok".equals(normalizedProvider)) {
+            return true;
+        }
+        return endpointValue != null && endpointValue.contains("/chat/completions");
+    }
+
+    private String callOpenAiCompatibleProvider(String normalizedProvider,
+                                                String endpointValue,
+                                                String prompt,
+                                                Map<String, Object> context,
+                                                String apiKey) {
+        String endpointText = endpointValue == null ? "" : endpointValue.trim();
+        if (endpointText.isBlank()) {
+            throw new RuntimeException("empty endpoint");
+        }
+        try {
+            Map<String, Object> requestPayload = new LinkedHashMap<>();
+            requestPayload.put("model", resolveModel(context, normalizedProvider));
+            requestPayload.put("messages", List.of(Map.of("role", "user", "content", prompt)));
+
+            Double temperature = resolveTemperature(context);
+            if (temperature != null) {
+                requestPayload.put("temperature", temperature);
+            }
+            Integer maxTokens = resolveMaxTokens(context);
+            if (maxTokens != null) {
+                requestPayload.put("max_tokens", maxTokens);
+            }
+
+            String requestBody = objectMapper.writeValueAsString(requestPayload);
+            HttpRequest request = HttpRequest.newBuilder(URI.create(endpointText))
+                    .timeout(HTTP_TIMEOUT)
+                    .header("Content-Type", "application/json")
+                    .header("Authorization", "Bearer " + apiKey)
+                    .POST(HttpRequest.BodyPublishers.ofString(requestBody))
+                    .build();
+
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            int status = response.statusCode();
+            String body = response.body() == null ? "" : response.body();
+            if (status < 200 || status >= 300) {
+                throw new RuntimeException("http_" + status + ": " + abbreviate(body, 300));
+            }
+
+            String content = extractAssistantText(body);
+            if (content == null || content.isBlank()) {
+                throw new RuntimeException("empty_response_content");
+            }
+            return content;
+        } catch (IOException | InterruptedException ex) {
+            if (ex instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
+            throw new RuntimeException("http_call_failed: " + ex.getMessage(), ex);
+        }
+    }
+
+    private String extractAssistantText(String responseBody) {
+        try {
+            JsonNode root = objectMapper.readTree(responseBody == null ? "" : responseBody);
+            JsonNode contentNode = root.path("choices").path(0).path("message").path("content");
+            if (contentNode.isTextual()) {
+                return contentNode.asText("").trim();
+            }
+            if (contentNode.isArray()) {
+                StringBuilder builder = new StringBuilder();
+                for (JsonNode item : contentNode) {
+                    String text = item.path("text").asText("");
+                    if (!text.isBlank()) {
+                        if (builder.length() > 0) {
+                            builder.append('\n');
+                        }
+                        builder.append(text.trim());
+                    }
+                }
+                if (builder.length() > 0) {
+                    return builder.toString();
+                }
+            }
+            String outputText = root.path("output_text").asText("").trim();
+            if (!outputText.isBlank()) {
+                return outputText;
+            }
+            return null;
+        } catch (Exception ex) {
+            throw new RuntimeException("invalid_response_json", ex);
+        }
+    }
+
+    private String resolveModel(Map<String, Object> context, String normalizedProvider) {
+        if (context != null) {
+            String model = asText(context.get("model"));
+            if (model != null) {
+                return model;
+            }
+        }
+        return normalizedProvider;
+    }
+
+    private Double resolveTemperature(Map<String, Object> context) {
+        if (context == null) {
+            return null;
+        }
+        Object raw = context.get("temperature");
+        if (raw instanceof Number number) {
+            return number.doubleValue();
+        }
+        if (raw instanceof String text && !text.isBlank()) {
+            try {
+                return Double.parseDouble(text.trim());
+            } catch (NumberFormatException ignored) {
+                return null;
+            }
+        }
+        return null;
+    }
+
+    private Integer resolveMaxTokens(Map<String, Object> context) {
+        if (context == null) {
+            return null;
+        }
+        Object raw = context.get("maxTokens");
+        if (raw == null) {
+            raw = context.get("max_tokens");
+        }
+        if (raw instanceof Number number) {
+            return number.intValue();
+        }
+        if (raw instanceof String text && !text.isBlank()) {
+            try {
+                return Integer.parseInt(text.trim());
+            } catch (NumberFormatException ignored) {
+                return null;
+            }
+        }
+        return null;
+    }
+
+    private String abbreviate(String text, int maxLength) {
+        if (text == null) {
+            return "";
+        }
+        String trimmed = text.trim();
+        if (trimmed.length() <= maxLength) {
+            return trimmed;
+        }
+        return trimmed.substring(0, maxLength) + "...";
     }
 
     private String resolveApiKey(Map<String, Object> context, String providerName) {
