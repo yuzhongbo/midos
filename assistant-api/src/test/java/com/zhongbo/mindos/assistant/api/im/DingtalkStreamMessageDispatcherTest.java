@@ -43,6 +43,8 @@ class DingtalkStreamMessageDispatcherTest {
                 DingtalkIntegrationSettings.BOT_MESSAGE_TOPIC,
                 10L,
                 "我正在处理中，请稍等。",
+                false,
+                30000L,
                 true,
                 1000L,
                 60000L,
@@ -100,6 +102,8 @@ class DingtalkStreamMessageDispatcherTest {
                 DingtalkIntegrationSettings.BOT_MESSAGE_TOPIC,
                 200L,
                 "我正在处理中，请稍等。",
+                false,
+                30000L,
                 true,
                 1000L,
                 60000L,
@@ -141,6 +145,8 @@ class DingtalkStreamMessageDispatcherTest {
                 DingtalkIntegrationSettings.BOT_MESSAGE_TOPIC,
                 0L,
                 "处理中",
+                false,
+                30000L,
                 true,
                 1000L,
                 60000L,
@@ -187,6 +193,8 @@ class DingtalkStreamMessageDispatcherTest {
                 DingtalkIntegrationSettings.BOT_MESSAGE_TOPIC,
                 200L,
                 "我正在处理中，请稍等。",
+                false,
+                30000L,
                 true,
                 1000L,
                 60000L,
@@ -222,6 +230,7 @@ class DingtalkStreamMessageDispatcherTest {
     void shouldSplitOversizedFinalReplyBeforeSend() throws Exception {
         ImGatewayService gatewayService = mock(ImGatewayService.class);
         RecordingConversationSender sender = new RecordingConversationSender(true);
+        String longReply = "1234567890".repeat(45);
         DingtalkIntegrationSettings settings = new DingtalkIntegrationSettings(
                 true,
                 true,
@@ -231,6 +240,8 @@ class DingtalkStreamMessageDispatcherTest {
                 DingtalkIntegrationSettings.BOT_MESSAGE_TOPIC,
                 50L,
                 "处理中",
+                false,
+                30000L,
                 true,
                 1000L,
                 60000L,
@@ -243,9 +254,9 @@ class DingtalkStreamMessageDispatcherTest {
                 ""
         );
         when(gatewayService.chatAsync(ImPlatform.DINGTALK, "staff-cap", "cid-cap", "请总结"))
-                .thenReturn(CompletableFuture.completedFuture("1234567890123456789012345678901234567890"));
+                .thenReturn(CompletableFuture.completedFuture(longReply));
         dispatcher = new DingtalkStreamMessageDispatcher(gatewayService, sender, settings);
-        setPrivateIntField(dispatcher, "dingtalkReplyMaxChars", 20);
+        setPrivateIntField(dispatcher, "dingtalkReplyMaxChars", 200);
 
         dispatcher.handleIncomingPayload(Map.of(
                 "conversationId", "cid-cap",
@@ -253,11 +264,91 @@ class DingtalkStreamMessageDispatcherTest {
                 "text", Map.of("content", "请总结")
         ));
 
+        waitUntil(() -> sender.messages.size() >= 3, 1000);
+        assertTrue(sender.messages.stream().allMatch(message -> message.length() <= 200));
+        assertEquals(longReply, String.join("", sender.messages));
+    }
+
+    @Test
+    void shouldForceWaitingStatusEvenForFastReplyWhenConfigured() throws Exception {
+        ImGatewayService gatewayService = mock(ImGatewayService.class);
+        RecordingConversationSender sender = new RecordingConversationSender(true);
+        DingtalkIntegrationSettings settings = new DingtalkIntegrationSettings(
+                true,
+                true,
+                true,
+                "client-id",
+                "client-secret",
+                DingtalkIntegrationSettings.BOT_MESSAGE_TOPIC,
+                500L,
+                "处理中",
+                true,
+                30000L,
+                true,
+                1000L,
+                60000L,
+                2.0d,
+                0.2d,
+                0,
+                true,
+                "robot-code",
+                "",
+                ""
+        );
+        when(gatewayService.chatAsync(ImPlatform.DINGTALK, "staff-force", "cid-force", "你好"))
+                .thenReturn(CompletableFuture.completedFuture("最终回复"));
+        dispatcher = new DingtalkStreamMessageDispatcher(gatewayService, sender, settings);
+
+        dispatcher.handleIncomingPayload(Map.of(
+                "conversationId", "cid-force",
+                "senderStaffId", "staff-force",
+                "text", Map.of("content", "你好")
+        ));
+
         waitUntil(() -> sender.messages.size() >= 2, 1000);
-        assertEquals(2, sender.messages.size());
-        assertTrue(sender.messages.get(0).length() <= 20);
-        assertTrue(sender.messages.get(1).length() <= 20);
-        assertEquals("1234567890123456789012345678901234567890", sender.messages.get(0) + sender.messages.get(1));
+        assertEquals("处理中", sender.messages.get(0));
+        assertEquals("最终回复", sender.messages.get(1));
+    }
+
+    @Test
+    void shouldSendTimeoutFallbackWhenAsyncReplyNeverCompletes() throws Exception {
+        ImGatewayService gatewayService = mock(ImGatewayService.class);
+        RecordingConversationSender sender = new RecordingConversationSender(true);
+        DingtalkIntegrationSettings settings = new DingtalkIntegrationSettings(
+                true,
+                true,
+                true,
+                "client-id",
+                "client-secret",
+                DingtalkIntegrationSettings.BOT_MESSAGE_TOPIC,
+                10L,
+                "处理中",
+                true,
+                60L,
+                true,
+                1000L,
+                60000L,
+                2.0d,
+                0.2d,
+                0,
+                true,
+                "robot-code",
+                "",
+                ""
+        );
+        when(gatewayService.chatAsync(ImPlatform.DINGTALK, "staff-timeout", "cid-timeout", "慢一点"))
+                .thenReturn(new CompletableFuture<>());
+        dispatcher = new DingtalkStreamMessageDispatcher(gatewayService, sender, settings);
+
+        dispatcher.handleIncomingPayload(Map.of(
+                "conversationId", "cid-timeout",
+                "senderStaffId", "staff-timeout",
+                "text", Map.of("content", "慢一点")
+        ));
+
+        waitUntil(() -> sender.messages.size() >= 2, 1500);
+        assertEquals("处理中", sender.messages.get(0));
+        assertEquals(ImReplySanitizer.TIMEOUT_IM_FALLBACK_REPLY, sender.messages.get(1));
     }
 
     private void setPrivateIntField(Object target, String fieldName, int value) throws Exception {

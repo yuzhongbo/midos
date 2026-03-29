@@ -32,6 +32,8 @@ class DingtalkOpenApiConversationSenderTest {
                 "chatbot",
                 800L,
                 "我正在处理这条消息，请稍等，我会继续回复你。",
+                false,
+                30000L,
                 true,
                 1000L,
                 60000L,

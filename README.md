@@ -422,6 +422,7 @@ mindos.llm.provider-keys=deepseek:sk-xxx,openai:sk-yyy,gemini:AIzaSy-zzz,qwen:sk
 If you prefer cleaner secret handling for Gemini, use the same endpoint without `?key=` and keep the Gemini secret only in `mindos.llm.provider-keys`.
 - LLM call metrics (token estimate + multi-provider stats):
   - endpoint: `GET /api/metrics/llm?windowMinutes=60&provider=openai&includeRecent=true&recentLimit=20`
+  - routing replay endpoint: `GET /api/metrics/llm/routing-replay?limit=200` (offline compare of `rule / preAnalyze / finalChannel` from recent real inputs)
   - toggles: `mindos.llm.metrics.enabled` (default `true`), `mindos.llm.metrics.max-recent-calls` (default `500`)
   - optional auth: `mindos.security.metrics.require-admin-token` (default `true`, validates `mindos.security.risky-ops.admin-token-header` / `mindos.security.risky-ops.admin-token`)
   - summary includes success/fallback rate, average latency, estimated token totals, provider aggregates, optional recent calls, and `securityAudit` writer metrics (`queueDepth`, `enqueuedCount`, `writtenCount`, `callerRunsFallbackCount`, `flushTimeoutCount`, `flushErrorCount`).
@@ -431,6 +432,7 @@ If you prefer cleaner secret handling for Gemini, use the same endpoint without 
     - `contextCompression`: dispatcher prompt-context compression effectiveness (`requests`, `compressedRequests`, `totalInputChars`, `totalOutputChars`, `avgCompressionRatio`, `summarizedTurns`)
     - `skillPreAnalyze`: dispatcher pre-analyze gating stats (`mode`, `confidenceThreshold`, `requests`, `executed`, `accepted`, `skippedByGate`, `skippedBySkill`)
     - `memoryHits`: prompt-memory retrieval hit stats (`requests`, `semanticHits`, `proceduralHits`, `rollupHits`, `approximateHitRate`)
+    - `memoryContribution`: per-turn memory segment tags used for final reply construction (`requests`, `recentTagged`, `semanticTagged`, `proceduralTagged`, `personaTagged`, `rollupTagged`)
     - `llmCacheWindowHitRate`: cache hit rate within current `windowMinutes` only (better for release-over-release online effectiveness tracking)
     - `llmCacheWindowHits` / `llmCacheWindowMisses`: sample size of cache decisions inside current window, used together with `llmCacheWindowHitRate` to avoid small-sample misread.
     - `llmCacheWindowLowSample`: true when window sample size (`hits + misses`) is below threshold.
@@ -465,11 +467,14 @@ If you prefer cleaner secret handling for Gemini, use the same endpoint without 
   - `mindos.dispatcher.skill.pre-analyze.mode=auto|always|never` (default `auto`): controls whether low-certainty requests go through LLM skill pre-analysis.
   - `mindos.dispatcher.skill.pre-analyze.confidence-threshold` (default `0`): in `auto` mode, skip pre-analysis when best candidate confidence is below this threshold.
   - `mindos.dispatcher.skill.pre-analyze.skip-skills` (default `time`): skill names that should not be selected by LLM pre-analysis.
+  - `mindos.dispatcher.llm-dsl.provider` / `mindos.dispatcher.llm-dsl.preset` (default empty): stage-specific provider/preset defaults for `llm-dsl` routing calls when profile override is absent.
+  - `mindos.dispatcher.llm-fallback.provider` / `mindos.dispatcher.llm-fallback.preset` (default empty): stage-specific provider/preset defaults for normal chat fallback when profile override is absent.
   - `mindos.dispatcher.skill.finalize-with-llm.enabled` (default `false` in base profile, `true` in `solo`): runs an LLM postprocess stage to convert structured skill output into a concise user-facing conclusion.
   - `mindos.dispatcher.skill.finalize-with-llm.skills` (default `teaching.plan,todo.create,eq.coach,code.generate,file.search`): comma-separated skill allowlist for postprocess finalization.
   - `mindos.dispatcher.skill.finalize-with-llm.max-output-chars` (default `900`): hard cap for the final postprocessed skill reply.
   - `mindos.dispatcher.skill.finalize-with-llm.provider` (default empty): optional dedicated provider override for `skill-postprocess` stage.
   - `mindos.dispatcher.skill.finalize-with-llm.preset` (default empty in base profile, `cost` in `solo`): optional dedicated preset override for `skill-postprocess` stage.
+  - `mindos.dispatcher.routing-replay.max-samples` (default `200`): retained sample size for routing replay offline analysis.
 - Optional post-skill summary writeback controls:
   - `mindos.memory.post-skill-summary.enabled` (default `false`): when enabled, successful skill outputs are summarized and written to semantic memory.
   - `mindos.memory.post-skill-summary.skills` (default `teaching.plan,todo.create,eq.coach,code.generate,file.search`): comma-separated skill allowlist for summary writeback.
@@ -670,6 +675,8 @@ mindos.im.dingtalk.stream.client-secret=ding-app-secret
 mindos.im.dingtalk.stream.topic=/v1.0/im/bot/messages/get
 mindos.im.dingtalk.stream.waiting-delay-ms=800
 mindos.im.dingtalk.stream.waiting-text=我正在处理这条消息，请稍等，我会继续回复你。
+mindos.im.dingtalk.stream.force-waiting=true
+mindos.im.dingtalk.stream.final-timeout-ms=30000
 mindos.im.dingtalk.stream.reconnect.enabled=true
 mindos.im.dingtalk.stream.reconnect.initial-delay-ms=1000
 mindos.im.dingtalk.stream.reconnect.max-delay-ms=60000
@@ -686,7 +693,9 @@ mindos.im.dingtalk.outbound.robot-code=dingrobotcode
 Behavior in stream mode:
 
 - if the reply finishes before `mindos.im.dingtalk.stream.waiting-delay-ms`, MindOS sends only the final answer;
+- when `mindos.im.dingtalk.stream.force-waiting=true`, MindOS always sends waiting text first (even for fast replies) to avoid “silent” windows;
 - if the reply is still running after that delay, MindOS first sends the waiting text, then pushes the final answer when the dispatcher finishes;
+- if async processing exceeds `mindos.im.dingtalk.stream.final-timeout-ms`, MindOS sends a timeout-friendly fallback reply to avoid hanging conversations;
 - if stream startup fails (for example DingTalk `503 ServiceUnavailable`), MindOS retries with exponential backoff using `mindos.im.dingtalk.stream.reconnect.*` settings;
 - webhook timeout settings still apply to `/api/im/dingtalk/events`, but they are no longer the primary receive path once DingTalk is switched to `Stream 模式推送` in the developer console.
 

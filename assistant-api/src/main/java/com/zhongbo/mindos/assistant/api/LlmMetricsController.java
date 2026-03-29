@@ -7,6 +7,7 @@ import com.zhongbo.mindos.assistant.common.LlmCacheMetricsReader;
 import com.zhongbo.mindos.assistant.common.MemoryWriteGateMetricsReader;
 import com.zhongbo.mindos.assistant.common.dto.LlmCacheWindowMetricsDto;
 import com.zhongbo.mindos.assistant.common.dto.LlmMetricsResponseDto;
+import com.zhongbo.mindos.assistant.common.dto.RoutingReplayDatasetDto;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -75,11 +76,21 @@ public class LlmMetricsController {
                 contextCompressionMetricsReader.snapshotContextCompressionMetrics(),
                 dispatcherRoutingMetricsReader.snapshotSkillPreAnalyzeMetrics(),
                 dispatcherRoutingMetricsReader.snapshotMemoryHitMetrics(),
+                dispatcherRoutingMetricsReader.snapshotMemoryContributionMetrics(),
                 windowCache.hitRate(),
                 windowCache.hits(),
                 windowCache.misses(),
                 llmCacheWindowLowSample
         );
+    }
+
+    @GetMapping("/routing-replay")
+    public RoutingReplayDatasetDto getRoutingReplay(@RequestParam(defaultValue = "200") int limit,
+                                                    HttpServletRequest request) {
+        if (requireAdminToken) {
+            adminTokenGuard.verify(request, "metrics-reader", "security.metrics.llm.read", "llm-metrics");
+        }
+        return dispatcherRoutingMetricsReader.snapshotRoutingReplay(limit);
     }
 }
 

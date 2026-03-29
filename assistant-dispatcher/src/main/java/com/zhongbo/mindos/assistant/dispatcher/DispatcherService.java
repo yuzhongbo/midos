@@ -8,8 +8,11 @@ import com.zhongbo.mindos.assistant.common.SkillDsl;
 import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.common.dto.ContextCompressionMetricsDto;
 import com.zhongbo.mindos.assistant.common.dto.ExecutionTraceDto;
+import com.zhongbo.mindos.assistant.common.dto.MemoryContributionMetricsDto;
 import com.zhongbo.mindos.assistant.common.dto.MemoryHitMetricsDto;
 import com.zhongbo.mindos.assistant.common.dto.PromptMemoryContextDto;
+import com.zhongbo.mindos.assistant.common.dto.RoutingReplayDatasetDto;
+import com.zhongbo.mindos.assistant.common.dto.RoutingReplayItemDto;
 import com.zhongbo.mindos.assistant.common.dto.RoutingDecisionDto;
 import com.zhongbo.mindos.assistant.common.dto.SkillPreAnalyzeMetricsDto;
 import com.zhongbo.mindos.assistant.memory.MemoryManager;
@@ -26,6 +29,7 @@ import org.springframework.stereotype.Service;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Arrays;
+import java.util.ArrayDeque;
 import java.util.concurrent.CompletableFuture;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -35,6 +39,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.Deque;
 import java.util.function.Consumer;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -118,6 +123,10 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
     private final String skillPreAnalyzeMode;
     private final int skillPreAnalyzeConfidenceThreshold;
     private final Set<String> skillPreAnalyzeSkipSkills;
+    private final String llmDslProvider;
+    private final String llmDslPreset;
+    private final String llmFallbackProvider;
+    private final String llmFallbackPreset;
     private final boolean postSkillSummaryEnabled;
     private final Set<String> postSkillSummarySkills;
     private final int postSkillSummaryMaxReplyChars;
@@ -128,6 +137,9 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
     private final String skillFinalizeWithLlmPreset;
     private final int memoryContextKeepRecentTurns;
     private final int memoryContextHistorySummaryMinTurns;
+    private final int routingReplayMaxSamples;
+    private final Object routingReplayLock = new Object();
+    private final Deque<RoutingReplayItemDto> routingReplaySamples = new ArrayDeque<>();
     private final AtomicLong contextCompressionRequestCount = new AtomicLong();
     private final AtomicLong contextCompressionAppliedCount = new AtomicLong();
     private final AtomicLong contextCompressionInputChars = new AtomicLong();
@@ -142,6 +154,13 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
     private final AtomicLong memoryHitSemanticCount = new AtomicLong();
     private final AtomicLong memoryHitProceduralCount = new AtomicLong();
     private final AtomicLong memoryHitRollupCount = new AtomicLong();
+    private final AtomicLong memoryContributionRequestCount = new AtomicLong();
+    private final AtomicLong memoryContributionRecentCount = new AtomicLong();
+    private final AtomicLong memoryContributionSemanticCount = new AtomicLong();
+    private final AtomicLong memoryContributionProceduralCount = new AtomicLong();
+    private final AtomicLong memoryContributionPersonaCount = new AtomicLong();
+    private final AtomicLong memoryContributionRollupCount = new AtomicLong();
+    private final AtomicLong routingReplayTotalCapturedCount = new AtomicLong();
 
     public DispatcherService(SkillEngine skillEngine,
                              SkillDslParser skillDslParser,
@@ -174,6 +193,10 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                               @Value("${mindos.dispatcher.skill.pre-analyze.mode:auto}") String skillPreAnalyzeMode,
                               @Value("${mindos.dispatcher.skill.pre-analyze.confidence-threshold:0}") int skillPreAnalyzeConfidenceThreshold,
                               @Value("${mindos.dispatcher.skill.pre-analyze.skip-skills:time}") String skillPreAnalyzeSkipSkills,
+                              @Value("${mindos.dispatcher.llm-dsl.provider:}") String llmDslProvider,
+                              @Value("${mindos.dispatcher.llm-dsl.preset:}") String llmDslPreset,
+                              @Value("${mindos.dispatcher.llm-fallback.provider:}") String llmFallbackProvider,
+                              @Value("${mindos.dispatcher.llm-fallback.preset:}") String llmFallbackPreset,
                               @Value("${mindos.memory.post-skill-summary.enabled:false}") boolean postSkillSummaryEnabled,
                               @Value("${mindos.memory.post-skill-summary.skills:teaching.plan,todo.create,eq.coach,code.generate,file.search}") String postSkillSummarySkills,
                               @Value("${mindos.memory.post-skill-summary.max-reply-chars:280}") int postSkillSummaryMaxReplyChars,
@@ -182,6 +205,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                               @Value("${mindos.dispatcher.skill.finalize-with-llm.max-output-chars:900}") int skillFinalizeWithLlmMaxOutputChars,
                               @Value("${mindos.dispatcher.skill.finalize-with-llm.provider:}") String skillFinalizeWithLlmProvider,
                               @Value("${mindos.dispatcher.skill.finalize-with-llm.preset:}") String skillFinalizeWithLlmPreset,
+                              @Value("${mindos.dispatcher.routing-replay.max-samples:200}") int routingReplayMaxSamples,
                               @Value("${mindos.dispatcher.memory-context.keep-recent-turns:2}") int memoryContextKeepRecentTurns,
                               @Value("${mindos.dispatcher.memory-context.history-summary-min-turns:4}") int memoryContextHistorySummaryMinTurns) {
         this.skillEngine = skillEngine;
@@ -217,6 +241,10 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         this.skillPreAnalyzeMode = normalizeSkillPreAnalyzeMode(skillPreAnalyzeMode);
         this.skillPreAnalyzeConfidenceThreshold = Math.max(0, skillPreAnalyzeConfidenceThreshold);
         this.skillPreAnalyzeSkipSkills = parseCsvSet(skillPreAnalyzeSkipSkills);
+        this.llmDslProvider = normalizeOptionalConfig(llmDslProvider);
+        this.llmDslPreset = normalizeOptionalConfig(llmDslPreset);
+        this.llmFallbackProvider = normalizeOptionalConfig(llmFallbackProvider);
+        this.llmFallbackPreset = normalizeOptionalConfig(llmFallbackPreset);
         this.postSkillSummaryEnabled = postSkillSummaryEnabled;
         this.postSkillSummarySkills = parseCsvSet(postSkillSummarySkills);
         this.postSkillSummaryMaxReplyChars = Math.max(80, postSkillSummaryMaxReplyChars);
@@ -225,6 +253,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         this.skillFinalizeWithLlmMaxOutputChars = Math.max(200, skillFinalizeWithLlmMaxOutputChars);
         this.skillFinalizeWithLlmProvider = normalizeOptionalConfig(skillFinalizeWithLlmProvider);
         this.skillFinalizeWithLlmPreset = normalizeOptionalConfig(skillFinalizeWithLlmPreset);
+        this.routingReplayMaxSamples = Math.max(10, routingReplayMaxSamples);
         this.memoryContextKeepRecentTurns = Math.max(1, memoryContextKeepRecentTurns);
         this.memoryContextHistorySummaryMinTurns = Math.max(2, memoryContextHistorySummaryMinTurns);
     }
@@ -245,6 +274,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         Instant startTime = Instant.now();
         LOGGER.info("Dispatcher input: userId=" + userId + ", input=" + clip(userInput));
         java.util.concurrent.atomic.AtomicReference<RoutingDecisionDto> routingDecisionRef = new java.util.concurrent.atomic.AtomicReference<>();
+        RoutingReplayProbe replayProbe = new RoutingReplayProbe();
 
         memoryManager.storeUserConversation(userId, userInput);
         maybeStoreSemanticMemory(userId, userInput);
@@ -289,17 +319,10 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         llmContext.put("routeStage", "llm-fallback");
         llmContext.put("profile", resolvedProfileContext);
         copyInteractionContext(resolvedProfileContext, llmContext);
-        String llmProvider = asString(resolvedProfileContext.get("llmProvider"));
-        if (llmProvider != null) {
-            llmContext.put("llmProvider", llmProvider);
-        }
-        String llmPreset = asString(resolvedProfileContext.get("llmPreset"));
-        if (llmPreset != null) {
-            llmContext.put("llmPreset", llmPreset);
-        }
+        applyStageLlmRoute("llm-fallback", resolvedProfileContext, llmContext);
 
         return metaOrchestratorService.orchestrate(
-                        () -> executeSinglePass(userId, userInput, context, memoryContext, promptMemoryContext, llmContext, routingDecisionRef),
+                        () -> executeSinglePass(userId, userInput, context, memoryContext, promptMemoryContext, llmContext, routingDecisionRef, replayProbe),
                         () -> CompletableFuture.completedFuture(buildLlmFallbackResult(memoryContext, promptMemoryContext, userInput, llmContext))
                 )
                 .thenApply(orchestration -> {
@@ -313,6 +336,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                     maybeStorePostSkillSummary(userId, userInput, result);
                     personaCoreService.learnFromTurn(userId, resolvedProfileContext, result);
                     maybeStoreExecutionTraceMemory(userId, trace);
+                    recordRoutingReplaySample(userInput, routingDecisionRef.get(), replayProbe, promptMemoryContext, result.skillName());
                     return new DispatchResult(result.output(), result.skillName(), trace);
                 })
                 .whenComplete((result, error) -> {
@@ -337,6 +361,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         Instant startTime = Instant.now();
         LOGGER.info("Dispatcher(stream) input: userId=" + userId + ", input=" + clip(userInput));
         java.util.concurrent.atomic.AtomicReference<RoutingDecisionDto> routingDecisionRef = new java.util.concurrent.atomic.AtomicReference<>();
+        RoutingReplayProbe replayProbe = new RoutingReplayProbe();
 
         memoryManager.storeUserConversation(userId, userInput);
         maybeStoreSemanticMemory(userId, userInput);
@@ -378,16 +403,9 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         llmContext.put("routeStage", "llm-fallback");
         llmContext.put("profile", resolvedProfileContext);
         copyInteractionContext(resolvedProfileContext, llmContext);
-        String llmProvider = asString(resolvedProfileContext.get("llmProvider"));
-        if (llmProvider != null) {
-            llmContext.put("llmProvider", llmProvider);
-        }
-        String llmPreset = asString(resolvedProfileContext.get("llmPreset"));
-        if (llmPreset != null) {
-            llmContext.put("llmPreset", llmPreset);
-        }
+        applyStageLlmRoute("llm-fallback", resolvedProfileContext, llmContext);
 
-        return routeToSkillAsync(userId, userInput, context, memoryContext)
+        return routeToSkillAsync(userId, userInput, context, memoryContext, replayProbe)
                 .thenApply(routingOutcome -> {
                     routingDecisionRef.set(routingOutcome.routingDecision());
                     return routingOutcome.result().orElseGet(() ->
@@ -403,6 +421,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                     memoryManager.storeAssistantConversation(userId, normalized.output());
                     maybeStorePostSkillSummary(userId, userInput, normalized);
                     personaCoreService.learnFromTurn(userId, resolvedProfileContext, normalized);
+                    recordRoutingReplaySample(userInput, routingDecisionRef.get(), replayProbe, promptMemoryContext, normalized.skillName());
                     return new DispatchResult(normalized.output(), normalized.skillName(), trace);
                 })
                 .whenComplete((result, error) -> {
@@ -426,8 +445,9 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                                                              String memoryContext,
                                                              PromptMemoryContextDto promptMemoryContext,
                                                              Map<String, Object> llmContext,
-                                                             java.util.concurrent.atomic.AtomicReference<RoutingDecisionDto> routingDecisionRef) {
-        return routeToSkillAsync(userId, userInput, context, memoryContext)
+                                                             java.util.concurrent.atomic.AtomicReference<RoutingDecisionDto> routingDecisionRef,
+                                                             RoutingReplayProbe replayProbe) {
+        return routeToSkillAsync(userId, userInput, context, memoryContext, replayProbe)
                 .thenApply(routingOutcome -> {
                     routingDecisionRef.set(routingOutcome.routingDecision());
                     return routingOutcome.result().orElseGet(() ->
@@ -560,7 +580,8 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
     private CompletableFuture<RoutingOutcome> routeToSkillAsync(String userId,
                                                                 String userInput,
                                                                 SkillContext context,
-                                                                String memoryContext) {
+                                                                String memoryContext,
+                                                                RoutingReplayProbe replayProbe) {
         List<String> rejectedReasons = new java.util.ArrayList<>();
         Optional<SkillDsl> explicitDsl = skillDslParser.parse(userInput);
         if (explicitDsl.isPresent()) {
@@ -596,6 +617,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
             ruleDsl = Optional.empty();
         }
         if (ruleDsl.isPresent()) {
+            replayProbe.ruleCandidate = ruleDsl.get().skill();
             Optional<SkillResult> blocked = maybeBlockByCapability(ruleDsl.get().skill());
             if (blocked.isPresent()) {
                 return CompletableFuture.completedFuture(new RoutingOutcome(blocked, new RoutingDecisionDto(
@@ -617,6 +639,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                             ))))
                     .orElseGet(() -> CompletableFuture.completedFuture(new RoutingOutcome(Optional.empty(), fallbackRoutingDecision(rejectedReasons))));
         }
+        replayProbe.ruleCandidate = "NONE";
         rejectedReasons.add("no deterministic rule matched");
 
         Optional<SkillResult> metaReply = answerMetaQuestion(userInput);
@@ -697,6 +720,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
 
                     skillPreAnalyzeRequestCount.incrementAndGet();
                     if (!shouldRunSkillPreAnalyze(userId, userInput)) {
+                        replayProbe.preAnalyzeCandidate = "SKIPPED_BY_GATE";
                         skillPreAnalyzeSkippedByGateCount.incrementAndGet();
                         rejectedReasons.add("skill pre-analyze skipped by mode/threshold gate");
                         LOGGER.info("Dispatcher route=llm-fallback, userId=" + userId + ", reason=skill-pre-analyze-gate");
@@ -713,11 +737,13 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                         llmDsl = Optional.empty();
                     }
                     if (llmDsl.isPresent() && skillPreAnalyzeSkipSkills.contains(llmDsl.get().skill())) {
+                        replayProbe.preAnalyzeCandidate = "SKIPPED_BY_SKILL";
                         skillPreAnalyzeSkippedBySkillCount.incrementAndGet();
                         rejectedReasons.add("LLM-routed skill '" + llmDsl.get().skill() + "' is configured to skip pre-analyze routing");
                         llmDsl = Optional.empty();
                     }
                     if (llmDsl.isPresent()) {
+                        replayProbe.preAnalyzeCandidate = llmDsl.get().skill();
                         skillPreAnalyzeAcceptedCount.incrementAndGet();
                         Optional<SkillResult> blocked = maybeBlockByCapability(llmDsl.get().skill());
                         if (blocked.isPresent()) {
@@ -744,6 +770,10 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                                                 List.copyOf(rejectedReasons)
                                         ))))
                                 .orElseGet(() -> CompletableFuture.completedFuture(new RoutingOutcome(Optional.empty(), fallbackRoutingDecision(rejectedReasons))));
+                    }
+
+                    if ("NOT_RUN".equals(replayProbe.preAnalyzeCandidate)) {
+                        replayProbe.preAnalyzeCandidate = "NONE";
                     }
 
                     LOGGER.info("Dispatcher route=llm-fallback, userId=" + userId);
@@ -1401,14 +1431,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         llmContext.put("input", userInput);
         llmContext.put("routeStage", "llm-dsl");
         copyInteractionContext(profileContext, llmContext);
-        String llmProvider = profileContext == null ? null : asString(profileContext.get("llmProvider"));
-        if (llmProvider != null) {
-            llmContext.put("llmProvider", llmProvider);
-        }
-        String llmPreset = profileContext == null ? null : asString(profileContext.get("llmPreset"));
-        if (llmPreset != null) {
-            llmContext.put("llmPreset", llmPreset);
-        }
+        applyStageLlmRoute("llm-dsl", profileContext == null ? Map.of() : profileContext, llmContext);
         String llmReply = llmClient.generateResponse(prompt, Map.copyOf(llmContext));
         if (llmReply == null || llmReply.isBlank() || "NONE".equalsIgnoreCase(llmReply.trim())) {
             return Optional.empty();
@@ -1692,6 +1715,108 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         return value.trim();
     }
 
+    private void applyStageLlmRoute(String stage,
+                                    Map<String, Object> profileContext,
+                                    Map<String, Object> llmContext) {
+        String profileProvider = profileContext == null ? null : asString(profileContext.get("llmProvider"));
+        String profilePreset = profileContext == null ? null : asString(profileContext.get("llmPreset"));
+
+        String provider = profileProvider;
+        String preset = profilePreset;
+        if ("llm-dsl".equals(stage)) {
+            if (provider == null) {
+                provider = llmDslProvider;
+            }
+            if (preset == null) {
+                preset = llmDslPreset;
+            }
+        } else if ("llm-fallback".equals(stage)) {
+            if (provider == null) {
+                provider = llmFallbackProvider;
+            }
+            if (preset == null) {
+                preset = llmFallbackPreset;
+            }
+        }
+        if (provider != null) {
+            llmContext.put("llmProvider", provider);
+        }
+        if (preset != null) {
+            llmContext.put("llmPreset", preset);
+        }
+    }
+
+    private void recordRoutingReplaySample(String userInput,
+                                           RoutingDecisionDto routingDecision,
+                                           RoutingReplayProbe replayProbe,
+                                           PromptMemoryContextDto promptMemoryContext,
+                                           String finalChannel) {
+        List<String> memorySegments = collectMemorySegments(promptMemoryContext);
+        memoryContributionRequestCount.incrementAndGet();
+        if (memorySegments.contains("recent")) {
+            memoryContributionRecentCount.incrementAndGet();
+        }
+        if (memorySegments.contains("semantic")) {
+            memoryContributionSemanticCount.incrementAndGet();
+        }
+        if (memorySegments.contains("procedural")) {
+            memoryContributionProceduralCount.incrementAndGet();
+        }
+        if (memorySegments.contains("persona")) {
+            memoryContributionPersonaCount.incrementAndGet();
+        }
+        if (memorySegments.contains("rollup")) {
+            memoryContributionRollupCount.incrementAndGet();
+        }
+
+        RoutingReplayItemDto sample = new RoutingReplayItemDto(
+                Instant.now(),
+                routingDecision == null ? "unknown" : safeValue(routingDecision.route()),
+                safeValue(finalChannel),
+                replayProbe == null ? "NONE" : safeValue(replayProbe.ruleCandidate),
+                replayProbe == null ? "NOT_RUN" : safeValue(replayProbe.preAnalyzeCandidate),
+                memorySegments,
+                capText(userInput == null ? "" : userInput.trim(), 260)
+        );
+        synchronized (routingReplayLock) {
+            routingReplaySamples.addLast(sample);
+            while (routingReplaySamples.size() > routingReplayMaxSamples) {
+                routingReplaySamples.removeFirst();
+            }
+        }
+        routingReplayTotalCapturedCount.incrementAndGet();
+    }
+
+    private List<String> collectMemorySegments(PromptMemoryContextDto promptMemoryContext) {
+        if (promptMemoryContext == null) {
+            return List.of();
+        }
+        List<String> segments = new java.util.ArrayList<>();
+        if (promptMemoryContext.recentConversation() != null && !promptMemoryContext.recentConversation().isBlank()) {
+            segments.add("recent");
+        }
+        if (promptMemoryContext.semanticContext() != null && !promptMemoryContext.semanticContext().isBlank()) {
+            segments.add("semantic");
+            if (promptMemoryContext.semanticContext().contains("persisted rollup:")) {
+                segments.add("rollup");
+            }
+        }
+        if (promptMemoryContext.proceduralHints() != null && !promptMemoryContext.proceduralHints().isBlank()) {
+            segments.add("procedural");
+        }
+        if (promptMemoryContext.personaSnapshot() != null && !promptMemoryContext.personaSnapshot().isEmpty()) {
+            segments.add("persona");
+        }
+        return List.copyOf(segments);
+    }
+
+    private String safeValue(String value) {
+        if (value == null || value.isBlank()) {
+            return "none";
+        }
+        return value.trim();
+    }
+
     private String capText(String value, int maxChars) {
         if (value == null) {
             return "";
@@ -1906,6 +2031,43 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                 proceduralHits,
                 rollupHits,
                 hitRate
+        );
+    }
+
+    @Override
+    public MemoryContributionMetricsDto snapshotMemoryContributionMetrics() {
+        return new MemoryContributionMetricsDto(
+                memoryContributionRequestCount.get(),
+                memoryContributionRecentCount.get(),
+                memoryContributionSemanticCount.get(),
+                memoryContributionProceduralCount.get(),
+                memoryContributionPersonaCount.get(),
+                memoryContributionRollupCount.get()
+        );
+    }
+
+    @Override
+    public RoutingReplayDatasetDto snapshotRoutingReplay(int limit) {
+        int effectiveLimit = Math.max(1, Math.min(Math.max(1, limit), routingReplayMaxSamples));
+        List<RoutingReplayItemDto> copy;
+        synchronized (routingReplayLock) {
+            copy = List.copyOf(routingReplaySamples);
+        }
+        int fromIndex = Math.max(0, copy.size() - effectiveLimit);
+        List<RoutingReplayItemDto> samples = copy.subList(fromIndex, copy.size());
+
+        Map<String, Long> byRoute = new LinkedHashMap<>();
+        Map<String, Long> byFinalChannel = new LinkedHashMap<>();
+        for (RoutingReplayItemDto sample : samples) {
+            byRoute.merge(safeValue(sample.route()), 1L, Long::sum);
+            byFinalChannel.merge(safeValue(sample.finalChannel()), 1L, Long::sum);
+        }
+        return new RoutingReplayDatasetDto(
+                effectiveLimit,
+                routingReplayTotalCapturedCount.get(),
+                samples,
+                Map.copyOf(byRoute),
+                Map.copyOf(byFinalChannel)
         );
     }
 
@@ -2166,6 +2328,11 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
     }
 
     private record RoutingOutcome(Optional<SkillResult> result, RoutingDecisionDto routingDecision) {
+    }
+
+    private static final class RoutingReplayProbe {
+        private String ruleCandidate = "NONE";
+        private String preAnalyzeCandidate = "NOT_RUN";
     }
 
     private String inferMemoryBucket(String input) {

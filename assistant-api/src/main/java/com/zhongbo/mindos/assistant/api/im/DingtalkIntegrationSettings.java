@@ -16,6 +16,8 @@ class DingtalkIntegrationSettings {
     private final String streamTopic;
     private final long streamWaitingDelayMs;
     private final String streamWaitingText;
+    private final boolean streamForceWaiting;
+    private final long streamFinalTimeoutMs;
     private final boolean streamReconnectEnabled;
     private final long streamReconnectInitialDelayMs;
     private final long streamReconnectMaxDelayMs;
@@ -36,6 +38,8 @@ class DingtalkIntegrationSettings {
             @Value("${mindos.im.dingtalk.stream.topic:/v1.0/im/bot/messages/get}") String streamTopic,
             @Value("${mindos.im.dingtalk.stream.waiting-delay-ms:800}") long streamWaitingDelayMs,
             @Value("${mindos.im.dingtalk.stream.waiting-text:我正在处理这条消息，请稍等，我会继续回复你。}") String streamWaitingText,
+            @Value("${mindos.im.dingtalk.stream.force-waiting:false}") boolean streamForceWaiting,
+            @Value("${mindos.im.dingtalk.stream.final-timeout-ms:30000}") long streamFinalTimeoutMs,
             @Value("${mindos.im.dingtalk.stream.reconnect.enabled:true}") boolean streamReconnectEnabled,
             @Value("${mindos.im.dingtalk.stream.reconnect.initial-delay-ms:1000}") long streamReconnectInitialDelayMs,
             @Value("${mindos.im.dingtalk.stream.reconnect.max-delay-ms:60000}") long streamReconnectMaxDelayMs,
@@ -56,6 +60,8 @@ class DingtalkIntegrationSettings {
         this.streamWaitingText = trim(streamWaitingText).isBlank()
                 ? "我正在处理这条消息，请稍等，我会继续回复你。"
                 : trim(streamWaitingText);
+        this.streamForceWaiting = streamForceWaiting;
+        this.streamFinalTimeoutMs = Math.max(1000L, streamFinalTimeoutMs);
         this.streamReconnectEnabled = streamReconnectEnabled;
         this.streamReconnectInitialDelayMs = Math.max(200L, streamReconnectInitialDelayMs);
         this.streamReconnectMaxDelayMs = Math.max(this.streamReconnectInitialDelayMs, streamReconnectMaxDelayMs);
@@ -105,6 +111,14 @@ class DingtalkIntegrationSettings {
 
     String streamWaitingText() {
         return streamWaitingText;
+    }
+
+    boolean streamForceWaiting() {
+        return streamForceWaiting;
+    }
+
+    long streamFinalTimeoutMs() {
+        return streamFinalTimeoutMs;
     }
 
     boolean streamReconnectEnabled() {

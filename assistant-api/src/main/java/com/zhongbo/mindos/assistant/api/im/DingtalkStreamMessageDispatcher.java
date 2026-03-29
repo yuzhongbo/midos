@@ -119,10 +119,8 @@ class DingtalkStreamMessageDispatcher {
 
         CompletableFuture<String> replyFuture = imGatewayService.chatAsync(ImPlatform.DINGTALK, senderId, conversationId, text);
         AtomicBoolean waitingSent = new AtomicBoolean(false);
-        ScheduledFuture<?> waitingTask = waitingScheduler.schedule(() -> {
-            if (replyFuture.isDone()) {
-                return;
-            }
+        ScheduledFuture<?> waitingTask = null;
+        if (settings.streamForceWaiting()) {
             boolean sent = sendText(conversationId, settings.streamWaitingText(), sessionWebhook);
             waitingSent.set(sent);
             logEvent(sent ? Level.INFO : Level.WARNING,
@@ -131,12 +129,38 @@ class DingtalkStreamMessageDispatcher {
                             "conversationHash", safeHash(conversationId),
                             "senderHash", safeHash(senderId),
                             "replyLength", settings.streamWaitingText().length(),
-                            "waitingDelayMs", settings.streamWaitingDelayMs()
+                            "waitingDelayMs", 0
                     ));
-        }, settings.streamWaitingDelayMs(), TimeUnit.MILLISECONDS);
+        } else {
+            waitingTask = waitingScheduler.schedule(() -> {
+                if (replyFuture.isDone()) {
+                    return;
+                }
+                boolean sent = sendText(conversationId, settings.streamWaitingText(), sessionWebhook);
+                waitingSent.set(sent);
+                logEvent(sent ? Level.INFO : Level.WARNING,
+                        sent ? "dingtalk.stream.waiting.sent" : "dingtalk.stream.waiting.failed",
+                        Map.of(
+                                "conversationHash", safeHash(conversationId),
+                                "senderHash", safeHash(senderId),
+                                "replyLength", settings.streamWaitingText().length(),
+                                "waitingDelayMs", settings.streamWaitingDelayMs()
+                        ));
+            }, settings.streamWaitingDelayMs(), TimeUnit.MILLISECONDS);
+        }
 
-        replyFuture.whenComplete((reply, error) -> {
-            waitingTask.cancel(false);
+        CompletableFuture<String> guardedReplyFuture = replyFuture.completeOnTimeout(
+                ImReplySanitizer.TIMEOUT_IM_FALLBACK_REPLY,
+                settings.streamFinalTimeoutMs(),
+                TimeUnit.MILLISECONDS
+        );
+
+        ScheduledFuture<?> finalWaitingTask = waitingTask;
+        guardedReplyFuture.whenComplete((reply, error) -> {
+            if (finalWaitingTask != null) {
+                finalWaitingTask.cancel(false);
+            }
+            boolean timeoutFallback = error == null && ImReplySanitizer.TIMEOUT_IM_FALLBACK_REPLY.equals(reply);
             String finalReply = error == null
                     ? reply
                     : ImReplySanitizer.FRIENDLY_IM_FALLBACK_REPLY;
@@ -153,7 +177,8 @@ class DingtalkStreamMessageDispatcher {
                             "senderHash", safeHash(senderId),
                             "replyLength", safeLength(finalReply),
                             "hadWaitingStatus", waitingSent.get(),
-                            "errorFallback", error != null
+                            "errorFallback", error != null,
+                            "timeoutFallback", timeoutFallback
                     ));
             if (!sent && waitingSent.get()) {
                 LOGGER.warning("DingTalk stream final reply could not be delivered after waiting status, conversationHash="
