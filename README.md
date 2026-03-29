@@ -385,6 +385,7 @@ curl -X POST http://localhost:8080/api/skills/load-mcp \
 - When no explicit `model` is supplied, `qwen` defaults to `qwen3.5-plus`.
 - For native Gemini, prefer configuring the base endpoint in `mindos.llm.provider-endpoints` and keep the secret in `mindos.llm.provider-keys`; the client will append `?key=...` automatically and mask it in metrics.
 - DingTalk webhook replies are synchronous; `mindos.im.dingtalk.reply-timeout-ms` (default `2500`) caps the wait budget so slow LLM replies degrade to a timeout-friendly message instead of vanishing from the chat window.
+- DingTalk reply length guard `mindos.im.dingtalk.reply-max-chars` (default `1200`) trims oversized webhook replies; in stream mode, MindOS sends long final answers in ordered segments (`<= reply-max-chars` each) to reduce information loss.
 - DingTalk stream mode is optional and intended for slow replies: enable `mindos.im.dingtalk.stream.enabled=true`, provide `mindos.im.dingtalk.stream.client-id`, `mindos.im.dingtalk.stream.client-secret`, and outbound settings (`mindos.im.dingtalk.outbound.enabled=true`, `mindos.im.dingtalk.outbound.robot-code`). When a reply is slow, MindOS sends a waiting status after `mindos.im.dingtalk.stream.waiting-delay-ms` (default `800`) and then pushes the final answer when it is ready.
 - For single-host restart continuity, central memory uses file storage by default (`mindos.memory.file-repo.enabled=true`, `mindos.memory.file-repo.base-dir=data/memory-sync`) when no JDBC `DataSource` is configured.
 - Optional multi-provider routing:
@@ -428,6 +429,8 @@ If you prefer cleaner secret handling for Gemini, use the same endpoint without 
     - `llmCache`: short TTL response cache status and effectiveness (`enabled`, `hitCount`, `missCount`, `hitRate`, `entryCount`, `ttlSeconds`, `maxEntries`)
     - `memoryWriteGate`: secondary semantic-duplicate write gate effectiveness (`secondaryDuplicateGateEnabled`, `secondaryDuplicateChecks`, `secondaryDuplicateIntercepted`, `secondaryDuplicateInterceptRate`)
     - `contextCompression`: dispatcher prompt-context compression effectiveness (`requests`, `compressedRequests`, `totalInputChars`, `totalOutputChars`, `avgCompressionRatio`, `summarizedTurns`)
+    - `skillPreAnalyze`: dispatcher pre-analyze gating stats (`mode`, `confidenceThreshold`, `requests`, `executed`, `accepted`, `skippedByGate`, `skippedBySkill`)
+    - `memoryHits`: prompt-memory retrieval hit stats (`requests`, `semanticHits`, `proceduralHits`, `rollupHits`, `approximateHitRate`)
     - `llmCacheWindowHitRate`: cache hit rate within current `windowMinutes` only (better for release-over-release online effectiveness tracking)
     - `llmCacheWindowHits` / `llmCacheWindowMisses`: sample size of cache decisions inside current window, used together with `llmCacheWindowHitRate` to avoid small-sample misread.
     - `llmCacheWindowLowSample`: true when window sample size (`hits + misses`) is below threshold.
@@ -462,6 +465,15 @@ If you prefer cleaner secret handling for Gemini, use the same endpoint without 
   - `mindos.dispatcher.skill.pre-analyze.mode=auto|always|never` (default `auto`): controls whether low-certainty requests go through LLM skill pre-analysis.
   - `mindos.dispatcher.skill.pre-analyze.confidence-threshold` (default `0`): in `auto` mode, skip pre-analysis when best candidate confidence is below this threshold.
   - `mindos.dispatcher.skill.pre-analyze.skip-skills` (default `time`): skill names that should not be selected by LLM pre-analysis.
+  - `mindos.dispatcher.skill.finalize-with-llm.enabled` (default `false` in base profile, `true` in `solo`): runs an LLM postprocess stage to convert structured skill output into a concise user-facing conclusion.
+  - `mindos.dispatcher.skill.finalize-with-llm.skills` (default `teaching.plan,todo.create,eq.coach,code.generate,file.search`): comma-separated skill allowlist for postprocess finalization.
+  - `mindos.dispatcher.skill.finalize-with-llm.max-output-chars` (default `900`): hard cap for the final postprocessed skill reply.
+  - `mindos.dispatcher.skill.finalize-with-llm.provider` (default empty): optional dedicated provider override for `skill-postprocess` stage.
+  - `mindos.dispatcher.skill.finalize-with-llm.preset` (default empty in base profile, `cost` in `solo`): optional dedicated preset override for `skill-postprocess` stage.
+- Optional post-skill summary writeback controls:
+  - `mindos.memory.post-skill-summary.enabled` (default `false`): when enabled, successful skill outputs are summarized and written to semantic memory.
+  - `mindos.memory.post-skill-summary.skills` (default `teaching.plan,todo.create,eq.coach,code.generate,file.search`): comma-separated skill allowlist for summary writeback.
+  - `mindos.memory.post-skill-summary.max-reply-chars` (default `280`): summary-safe cap for skill output included in memory writeback.
   - chat `executionTrace.routing` now includes `route`, `selectedSkill`, `confidence`, `reasons`, and `rejectedReasons` for diagnosing why a skill was chosen or why the request fell back to plain LLM chat.
 - Dispatcher token/loop guards:
   - `mindos.dispatcher.prompt.max-chars` (default `2800`)
@@ -808,6 +820,8 @@ set "MINDOS_IM_DINGTALK_STREAM_WAITING_TEXT=收到，我正在处理中，马上
 set "MINDOS_DISPATCHER_LLM_REPLY_MAX_CHARS=700"
 set "MINDOS_DISPATCHER_PROMPT_MAX_CHARS=2000"
 set "MINDOS_DISPATCHER_MEMORY_CONTEXT_MAX_CHARS=1200"
+set "MINDOS_DISPATCHER_SKILL_FINALIZE_WITH_LLM_ENABLED=true"
+set "MINDOS_DISPATCHER_SKILL_FINALIZE_WITH_LLM_PRESET=cost"
 ```
 
 ```bat

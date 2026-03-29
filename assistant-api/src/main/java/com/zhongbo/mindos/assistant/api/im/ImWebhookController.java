@@ -69,6 +69,9 @@ public class ImWebhookController {
     @Value("${mindos.im.dingtalk.reply-timeout-ms:2500}")
     private long dingtalkReplyTimeoutMs;
 
+    @Value("${mindos.im.dingtalk.reply-max-chars:1200}")
+    private int dingtalkReplyMaxChars;
+
     @Value("${mindos.im.wechat.token:}")
     private String wechatToken;
 
@@ -215,7 +218,7 @@ public class ImWebhookController {
         long timeoutMs = Math.max(300L, dingtalkReplyTimeoutMs);
         CompletableFuture<String> replyFuture = imGatewayService.chatAsync(ImPlatform.DINGTALK, senderId, chatId, text);
         try {
-            return ImReplySanitizer.sanitize(replyFuture.get(timeoutMs, TimeUnit.MILLISECONDS));
+            return capForDingtalk(ImReplySanitizer.sanitize(replyFuture.get(timeoutMs, TimeUnit.MILLISECONDS)));
         } catch (TimeoutException ex) {
             replyFuture.cancel(true);
             LOGGER.warning("DingTalk reply timed out before webhook response: senderHash="
@@ -228,6 +231,17 @@ public class ImWebhookController {
                     ex);
             return ImReplySanitizer.FRIENDLY_IM_FALLBACK_REPLY;
         }
+    }
+
+    private String capForDingtalk(String reply) {
+        if (reply == null) {
+            return "";
+        }
+        int maxChars = Math.max(200, dingtalkReplyMaxChars);
+        if (reply.length() <= maxChars) {
+            return reply;
+        }
+        return reply.substring(0, maxChars - 1) + "…";
     }
 
     private String safeHash(String value) {

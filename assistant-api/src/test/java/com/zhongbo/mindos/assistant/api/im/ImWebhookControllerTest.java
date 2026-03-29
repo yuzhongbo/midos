@@ -21,6 +21,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
         "mindos.im.feishu.verify-signature=false",
         "mindos.im.dingtalk.verify-signature=false",
         "mindos.im.wechat.verify-signature=false",
+        "mindos.im.dingtalk.reply-max-chars=80",
         "mindos.memory.file-repo.enabled=false"
 })
 @AutoConfigureMockMvc
@@ -81,6 +82,22 @@ class ImWebhookControllerTest {
                 .andExpect(jsonPath("$.proceduralHints").isString())
                 .andExpect(jsonPath("$.debugTopItems").isArray())
                 .andExpect(jsonPath("$.personaSnapshot.language").value("zh-CN"));
+    }
+
+    @Test
+    void shouldCapDingtalkWebhookReplyLength() throws Exception {
+        String longPayload = "{" +
+                "\"senderId\":\"ding-cap-user\"," +
+                "\"conversationId\":\"conv-cap\"," +
+                "\"text\":{\"content\":\"echo 12345678901234567890123456789012345678901234567890123456789012345678901234567890\"}" +
+                "}";
+
+        mockMvc.perform(post("/api/im/dingtalk/events")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(longPayload))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.msgtype").value("text"))
+                .andExpect(jsonPath("$.text.content").value(org.hamcrest.Matchers.matchesPattern("^.{1,80}$")));
     }
 
     @Test

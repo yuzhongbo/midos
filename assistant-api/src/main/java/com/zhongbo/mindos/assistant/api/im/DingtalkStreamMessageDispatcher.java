@@ -2,6 +2,7 @@ package com.zhongbo.mindos.assistant.api.im;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PreDestroy;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.util.LinkedHashMap;
@@ -30,6 +31,9 @@ class DingtalkStreamMessageDispatcher {
     private final ScheduledExecutorService waitingScheduler;
     private final ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
     private final Map<String, Long> recentBotEchoes = new ConcurrentHashMap<>();
+
+    @Value("${mindos.im.dingtalk.reply-max-chars:1200}")
+    private int dingtalkReplyMaxChars = 1200;
 
     DingtalkStreamMessageDispatcher(ImGatewayService imGatewayService,
                                     DingtalkConversationSender conversationSender,
@@ -165,8 +169,33 @@ class DingtalkStreamMessageDispatcher {
 
     private boolean sendText(String conversationId, String reply, String sessionWebhook) {
         String sanitized = ImReplySanitizer.sanitize(reply);
-        rememberBotEcho(conversationId, sanitized);
-        return conversationSender.sendText(conversationId, sanitized, sessionWebhook);
+        boolean sentAll = true;
+        for (String segment : splitForDingtalk(sanitized)) {
+            boolean sent = conversationSender.sendText(conversationId, segment, sessionWebhook);
+            if (sent) {
+                rememberBotEcho(conversationId, segment);
+                continue;
+            }
+            sentAll = false;
+            break;
+        }
+        return sentAll;
+    }
+
+    private java.util.List<String> splitForDingtalk(String reply) {
+        if (reply == null || reply.isEmpty()) {
+            return java.util.List.of("");
+        }
+        int maxChars = Math.max(200, dingtalkReplyMaxChars);
+        if (reply.length() <= maxChars) {
+            return java.util.List.of(reply);
+        }
+        java.util.List<String> segments = new java.util.ArrayList<>();
+        for (int start = 0; start < reply.length(); start += maxChars) {
+            int end = Math.min(reply.length(), start + maxChars);
+            segments.add(reply.substring(start, end));
+        }
+        return java.util.List.copyOf(segments);
     }
 
     private boolean shouldSuppressAsBotEcho(String conversationId, String text) {

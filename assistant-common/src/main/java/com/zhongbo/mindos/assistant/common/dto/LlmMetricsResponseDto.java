@@ -15,6 +15,8 @@ public record LlmMetricsResponseDto(
         LlmCacheMetricsDto llmCache,
         MemoryWriteGateMetricsDto memoryWriteGate,
         ContextCompressionMetricsDto contextCompression,
+        SkillPreAnalyzeMetricsDto skillPreAnalyze,
+        MemoryHitMetricsDto memoryHits,
         double llmCacheWindowHitRate,
         long llmCacheWindowHits,
         long llmCacheWindowMisses,

@@ -4,6 +4,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
+import java.lang.reflect.Field;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -215,6 +216,54 @@ class DingtalkStreamMessageDispatcherTest {
         assertEquals(1, sender.messages.size());
         assertEquals("好的，给你三条待办", sender.messages.get(0));
         assertEquals("https://oapi.dingtalk.com/robot/send?access_token=test", sender.lastSessionWebhook);
+    }
+
+    @Test
+    void shouldSplitOversizedFinalReplyBeforeSend() throws Exception {
+        ImGatewayService gatewayService = mock(ImGatewayService.class);
+        RecordingConversationSender sender = new RecordingConversationSender(true);
+        DingtalkIntegrationSettings settings = new DingtalkIntegrationSettings(
+                true,
+                true,
+                true,
+                "client-id",
+                "client-secret",
+                DingtalkIntegrationSettings.BOT_MESSAGE_TOPIC,
+                50L,
+                "处理中",
+                true,
+                1000L,
+                60000L,
+                2.0d,
+                0.2d,
+                0,
+                true,
+                "robot-code",
+                "",
+                ""
+        );
+        when(gatewayService.chatAsync(ImPlatform.DINGTALK, "staff-cap", "cid-cap", "请总结"))
+                .thenReturn(CompletableFuture.completedFuture("1234567890123456789012345678901234567890"));
+        dispatcher = new DingtalkStreamMessageDispatcher(gatewayService, sender, settings);
+        setPrivateIntField(dispatcher, "dingtalkReplyMaxChars", 20);
+
+        dispatcher.handleIncomingPayload(Map.of(
+                "conversationId", "cid-cap",
+                "senderStaffId", "staff-cap",
+                "text", Map.of("content", "请总结")
+        ));
+
+        waitUntil(() -> sender.messages.size() >= 2, 1000);
+        assertEquals(2, sender.messages.size());
+        assertTrue(sender.messages.get(0).length() <= 20);
+        assertTrue(sender.messages.get(1).length() <= 20);
+        assertEquals("1234567890123456789012345678901234567890", sender.messages.get(0) + sender.messages.get(1));
+    }
+
+    private void setPrivateIntField(Object target, String fieldName, int value) throws Exception {
+        Field field = target.getClass().getDeclaredField(fieldName);
+        field.setAccessible(true);
+        field.setInt(target, value);
     }
 
     private void waitUntil(CheckedCondition condition, long timeoutMs) throws Exception {

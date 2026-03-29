@@ -26,7 +26,9 @@ class SoloProfileSmokeTest {
         mockMvc.perform(get("/api/metrics/llm"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.windowMinutes").isNumber())
-                .andExpect(jsonPath("$.contextCompression.requests").isNumber());
+                .andExpect(jsonPath("$.contextCompression.requests").isNumber())
+                .andExpect(jsonPath("$.skillPreAnalyze.requests").isNumber())
+                .andExpect(jsonPath("$.memoryHits.requests").isNumber());
     }
 
     @Test

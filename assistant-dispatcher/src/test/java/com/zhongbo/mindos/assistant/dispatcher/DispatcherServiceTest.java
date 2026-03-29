@@ -157,13 +157,15 @@ class DispatcherServiceTest {
         ));
         DispatcherService service = createDispatcher(memoryManager, llmClient, List.of(
                 new FixedSkill("code.generate", "Generate code", "code")
-        ), 2, "never", 18, "time,echo");
+        ), 2, "never", 18, "time", false, "", false, "", "", "");
 
         DispatchResult result = service.dispatch("pre-analyze-never-user", "帮我看看这个需求");
 
         assertEquals("llm", result.channel());
         assertEquals(0, llmClient.routingCallCount());
         assertEquals(1, llmClient.fallbackCallCount());
+        assertEquals("never", service.snapshotSkillPreAnalyzeMetrics().mode());
+        assertTrue(service.snapshotSkillPreAnalyzeMetrics().skippedByGate() >= 1);
     }
 
     @Test
@@ -172,7 +174,7 @@ class DispatcherServiceTest {
         RecordingLlmClient llmClient = new RecordingLlmClient(List.of("fallback"));
         DispatcherService service = createDispatcher(memoryManager, llmClient, List.of(
                 new FixedSkill("code.generate", "Generate code", "code")
-        ), 2, "auto", 200, "time,echo");
+        ), 2, "auto", 200, "time", false, "", false, "", "", "");
 
         DispatchResult result = service.dispatch("pre-analyze-threshold-user", "你好，今天天气不错");
 
@@ -190,7 +192,7 @@ class DispatcherServiceTest {
         ));
         DispatcherService service = createDispatcher(memoryManager, llmClient, List.of(
                 new FixedSkill("code.generate", "Generate code", "code")
-        ), 2, "always", 0, "code.generate,time,echo");
+        ), 2, "always", 0, "code.generate,time", false, "", false, "", "", "");
 
         DispatchResult result = service.dispatch("pre-analyze-skip-user", "请处理这个请求");
 
@@ -221,13 +223,65 @@ class DispatcherServiceTest {
         assertTrue(context.containsKey("memory.procedural"));
         assertTrue(context.containsKey("memory.persona"));
         assertTrue(String.valueOf(context.get("memory.recent")).length() >= 0);
+        assertTrue(service.snapshotMemoryHitMetrics().requests() >= 1);
+    }
+
+    @Test
+    void shouldWritePostSkillSummaryWhenEnabled() {
+        MemoryManager memoryManager = createMemoryManager();
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of("ignored"));
+        DispatcherService service = createDispatcher(memoryManager, llmClient, List.of(
+                new FixedSkill("code.generate", "Generate code", "result code block")
+        ), 2, "never", 0, "time", true, "code.generate", false, "", "", "");
+
+        DispatchResult result = service.dispatch("summary-user", "generate code for order api");
+
+        assertEquals("code.generate", result.channel());
+        List<SemanticMemoryEntry> summaries = memoryManager.searchKnowledge("summary-user", "post-skill-summary", 10, "coding");
+        assertFalse(summaries.isEmpty());
+        assertTrue(summaries.get(0).text().contains("channel=code.generate"));
+    }
+
+    @Test
+    void shouldFinalizeSkillResultViaLlmWhenEnabled() {
+        MemoryManager memoryManager = createMemoryManager();
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of("这是模型优化后的最终答复"));
+        DispatcherService service = createDispatcher(memoryManager, llmClient, List.of(
+                new FixedSkill("todo.create", "Create todo", "- 待办: 准备周报\n- 截止: 周五")
+        ), 2, "never", 0, "time", false, "", true, "todo.create", "", "");
+
+        DispatchResult result = service.dispatch("finalize-user", "skill:todo.create task=准备周报 dueDate=周五");
+
+        assertEquals("todo.create", result.channel());
+        assertEquals("这是模型优化后的最终答复", result.reply());
+        assertEquals(0, llmClient.routingCallCount());
+        assertTrue(llmClient.fallbackCallCount() >= 1);
+    }
+
+    @Test
+    void shouldUseDedicatedProviderAndPresetForSkillPostprocess() {
+        MemoryManager memoryManager = createMemoryManager();
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of("后处理完成"));
+        DispatcherService service = createDispatcher(memoryManager, llmClient, List.of(
+                new FixedSkill("todo.create", "Create todo", "- 待办: 整理迭代计划")
+        ), 2, "never", 0, "time", false, "", true, "todo.create", "qwen", "cost");
+
+        DispatchResult result = service.dispatch("finalize-route-user", "skill:todo.create task=整理迭代计划");
+
+        assertEquals("todo.create", result.channel());
+        assertEquals("后处理完成", result.reply());
+        assertFalse(llmClient.finalizeContexts().isEmpty());
+        Map<String, Object> finalizeContext = llmClient.finalizeContexts().get(0);
+        assertEquals("skill-postprocess", finalizeContext.get("routeStage"));
+        assertEquals("qwen", finalizeContext.get("llmProvider"));
+        assertEquals("cost", finalizeContext.get("llmPreset"));
     }
 
     private DispatcherService createDispatcher(MemoryManager memoryManager,
                                                RecordingLlmClient llmClient,
                                                List<Skill> skills,
                                                int llmShortlistMaxSkills) {
-        return createDispatcher(memoryManager, llmClient, skills, llmShortlistMaxSkills, "auto", 0, "time");
+        return createDispatcher(memoryManager, llmClient, skills, llmShortlistMaxSkills, "auto", 0, "time", false, "", false, "", "", "");
     }
 
     private DispatcherService createDispatcher(MemoryManager memoryManager,
@@ -236,7 +290,13 @@ class DispatcherServiceTest {
                                                int llmShortlistMaxSkills,
                                                String preAnalyzeMode,
                                                int preAnalyzeThreshold,
-                                               String preAnalyzeSkipSkills) {
+                                               String preAnalyzeSkipSkills,
+                                               boolean postSkillSummaryEnabled,
+                                               String postSkillSummarySkills,
+                                               boolean skillFinalizeEnabled,
+                                               String skillFinalizeSkills,
+                                               String skillFinalizeProvider,
+                                               String skillFinalizePreset) {
         SkillRegistry registry = new SkillRegistry(skills);
         SkillDslExecutor dslExecutor = new SkillDslExecutor(registry);
         SkillEngine skillEngine = new SkillEngine(registry, dslExecutor, memoryManager);
@@ -276,6 +336,14 @@ class DispatcherServiceTest {
                 preAnalyzeMode,
                 preAnalyzeThreshold,
                 preAnalyzeSkipSkills,
+                postSkillSummaryEnabled,
+                postSkillSummarySkills,
+                280,
+                skillFinalizeEnabled,
+                skillFinalizeSkills,
+                900,
+                skillFinalizeProvider,
+                skillFinalizePreset,
                 2,
                 4
         );
@@ -316,6 +384,7 @@ class DispatcherServiceTest {
         private final ArrayDeque<String> responses;
         private final List<String> routingPrompts = new ArrayList<>();
         private final List<Map<String, Object>> fallbackContexts = new ArrayList<>();
+        private final List<Map<String, Object>> finalizeContexts = new ArrayList<>();
         private int routingCallCount;
         private int fallbackCallCount;
 
@@ -330,7 +399,11 @@ class DispatcherServiceTest {
                 routingPrompts.add(prompt);
             } else {
                 fallbackCallCount++;
-                fallbackContexts.add(context == null ? Map.of() : Map.copyOf(context));
+                Map<String, Object> captured = context == null ? Map.of() : Map.copyOf(context);
+                fallbackContexts.add(captured);
+                if (prompt != null && prompt.startsWith("你是回复优化助手。")) {
+                    finalizeContexts.add(captured);
+                }
             }
             return responses.isEmpty() ? "stub" : responses.removeFirst();
         }
@@ -349,6 +422,10 @@ class DispatcherServiceTest {
 
         private List<Map<String, Object>> fallbackContexts() {
             return fallbackContexts;
+        }
+
+        private List<Map<String, Object>> finalizeContexts() {
+            return finalizeContexts;
         }
     }
 
