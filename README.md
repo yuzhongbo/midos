@@ -138,11 +138,19 @@ mindos-server-stop.bat
 `mindos-server.env.bat` is the single place to edit self-hosted variables such as:
 - keep each line in the form `set "KEY=value"` and edit only the text to the right of the first `=`
 - enable one LLM provider first with `MINDOS_LLM_HTTP_ENABLED=true`, `MINDOS_LLM_PROVIDER=qwen`, and one `MINDOS_LLM_PROVIDER_KEYS=qwen:...` line
+- if you switch to Doubao Ark, also set `MINDOS_LLM_PROVIDER_MODELS=doubao:<Model ID or Endpoint ID>` because the Chat API requires a real model identifier and uses `Authorization: Bearer <ARK_API_KEY>`
+- the exported Windows template keeps `doubao:REPLACE_WITH_YOUR_DOUBAO_ENDPOINT_ID` on the same line; leaving that placeholder unchanged is safe because MindOS ignores it until you replace it with a real Ark Model ID / Endpoint ID
 - add other providers only when you actually need cross-provider switching
 - keep `MINDOS_IM_DINGTALK_*` / `MINDOS_IM_WECHAT_*` disabled until you have real bot credentials
 - `MINDOS_SERVER_PORT` for local service port
 
 The exported Windows bundle also includes `mindos-server.full.env.bat` as a commented multi-provider reference. It is not auto-loaded; copy only the lines you want from it back into `mindos-server.env.bat` when needed. In provider maps, commas split entries and the first colon splits provider name from value, so edit those lines carefully.
+
+LLM provider configuration notes:
+- `mindos.llm.provider-endpoints` controls provider -> chat endpoint mapping.
+- `mindos.llm.provider-models` controls provider -> model mapping.
+- `qwen` keeps the built-in default model `qwen3.5-plus` when no model is supplied.
+- `doubao` must be configured with a real Ark `Model ID` or `Endpoint ID`, for example `mindos.llm.provider-models=doubao:ep-202603290001`, before enabling live HTTP calls.
 
 ## Cloud deploy (single-user)
 
@@ -378,6 +386,7 @@ curl -X POST http://localhost:8080/api/skills/load-mcp \
 - For native Gemini, prefer configuring the base endpoint in `mindos.llm.provider-endpoints` and keep the secret in `mindos.llm.provider-keys`; the client will append `?key=...` automatically and mask it in metrics.
 - DingTalk webhook replies are synchronous; `mindos.im.dingtalk.reply-timeout-ms` (default `2500`) caps the wait budget so slow LLM replies degrade to a timeout-friendly message instead of vanishing from the chat window.
 - DingTalk stream mode is optional and intended for slow replies: enable `mindos.im.dingtalk.stream.enabled=true`, provide `mindos.im.dingtalk.stream.client-id`, `mindos.im.dingtalk.stream.client-secret`, and outbound settings (`mindos.im.dingtalk.outbound.enabled=true`, `mindos.im.dingtalk.outbound.robot-code`). When a reply is slow, MindOS sends a waiting status after `mindos.im.dingtalk.stream.waiting-delay-ms` (default `800`) and then pushes the final answer when it is ready.
+- For single-host restart continuity, central memory uses file storage by default (`mindos.memory.file-repo.enabled=true`, `mindos.memory.file-repo.base-dir=data/memory-sync`) when no JDBC `DataSource` is configured.
 - Optional multi-provider routing:
   - default provider: `mindos.llm.provider=stub`
   - routing mode: `mindos.llm.routing.mode=fixed|auto` (default `fixed`)
@@ -450,6 +459,9 @@ If you prefer cleaner secret handling for Gemini, use the same endpoint without 
 - Dispatcher LLM skill-routing optimization controls:
   - `mindos.dispatcher.skill-routing.llm-shortlist-max-skills` (default `8`): only the top candidate skills are exposed to the LLM router prompt, reducing false positives and token cost when the skill catalog grows.
   - `mindos.dispatcher.skill-routing.conversational-bypass.enabled` (default `true`): short small-talk inputs such as `谢谢/好的/hello` skip the LLM skill-selection pass and go straight to normal chat fallback.
+  - `mindos.dispatcher.skill.pre-analyze.mode=auto|always|never` (default `auto`): controls whether low-certainty requests go through LLM skill pre-analysis.
+  - `mindos.dispatcher.skill.pre-analyze.confidence-threshold` (default `0`): in `auto` mode, skip pre-analysis when best candidate confidence is below this threshold.
+  - `mindos.dispatcher.skill.pre-analyze.skip-skills` (default `time`): skill names that should not be selected by LLM pre-analysis.
   - chat `executionTrace.routing` now includes `route`, `selectedSkill`, `confidence`, `reasons`, and `rejectedReasons` for diagnosing why a skill was chosen or why the request fell back to plain LLM chat.
 - Dispatcher token/loop guards:
   - `mindos.dispatcher.prompt.max-chars` (default `2800`)
@@ -646,6 +658,12 @@ mindos.im.dingtalk.stream.client-secret=ding-app-secret
 mindos.im.dingtalk.stream.topic=/v1.0/im/bot/messages/get
 mindos.im.dingtalk.stream.waiting-delay-ms=800
 mindos.im.dingtalk.stream.waiting-text=我正在处理这条消息，请稍等，我会继续回复你。
+mindos.im.dingtalk.stream.reconnect.enabled=true
+mindos.im.dingtalk.stream.reconnect.initial-delay-ms=1000
+mindos.im.dingtalk.stream.reconnect.max-delay-ms=60000
+mindos.im.dingtalk.stream.reconnect.multiplier=2.0
+mindos.im.dingtalk.stream.reconnect.jitter-ratio=0.2
+mindos.im.dingtalk.stream.reconnect.max-attempts=0
 mindos.im.dingtalk.outbound.enabled=true
 mindos.im.dingtalk.outbound.robot-code=dingrobotcode
 # Optional: override outbound app credentials; when omitted, MindOS reuses the stream client credentials.
@@ -657,6 +675,7 @@ Behavior in stream mode:
 
 - if the reply finishes before `mindos.im.dingtalk.stream.waiting-delay-ms`, MindOS sends only the final answer;
 - if the reply is still running after that delay, MindOS first sends the waiting text, then pushes the final answer when the dispatcher finishes;
+- if stream startup fails (for example DingTalk `503 ServiceUnavailable`), MindOS retries with exponential backoff using `mindos.im.dingtalk.stream.reconnect.*` settings;
 - webhook timeout settings still apply to `/api/im/dingtalk/events`, but they are no longer the primary receive path once DingTalk is switched to `Stream 模式推送` in the developer console.
 
 Useful stream-mode log events:
@@ -705,6 +724,12 @@ Optional but recommended:
 
 - `mindos.im.dingtalk.stream.waiting-delay-ms=800`
 - `mindos.im.dingtalk.stream.waiting-text=我正在处理这条消息，请稍等，我会继续回复你。`
+- `mindos.im.dingtalk.stream.reconnect.enabled=true`
+- `mindos.im.dingtalk.stream.reconnect.initial-delay-ms=1000`
+- `mindos.im.dingtalk.stream.reconnect.max-delay-ms=60000`
+- `mindos.im.dingtalk.stream.reconnect.multiplier=2.0`
+- `mindos.im.dingtalk.stream.reconnect.jitter-ratio=0.2`
+- `mindos.im.dingtalk.stream.reconnect.max-attempts=0` (`0` means unlimited retries)
 - `mindos.im.dingtalk.outbound.app-key` / `mindos.im.dingtalk.outbound.app-secret` if outbound sending should not reuse the stream credentials.
 
 ### 3. Permissions to confirm
@@ -762,4 +787,43 @@ Unsigned connectivity check (only for temporary debug when signature verificatio
 curl -i -X POST "https://bot.2756online.com/api/im/dingtalk/events" \
   -H "Content-Type: application/json" \
   -d '{"senderId":"u1","conversationId":"c1","text":{"content":"echo hi"}}'
+```
+
+## DingTalk slow-model presets (chat/work/writing)
+
+Do not paste markdown tables into `mindos-server.env.bat`; only paste `set "KEY=value"` lines.
+
+| Scene | Waiting delay | Reply length | Prompt/context budget |
+|---|---:|---:|---:|
+| chat (fast feel) | `200` ms | `700` | `2000/1200` |
+| work (balanced) | `350` ms | `900` | `2400/1400` |
+| writing (quality) | `500` ms | `1200` | `3000/1800` |
+
+Windows env snippet examples:
+
+```bat
+REM chat (fast feel)
+set "MINDOS_IM_DINGTALK_STREAM_WAITING_DELAY_MS=200"
+set "MINDOS_IM_DINGTALK_STREAM_WAITING_TEXT=收到，我正在处理中，马上给你完整答复。"
+set "MINDOS_DISPATCHER_LLM_REPLY_MAX_CHARS=700"
+set "MINDOS_DISPATCHER_PROMPT_MAX_CHARS=2000"
+set "MINDOS_DISPATCHER_MEMORY_CONTEXT_MAX_CHARS=1200"
+```
+
+```bat
+REM work (balanced)
+set "MINDOS_IM_DINGTALK_STREAM_WAITING_DELAY_MS=350"
+set "MINDOS_IM_DINGTALK_STREAM_WAITING_TEXT=我正在思考中，预计几十秒内回复你，请稍等。"
+set "MINDOS_DISPATCHER_LLM_REPLY_MAX_CHARS=900"
+set "MINDOS_DISPATCHER_PROMPT_MAX_CHARS=2400"
+set "MINDOS_DISPATCHER_MEMORY_CONTEXT_MAX_CHARS=1400"
+```
+
+```bat
+REM writing (quality)
+set "MINDOS_IM_DINGTALK_STREAM_WAITING_DELAY_MS=500"
+set "MINDOS_IM_DINGTALK_STREAM_WAITING_TEXT=我正在整理更完整的内容，请再给我一点时间。"
+set "MINDOS_DISPATCHER_LLM_REPLY_MAX_CHARS=1200"
+set "MINDOS_DISPATCHER_PROMPT_MAX_CHARS=3000"
+set "MINDOS_DISPATCHER_MEMORY_CONTEXT_MAX_CHARS=1800"
 ```

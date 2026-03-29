@@ -43,6 +43,12 @@ class DingtalkStreamMessageDispatcherTest {
                 10L,
                 "我正在处理中，请稍等。",
                 true,
+                1000L,
+                60000L,
+                2.0d,
+                0.2d,
+                0,
+                true,
                 "robot-code",
                 "",
                 ""
@@ -94,6 +100,12 @@ class DingtalkStreamMessageDispatcherTest {
                 200L,
                 "我正在处理中，请稍等。",
                 true,
+                1000L,
+                60000L,
+                2.0d,
+                0.2d,
+                0,
+                true,
                 "robot-code",
                 "",
                 ""
@@ -128,6 +140,12 @@ class DingtalkStreamMessageDispatcherTest {
                 DingtalkIntegrationSettings.BOT_MESSAGE_TOPIC,
                 0L,
                 "处理中",
+                true,
+                1000L,
+                60000L,
+                2.0d,
+                0.2d,
+                0,
                 true,
                 "robot-code",
                 "",
@@ -169,6 +187,12 @@ class DingtalkStreamMessageDispatcherTest {
                 200L,
                 "我正在处理中，请稍等。",
                 true,
+                1000L,
+                60000L,
+                2.0d,
+                0.2d,
+                0,
+                true,
                 "robot-code",
                 "",
                 ""
@@ -182,6 +206,7 @@ class DingtalkStreamMessageDispatcherTest {
                 "data", Map.of(
                         "conversationId", "cid-4",
                         "senderStaffId", "staff-4",
+                        "sessionWebhook", "https://oapi.dingtalk.com/robot/send?access_token=test",
                         "text", Map.of("content", "帮我列待办")
                 )
         ));
@@ -189,6 +214,7 @@ class DingtalkStreamMessageDispatcherTest {
         waitUntil(() -> !sender.messages.isEmpty(), 1000);
         assertEquals(1, sender.messages.size());
         assertEquals("好的，给你三条待办", sender.messages.get(0));
+        assertEquals("https://oapi.dingtalk.com/robot/send?access_token=test", sender.lastSessionWebhook);
     }
 
     private void waitUntil(CheckedCondition condition, long timeoutMs) throws Exception {
@@ -211,6 +237,7 @@ class DingtalkStreamMessageDispatcherTest {
 
         private final boolean ready;
         private final CopyOnWriteArrayList<String> messages = new CopyOnWriteArrayList<>();
+        private volatile String lastSessionWebhook;
 
         private RecordingConversationSender(boolean ready) {
             this.ready = ready;
@@ -225,6 +252,12 @@ class DingtalkStreamMessageDispatcherTest {
         public boolean sendText(String openConversationId, String text) {
             messages.add(text);
             return true;
+        }
+
+        @Override
+        public boolean sendText(String openConversationId, String text, String sessionWebhook) {
+            lastSessionWebhook = sessionWebhook;
+            return sendText(openConversationId, text);
         }
     }
 

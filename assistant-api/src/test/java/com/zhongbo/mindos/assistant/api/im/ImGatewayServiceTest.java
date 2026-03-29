@@ -14,6 +14,7 @@ import org.junit.jupiter.api.Test;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.logging.Handler;
 import java.util.logging.Level;
@@ -21,6 +22,7 @@ import java.util.logging.LogRecord;
 import java.util.logging.Logger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
@@ -155,6 +157,30 @@ class ImGatewayServiceTest {
         String reply = service.chatAsync(ImPlatform.DINGTALK, "u5", "c5", "继续生成").get(1, TimeUnit.SECONDS);
 
         assertEquals(ImReplySanitizer.TIMEOUT_IM_FALLBACK_REPLY, reply);
+        service.shutdown();
+    }
+
+    @Test
+    void shouldReturnAsyncFutureBeforeSlowDispatcherCompletes() throws Exception {
+        DispatcherService dispatcherService = mock(DispatcherService.class);
+        MemoryManager memoryManager = mock(MemoryManager.class);
+        MemoryConsolidationService consolidationService = new MemoryConsolidationService();
+        ImGatewayService service = new ImGatewayService(dispatcherService, memoryManager, consolidationService);
+
+        CompletableFuture<DispatchResult> slowReply = new CompletableFuture<>();
+        when(dispatcherService.dispatchAsync(eq("im:dingtalk:u6"), eq("继续"), any()))
+                .thenReturn(slowReply);
+
+        long startedAt = System.nanoTime();
+        CompletableFuture<String> replyFuture = service.chatAsync(ImPlatform.DINGTALK, "u6", "c6", "继续");
+        long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt);
+
+        assertFalse(replyFuture.isDone());
+        assertTrue(elapsedMs < 200, "chatAsync should return quickly so stream waiting status can be scheduled");
+
+        slowReply.complete(new DispatchResult("好的，继续。", "llm"));
+        assertEquals("好的，继续。", replyFuture.get(1, TimeUnit.SECONDS));
+        service.shutdown();
     }
 
     @Test

@@ -21,10 +21,14 @@ class ApiKeyLlmClientTest {
     @Test
     void shouldCallHttpAndReturnAssistantContentWhenHttpEnabled() throws Exception {
         HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
+        ConcurrentHashMap<String, String> observed = new ConcurrentHashMap<>();
         server.createContext("/v1/chat/completions", exchange -> {
-            byte[] body = "{\"choices\":[{\"message\":{\"content\":\"hello from proxy\"}}]}"
+            observed.put("body", new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            byte[] body = ("data: {\"choices\":[{\"delta\":{\"content\":\"hello from \"}}]}\n\n"
+                    + "data: {\"choices\":[{\"delta\":{\"content\":\"proxy\"}}]}\n\n"
+                    + "data: [DONE]\n\n")
                     .getBytes(StandardCharsets.UTF_8);
-            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.getResponseHeaders().add("Content-Type", "text/event-stream");
             exchange.sendResponseHeaders(200, body.length);
             exchange.getResponseBody().write(body);
             exchange.close();
@@ -46,6 +50,7 @@ class ApiKeyLlmClientTest {
             String output = client.generateResponse("hello", Map.of("userId", "u-http", "llmProvider", "gemini"));
 
             assertEquals("hello from proxy", output);
+            assertTrue(observed.get("body").contains("\"stream\":true"));
         } finally {
             server.stop(0);
         }
@@ -130,9 +135,10 @@ class ApiKeyLlmClientTest {
             String authorization = exchange.getRequestHeaders().getFirst("Authorization");
             observed.put("auth", authorization == null ? "" : authorization);
             observed.put("body", new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
-            byte[] body = "{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"hello from gemini native\"}]}}]}"
+            byte[] body = ("data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"hello from gemini \"}]}}]}\n\n"
+                    + "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"native\"}]}}]}\n\n")
                     .getBytes(StandardCharsets.UTF_8);
-            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.getResponseHeaders().add("Content-Type", "text/event-stream");
             exchange.sendResponseHeaders(200, body.length);
             exchange.getResponseBody().write(body);
             exchange.close();
@@ -160,24 +166,6 @@ class ApiKeyLlmClientTest {
             isNativeGeminiEndpoint.setAccessible(true);
             assertTrue((boolean) isNativeGeminiEndpoint.invoke(client, resolvedEndpoint));
 
-            var callNativeGeminiProvider = ApiKeyLlmClient.class.getDeclaredMethod(
-                    "callNativeGeminiProvider",
-                    String.class,
-                    String.class,
-                    String.class,
-                    Map.class,
-                    String.class
-            );
-            callNativeGeminiProvider.setAccessible(true);
-            String directOutput = (String) callNativeGeminiProvider.invoke(
-                    client,
-                    "gemini",
-                    resolvedEndpoint,
-                    "hello native",
-                    Map.of("temperature", 0.2, "maxTokens", 128),
-                    "key-gemini"
-            );
-            assertEquals("hello from gemini native", directOutput);
 
             String output = client.generateResponse("hello native", Map.of(
                     "userId", "u-gemini",
@@ -187,8 +175,8 @@ class ApiKeyLlmClientTest {
             ));
 
             assertEquals("hello from gemini native", output);
-            assertEquals("/v1beta/models/gemini-2.0-flash:generateContent", observed.get("path"));
-            assertEquals("key=key-gemini", observed.get("query"));
+            assertEquals("/v1beta/models/gemini-2.0-flash:streamGenerateContent", observed.get("path"));
+            assertEquals("key=key-gemini&alt=sse", observed.get("query"));
             assertEquals("", observed.get("auth"));
             assertTrue(observed.get("body").contains("\"contents\""));
             assertTrue(observed.get("body").contains("hello native"));
@@ -229,8 +217,8 @@ class ApiKeyLlmClientTest {
             String output = client.generateResponse("hello", Map.of("userId", "u-gemini-2", "llmProvider", "gemini"));
 
             assertEquals("ok", output);
-            assertEquals("/v1beta/models/gemini-2.0-flash:generateContent", observed.get("path"));
-            assertEquals("key=config-key", observed.get("query"));
+            assertEquals("/v1beta/models/gemini-2.0-flash:streamGenerateContent", observed.get("path"));
+            assertEquals("key=config-key&alt=sse", observed.get("query"));
             List<?> calls = readRecordedCalls(client);
             assertFalse(calls.isEmpty());
             Object lastCall = calls.get(calls.size() - 1);
@@ -378,6 +366,173 @@ class ApiKeyLlmClientTest {
         } finally {
             server.stop(0);
         }
+    }
+
+    @Test
+    void shouldUseConfiguredDoubaoModelAndBearerAuth() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
+        ConcurrentHashMap<String, String> observed = new ConcurrentHashMap<>();
+        server.createContext("/api/v3/chat/completions", exchange -> {
+            observed.put("path", exchange.getRequestURI().getPath());
+            observed.put("auth", exchange.getRequestHeaders().getFirst("Authorization"));
+            observed.put("body", new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            byte[] body = ("data: {\"choices\":[{\"delta\":{\"content\":\"doubao \"}}]}\n\n"
+                    + "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\n"
+                    + "data: [DONE]\n\n")
+                    .getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "text/event-stream");
+            exchange.sendResponseHeaders(200, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+        try {
+            ApiKeyLlmClient client = newClient(
+                    "doubao",
+                    "fixed",
+                    "llm-dsl:doubao,llm-fallback:doubao",
+                    "cost:doubao,quality:doubao",
+                    "doubao:ark-key",
+                    "doubao:ep-20260329-test",
+                    false,
+                    60,
+                    true,
+                    "doubao:http://127.0.0.1:" + server.getAddress().getPort() + "/api/v3/chat/completions"
+            );
+
+            String output = client.generateResponse("你好", Map.of("userId", "u-doubao", "llmProvider", "doubao"));
+
+            assertEquals("doubao ok", output);
+            assertEquals("/api/v3/chat/completions", observed.get("path"));
+            assertEquals("Bearer ark-key", observed.get("auth"));
+            assertTrue(observed.get("body").contains("\"model\":\"ep-20260329-test\""));
+            assertTrue(observed.get("body").contains("\"messages\""));
+            assertTrue(observed.get("body").contains("\"stream\":true"));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void shouldResolveVolcengineAliasToDoubaoModelEndpointAndKey() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
+        ConcurrentHashMap<String, String> observed = new ConcurrentHashMap<>();
+        server.createContext("/api/v3/chat/completions", exchange -> {
+            observed.put("path", exchange.getRequestURI().getPath());
+            observed.put("auth", exchange.getRequestHeaders().getFirst("Authorization"));
+            observed.put("body", new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            byte[] body = "{\"choices\":[{\"message\":{\"content\":\"alias ok\"}}]}"
+                    .getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+        try {
+            ApiKeyLlmClient client = newClient(
+                    "volcengine",
+                    "fixed",
+                    "llm-dsl:volcengine,llm-fallback:volcengine",
+                    "cost:volcengine,quality:volcengine",
+                    "volcengine:ark-key",
+                    "volcengine:ep-20260329-alias",
+                    false,
+                    60,
+                    true,
+                    "doubao:http://127.0.0.1:" + server.getAddress().getPort() + "/api/v3/chat/completions"
+            );
+
+            String output = client.generateResponse("你好", Map.of("userId", "u-volcengine", "llmProvider", "volcengine"));
+
+            assertEquals("alias ok", output);
+            assertEquals("/api/v3/chat/completions", observed.get("path"));
+            assertEquals("Bearer ark-key", observed.get("auth"));
+            assertTrue(observed.get("body").contains("\"model\":\"ep-20260329-alias\""));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void shouldPreferExplicitDoubaoModelOverConfiguredProviderModel() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
+        ConcurrentHashMap<String, String> observed = new ConcurrentHashMap<>();
+        server.createContext("/api/v3/chat/completions", exchange -> {
+            observed.put("body", new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            byte[] body = "{\"choices\":[{\"message\":{\"content\":\"doubao override ok\"}}]}"
+                    .getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+        try {
+            ApiKeyLlmClient client = newClient(
+                    "doubao",
+                    "fixed",
+                    "llm-dsl:doubao,llm-fallback:doubao",
+                    "cost:doubao,quality:doubao",
+                    "doubao:ark-key",
+                    "doubao:ep-20260329-configured",
+                    false,
+                    60,
+                    true,
+                    "doubao:http://127.0.0.1:" + server.getAddress().getPort() + "/api/v3/chat/completions"
+            );
+
+            String output = client.generateResponse("你好", Map.of(
+                    "userId", "u-doubao-override",
+                    "llmProvider", "doubao",
+                    "model", "ep-20260329-explicit"
+            ));
+
+            assertEquals("doubao override ok", output);
+            assertTrue(observed.get("body").contains("\"model\":\"ep-20260329-explicit\""));
+            assertFalse(observed.get("body").contains("\"model\":\"ep-20260329-configured\""));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void shouldReturnHelpfulMessageWhenDoubaoModelIsMissing() {
+        ApiKeyLlmClient client = newClient(
+                "doubao",
+                "fixed",
+                "llm-dsl:doubao,llm-fallback:doubao",
+                "cost:doubao,quality:doubao",
+                "doubao:ark-key",
+                false,
+                60,
+                true,
+                "doubao:https://ark.cn-beijing.volces.com/api/v3/chat/completions"
+        );
+
+        String output = client.generateResponse("你好", Map.of("userId", "u-doubao-missing", "llmProvider", "doubao"));
+
+        assertEquals("[LLM doubao] unavailable: missing Model ID / Endpoint ID. Configure mindos.llm.provider-models=doubao:<endpoint-or-model-id> or pass context.model.", output);
+    }
+
+    @Test
+    void shouldIgnoreDoubaoTemplatePlaceholderUntilOperatorFillsIt() {
+        ApiKeyLlmClient client = newClient(
+                "doubao",
+                "fixed",
+                "llm-dsl:doubao,llm-fallback:doubao",
+                "cost:doubao,quality:doubao",
+                "doubao:ark-key",
+                "doubao:REPLACE_WITH_YOUR_DOUBAO_ENDPOINT_ID",
+                false,
+                60,
+                true,
+                "doubao:https://ark.cn-beijing.volces.com/api/v3/chat/completions"
+        );
+
+        String output = client.generateResponse("你好", Map.of("userId", "u-doubao-placeholder", "llmProvider", "doubao"));
+
+        assertEquals("[LLM doubao] unavailable: missing Model ID / Endpoint ID. Configure mindos.llm.provider-models=doubao:<endpoint-or-model-id> or pass context.model.", output);
     }
 
     @Test
@@ -583,7 +738,21 @@ class ApiKeyLlmClientTest {
                                       long cacheTtlSeconds,
                                       boolean httpEnabled,
                                       String providerEndpoints) {
-        return newClient(defaultProvider, routingMode, stageMap, presetMap, providerKeys, cacheEnabled, cacheTtlSeconds,
+        return newClient(defaultProvider, routingMode, stageMap, presetMap, providerKeys, "", cacheEnabled, cacheTtlSeconds,
+                httpEnabled, providerEndpoints);
+    }
+
+    private ApiKeyLlmClient newClient(String defaultProvider,
+                                      String routingMode,
+                                      String stageMap,
+                                      String presetMap,
+                                      String providerKeys,
+                                      String providerModels,
+                                      boolean cacheEnabled,
+                                      long cacheTtlSeconds,
+                                      boolean httpEnabled,
+                                      String providerEndpoints) {
+        return newClient(defaultProvider, routingMode, stageMap, presetMap, providerKeys, providerModels, cacheEnabled, cacheTtlSeconds,
                 "fallback-global-key", httpEnabled, providerEndpoints);
     }
 
@@ -592,6 +761,21 @@ class ApiKeyLlmClientTest {
                                       String stageMap,
                                       String presetMap,
                                       String providerKeys,
+                                      boolean cacheEnabled,
+                                      long cacheTtlSeconds,
+                                      String globalApiKey,
+                                      boolean httpEnabled,
+                                      String providerEndpoints) {
+        return newClient(defaultProvider, routingMode, stageMap, presetMap, providerKeys, "", cacheEnabled, cacheTtlSeconds,
+                globalApiKey, httpEnabled, providerEndpoints);
+    }
+
+    private ApiKeyLlmClient newClient(String defaultProvider,
+                                      String routingMode,
+                                      String stageMap,
+                                      String presetMap,
+                                      String providerKeys,
+                                      String providerModels,
                                       boolean cacheEnabled,
                                       long cacheTtlSeconds,
                                       String globalApiKey,
@@ -606,6 +790,7 @@ class ApiKeyLlmClientTest {
                 "https://api.example.com/v1/chat/completions",
                 globalApiKey,
                 providerEndpoints,
+                providerModels,
                 providerKeys,
                 stageMap,
                 presetMap,

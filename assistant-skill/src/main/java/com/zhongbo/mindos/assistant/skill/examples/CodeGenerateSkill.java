@@ -31,7 +31,7 @@ public class CodeGenerateSkill implements Skill {
 
     @Override
     public String description() {
-        return "Generates code from a task description (skeleton placeholder).";
+        return "根据任务描述生成代码草稿，可附带语言或风格偏好。";
     }
 
     @Override
@@ -57,7 +57,9 @@ public class CodeGenerateSkill implements Skill {
                 LOGGER.log(Level.WARNING, "LLM call failed for code.generate skill, fallback to local output", ex);
             }
         }
-        String output = "[code.generate] Placeholder generated code for task: " + taskDescription;
+        String output = "我先给你一个可落地的代码起步方案：\n"
+                + "- 任务目标：" + taskDescription + "\n"
+                + "- 下一步：告诉我你希望的语言、框架或输入输出示例，我会直接补成完整代码。";
         return SkillResult.success(name(), output);
     }
 

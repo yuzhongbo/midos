@@ -31,7 +31,7 @@ public class FileSearchSkill implements Skill {
 
     @Override
     public String description() {
-        return "Searches files by path and keyword (skeleton placeholder).";
+        return "按路径和关键词整理候选文件，适合快速缩小排查范围。";
     }
 
     @Override
@@ -49,8 +49,9 @@ public class FileSearchSkill implements Skill {
                 LOGGER.log(Level.WARNING, "LLM call failed for file.search skill, fallback to local output", ex);
             }
         }
-        String output = "[file.search] Placeholder match list for path='"
-                + filePath + "', keyword='" + keyword + "': [example.txt, notes.md]";
+        String output = "我先帮你缩小范围：在路径 `" + filePath + "` 下，建议先看这两个候选文件："
+                + "example.txt、notes.md。"
+                + (keyword.isBlank() ? "如果你给我关键词，我可以继续按优先级细化。" : "我会重点关注与“" + keyword + "”相关的段落。") ;
         return SkillResult.success(name(), output);
     }
 

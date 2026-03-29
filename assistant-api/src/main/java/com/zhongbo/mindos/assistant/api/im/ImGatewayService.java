@@ -9,6 +9,7 @@ import com.zhongbo.mindos.assistant.memory.MemoryManager;
 import com.zhongbo.mindos.assistant.memory.model.MemoryCompressionPlan;
 import com.zhongbo.mindos.assistant.memory.model.MemoryCompressionStep;
 import com.zhongbo.mindos.assistant.memory.model.MemoryStyleProfile;
+import jakarta.annotation.PreDestroy;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
@@ -21,6 +22,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -39,6 +42,7 @@ public class ImGatewayService {
     private final DispatcherService dispatcherService;
     private final MemoryManager memoryManager;
     private final MemoryConsolidationService memoryConsolidationService;
+    private final ExecutorService asyncExecutor;
     private final Map<String, String> pendingKeyPointReviews = new ConcurrentHashMap<>();
     private final Map<String, List<String>> pendingTodoFromReview = new ConcurrentHashMap<>();
 
@@ -48,6 +52,11 @@ public class ImGatewayService {
         this.dispatcherService = dispatcherService;
         this.memoryManager = memoryManager;
         this.memoryConsolidationService = memoryConsolidationService;
+        this.asyncExecutor = Executors.newCachedThreadPool(runnable -> {
+            Thread thread = new Thread(runnable, "mindos-im-gateway");
+            thread.setDaemon(true);
+            return thread;
+        });
     }
 
     String chat(ImPlatform platform, String senderId, String chatId, String text) {
@@ -80,18 +89,22 @@ public class ImGatewayService {
         String userId = buildUserId(platform, senderId);
         Map<String, Object> profileContext = buildProfileContext(platform, senderId, chatId);
 
-        String memoryReply = tryHandleMemoryPlanningIntent(userId, normalizedText);
-        if (memoryReply != null) {
-            return CompletableFuture.completedFuture(sanitizeAndObserve(platform, senderId, chatId, userId, "memory-intent", memoryReply));
-        }
+        return CompletableFuture.supplyAsync(() -> {
+            String memoryReply = tryHandleMemoryPlanningIntent(userId, normalizedText);
+            if (memoryReply != null) {
+                return sanitizeAndObserve(platform, senderId, chatId, userId, "memory-intent", memoryReply);
+            }
+            DispatchResult result = dispatcherService.dispatchAsync(userId, normalizedText, profileContext).join();
+            String replySource = result.channel() == null || result.channel().isBlank()
+                    ? "dispatcher"
+                    : "dispatcher:" + result.channel().trim();
+            return sanitizeAndObserve(platform, senderId, chatId, userId, replySource, result.reply());
+        }, asyncExecutor);
+    }
 
-        return dispatcherService.dispatchAsync(userId, normalizedText, profileContext)
-                .thenApply(result -> {
-                    String replySource = result.channel() == null || result.channel().isBlank()
-                            ? "dispatcher"
-                            : "dispatcher:" + result.channel().trim();
-                    return sanitizeAndObserve(platform, senderId, chatId, userId, replySource, result.reply());
-                });
+    @PreDestroy
+    void shutdown() {
+        asyncExecutor.shutdownNow();
     }
 
     private Map<String, Object> buildProfileContext(ImPlatform platform, String senderId, String chatId) {

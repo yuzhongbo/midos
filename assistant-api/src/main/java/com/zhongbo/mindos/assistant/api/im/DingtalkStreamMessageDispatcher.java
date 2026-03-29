@@ -49,6 +49,10 @@ class DingtalkStreamMessageDispatcher {
             return;
         }
         Map<String, Object> eventData = nestedMapValue(payload.get("data"));
+        String sessionWebhook = firstNonBlank(
+                stringValue(payload.get("sessionWebhook")),
+                stringValue(eventData.get("sessionWebhook"))
+        );
         String conversationId = firstNonBlank(
                 stringValue(payload.get("conversationId")),
                 stringValue(payload.get("openConversationId")),
@@ -115,7 +119,7 @@ class DingtalkStreamMessageDispatcher {
             if (replyFuture.isDone()) {
                 return;
             }
-            boolean sent = sendText(conversationId, settings.streamWaitingText());
+            boolean sent = sendText(conversationId, settings.streamWaitingText(), sessionWebhook);
             waitingSent.set(sent);
             logEvent(sent ? Level.INFO : Level.WARNING,
                     sent ? "dingtalk.stream.waiting.sent" : "dingtalk.stream.waiting.failed",
@@ -137,7 +141,7 @@ class DingtalkStreamMessageDispatcher {
                         "DingTalk stream async reply failed, conversationHash=" + safeHash(conversationId),
                         error);
             }
-            boolean sent = sendText(conversationId, finalReply);
+            boolean sent = sendText(conversationId, finalReply, sessionWebhook);
             logEvent(sent ? Level.INFO : Level.WARNING,
                     sent ? "dingtalk.stream.final.sent" : "dingtalk.stream.final.failed",
                     Map.of(
@@ -159,10 +163,10 @@ class DingtalkStreamMessageDispatcher {
         waitingScheduler.shutdownNow();
     }
 
-    private boolean sendText(String conversationId, String reply) {
+    private boolean sendText(String conversationId, String reply, String sessionWebhook) {
         String sanitized = ImReplySanitizer.sanitize(reply);
         rememberBotEcho(conversationId, sanitized);
-        return conversationSender.sendText(conversationId, sanitized);
+        return conversationSender.sendText(conversationId, sanitized, sessionWebhook);
     }
 
     private boolean shouldSuppressAsBotEcho(String conversationId, String text) {

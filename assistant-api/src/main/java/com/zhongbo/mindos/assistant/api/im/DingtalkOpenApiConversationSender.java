@@ -2,6 +2,7 @@ package com.zhongbo.mindos.assistant.api.im;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.dingtalk.open.app.api.chatbot.BotReplier;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -56,6 +57,11 @@ public class DingtalkOpenApiConversationSender implements DingtalkConversationSe
 
     @Override
     public boolean sendText(String openConversationId, String text) {
+        return sendText(openConversationId, text, "");
+    }
+
+    @Override
+    public boolean sendText(String openConversationId, String text, String sessionWebhook) {
         String conversationId = safe(openConversationId);
         String message = safe(text);
         if (!isReady() || conversationId.isBlank() || message.isBlank()) {
@@ -65,6 +71,9 @@ public class DingtalkOpenApiConversationSender implements DingtalkConversationSe
                     "replyLength", message.length()
             ));
             return false;
+        }
+        if (trySendBySessionWebhook(conversationId, message, sessionWebhook)) {
+            return true;
         }
         try {
             String accessToken = resolveAccessToken();
@@ -166,6 +175,29 @@ public class DingtalkOpenApiConversationSender implements DingtalkConversationSe
                     "expiresInSeconds", expiresInSeconds
             ));
             return accessToken;
+        }
+    }
+
+    private boolean trySendBySessionWebhook(String conversationId, String message, String sessionWebhook) {
+        String webhook = safe(sessionWebhook);
+        if (webhook.isBlank()) {
+            return false;
+        }
+        try {
+            BotReplier.fromWebhook(webhook).replyText(message);
+            logEvent(Level.INFO, "dingtalk.stream.outbound.sent", Map.of(
+                    "conversationHash", safeHash(conversationId),
+                    "replyLength", message.length(),
+                    "channel", "session_webhook"
+            ));
+            return true;
+        } catch (Exception ex) {
+            logEvent(Level.WARNING, "dingtalk.stream.outbound.webhook-failed", Map.of(
+                    "conversationHash", safeHash(conversationId),
+                    "replyLength", message.length(),
+                    "reason", ex.getMessage() == null ? ex.getClass().getSimpleName() : clip(ex.getMessage())
+            ));
+            return false;
         }
     }
 

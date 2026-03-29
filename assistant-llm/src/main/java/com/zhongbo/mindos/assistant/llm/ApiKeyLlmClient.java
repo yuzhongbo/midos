@@ -14,7 +14,10 @@ import com.zhongbo.mindos.assistant.common.dsl.SkillDSL;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
+import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
@@ -29,6 +32,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.function.Consumer;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -66,6 +71,7 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
     private final String endpoint;
     private final String globalApiKey;
     private final Map<String, String> providerEndpoints;
+    private final Map<String, String> providerModels;
     private final Map<String, String> providerApiKeys;
     private final Map<String, String> stageProviderMap;
     private final Map<String, String> presetProviderMap;
@@ -95,6 +101,7 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
                            @Value("${mindos.llm.endpoint:https://api.example.com/v1/chat/completions}") String endpoint,
                            @Value("${mindos.llm.api-key:}") String globalApiKey,
                            @Value("${mindos.llm.provider-endpoints:}") String providerEndpoints,
+                           @Value("${mindos.llm.provider-models:}") String providerModels,
                            @Value("${mindos.llm.provider-keys:}") String providerKeys,
                            @Value("${mindos.llm.routing.stage-map:llm-dsl:openai,llm-fallback:openai}") String stageProviderMap,
                            @Value("${mindos.llm.routing.preset-map:cost:openai,balanced:openai,quality:openai}") String presetProviderMap,
@@ -112,6 +119,7 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
         this.endpoint = endpoint;
         this.globalApiKey = globalApiKey;
         this.providerEndpoints = parseProviderConfig(providerEndpoints);
+        this.providerModels = parseProviderConfig(providerModels);
         this.providerApiKeys = parseProviderConfig(providerKeys);
         this.stageProviderMap = parseProviderConfig(stageProviderMap);
         this.presetProviderMap = parseProviderConfig(presetProviderMap);
@@ -138,14 +146,20 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
 
         String selectedProvider = resolveProvider(safeContext);
         String selectedEndpoint = resolveEndpoint(selectedProvider);
+        String selectedModel = resolveModel(safeContext, normalizeProvider(selectedProvider));
         String apiKey = resolveApiKey(safeContext, selectedProvider);
         if (apiKey == null || apiKey.isBlank()) {
             String output = buildMissingApiKeyReply(safeContext, selectedProvider);
             recordMetric(startedAt, safeContext, selectedProvider, selectedEndpoint, false, false, prompt, output, "missing_api_key");
             return output;
         }
+        if (selectedModel == null || selectedModel.isBlank()) {
+            String output = buildMissingModelReply(safeContext, selectedProvider);
+            recordMetric(startedAt, safeContext, selectedProvider, selectedEndpoint, false, false, prompt, output, "missing_model");
+            return output;
+        }
 
-        String cacheKey = buildCacheKey(prompt, safeContext, selectedProvider, selectedEndpoint);
+        String cacheKey = buildCacheKey(prompt, safeContext, selectedProvider, selectedEndpoint, selectedModel);
         String cached = getCachedResponse(cacheKey);
         if (cached != null) {
             recordMetric(startedAt, safeContext, selectedProvider, selectedEndpoint, true, false, prompt, cached, null);
@@ -155,7 +169,7 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
         RuntimeException lastError = null;
         for (int attempt = 1; attempt <= maxRetries; attempt++) {
             try {
-                String output = callProvider(selectedProvider, selectedEndpoint, prompt, safeContext, apiKey);
+                String output = callProvider(selectedProvider, selectedEndpoint, selectedModel, prompt, safeContext, apiKey, null, null);
                 putCachedResponse(cacheKey, output);
                 recordMetric(startedAt, safeContext, selectedProvider, selectedEndpoint, true, attempt > 1, prompt, output, null);
                 return output;
@@ -171,6 +185,62 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
         recordMetric(startedAt, safeContext, selectedProvider, selectedEndpoint, false, maxRetries > 1, prompt, output,
                 lastError == null ? "runtime_error" : simplifyErrorType(lastError));
         return output;
+    }
+
+    @Override
+    public void streamResponse(String prompt, Map<String, Object> context, Consumer<String> onDelta) {
+        Map<String, Object> safeContext = context == null ? Map.of() : context;
+        if (prompt == null || prompt.isBlank()) {
+            if (onDelta != null) {
+                onDelta.accept("[LLM error] Prompt cannot be empty.");
+            }
+            return;
+        }
+        String selectedProvider = resolveProvider(safeContext);
+        String selectedEndpoint = resolveEndpoint(selectedProvider);
+        String selectedModel = resolveModel(safeContext, normalizeProvider(selectedProvider));
+        String apiKey = resolveApiKey(safeContext, selectedProvider);
+        if (apiKey == null || apiKey.isBlank()) {
+            if (onDelta != null) {
+                onDelta.accept(buildMissingApiKeyReply(safeContext, selectedProvider));
+            }
+            return;
+        }
+        if (selectedModel == null || selectedModel.isBlank()) {
+            if (onDelta != null) {
+                onDelta.accept(buildMissingModelReply(safeContext, selectedProvider));
+            }
+            return;
+        }
+
+        RuntimeException lastError = null;
+        AtomicBoolean streamed = new AtomicBoolean(false);
+        for (int attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+                String output = callProvider(
+                        selectedProvider,
+                        selectedEndpoint,
+                        selectedModel,
+                        prompt,
+                        safeContext,
+                        apiKey,
+                        onDelta,
+                        streamed
+                );
+                if (onDelta != null && !streamed.get() && output != null && !output.isBlank()) {
+                    onDelta.accept(output);
+                }
+                return;
+            } catch (RuntimeException ex) {
+                lastError = ex;
+                if (attempt < maxRetries) {
+                    sleepBeforeRetry();
+                }
+            }
+        }
+        if (onDelta != null) {
+            onDelta.accept(buildRequestFailureReply(safeContext, selectedProvider, maxRetries, lastError));
+        }
     }
 
     @Override
@@ -267,15 +337,18 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
 
     private String callProvider(String providerName,
                                 String endpointValue,
+                                String model,
                                 String prompt,
                                 Map<String, Object> context,
-                                String apiKey) {
+                                String apiKey,
+                                Consumer<String> deltaConsumer,
+                                AtomicBoolean streamEmitted) {
         String normalized = normalizeProvider(providerName);
         if (httpEnabled && isNativeGeminiEndpoint(endpointValue)) {
-            return callNativeGeminiProvider(normalized, endpointValue, prompt, context, apiKey);
+            return callNativeGeminiProvider(endpointValue, prompt, context, apiKey, deltaConsumer, streamEmitted);
         }
         if (httpEnabled && isOpenAiCompatibleProvider(normalized, endpointValue)) {
-            return callOpenAiCompatibleProvider(normalized, endpointValue, prompt, context, apiKey);
+            return callOpenAiCompatibleProvider(endpointValue, model, prompt, context, apiKey, deltaConsumer, streamEmitted);
         }
         if (normalized.contains("openai")
                 || "deepseek".equals(normalized)
@@ -322,19 +395,22 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
         return endpointValue.trim().toLowerCase(Locale.ROOT).contains(":generatecontent");
     }
 
-    private String callOpenAiCompatibleProvider(String normalizedProvider,
-                                                String endpointValue,
+    private String callOpenAiCompatibleProvider(String endpointValue,
+                                                String model,
                                                 String prompt,
                                                 Map<String, Object> context,
-                                                String apiKey) {
+                                                String apiKey,
+                                                Consumer<String> deltaConsumer,
+                                                AtomicBoolean streamEmitted) {
         String endpointText = endpointValue == null ? "" : endpointValue.trim();
         if (endpointText.isBlank()) {
             throw new RuntimeException("empty endpoint");
         }
         try {
             Map<String, Object> requestPayload = new LinkedHashMap<>();
-            requestPayload.put("model", resolveModel(context, normalizedProvider));
+            requestPayload.put("model", model);
             requestPayload.put("messages", List.of(Map.of("role", "user", "content", prompt)));
+            requestPayload.put("stream", true);
 
             Double temperature = resolveTemperature(context);
             if (temperature != null) {
@@ -349,18 +425,19 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
             HttpRequest request = HttpRequest.newBuilder(URI.create(endpointText))
                     .timeout(HTTP_TIMEOUT)
                     .header("Content-Type", "application/json")
+                    .header("Accept", "text/event-stream")
                     .header("Authorization", "Bearer " + apiKey)
                     .POST(HttpRequest.BodyPublishers.ofString(requestBody))
                     .build();
 
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<InputStream> response = httpClient.send(request, HttpResponse.BodyHandlers.ofInputStream());
             int status = response.statusCode();
-            String body = response.body() == null ? "" : response.body();
+            String body = readResponseBody(response.body());
             if (status < 200 || status >= 300) {
                 throw new RuntimeException("http_" + status + ": " + abbreviate(body, 300));
             }
 
-            String content = extractAssistantText(body);
+            String content = extractAssistantText(body, deltaConsumer, streamEmitted);
             if (content == null || content.isBlank()) {
                 throw new RuntimeException("empty_response_content");
             }
@@ -373,11 +450,12 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
         }
     }
 
-    private String callNativeGeminiProvider(String normalizedProvider,
-                                            String endpointValue,
+    private String callNativeGeminiProvider(String endpointValue,
                                             String prompt,
                                             Map<String, Object> context,
-                                            String apiKey) {
+                                            String apiKey,
+                                            Consumer<String> deltaConsumer,
+                                            AtomicBoolean streamEmitted) {
         String endpointText = endpointValue == null ? "" : endpointValue.trim();
         if (endpointText.isBlank()) {
             throw new RuntimeException("empty endpoint");
@@ -400,20 +478,21 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
             }
 
             String requestBody = objectMapper.writeValueAsString(requestPayload);
-            HttpRequest request = HttpRequest.newBuilder(URI.create(buildNativeGeminiRequestUrl(endpointText, apiKey)))
+            HttpRequest request = HttpRequest.newBuilder(URI.create(buildNativeGeminiStreamRequestUrl(endpointText, apiKey)))
                     .timeout(HTTP_TIMEOUT)
                     .header("Content-Type", "application/json")
+                    .header("Accept", "text/event-stream")
                     .POST(HttpRequest.BodyPublishers.ofString(requestBody))
                     .build();
 
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<InputStream> response = httpClient.send(request, HttpResponse.BodyHandlers.ofInputStream());
             int status = response.statusCode();
-            String body = response.body() == null ? "" : response.body();
+            String body = readResponseBody(response.body());
             if (status < 200 || status >= 300) {
                 throw new RuntimeException("http_" + status + ": " + abbreviate(body, 300));
             }
 
-            String content = extractGeminiText(body);
+            String content = extractGeminiText(body, deltaConsumer, streamEmitted);
             if (content == null || content.isBlank()) {
                 throw new RuntimeException("empty_response_content");
             }
@@ -426,59 +505,37 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
         }
     }
 
-    private String extractAssistantText(String responseBody) {
+    private String extractAssistantText(String responseBody,
+                                        Consumer<String> deltaConsumer,
+                                        AtomicBoolean streamEmitted) {
+        if (looksLikeSsePayload(responseBody)) {
+            String streamed = extractOpenAiCompatibleStreamText(responseBody, deltaConsumer, streamEmitted);
+            if (streamed != null && !streamed.isBlank()) {
+                return streamed;
+            }
+        }
         try {
             JsonNode root = objectMapper.readTree(responseBody == null ? "" : responseBody);
-            JsonNode contentNode = root.path("choices").path(0).path("message").path("content");
-            if (contentNode.isTextual()) {
-                return contentNode.asText("").trim();
-            }
-            if (contentNode.isArray()) {
-                StringBuilder builder = new StringBuilder();
-                for (JsonNode item : contentNode) {
-                    String text = item.path("text").asText("");
-                    if (!text.isBlank()) {
-                        if (!builder.isEmpty()) {
-                            builder.append('\n');
-                        }
-                        builder.append(text.trim());
-                    }
-                }
-                if (!builder.isEmpty()) {
-                    return builder.toString();
-                }
-            }
-            String outputText = root.path("output_text").asText("").trim();
-            if (!outputText.isBlank()) {
-                return outputText;
-            }
-            return null;
+            String content = extractAssistantText(root);
+            return content == null ? null : content.trim();
         } catch (Exception ex) {
             throw new RuntimeException("invalid_response_json", ex);
         }
     }
 
-    private String extractGeminiText(String responseBody) {
+    private String extractGeminiText(String responseBody,
+                                     Consumer<String> deltaConsumer,
+                                     AtomicBoolean streamEmitted) {
+        if (looksLikeSsePayload(responseBody)) {
+            String streamed = extractGeminiStreamText(responseBody, deltaConsumer, streamEmitted);
+            if (streamed != null && !streamed.isBlank()) {
+                return streamed;
+            }
+        }
         try {
             JsonNode root = objectMapper.readTree(responseBody == null ? "" : responseBody);
-            JsonNode parts = root.path("candidates").path(0).path("content").path("parts");
-            if (parts.isArray()) {
-                StringBuilder builder = new StringBuilder();
-                for (JsonNode part : parts) {
-                    String text = part.path("text").asText("").trim();
-                    if (!text.isBlank()) {
-                        if (!builder.isEmpty()) {
-                            builder.append('\n');
-                        }
-                        builder.append(text);
-                    }
-                }
-                if (!builder.isEmpty()) {
-                    return builder.toString();
-                }
-            }
-            String directText = root.path("text").asText("").trim();
-            return directText.isBlank() ? null : directText;
+            String content = extractGeminiText(root);
+            return content == null ? null : content.trim();
         } catch (Exception ex) {
             throw new RuntimeException("invalid_response_json", ex);
         }
@@ -492,6 +549,153 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
         return endpointText + separator + "key=" + URLEncoder.encode(apiKey, java.nio.charset.StandardCharsets.UTF_8);
     }
 
+    private String buildNativeGeminiStreamRequestUrl(String endpointText, String apiKey) {
+        String streamEndpoint = endpointText.replace(":generateContent", ":streamGenerateContent");
+        String url = buildNativeGeminiRequestUrl(streamEndpoint, apiKey);
+        if (url.contains("alt=")) {
+            return url;
+        }
+        String separator = url.contains("?") ? "&" : "?";
+        return url + separator + "alt=" + URLEncoder.encode("sse", java.nio.charset.StandardCharsets.UTF_8);
+    }
+
+    private String readResponseBody(InputStream bodyStream) throws IOException {
+        if (bodyStream == null) {
+            return "";
+        }
+        try (InputStream input = bodyStream;
+             BufferedReader reader = new BufferedReader(new InputStreamReader(input, java.nio.charset.StandardCharsets.UTF_8))) {
+            StringBuilder builder = new StringBuilder();
+            String line;
+            boolean first = true;
+            while ((line = reader.readLine()) != null) {
+                if (!first) {
+                    builder.append('\n');
+                }
+                builder.append(line);
+                first = false;
+            }
+            return builder.toString();
+        }
+    }
+
+    private boolean looksLikeSsePayload(String responseBody) {
+        return responseBody != null && responseBody.contains("data:");
+    }
+
+    private String extractOpenAiCompatibleStreamText(String responseBody,
+                                                     Consumer<String> deltaConsumer,
+                                                     AtomicBoolean streamEmitted) {
+        return extractSseText(responseBody, false, deltaConsumer, streamEmitted);
+    }
+
+    private String extractGeminiStreamText(String responseBody,
+                                           Consumer<String> deltaConsumer,
+                                           AtomicBoolean streamEmitted) {
+        return extractSseText(responseBody, true, deltaConsumer, streamEmitted);
+    }
+
+    private String extractSseText(String responseBody,
+                                  boolean geminiFormat,
+                                  Consumer<String> deltaConsumer,
+                                  AtomicBoolean streamEmitted) {
+        if (responseBody == null || responseBody.isBlank()) {
+            return null;
+        }
+        StringBuilder aggregated = new StringBuilder();
+        for (String rawLine : responseBody.split("\\R")) {
+            String line = rawLine.trim();
+            if (!line.startsWith("data:")) {
+                continue;
+            }
+            String payload = line.substring("data:".length()).trim();
+            if (payload.isBlank() || "[DONE]".equals(payload)) {
+                continue;
+            }
+            String chunk = geminiFormat ? extractGeminiChunkText(payload) : extractAssistantChunkText(payload);
+            if (chunk != null && !chunk.isBlank()) {
+                aggregated.append(chunk);
+                if (deltaConsumer != null) {
+                    deltaConsumer.accept(chunk);
+                    if (streamEmitted != null) {
+                        streamEmitted.set(true);
+                    }
+                }
+            }
+        }
+        return aggregated.isEmpty() ? null : aggregated.toString().trim();
+    }
+
+    private String extractAssistantChunkText(String chunkPayload) {
+        try {
+            return extractAssistantText(objectMapper.readTree(chunkPayload));
+        } catch (Exception ex) {
+            throw new RuntimeException("invalid_response_json", ex);
+        }
+    }
+
+    private String extractGeminiChunkText(String chunkPayload) {
+        try {
+            return extractGeminiText(objectMapper.readTree(chunkPayload));
+        } catch (Exception ex) {
+            throw new RuntimeException("invalid_response_json", ex);
+        }
+    }
+
+    private String extractAssistantText(JsonNode root) {
+        if (root == null || root.isMissingNode()) {
+            return null;
+        }
+        StringBuilder builder = new StringBuilder();
+        JsonNode choices = root.path("choices");
+        if (choices.isArray()) {
+            for (JsonNode choice : choices) {
+                appendContentNode(builder, choice.path("delta").path("content"));
+                appendContentNode(builder, choice.path("message").path("content"));
+            }
+        }
+        appendContentNode(builder, root.path("output_text"));
+        return builder.isEmpty() ? null : builder.toString();
+    }
+
+    private String extractGeminiText(JsonNode root) {
+        if (root == null || root.isMissingNode()) {
+            return null;
+        }
+        StringBuilder builder = new StringBuilder();
+        JsonNode parts = root.path("candidates").path(0).path("content").path("parts");
+        if (parts.isArray()) {
+            for (JsonNode part : parts) {
+                appendContentNode(builder, part.path("text"));
+            }
+        }
+        appendContentNode(builder, root.path("text"));
+        return builder.isEmpty() ? null : builder.toString();
+    }
+
+    private void appendContentNode(StringBuilder builder, JsonNode node) {
+        if (node == null || node.isMissingNode() || node.isNull()) {
+            return;
+        }
+        if (node.isTextual()) {
+            String text = node.asText("");
+            if (!text.trim().isBlank()) {
+                builder.append(text);
+            }
+            return;
+        }
+        if (node.isArray()) {
+            for (JsonNode item : node) {
+                if (item.isTextual()) {
+                    appendContentNode(builder, item);
+                } else {
+                    appendContentNode(builder, item.path("text"));
+                    appendContentNode(builder, item.path("content"));
+                }
+            }
+        }
+    }
+
     private String resolveModel(Map<String, Object> context, String normalizedProvider) {
         if (context != null) {
             String model = asText(context.get("model"));
@@ -499,10 +703,28 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
                 return model;
             }
         }
+        String configuredModel = providerModels.get(normalizedProvider);
+        if (!isTemplatePlaceholder(configuredModel)) {
+            configuredModel = asText(configuredModel);
+            if (configuredModel != null) {
+                return configuredModel;
+            }
+        }
         if ("qwen".equals(normalizedProvider)) {
             return "qwen3.5-plus";
         }
+        if ("doubao".equals(normalizedProvider)) {
+            return null;
+        }
         return normalizedProvider;
+    }
+
+    private boolean isTemplatePlaceholder(String value) {
+        if (value == null) {
+            return false;
+        }
+        String normalized = value.trim().toUpperCase(Locale.ROOT);
+        return normalized.startsWith("REPLACE_WITH_") || normalized.startsWith("YOUR_");
     }
 
     private Double resolveTemperature(Map<String, Object> context) {
@@ -560,6 +782,17 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
             return buildImDegradedReply(providerName, "auth_failure");
         }
         return "[LLM " + normalizeProvider(providerName) + "] unavailable: missing API key.";
+    }
+
+    private String buildMissingModelReply(Map<String, Object> context, String providerName) {
+        if (isImContext(context)) {
+            return buildImDegradedReply(providerName, "unavailable");
+        }
+        String normalizedProvider = normalizeProvider(providerName);
+        if ("doubao".equals(normalizedProvider)) {
+            return "[LLM doubao] unavailable: missing Model ID / Endpoint ID. Configure mindos.llm.provider-models=doubao:<endpoint-or-model-id> or pass context.model.";
+        }
+        return "[LLM " + normalizedProvider + "] unavailable: missing model.";
     }
 
     private String buildRequestFailureReply(Map<String, Object> context,
@@ -864,7 +1097,8 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
     private String buildCacheKey(String prompt,
                                  Map<String, Object> context,
                                  String providerName,
-                                 String endpointValue) {
+                                 String endpointValue,
+                                 String model) {
         if (!responseCacheEnabled) {
             return null;
         }
@@ -876,6 +1110,7 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
         return String.join("\u001F",
                 normalizeProvider(providerName),
                 endpointValue == null ? "" : endpointValue,
+                model == null ? "" : model,
                 userId == null ? "" : userId,
                 routeStage == null ? "" : routeStage,
                 profileProvider == null ? "" : profileProvider,

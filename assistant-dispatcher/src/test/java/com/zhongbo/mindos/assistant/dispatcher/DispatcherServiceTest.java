@@ -97,6 +97,25 @@ class DispatcherServiceTest {
     }
 
     @Test
+    void shouldRejectCodeGenerateWhenLlmRoutingMatchesGeneralKnowledgeQuestion() {
+        MemoryManager memoryManager = createMemoryManager();
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of(
+                "{\"skill\":\"code.generate\",\"input\":{\"task\":\"用简单例子解释量子计算的基本原理\"}}",
+                "量子计算可以理解为让信息在多个可能状态上同时演化，再通过干涉放大正确答案。"
+        ));
+        DispatcherService service = createDispatcher(memoryManager, llmClient, List.of(
+                new FixedSkill("code.generate", "根据任务描述生成代码草稿", "代码草稿")
+        ), 2);
+
+        DispatchResult result = service.dispatch("general-user", "用简单例子解释量子计算的基本原理");
+
+        assertEquals("llm", result.channel());
+        assertEquals(1, llmClient.routingCallCount());
+        assertEquals(1, llmClient.fallbackCallCount());
+        assertTrue(result.reply().contains("量子计算"));
+    }
+
+    @Test
     void shouldStoreRememberCommandFromChinesePrefixIntoTaskBucket() {
         MemoryManager memoryManager = createMemoryManager();
         RecordingLlmClient llmClient = new RecordingLlmClient(List.of("已记住"));
@@ -129,10 +148,95 @@ class DispatcherServiceTest {
         assertTrue(metrics.summarizedTurns() >= 1);
     }
 
+    @Test
+    void shouldSkipLlmPreAnalyzeWhenModeIsNever() {
+        MemoryManager memoryManager = createMemoryManager();
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of(
+                "{\"skill\":\"code.generate\",\"input\":{\"task\":\"generate code\"}}",
+                "fallback"
+        ));
+        DispatcherService service = createDispatcher(memoryManager, llmClient, List.of(
+                new FixedSkill("code.generate", "Generate code", "code")
+        ), 2, "never", 18, "time,echo");
+
+        DispatchResult result = service.dispatch("pre-analyze-never-user", "帮我看看这个需求");
+
+        assertEquals("llm", result.channel());
+        assertEquals(0, llmClient.routingCallCount());
+        assertEquals(1, llmClient.fallbackCallCount());
+    }
+
+    @Test
+    void shouldSkipLlmPreAnalyzeWhenConfidenceIsBelowThresholdInAutoMode() {
+        MemoryManager memoryManager = createMemoryManager();
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of("fallback"));
+        DispatcherService service = createDispatcher(memoryManager, llmClient, List.of(
+                new FixedSkill("code.generate", "Generate code", "code")
+        ), 2, "auto", 200, "time,echo");
+
+        DispatchResult result = service.dispatch("pre-analyze-threshold-user", "你好，今天天气不错");
+
+        assertEquals("llm", result.channel());
+        assertEquals(0, llmClient.routingCallCount());
+        assertEquals(1, llmClient.fallbackCallCount());
+    }
+
+    @Test
+    void shouldRejectPreAnalyzeResultForSkippedSkill() {
+        MemoryManager memoryManager = createMemoryManager();
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of(
+                "{\"skill\":\"code.generate\",\"input\":{\"task\":\"create api\"}}",
+                "fallback"
+        ));
+        DispatcherService service = createDispatcher(memoryManager, llmClient, List.of(
+                new FixedSkill("code.generate", "Generate code", "code")
+        ), 2, "always", 0, "code.generate,time,echo");
+
+        DispatchResult result = service.dispatch("pre-analyze-skip-user", "请处理这个请求");
+
+        assertEquals("llm", result.channel());
+        assertEquals(1, llmClient.routingCallCount());
+        assertEquals(1, llmClient.fallbackCallCount());
+    }
+
+    @Test
+    void shouldInjectStructuredMemorySlotsIntoLlmFallbackContext() {
+        MemoryManager memoryManager = createMemoryManager();
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of("fallback-ok"));
+        DispatcherService service = createDispatcher(memoryManager, llmClient, List.of(), 2);
+
+        memoryManager.storeUserConversation("ctx-user", "我偏好简洁回答");
+        memoryManager.storeAssistantConversation("ctx-user", "好的，我会尽量简洁");
+        memoryManager.storeKnowledge("ctx-user", "用户偏好简洁回答", List.of(0.1, 0.2), "profile");
+        memoryManager.logSkillUsage("ctx-user", "teaching.plan", "给我学习计划", true);
+
+        DispatchResult result = service.dispatch("ctx-user", "继续按之前方式");
+
+        assertEquals("llm", result.channel());
+        assertEquals(1, llmClient.fallbackCallCount());
+        assertFalse(llmClient.fallbackContexts().isEmpty());
+        Map<String, Object> context = llmClient.fallbackContexts().get(0);
+        assertTrue(context.containsKey("memory.recent"));
+        assertTrue(context.containsKey("memory.semantic"));
+        assertTrue(context.containsKey("memory.procedural"));
+        assertTrue(context.containsKey("memory.persona"));
+        assertTrue(String.valueOf(context.get("memory.recent")).length() >= 0);
+    }
+
     private DispatcherService createDispatcher(MemoryManager memoryManager,
                                                RecordingLlmClient llmClient,
                                                List<Skill> skills,
                                                int llmShortlistMaxSkills) {
+        return createDispatcher(memoryManager, llmClient, skills, llmShortlistMaxSkills, "auto", 0, "time");
+    }
+
+    private DispatcherService createDispatcher(MemoryManager memoryManager,
+                                               RecordingLlmClient llmClient,
+                                               List<Skill> skills,
+                                               int llmShortlistMaxSkills,
+                                               String preAnalyzeMode,
+                                               int preAnalyzeThreshold,
+                                               String preAnalyzeSkipSkills) {
         SkillRegistry registry = new SkillRegistry(skills);
         SkillDslExecutor dslExecutor = new SkillDslExecutor(registry);
         SkillEngine skillEngine = new SkillEngine(registry, dslExecutor, memoryManager);
@@ -169,6 +273,9 @@ class DispatcherServiceTest {
                 "guarded",
                 llmShortlistMaxSkills,
                 true,
+                preAnalyzeMode,
+                preAnalyzeThreshold,
+                preAnalyzeSkipSkills,
                 2,
                 4
         );
@@ -208,6 +315,7 @@ class DispatcherServiceTest {
     private static final class RecordingLlmClient implements LlmClient {
         private final ArrayDeque<String> responses;
         private final List<String> routingPrompts = new ArrayList<>();
+        private final List<Map<String, Object>> fallbackContexts = new ArrayList<>();
         private int routingCallCount;
         private int fallbackCallCount;
 
@@ -222,6 +330,7 @@ class DispatcherServiceTest {
                 routingPrompts.add(prompt);
             } else {
                 fallbackCallCount++;
+                fallbackContexts.add(context == null ? Map.of() : Map.copyOf(context));
             }
             return responses.isEmpty() ? "stub" : responses.removeFirst();
         }
@@ -236,6 +345,10 @@ class DispatcherServiceTest {
 
         private List<String> routingPrompts() {
             return routingPrompts;
+        }
+
+        private List<Map<String, Object>> fallbackContexts() {
+            return fallbackContexts;
         }
     }
 

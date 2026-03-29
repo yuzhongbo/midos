@@ -33,6 +33,12 @@ class DingtalkOpenApiConversationSenderTest {
                 800L,
                 "我正在处理这条消息，请稍等，我会继续回复你。",
                 true,
+                1000L,
+                60000L,
+                2.0d,
+                0.2d,
+                0,
+                true,
                 "robot-code",
                 "",
                 ""

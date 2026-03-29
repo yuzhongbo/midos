@@ -28,10 +28,28 @@ class LlmEnabledSkillsFallbackTest {
     void timeSkillShouldFallbackWhenLlmReturnsBlank() {
         TimeSkill skill = new TimeSkill((prompt, context) -> "   ");
 
-        SkillResult result = skill.run(new SkillContext(null, "time", Map.of()));
+        SkillResult result = skill.run(new SkillContext(null, "time", Map.of(
+                "language", "en-US",
+                "timezone", "UTC"
+        )));
 
         assertTrue(result.success());
-        assertTrue(result.output().startsWith("Current time is "));
+        assertTrue(result.output().startsWith("Current time: "));
+        assertTrue(result.output().contains("UTC"));
+    }
+
+    @Test
+    void timeSkillShouldFormatChineseLocaleAndTimezone() {
+        TimeSkill skill = new TimeSkill((prompt, context) -> "");
+
+        SkillResult result = skill.run(new SkillContext(null, "现在几点了", Map.of(
+                "language", "zh-CN",
+                "timezone", "Asia/Shanghai"
+        )));
+
+        assertTrue(result.success());
+        assertTrue(result.output().startsWith("当前时间："));
+        assertTrue(result.output().contains("202") || result.output().contains("年"));
     }
 
     @Test
@@ -43,7 +61,7 @@ class LlmEnabledSkillsFallbackTest {
         SkillResult result = skill.run(new SkillContext(null, "", Map.of("task", "generate java dto")));
 
         assertTrue(result.success());
-        assertTrue(result.output().contains("Placeholder generated code"));
+        assertTrue(result.output().contains("代码起步方案"));
     }
 
     @Test
@@ -53,6 +71,7 @@ class LlmEnabledSkillsFallbackTest {
         SkillResult result = skill.run(new SkillContext(null, "", Map.of("task", "write tests", "dueDate", "tomorrow")));
 
         assertTrue(result.success());
+        assertTrue(result.output().contains("待办"));
         assertTrue(result.output().contains("write tests"));
     }
 
@@ -66,7 +85,7 @@ class LlmEnabledSkillsFallbackTest {
         SkillResult result = skill.run(new SkillContext(null, "", Map.of("path", "./", "keyword", "README")));
 
         assertTrue(result.success());
-        assertTrue(result.output().contains("Placeholder match list"));
+        assertTrue(result.output().contains("缩小范围"));
     }
 }
 

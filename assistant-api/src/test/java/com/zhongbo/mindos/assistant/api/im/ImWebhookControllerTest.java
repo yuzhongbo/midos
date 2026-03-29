@@ -20,7 +20,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
         "mindos.im.wechat.enabled=true",
         "mindos.im.feishu.verify-signature=false",
         "mindos.im.dingtalk.verify-signature=false",
-        "mindos.im.wechat.verify-signature=false"
+        "mindos.im.wechat.verify-signature=false",
+        "mindos.memory.file-repo.enabled=false"
 })
 @AutoConfigureMockMvc
 class ImWebhookControllerTest {
@@ -69,6 +70,17 @@ class ImWebhookControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.msgtype").value("text"))
                 .andExpect(jsonPath("$.text.content").isNotEmpty());
+
+        mockMvc.perform(get("/api/memory/ding-user/retrieve-preview")
+                        .param("query", "echo hi")
+                        .param("maxChars", "900")
+                        .param("language", "zh-CN"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.recentConversation").isString())
+                .andExpect(jsonPath("$.semanticContext").isString())
+                .andExpect(jsonPath("$.proceduralHints").isString())
+                .andExpect(jsonPath("$.debugTopItems").isArray())
+                .andExpect(jsonPath("$.personaSnapshot.language").value("zh-CN"));
     }
 
     @Test

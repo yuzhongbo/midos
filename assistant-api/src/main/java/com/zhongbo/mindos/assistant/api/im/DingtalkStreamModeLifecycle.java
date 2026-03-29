@@ -2,19 +2,23 @@ package com.zhongbo.mindos.assistant.api.im;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.dingtalk.open.app.api.OpenDingTalkClient;
+import com.dingtalk.open.app.api.callback.OpenDingTalkCallbackListener;
+import com.dingtalk.open.app.api.models.bot.ChatbotMessage;
 import jakarta.annotation.PreDestroy;
 import org.springframework.context.SmartLifecycle;
 import org.springframework.lang.NonNull;
 import org.springframework.stereotype.Service;
 
-import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
-import java.lang.reflect.Proxy;
+import java.lang.reflect.InvocationTargetException;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -71,22 +75,96 @@ class DingtalkStreamModeLifecycle implements SmartLifecycle {
     }
 
     private void runStreamClient() {
+        int attempt = 0;
+        while (running.get()) {
+            attempt++;
+            try {
+                Object client = buildClient();
+                this.streamClient = client;
+                logEvent(Level.INFO, "dingtalk.stream.lifecycle.client-starting", Map.of(
+                        "topic", settings.streamTopic(),
+                        "attempt", attempt
+                ));
+                if (client instanceof OpenDingTalkClient streamClientContract) {
+                    streamClientContract.start();
+                } else {
+                    invokeNoArgs(client, "start");
+                }
+                logEvent(Level.INFO, "dingtalk.stream.lifecycle.started", Map.of(
+                        "topic", settings.streamTopic(),
+                        "attempt", attempt
+                ));
+                return;
+            } catch (Throwable ex) {
+                closeClientQuietly();
+                if (!running.get()) {
+                    return;
+                }
+                if (!shouldRetryStartFailure(ex, attempt)) {
+                    running.set(false);
+                    logEvent(Level.WARNING, "dingtalk.stream.lifecycle.start-failed", Map.of(
+                            "topic", settings.streamTopic(),
+                            "attempt", attempt,
+                            "reason", failureReason(ex)
+                    ), ex);
+                    return;
+                }
+                long delayMs = computeReconnectDelayMs(attempt);
+                logEvent(Level.WARNING, "dingtalk.stream.lifecycle.retry-scheduled", Map.of(
+                        "topic", settings.streamTopic(),
+                        "attempt", attempt,
+                        "delayMs", delayMs,
+                        "reason", failureReason(ex)
+                ), ex);
+                if (!sleepBeforeRetry(delayMs)) {
+                    return;
+                }
+            }
+        }
+    }
+
+    boolean shouldRetryStartFailure(Throwable throwable, int attempt) {
+        if (!settings.streamReconnectEnabled()) {
+            return false;
+        }
+        int maxAttempts = settings.streamReconnectMaxAttempts();
+        if (maxAttempts > 0 && attempt >= maxAttempts) {
+            return false;
+        }
+        String reason = failureReason(throwable).toLowerCase();
+        if (reason.contains("status=503") || reason.contains("serviceunavailable")) {
+            return true;
+        }
+        return attempt <= 2;
+    }
+
+    long computeReconnectDelayMs(int attempt) {
+        long initial = settings.streamReconnectInitialDelayMs();
+        long max = settings.streamReconnectMaxDelayMs();
+        double multiplier = settings.streamReconnectMultiplier();
+        double backoff = initial * Math.pow(multiplier, Math.max(0, attempt - 1));
+        long clamped = (long) Math.min(max, Math.max(initial, backoff));
+        return applyJitter(clamped);
+    }
+
+    private long applyJitter(long baseDelayMs) {
+        double jitterRatio = settings.streamReconnectJitterRatio();
+        if (jitterRatio <= 0.0d) {
+            return baseDelayMs;
+        }
+        long spread = Math.max(1L, Math.round(baseDelayMs * jitterRatio));
+        long delta = ThreadLocalRandom.current().nextLong(-spread, spread + 1L);
+        return Math.max(200L, baseDelayMs + delta);
+    }
+
+    private boolean sleepBeforeRetry(long delayMs) {
         try {
-            Object client = buildClient();
-            this.streamClient = client;
-            logEvent(Level.INFO, "dingtalk.stream.lifecycle.client-starting", Map.of(
-                    "topic", settings.streamTopic()
-            ));
-            invokeNoArgs(client, "start");
-            logEvent(Level.INFO, "dingtalk.stream.lifecycle.started", Map.of(
-                    "topic", settings.streamTopic()
-            ));
-        } catch (Throwable ex) {
+            TimeUnit.MILLISECONDS.sleep(Math.max(0L, delayMs));
+            return running.get();
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
             running.set(false);
-            logEvent(Level.WARNING, "dingtalk.stream.lifecycle.start-failed", Map.of(
-                    "topic", settings.streamTopic(),
-                    "reason", ex.getMessage() == null ? ex.getClass().getSimpleName() : ex.getMessage()
-            ), ex);
+            return false;
         }
     }
 
@@ -138,35 +216,40 @@ class DingtalkStreamModeLifecycle implements SmartLifecycle {
         Object credential = credentialClass
                 .getConstructor(String.class, String.class)
                 .newInstance(settings.streamClientId(), settings.streamClientSecret());
-        builder = invokeFluent(builder, "credential", credentialClass, credential);
+        Class<?> credentialContractClass = Class.forName("com.dingtalk.open.app.api.security.DingTalkCredential");
+        try {
+            builder = invokeFluent(builder, "credential", credentialContractClass, credential);
+        } catch (NoSuchMethodException ex) {
+            // Older SDK variants may expose the concrete AuthClientCredential signature directly.
+            builder = invokeFluent(builder, "credential", credentialClass, credential);
+        }
 
         Class<?> listenerClass = Class.forName("com.dingtalk.open.app.api.callback.OpenDingTalkCallbackListener");
-        Object listener = Proxy.newProxyInstance(
-                listenerClass.getClassLoader(),
-                new Class<?>[]{listenerClass},
-                createCallbackInvocationHandler());
+        OpenDingTalkCallbackListener<ChatbotMessage, Map<String, Object>> listener = createCallbackListener();
         builder = invokeFluent(builder, "registerCallbackListener", String.class, settings.streamTopic(), listenerClass, listener);
         return builder.getClass().getMethod("build").invoke(builder);
     }
 
-    private InvocationHandler createCallbackInvocationHandler() {
-        return (proxy, method, args) -> {
-            String methodName = method.getName();
-            if ("execute".equals(methodName) && args != null && args.length == 1) {
-                dispatcher.handleIncomingPayload(toPayloadMap(args[0]));
-                return dispatcher.emptyAck();
-            }
-            if ("toString".equals(methodName)) {
-                return "MindOSDingTalkStreamListener";
-            }
-            if ("hashCode".equals(methodName)) {
-                return System.identityHashCode(proxy);
-            }
-            if ("equals".equals(methodName)) {
-                return proxy == (args == null || args.length == 0 ? null : args[0]);
-            }
-            return null;
-        };
+    private OpenDingTalkCallbackListener<ChatbotMessage, Map<String, Object>> createCallbackListener() {
+        // Use a named class with concrete generic parameters; SDK callback descriptor parsing rejects raw/lambda listeners.
+        return new ChatbotStreamCallbackListener();
+    }
+
+    private final class ChatbotStreamCallbackListener implements OpenDingTalkCallbackListener<ChatbotMessage, Map<String, Object>> {
+        @Override
+        public Map<String, Object> execute(ChatbotMessage payload) {
+            dispatcher.handleIncomingPayload(toPayloadMap(payload));
+            return dispatcher.emptyAck();
+        }
+    }
+
+    private String failureReason(Throwable throwable) {
+        if (throwable instanceof InvocationTargetException invocationTargetException
+                && invocationTargetException.getTargetException() != null) {
+            Throwable target = invocationTargetException.getTargetException();
+            return target.getMessage() == null ? target.getClass().getSimpleName() : target.getMessage();
+        }
+        return throwable.getMessage() == null ? throwable.getClass().getSimpleName() : throwable.getMessage();
     }
 
     private Map<String, Object> toPayloadMap(Object payload) {
@@ -194,7 +277,25 @@ class DingtalkStreamModeLifecycle implements SmartLifecycle {
     }
 
     private Object invokeFluent(Object target, String methodName, Class<?> argumentType, Object argument) throws Exception {
-        Method method = target.getClass().getMethod(methodName, argumentType);
+        Method method;
+        try {
+            method = target.getClass().getMethod(methodName, argumentType);
+        } catch (NoSuchMethodException ex) {
+            method = null;
+            for (Method candidate : target.getClass().getMethods()) {
+                if (!candidate.getName().equals(methodName) || candidate.getParameterCount() != 1) {
+                    continue;
+                }
+                Class<?> parameterType = candidate.getParameterTypes()[0];
+                if (parameterType.isAssignableFrom(argumentType)) {
+                    method = candidate;
+                    break;
+                }
+            }
+            if (method == null) {
+                throw ex;
+            }
+        }
         return method.invoke(target, argument);
     }
 
@@ -208,6 +309,14 @@ class DingtalkStreamModeLifecycle implements SmartLifecycle {
         this.streamClient = null;
         if (client == null) {
             return;
+        }
+        if (client instanceof OpenDingTalkClient streamClientContract) {
+            try {
+                streamClientContract.stop();
+                return;
+            } catch (Exception ex) {
+                LOGGER.log(Level.FINE, "Failed to stop DingTalk stream client via OpenDingTalkClient.stop", ex);
+            }
         }
         for (String candidate : new String[]{"stop", "close", "shutdown"}) {
             try {

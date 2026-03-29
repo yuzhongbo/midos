@@ -32,7 +32,7 @@ public class EchoSkill implements Skill {
 
     @Override
     public String description() {
-        return "Echoes back the text after the 'echo' command.";
+        return "复述你提供的文本，适合快速确认输入或做简短回显。";
     }
 
     @Override

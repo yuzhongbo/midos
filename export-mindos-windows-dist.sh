@@ -87,51 +87,90 @@ cat > "$OUTPUT_DIR/mindos-server.env.bat" <<'BAT'
 REM Edit this file on Windows before starting MindOS.
 REM Keep the set "KEY=value" format unchanged.
 REM Only edit the text to the right of the first '='.
-REM Avoid unescaped special characters such as: & | < > % ^ !
+REM Avoid special CMD symbols in values unless you fully understand escaping rules.
+
+set "MINDOS_ENV_LOADED="
 
 REM Core runtime
 set "MINDOS_SPRING_PROFILE=solo"
 set "MINDOS_SERVER_PORT=8080"
 set "MINDOS_SERVER=http://localhost:8080"
+set "MINDOS_MEMORY_FILE_REPO_ENABLED=true"
+set "MINDOS_MEMORY_FILE_REPO_BASE_DIR=data/memory-sync"
 set "MINDOS_USER=solo-smoke-user"
 set "MINDOS_SMOKE_TIMEOUT_SECONDS=8"
 set "MINDOS_PAUSE_ON_EXIT=true"
 
 REM LLM routing / provider selection
-set "MINDOS_LLM_HTTP_ENABLED=false"
-set "MINDOS_LLM_PROVIDER=stub"
-REM Enable exactly one provider first; copy more complex multi-provider examples from mindos-server.full.env.bat only when needed.
-REM set "MINDOS_LLM_HTTP_ENABLED=true"
-REM set "MINDOS_LLM_PROVIDER=qwen"
-REM set "MINDOS_LLM_PROVIDER_ENDPOINTS=qwen:https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
-REM set "MINDOS_LLM_PROVIDER_KEYS=qwen:paste-your-qwen-key-here"
+set "MINDOS_LLM_HTTP_ENABLED=true"
+set "MINDOS_LLM_PROVIDER=qwen"
+set "MINDOS_LLM_ROUTING_MODE=fixed"
+REM Keep provider endpoints on built-in defaults for qwen/doubao to reduce bat editing risk.
+REM To switch default provider later, change only MINDOS_LLM_PROVIDER to qwen or doubao.
+set "MINDOS_LLM_PROVIDER_KEYS=qwen:REPLACE_WITH_YOUR_NEW_QWEN_KEY,doubao:REPLACE_WITH_YOUR_DOUBAO_KEY"
+REM Doubao Ark Chat also requires a real Model ID or Endpoint ID.
+REM The REPLACE_WITH value is ignored until you replace it with a real Ark Endpoint ID or Model ID.
+set "MINDOS_LLM_PROVIDER_MODELS=qwen:qwen3.5-plus,doubao:REPLACE_WITH_YOUR_DOUBAO_ENDPOINT_ID"
+set "MINDOS_LLM_RETRY_MAX_ATTEMPTS=1"
+set "MINDOS_LLM_RETRY_DELAY_MS=100"
 
 REM Optional cache overrides
-REM set "MINDOS_LLM_CACHE_ENABLED=true"
-REM set "MINDOS_LLM_CACHE_TTL_SECONDS=120"
-REM set "MINDOS_LLM_CACHE_MAX_ENTRIES=512"
+set "MINDOS_LLM_CACHE_ENABLED=true"
+set "MINDOS_LLM_CACHE_TTL_SECONDS=120"
+set "MINDOS_LLM_CACHE_MAX_ENTRIES=512"
 
 REM DingTalk / WeChat bot integration
-set "MINDOS_IM_ENABLED=false"
-set "MINDOS_IM_DINGTALK_ENABLED=false"
+set "MINDOS_IM_ENABLED=true"
+set "MINDOS_IM_DINGTALK_ENABLED=true"
 set "MINDOS_IM_DINGTALK_VERIFY_SIGNATURE=false"
 set "MINDOS_IM_DINGTALK_SECRET="
 set "MINDOS_IM_DINGTALK_REPLY_TIMEOUT_MS=2500"
-REM Optional DingTalk stream mode for slow replies
-REM set "MINDOS_IM_DINGTALK_STREAM_ENABLED=true"
-REM set "MINDOS_IM_DINGTALK_STREAM_CLIENT_ID=ding-app-key"
-REM set "MINDOS_IM_DINGTALK_STREAM_CLIENT_SECRET=ding-app-secret"
-REM set "MINDOS_IM_DINGTALK_STREAM_TOPIC=/v1.0/im/bot/messages/get"
-REM set "MINDOS_IM_DINGTALK_STREAM_WAITING_DELAY_MS=800"
-REM set "MINDOS_IM_DINGTALK_STREAM_WAITING_TEXT=MindOS is still working on this message. Please wait a moment."
-REM set "MINDOS_IM_DINGTALK_OUTBOUND_ENABLED=true"
-REM set "MINDOS_IM_DINGTALK_OUTBOUND_ROBOT_CODE=dingrobotcode"
+
+REM Stream required fields (replace placeholders)
+set "MINDOS_IM_DINGTALK_STREAM_ENABLED=true"
+set "MINDOS_IM_DINGTALK_STREAM_CLIENT_ID=REPLACE_WITH_YOUR_APP_KEY"
+set "MINDOS_IM_DINGTALK_STREAM_CLIENT_SECRET=REPLACE_WITH_YOUR_APP_SECRET"
+set "MINDOS_IM_DINGTALK_STREAM_TOPIC=/v1.0/im/bot/messages/get"
+set "MINDOS_IM_DINGTALK_STREAM_RECONNECT_ENABLED=true"
+set "MINDOS_IM_DINGTALK_STREAM_RECONNECT_INITIAL_DELAY_MS=1000"
+set "MINDOS_IM_DINGTALK_STREAM_RECONNECT_MAX_DELAY_MS=60000"
+set "MINDOS_IM_DINGTALK_STREAM_RECONNECT_MULTIPLIER=2.0"
+set "MINDOS_IM_DINGTALK_STREAM_RECONNECT_JITTER_RATIO=0.2"
+set "MINDOS_IM_DINGTALK_STREAM_RECONNECT_MAX_ATTEMPTS=0"
+set "MINDOS_IM_DINGTALK_OUTBOUND_ENABLED=true"
+set "MINDOS_IM_DINGTALK_OUTBOUND_ROBOT_CODE=REPLACE_WITH_YOUR_ROBOT_CODE"
+
+REM Slow-model experience preset (choose one)
+REM chat (fast feel)
+REM set "MINDOS_IM_DINGTALK_STREAM_WAITING_DELAY_MS=200"
+REM set "MINDOS_IM_DINGTALK_STREAM_WAITING_TEXT=Got it. Processing now, full reply is coming soon."
+REM set "MINDOS_DISPATCHER_LLM_REPLY_MAX_CHARS=700"
+REM set "MINDOS_DISPATCHER_PROMPT_MAX_CHARS=2000"
+REM set "MINDOS_DISPATCHER_MEMORY_CONTEXT_MAX_CHARS=1200"
+
+REM speed-first preset (recommended when model feels slow)
+set "MINDOS_IM_DINGTALK_STREAM_WAITING_DELAY_MS=200"
+set "MINDOS_IM_DINGTALK_STREAM_WAITING_TEXT=Got it. Processing now, full reply is coming soon."
+set "MINDOS_DISPATCHER_LLM_REPLY_MAX_CHARS=700"
+set "MINDOS_DISPATCHER_PROMPT_MAX_CHARS=2000"
+set "MINDOS_DISPATCHER_MEMORY_CONTEXT_MAX_CHARS=1200"
+set "MINDOS_DISPATCHER_MEMORY_CONTEXT_KEEP_RECENT_TURNS=1"
+
+REM writing (quality)
+REM set "MINDOS_IM_DINGTALK_STREAM_WAITING_DELAY_MS=500"
+REM set "MINDOS_IM_DINGTALK_STREAM_WAITING_TEXT=I am preparing a more complete answer, please give me a bit more time."
+REM set "MINDOS_DISPATCHER_LLM_REPLY_MAX_CHARS=1200"
+REM set "MINDOS_DISPATCHER_PROMPT_MAX_CHARS=3000"
+REM set "MINDOS_DISPATCHER_MEMORY_CONTEXT_MAX_CHARS=1800"
 set "MINDOS_IM_WECHAT_ENABLED=false"
 set "MINDOS_IM_WECHAT_VERIFY_SIGNATURE=true"
 set "MINDOS_IM_WECHAT_TOKEN="
 
 REM Metrics endpoint auth for local single-user usage
 set "MINDOS_SECURITY_METRICS_REQUIRE_ADMIN_TOKEN=false"
+
+REM Sentinel: launcher scripts verify this to detect env parsing failures.
+set "MINDOS_ENV_LOADED=1"
 BAT
 
 cat > "$OUTPUT_DIR/mindos-server.full.env.bat" <<'BAT'
@@ -140,12 +179,16 @@ REM Full multi-provider reference for Windows.
 REM Copy only the lines you need into mindos-server.env.bat.
 REM Keep the set "KEY=value" format unchanged.
 REM In provider maps, commas split entries and the first colon splits provider name from value.
-REM Edit one line at a time and avoid unescaped special characters such as: & | < > % ^ !
+REM Edit one line at a time and avoid special CMD symbols unless you know escaping rules.
+
+set "MINDOS_ENV_LOADED="
 
 REM Core runtime
 set "MINDOS_SPRING_PROFILE=solo"
 set "MINDOS_SERVER_PORT=8080"
 set "MINDOS_SERVER=http://localhost:8080"
+set "MINDOS_MEMORY_FILE_REPO_ENABLED=true"
+set "MINDOS_MEMORY_FILE_REPO_BASE_DIR=data/memory-sync"
 set "MINDOS_USER=solo-smoke-user"
 set "MINDOS_SMOKE_TIMEOUT_SECONDS=8"
 set "MINDOS_PAUSE_ON_EXIT=true"
@@ -156,48 +199,95 @@ set "MINDOS_LLM_PROVIDER=qwen"
 set "MINDOS_LLM_ROUTING_MODE=fixed"
 set "MINDOS_LLM_ROUTING_STAGE_MAP=llm-dsl:qwen,llm-fallback:qwen"
 set "MINDOS_LLM_ROUTING_PRESET_MAP=cost:qwen,balanced:qwen,quality:qwen"
-REM Safer single-provider example:
-REM set "MINDOS_LLM_PROVIDER_ENDPOINTS=qwen:https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
-REM set "MINDOS_LLM_PROVIDER_KEYS=qwen:paste-your-qwen-key-here"
+set "MINDOS_LLM_RETRY_MAX_ATTEMPTS=1"
+set "MINDOS_LLM_RETRY_DELAY_MS=100"
+REM Safer multi-provider key map: keep qwen as default, keep doubao ready for quick switching.
+REM Change only MINDOS_LLM_PROVIDER to qwen or doubao when you want to switch defaults.
+set "MINDOS_LLM_PROVIDER_KEYS=qwen:REPLACE_WITH_YOUR_NEW_QWEN_KEY,doubao:REPLACE_WITH_YOUR_DOUBAO_KEY"
+REM Doubao Ark Chat requires a real Model ID or Endpoint ID in addition to the API key.
+REM The REPLACE_WITH value is ignored until you replace it with a real Ark Endpoint ID or Model ID.
+set "MINDOS_LLM_PROVIDER_MODELS=qwen:qwen3.5-plus,doubao:REPLACE_WITH_YOUR_DOUBAO_ENDPOINT_ID"
 REM Multi-provider map example (more fragile because commas split entries):
 REM set "MINDOS_LLM_PROVIDER_ENDPOINTS=openai:https://ai.example.com/openai/v1/chat/completions,gemini:https://ai.example.com/gemini/v1beta/models/gemini-2.0-flash:generateContent,qwen:https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
 REM set "MINDOS_LLM_PROVIDER_KEYS=openai:paste-openai-key-here,gemini:paste-gemini-key-here,qwen:paste-qwen-key-here"
 
 REM Optional cache overrides
-REM set "MINDOS_LLM_CACHE_ENABLED=true"
-REM set "MINDOS_LLM_CACHE_TTL_SECONDS=120"
-REM set "MINDOS_LLM_CACHE_MAX_ENTRIES=512"
+set "MINDOS_LLM_CACHE_ENABLED=true"
+set "MINDOS_LLM_CACHE_TTL_SECONDS=120"
+set "MINDOS_LLM_CACHE_MAX_ENTRIES=512"
 
 REM DingTalk / WeChat bot integration
-set "MINDOS_IM_ENABLED=false"
-set "MINDOS_IM_DINGTALK_ENABLED=false"
+set "MINDOS_IM_ENABLED=true"
+set "MINDOS_IM_DINGTALK_ENABLED=true"
 set "MINDOS_IM_DINGTALK_VERIFY_SIGNATURE=false"
 set "MINDOS_IM_DINGTALK_SECRET="
 set "MINDOS_IM_DINGTALK_REPLY_TIMEOUT_MS=2500"
-REM Optional DingTalk stream mode for slow replies
-REM set "MINDOS_IM_DINGTALK_STREAM_ENABLED=true"
-REM set "MINDOS_IM_DINGTALK_STREAM_CLIENT_ID=ding-app-key"
-REM set "MINDOS_IM_DINGTALK_STREAM_CLIENT_SECRET=ding-app-secret"
-REM set "MINDOS_IM_DINGTALK_STREAM_TOPIC=/v1.0/im/bot/messages/get"
-REM set "MINDOS_IM_DINGTALK_STREAM_WAITING_DELAY_MS=800"
-REM set "MINDOS_IM_DINGTALK_STREAM_WAITING_TEXT=MindOS is still working on this message. Please wait a moment."
-REM set "MINDOS_IM_DINGTALK_OUTBOUND_ENABLED=true"
-REM set "MINDOS_IM_DINGTALK_OUTBOUND_ROBOT_CODE=dingrobotcode"
+
+REM Stream required fields (replace placeholders)
+set "MINDOS_IM_DINGTALK_STREAM_ENABLED=true"
+set "MINDOS_IM_DINGTALK_STREAM_CLIENT_ID=REPLACE_WITH_YOUR_APP_KEY"
+set "MINDOS_IM_DINGTALK_STREAM_CLIENT_SECRET=REPLACE_WITH_YOUR_APP_SECRET"
+set "MINDOS_IM_DINGTALK_STREAM_TOPIC=/v1.0/im/bot/messages/get"
+set "MINDOS_IM_DINGTALK_STREAM_RECONNECT_ENABLED=true"
+set "MINDOS_IM_DINGTALK_STREAM_RECONNECT_INITIAL_DELAY_MS=1000"
+set "MINDOS_IM_DINGTALK_STREAM_RECONNECT_MAX_DELAY_MS=60000"
+set "MINDOS_IM_DINGTALK_STREAM_RECONNECT_MULTIPLIER=2.0"
+set "MINDOS_IM_DINGTALK_STREAM_RECONNECT_JITTER_RATIO=0.2"
+set "MINDOS_IM_DINGTALK_STREAM_RECONNECT_MAX_ATTEMPTS=0"
+set "MINDOS_IM_DINGTALK_OUTBOUND_ENABLED=true"
+set "MINDOS_IM_DINGTALK_OUTBOUND_ROBOT_CODE=REPLACE_WITH_YOUR_ROBOT_CODE"
+
+REM Slow-model experience preset (choose one)
+REM chat (fast feel)
+REM set "MINDOS_IM_DINGTALK_STREAM_WAITING_DELAY_MS=200"
+REM set "MINDOS_IM_DINGTALK_STREAM_WAITING_TEXT=Got it. Processing now, full reply is coming soon."
+REM set "MINDOS_DISPATCHER_LLM_REPLY_MAX_CHARS=700"
+REM set "MINDOS_DISPATCHER_PROMPT_MAX_CHARS=2000"
+REM set "MINDOS_DISPATCHER_MEMORY_CONTEXT_MAX_CHARS=1200"
+
+REM speed-first preset (recommended when model feels slow)
+set "MINDOS_IM_DINGTALK_STREAM_WAITING_DELAY_MS=200"
+set "MINDOS_IM_DINGTALK_STREAM_WAITING_TEXT=Got it. Processing now, full reply is coming soon."
+set "MINDOS_DISPATCHER_LLM_REPLY_MAX_CHARS=700"
+set "MINDOS_DISPATCHER_PROMPT_MAX_CHARS=2000"
+set "MINDOS_DISPATCHER_MEMORY_CONTEXT_MAX_CHARS=1200"
+set "MINDOS_DISPATCHER_MEMORY_CONTEXT_KEEP_RECENT_TURNS=1"
+
+REM writing (quality)
+REM set "MINDOS_IM_DINGTALK_STREAM_WAITING_DELAY_MS=500"
+REM set "MINDOS_IM_DINGTALK_STREAM_WAITING_TEXT=I am preparing a more complete answer, please give me a bit more time."
+REM set "MINDOS_DISPATCHER_LLM_REPLY_MAX_CHARS=1200"
+REM set "MINDOS_DISPATCHER_PROMPT_MAX_CHARS=3000"
+REM set "MINDOS_DISPATCHER_MEMORY_CONTEXT_MAX_CHARS=1800"
 set "MINDOS_IM_WECHAT_ENABLED=false"
 set "MINDOS_IM_WECHAT_VERIFY_SIGNATURE=true"
 set "MINDOS_IM_WECHAT_TOKEN="
 
 REM Metrics endpoint auth for local single-user usage
 set "MINDOS_SECURITY_METRICS_REQUIRE_ADMIN_TOKEN=false"
+
+REM Sentinel: launcher scripts verify this to detect env parsing failures.
+set "MINDOS_ENV_LOADED=1"
 BAT
 
 cat > "$OUTPUT_DIR/mindos-server.bat" <<'BAT'
 @echo off
-setlocal
+setlocal EnableExtensions DisableDelayedExpansion
 
 set "ROOT_DIR=%~dp0"
 cd /d "%ROOT_DIR%"
-if exist "%ROOT_DIR%mindos-server.env.bat" call "%ROOT_DIR%mindos-server.env.bat"
+if exist "%ROOT_DIR%mindos-server.env.bat" (
+  set "MINDOS_ENV_LOADED="
+  call "%ROOT_DIR%mindos-server.env.bat"
+  if errorlevel 1 (
+    echo [FAIL] mindos-server.env.bat exited with code %ERRORLEVEL%.
+    goto :pause_and_fail
+  )
+  if not "%MINDOS_ENV_LOADED%"=="1" (
+    echo [FAIL] mindos-server.env.bat did not finish loading. Check for broken quotes/encoding in the file.
+    goto :pause_and_fail
+  )
+)
 if not exist logs mkdir logs
 if not exist run mkdir run
 
@@ -247,7 +337,7 @@ BAT
 
 cat > "$OUTPUT_DIR/mindos-server-debug.bat" <<'BAT'
 @echo off
-setlocal EnableExtensions EnableDelayedExpansion
+setlocal EnableExtensions DisableDelayedExpansion
 
 if not defined MINDOS_DEBUG_SHELL (
   set "MINDOS_DEBUG_SHELL=1"
@@ -259,12 +349,17 @@ set "ROOT_DIR=%~dp0"
 cd /d "%ROOT_DIR%"
 if exist "%ROOT_DIR%mindos-server.env.bat" (
   echo [INFO] Loading config from mindos-server.env.bat...
+  set "MINDOS_ENV_LOADED="
   call "%ROOT_DIR%mindos-server.env.bat"
-  set "ENV_EXIT_CODE=!ERRORLEVEL!"
-  if "!ENV_EXIT_CODE!"=="" set "ENV_EXIT_CODE=1"
-  if not "!ENV_EXIT_CODE!"=="0" (
-    echo [FAIL] mindos-server.env.bat exited with code !ENV_EXIT_CODE!.
-    exit /b !ENV_EXIT_CODE!
+  set "ENV_EXIT_CODE=%ERRORLEVEL%"
+  if "%ENV_EXIT_CODE%"=="" set "ENV_EXIT_CODE=1"
+  if not "%ENV_EXIT_CODE%"=="0" (
+    echo [FAIL] mindos-server.env.bat exited with code %ENV_EXIT_CODE%.
+    exit /b %ENV_EXIT_CODE%
+  )
+  if not "%MINDOS_ENV_LOADED%"=="1" (
+    echo [FAIL] mindos-server.env.bat did not finish loading. Check for broken quotes/encoding in the file.
+    exit /b 1
   )
 )
 
@@ -393,6 +488,7 @@ MindOS Windows server bundle
    - edit only the text to the right of the first '='
    - start from the safe defaults in mindos-server.env.bat
    - enable one LLM provider first; use mindos-server.full.env.bat only when you really need multi-provider maps
+   - if you use Doubao Ark, also set MINDOS_LLM_PROVIDER_MODELS=doubao:<Model ID or Endpoint ID>
    - MINDOS_IM_DINGTALK_* / MINDOS_IM_WECHAT_* stay disabled until you have real bot credentials
    - MINDOS_SERVER_PORT for local port
 
@@ -417,6 +513,7 @@ Notes:
 - All launcher scripts auto-load mindos-server.env.bat from the same directory.
 - mindos-server.full.env.bat is a commented reference file only; it is NOT auto-loaded.
 - In provider maps, commas split entries and the first colon splits provider name from value.
+- Doubao Ark Chat uses Authorization: Bearer <ARK_API_KEY> and requires a real Model ID or Endpoint ID.
 - Avoid unescaped special characters in values: & | < > % ^ !
 TXT
 
