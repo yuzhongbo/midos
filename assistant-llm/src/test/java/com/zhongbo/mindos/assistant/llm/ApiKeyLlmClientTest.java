@@ -455,6 +455,228 @@ class ApiKeyLlmClientTest {
     }
 
     @Test
+    void shouldCallArkResponsesEndpointWithWebSearchTool() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
+        ConcurrentHashMap<String, String> observed = new ConcurrentHashMap<>();
+        server.createContext("/api/v3/responses", exchange -> {
+            observed.put("path", exchange.getRequestURI().getPath());
+            observed.put("auth", exchange.getRequestHeaders().getFirst("Authorization"));
+            observed.put("body", new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            byte[] body = (
+                    "data: {\"type\":\"response.output_text.delta\",\"delta\":\"今天热点：\"}\n\n"
+                            + "data: {\"type\":\"response.output_text.delta\",\"delta\":\"A、B、C\"}\n\n"
+                            + "data: [DONE]\n\n"
+            ).getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "text/event-stream");
+            exchange.sendResponseHeaders(200, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+        try {
+            ApiKeyLlmClient client = newClient(
+                    "doubao",
+                    "fixed",
+                    "llm-dsl:doubao,llm-fallback:doubao",
+                    "cost:doubao,quality:doubao",
+                    "doubao:ark-key",
+                    "doubao:deepseek-v3-2-251201",
+                    false,
+                    60,
+                    true,
+                    "doubao:http://127.0.0.1:" + server.getAddress().getPort() + "/api/v3/responses"
+            );
+
+            String output = client.generateResponse("今天有什么热点新闻", Map.of("userId", "u-ark", "llmProvider", "doubao"));
+
+            assertEquals("今天热点：A、B、C", output);
+            assertEquals("/api/v3/responses", observed.get("path"));
+            assertEquals("Bearer ark-key", observed.get("auth"));
+            assertTrue(observed.get("body").contains("\"model\":\"deepseek-v3-2-251201\""));
+            assertTrue(observed.get("body").contains("\"tools\""));
+            assertTrue(observed.get("body").contains("\"type\":\"web_search\""));
+            assertTrue(observed.get("body").contains("\"max_keyword\":3"));
+            assertTrue(observed.get("body").contains("\"type\":\"input_text\""));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void shouldParseArkResponsesJsonOutputWhenNotSse() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
+        server.createContext("/api/v3/responses", exchange -> {
+            byte[] body = "{\"output\":[{\"content\":[{\"type\":\"output_text\",\"text\":\"新闻摘要\"}]}]}"
+                    .getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+        try {
+            ApiKeyLlmClient client = newClient(
+                    "doubao",
+                    "fixed",
+                    "llm-dsl:doubao,llm-fallback:doubao",
+                    "cost:doubao,quality:doubao",
+                    "doubao:ark-key",
+                    "doubao:deepseek-v3-2-251201",
+                    false,
+                    60,
+                    true,
+                    "doubao:http://127.0.0.1:" + server.getAddress().getPort() + "/api/v3/responses"
+            );
+
+            String output = client.generateResponse("今天有什么热点新闻", Map.of("userId", "u-ark-json", "llmProvider", "doubao"));
+
+            assertEquals("新闻摘要", output);
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void shouldSkipArkWebSearchToolWhenDisabled() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
+        ConcurrentHashMap<String, String> observed = new ConcurrentHashMap<>();
+        server.createContext("/api/v3/responses", exchange -> {
+            observed.put("body", new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            byte[] body = "{\"output\":[{\"content\":[{\"type\":\"output_text\",\"text\":\"ok\"}]}]}"
+                    .getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+        try {
+            ApiKeyLlmClient client = newClient(
+                    "doubao",
+                    "fixed",
+                    "llm-dsl:doubao,llm-fallback:doubao",
+                    "cost:doubao,quality:doubao",
+                    "doubao:ark-key",
+                    "doubao:deepseek-v3-2-251201",
+                    false,
+                    60,
+                    true,
+                    "doubao:http://127.0.0.1:" + server.getAddress().getPort() + "/api/v3/responses",
+                    false,
+                    "",
+                    ""
+            );
+
+            String output = client.generateResponse("今天有什么热点新闻", Map.of("userId", "u-ark-disabled", "llmProvider", "doubao"));
+
+            assertEquals("ok", output);
+            assertFalse(observed.get("body").contains("\"tools\""));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void shouldApplyArkWebSearchStageFilter() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
+        ConcurrentHashMap<String, String> observed = new ConcurrentHashMap<>();
+        server.createContext("/api/v3/responses", exchange -> {
+            observed.put("body", new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            byte[] body = "{\"output\":[{\"content\":[{\"type\":\"output_text\",\"text\":\"ok\"}]}]}"
+                    .getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+        try {
+            ApiKeyLlmClient client = newClient(
+                    "doubao",
+                    "fixed",
+                    "llm-dsl:doubao,llm-fallback:doubao",
+                    "cost:doubao,quality:doubao",
+                    "doubao:ark-key",
+                    "doubao:deepseek-v3-2-251201",
+                    false,
+                    60,
+                    true,
+                    "doubao:http://127.0.0.1:" + server.getAddress().getPort() + "/api/v3/responses",
+                    true,
+                    "llm-fallback",
+                    ""
+            );
+
+            client.generateResponse("今天有什么热点新闻", Map.of(
+                    "userId", "u-ark-stage",
+                    "llmProvider", "doubao",
+                    "routeStage", "llm-dsl"
+            ));
+            assertFalse(observed.get("body").contains("\"tools\""));
+
+            client.generateResponse("今天有什么热点新闻", Map.of(
+                    "userId", "u-ark-stage",
+                    "llmProvider", "doubao",
+                    "routeStage", "llm-fallback"
+            ));
+            assertTrue(observed.get("body").contains("\"tools\""));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void shouldApplyArkWebSearchPlatformFilter() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
+        ConcurrentHashMap<String, String> observed = new ConcurrentHashMap<>();
+        server.createContext("/api/v3/responses", exchange -> {
+            observed.put("body", new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            byte[] body = "{\"output\":[{\"content\":[{\"type\":\"output_text\",\"text\":\"ok\"}]}]}"
+                    .getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+        try {
+            ApiKeyLlmClient client = newClient(
+                    "doubao",
+                    "fixed",
+                    "llm-dsl:doubao,llm-fallback:doubao",
+                    "cost:doubao,quality:doubao",
+                    "doubao:ark-key",
+                    "doubao:deepseek-v3-2-251201",
+                    false,
+                    60,
+                    true,
+                    "doubao:http://127.0.0.1:" + server.getAddress().getPort() + "/api/v3/responses",
+                    true,
+                    "",
+                    "dingtalk"
+            );
+
+            client.generateResponse("今天有什么热点新闻", Map.of(
+                    "userId", "u-ark-platform",
+                    "llmProvider", "doubao",
+                    "interactionChannel", "im",
+                    "imPlatform", "feishu"
+            ));
+            assertFalse(observed.get("body").contains("\"tools\""));
+
+            client.generateResponse("今天有什么热点新闻", Map.of(
+                    "userId", "u-ark-platform",
+                    "llmProvider", "doubao",
+                    "interactionChannel", "im",
+                    "imPlatform", "dingtalk"
+            ));
+            assertTrue(observed.get("body").contains("\"tools\""));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
     void shouldPreferExplicitDoubaoModelOverConfiguredProviderModel() throws Exception {
         HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
         ConcurrentHashMap<String, String> observed = new ConcurrentHashMap<>();
@@ -761,6 +983,24 @@ class ApiKeyLlmClientTest {
                                       String stageMap,
                                       String presetMap,
                                       String providerKeys,
+                                      String providerModels,
+                                      boolean cacheEnabled,
+                                      long cacheTtlSeconds,
+                                      boolean httpEnabled,
+                                      String providerEndpoints,
+                                      boolean arkWebSearchEnabled,
+                                      String arkWebSearchStages,
+                                      String arkWebSearchPlatforms) {
+        return newClient(defaultProvider, routingMode, stageMap, presetMap, providerKeys, providerModels,
+                cacheEnabled, cacheTtlSeconds, "fallback-global-key", httpEnabled, providerEndpoints,
+                arkWebSearchEnabled, arkWebSearchStages, arkWebSearchPlatforms);
+    }
+
+    private ApiKeyLlmClient newClient(String defaultProvider,
+                                      String routingMode,
+                                      String stageMap,
+                                      String presetMap,
+                                      String providerKeys,
                                       boolean cacheEnabled,
                                       long cacheTtlSeconds,
                                       String globalApiKey,
@@ -781,6 +1021,25 @@ class ApiKeyLlmClientTest {
                                       String globalApiKey,
                                       boolean httpEnabled,
                                       String providerEndpoints) {
+        return newClient(defaultProvider, routingMode, stageMap, presetMap, providerKeys, providerModels,
+                cacheEnabled, cacheTtlSeconds, globalApiKey, httpEnabled, providerEndpoints,
+                true, "", "");
+    }
+
+    private ApiKeyLlmClient newClient(String defaultProvider,
+                                      String routingMode,
+                                      String stageMap,
+                                      String presetMap,
+                                      String providerKeys,
+                                      String providerModels,
+                                      boolean cacheEnabled,
+                                      long cacheTtlSeconds,
+                                      String globalApiKey,
+                                      boolean httpEnabled,
+                                      String providerEndpoints,
+                                      boolean arkWebSearchEnabled,
+                                      String arkWebSearchStages,
+                                      String arkWebSearchPlatforms) {
         ObjectProvider<UserApiKeyRepository> provider = new DefaultListableBeanFactory().getBeanProvider(UserApiKeyRepository.class);
         UserApiKeyService userApiKeyService = new UserApiKeyService(provider, new AesApiKeyCryptoService(""));
         LlmMetricsService metricsService = new LlmMetricsService(true, 200);
@@ -801,6 +1060,9 @@ class ApiKeyLlmClientTest {
                 cacheEnabled,
                 cacheTtlSeconds,
                 256,
+                arkWebSearchEnabled,
+                arkWebSearchStages,
+                arkWebSearchPlatforms,
                 userApiKeyService,
                 metricsService
         );

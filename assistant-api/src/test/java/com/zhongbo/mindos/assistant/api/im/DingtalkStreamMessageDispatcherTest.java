@@ -311,9 +311,10 @@ class DingtalkStreamMessageDispatcherTest {
     }
 
     @Test
-    void shouldSendTimeoutFallbackWhenAsyncReplyNeverCompletes() throws Exception {
+    void shouldSendRealFinalReplyAfterTimeoutNoticeWhenAsyncReplyIsSlow() throws Exception {
         ImGatewayService gatewayService = mock(ImGatewayService.class);
         RecordingConversationSender sender = new RecordingConversationSender(true);
+        CompletableFuture<String> slowReply = new CompletableFuture<>();
         DingtalkIntegrationSettings settings = new DingtalkIntegrationSettings(
                 true,
                 true,
@@ -337,7 +338,7 @@ class DingtalkStreamMessageDispatcherTest {
                 ""
         );
         when(gatewayService.chatAsync(ImPlatform.DINGTALK, "staff-timeout", "cid-timeout", "慢一点"))
-                .thenReturn(new CompletableFuture<>());
+                .thenReturn(slowReply);
         dispatcher = new DingtalkStreamMessageDispatcher(gatewayService, sender, settings);
 
         dispatcher.handleIncomingPayload(Map.of(
@@ -347,8 +348,12 @@ class DingtalkStreamMessageDispatcherTest {
         ));
 
         waitUntil(() -> sender.messages.size() >= 2, 1500);
+        slowReply.complete("最终结果已生成");
+        waitUntil(() -> sender.messages.size() >= 3, 1500);
+
         assertEquals("处理中", sender.messages.get(0));
-        assertEquals(ImReplySanitizer.TIMEOUT_IM_FALLBACK_REPLY, sender.messages.get(1));
+        assertEquals("处理中", sender.messages.get(1));
+        assertEquals("久等了，这是完整回复：\n最终结果已生成", sender.messages.get(2));
     }
 
     private void setPrivateIntField(Object target, String fieldName, int value) throws Exception {

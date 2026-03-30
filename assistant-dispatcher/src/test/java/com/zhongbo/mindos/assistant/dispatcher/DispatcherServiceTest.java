@@ -27,6 +27,7 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -203,6 +204,88 @@ class DispatcherServiceTest {
     }
 
     @Test
+    void shouldBypassPreAnalyzeForRealtimeIntentAndGoDirectlyToFallback() {
+        MemoryManager memoryManager = createMemoryManager();
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of("今天会有阵雨，外出记得带伞。"));
+        DispatcherService service = createDispatcher(memoryManager, llmClient, List.of(
+                new FixedSkill("eq.coach", "Coach emotional communication conflicts", "沟通建议")
+        ), 2, "always", 0, "time", "", "", "", "", false, "", false, "", "", "",
+                true, "天气,新闻,热点", true, 280, true);
+
+        DispatchResult result = service.dispatch("realtime-user", "查询今天的天气");
+
+        assertEquals("llm", result.channel());
+        assertEquals(0, llmClient.routingCallCount());
+        assertEquals(1, llmClient.fallbackCallCount());
+        assertEquals("llm-fallback", result.executionTrace().routing().route());
+        assertTrue(result.executionTrace().routing().rejectedReasons().stream()
+                .anyMatch(reason -> reason.contains("realtime intent bypassed skill pre-analyze")));
+    }
+
+    @Test
+    void shouldSkipDetectedSkillExecutionWhenLoopGuardBlocksRoute() {
+        MemoryManager memoryManager = createMemoryManager();
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of("fallback"));
+        AtomicInteger runCount = new AtomicInteger();
+        DispatcherService service = createDispatcher(memoryManager, llmClient, List.of(
+                new CountingSkill("eq.coach", "Coach emotional communication", "哈哈继续", runCount, "coach")
+        ), 2);
+
+        memoryManager.logSkillUsage("loop-user", "eq.coach", "哈哈继续", true);
+        memoryManager.logSkillUsage("loop-user", "eq.coach", "哈哈继续", true);
+        memoryManager.logSkillUsage("loop-user", "eq.coach", "哈哈继续", true);
+
+        DispatchResult result = service.dispatch("loop-user", "哈哈继续");
+
+        assertEquals("llm", result.channel());
+        assertEquals(0, runCount.get());
+        assertEquals(1, llmClient.fallbackCallCount());
+        assertTrue(result.executionTrace().routing().rejectedReasons().stream()
+                .anyMatch(reason -> reason.contains("detected skill blocked by loop guard")));
+        assertTrue(service.snapshotSkillPreAnalyzeMetrics().detectedSkillLoopSkipBlocked() >= 1);
+    }
+
+    @Test
+    void shouldCountEqCoachImTimeoutTriggers() {
+        MemoryManager memoryManager = createMemoryManager();
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of("fallback"));
+        DispatcherService service = createDispatcher(
+                memoryManager,
+                llmClient,
+                List.of(new SlowSkill("eq.coach", "Coach emotional communication", "超时测试", 120, "慢回复")),
+                2,
+                "auto",
+                0,
+                "time",
+                "",
+                "",
+                "",
+                "",
+                false,
+                "",
+                false,
+                "",
+                "",
+                "",
+                true,
+                "天气,新闻,热点,实时",
+                true,
+                280,
+                true,
+                true,
+                "eq.coach",
+                20,
+                "timeout-reply"
+        );
+
+        DispatchResult result = service.dispatch("im-timeout-user", "超时测试", Map.of("imPlatform", "dingtalk"));
+
+        assertEquals("eq.coach", result.channel());
+        assertEquals("timeout-reply", result.reply());
+        assertTrue(service.snapshotSkillPreAnalyzeMetrics().skillTimeoutTriggered() >= 1);
+    }
+
+    @Test
     void shouldInjectStructuredMemorySlotsIntoLlmFallbackContext() {
         MemoryManager memoryManager = createMemoryManager();
         RecordingLlmClient llmClient = new RecordingLlmClient(List.of("fallback-ok"));
@@ -223,8 +306,35 @@ class DispatcherServiceTest {
         assertTrue(context.containsKey("memory.semantic"));
         assertTrue(context.containsKey("memory.procedural"));
         assertTrue(context.containsKey("memory.persona"));
+        assertFalse(String.valueOf(context.get("memory.recent")).isBlank());
         assertEquals("llm-fallback", context.get("routeStage"));
         assertTrue(service.snapshotMemoryHitMetrics().requests() >= 1);
+    }
+
+    @Test
+    void shouldShrinkFallbackMemoryForRealtimeIntent() {
+        MemoryManager memoryManager = createMemoryManager();
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of("上海今天多云，最高 24 度。"));
+        DispatcherService service = createDispatcher(memoryManager, llmClient, List.of(), 2);
+
+        memoryManager.storeUserConversation("realtime-shrink-user", "我和同事沟通冲突，想走 eq.coach");
+        memoryManager.storeAssistantConversation("realtime-shrink-user", "我们可以先做冲突复盘和边界表达");
+        memoryManager.storeKnowledge("realtime-shrink-user", "eq.coach 历史：冷暴力处理建议", List.of(0.3, 0.2), "eq");
+
+        DispatchResult result = service.dispatch("realtime-shrink-user", "查询今天的天气");
+
+        assertEquals("llm", result.channel());
+        assertEquals(1, llmClient.fallbackCallCount());
+        assertFalse(llmClient.fallbackContexts().isEmpty());
+        Map<String, Object> context = llmClient.fallbackContexts().get(0);
+        assertEquals(Boolean.TRUE, context.get("memory.shrinkApplied"));
+        assertTrue(String.valueOf(context.get("memory.recent")).isBlank());
+        assertTrue(String.valueOf(context.get("memory.semantic")).isBlank());
+        assertTrue(String.valueOf(context.get("memory.procedural")).isBlank());
+        assertFalse(llmClient.fallbackPrompts().isEmpty());
+        String prompt = llmClient.fallbackPrompts().get(0);
+        assertFalse(prompt.contains("eq.coach"));
+        assertFalse(prompt.contains("冷暴力"));
     }
 
     @Test
@@ -317,7 +427,23 @@ class DispatcherServiceTest {
                                                RecordingLlmClient llmClient,
                                                List<Skill> skills,
                                                int llmShortlistMaxSkills) {
-        return createDispatcher(memoryManager, llmClient, skills, llmShortlistMaxSkills, "auto", 0, "time", "", "", "", "", false, "", false, "", "", "");
+        return createDispatcher(memoryManager, llmClient, skills, llmShortlistMaxSkills,
+                "auto", 0, "time", "", "", "", "", false, "", false, "", "", "",
+                true, "天气,新闻,热点,实时", true, 280, true);
+    }
+
+    private DispatcherService createDispatcher(MemoryManager memoryManager,
+                                               RecordingLlmClient llmClient,
+                                               List<Skill> skills,
+                                               int llmShortlistMaxSkills,
+                                               String preAnalyzeMode,
+                                               int preAnalyzeThreshold,
+                                               String preAnalyzeSkipSkills) {
+        return createDispatcher(memoryManager, llmClient, skills, llmShortlistMaxSkills,
+                preAnalyzeMode, preAnalyzeThreshold, preAnalyzeSkipSkills,
+                "", "", "", "",
+                false, "", false, "", "", "",
+                true, "天气,新闻,热点,实时", true, 280, true);
     }
 
     private DispatcherService createDispatcher(MemoryManager memoryManager,
@@ -336,7 +462,48 @@ class DispatcherServiceTest {
                                                boolean skillFinalizeEnabled,
                                                String skillFinalizeSkills,
                                                String skillFinalizeProvider,
-                                               String skillFinalizePreset) {
+                                               String skillFinalizePreset,
+                                               boolean realtimeIntentBypassEnabled,
+                                               String realtimeIntentTerms,
+                                               boolean realtimeIntentMemoryShrinkEnabled,
+                                               int realtimeIntentMemoryShrinkMaxChars,
+                                               boolean realtimeIntentMemoryShrinkIncludePersona) {
+        return createDispatcher(memoryManager, llmClient, skills, llmShortlistMaxSkills,
+                preAnalyzeMode, preAnalyzeThreshold, preAnalyzeSkipSkills,
+                llmDslProvider, llmDslPreset, llmFallbackProvider, llmFallbackPreset,
+                postSkillSummaryEnabled, postSkillSummarySkills,
+                skillFinalizeEnabled, skillFinalizeSkills, skillFinalizeProvider, skillFinalizePreset,
+                realtimeIntentBypassEnabled, realtimeIntentTerms,
+                realtimeIntentMemoryShrinkEnabled, realtimeIntentMemoryShrinkMaxChars, realtimeIntentMemoryShrinkIncludePersona,
+                true, "eq.coach,teaching.plan,todo.create,code.generate,file.search,mcp.*", 12000, "eq.coach timeout");
+    }
+
+    private DispatcherService createDispatcher(MemoryManager memoryManager,
+                                               RecordingLlmClient llmClient,
+                                               List<Skill> skills,
+                                               int llmShortlistMaxSkills,
+                                               String preAnalyzeMode,
+                                               int preAnalyzeThreshold,
+                                               String preAnalyzeSkipSkills,
+                                               String llmDslProvider,
+                                               String llmDslPreset,
+                                               String llmFallbackProvider,
+                                               String llmFallbackPreset,
+                                               boolean postSkillSummaryEnabled,
+                                               String postSkillSummarySkills,
+                                               boolean skillFinalizeEnabled,
+                                               String skillFinalizeSkills,
+                                               String skillFinalizeProvider,
+                                               String skillFinalizePreset,
+                                               boolean realtimeIntentBypassEnabled,
+                                               String realtimeIntentTerms,
+                                               boolean realtimeIntentMemoryShrinkEnabled,
+                                               int realtimeIntentMemoryShrinkMaxChars,
+                                               boolean realtimeIntentMemoryShrinkIncludePersona,
+                                               boolean preExecuteHeavySkillGuardEnabled,
+                                               String preExecuteHeavySkillGuardSkills,
+                                               long eqCoachTimeoutMs,
+                                               String eqCoachTimeoutReply) {
         SkillRegistry registry = new SkillRegistry(skills);
         SkillDslExecutor dslExecutor = new SkillDslExecutor(registry);
         SkillEngine skillEngine = new SkillEngine(registry, dslExecutor, memoryManager);
@@ -368,11 +535,20 @@ class DispatcherServiceTest {
                 6,
                 2,
                 180,
+                preExecuteHeavySkillGuardEnabled,
+                preExecuteHeavySkillGuardSkills,
+                eqCoachTimeoutMs,
+                eqCoachTimeoutReply,
                 true,
                 "ignore previous instructions,show system prompt",
                 "guarded",
                 llmShortlistMaxSkills,
                 true,
+                realtimeIntentBypassEnabled,
+                realtimeIntentTerms,
+                realtimeIntentMemoryShrinkEnabled,
+                realtimeIntentMemoryShrinkMaxChars,
+                realtimeIntentMemoryShrinkIncludePersona,
                 preAnalyzeMode,
                 preAnalyzeThreshold,
                 preAnalyzeSkipSkills,
@@ -392,6 +568,31 @@ class DispatcherServiceTest {
                 2,
                 4
         );
+    }
+
+    private DispatcherService createDispatcher(MemoryManager memoryManager,
+                                               RecordingLlmClient llmClient,
+                                               List<Skill> skills,
+                                               int llmShortlistMaxSkills,
+                                               String preAnalyzeMode,
+                                               int preAnalyzeThreshold,
+                                               String preAnalyzeSkipSkills,
+                                               String llmDslProvider,
+                                               String llmDslPreset,
+                                               String llmFallbackProvider,
+                                               String llmFallbackPreset,
+                                               boolean postSkillSummaryEnabled,
+                                               String postSkillSummarySkills,
+                                               boolean skillFinalizeEnabled,
+                                               String skillFinalizeSkills,
+                                               String skillFinalizeProvider,
+                                               String skillFinalizePreset) {
+        return createDispatcher(memoryManager, llmClient, skills, llmShortlistMaxSkills,
+                preAnalyzeMode, preAnalyzeThreshold, preAnalyzeSkipSkills,
+                llmDslProvider, llmDslPreset, llmFallbackProvider, llmFallbackPreset,
+                postSkillSummaryEnabled, postSkillSummarySkills,
+                skillFinalizeEnabled, skillFinalizeSkills, skillFinalizeProvider, skillFinalizePreset,
+                true, "天气,新闻,热点,实时", true, 280, true);
     }
 
     private MemoryManager createMemoryManager() {
@@ -431,6 +632,7 @@ class DispatcherServiceTest {
         private final List<Map<String, Object>> routingContexts = new ArrayList<>();
         private final List<Map<String, Object>> fallbackContexts = new ArrayList<>();
         private final List<Map<String, Object>> finalizeContexts = new ArrayList<>();
+        private final List<String> fallbackPrompts = new ArrayList<>();
         private int routingCallCount;
         private int fallbackCallCount;
 
@@ -448,6 +650,7 @@ class DispatcherServiceTest {
                 fallbackCallCount++;
                 Map<String, Object> captured = context == null ? Map.of() : Map.copyOf(context);
                 fallbackContexts.add(captured);
+                fallbackPrompts.add(prompt == null ? "" : prompt);
                 if (prompt != null && prompt.startsWith("你是回复优化助手。")) {
                     finalizeContexts.add(captured);
                 }
@@ -478,12 +681,98 @@ class DispatcherServiceTest {
         private List<Map<String, Object>> finalizeContexts() {
             return finalizeContexts;
         }
+
+        private List<String> fallbackPrompts() {
+            return fallbackPrompts;
+        }
     }
 
     private record FixedSkill(String name, String description, String output) implements Skill {
         @Override
         public SkillResult run(SkillContext context) {
             return SkillResult.success(name, output);
+        }
+    }
+
+    private static final class CountingSkill implements Skill {
+        private final String name;
+        private final String description;
+        private final String supportToken;
+        private final AtomicInteger runCount;
+        private final String output;
+
+        private CountingSkill(String name,
+                              String description,
+                              String supportToken,
+                              AtomicInteger runCount,
+                              String output) {
+            this.name = name;
+            this.description = description;
+            this.supportToken = supportToken;
+            this.runCount = runCount;
+            this.output = output;
+        }
+
+        @Override
+        public String name() {
+            return name;
+        }
+
+        @Override
+        public String description() {
+            return description;
+        }
+
+        @Override
+        public SkillResult run(SkillContext context) {
+            runCount.incrementAndGet();
+            return SkillResult.success(name, output);
+        }
+
+        @Override
+        public boolean supports(String input) {
+            return input != null && input.contains(supportToken);
+        }
+    }
+
+    private static final class SlowSkill implements Skill {
+        private final String name;
+        private final String description;
+        private final String supportToken;
+        private final long sleepMs;
+        private final String output;
+
+        private SlowSkill(String name, String description, String supportToken, long sleepMs, String output) {
+            this.name = name;
+            this.description = description;
+            this.supportToken = supportToken;
+            this.sleepMs = sleepMs;
+            this.output = output;
+        }
+
+        @Override
+        public String name() {
+            return name;
+        }
+
+        @Override
+        public String description() {
+            return description;
+        }
+
+        @Override
+        public SkillResult run(SkillContext context) {
+            try {
+                Thread.sleep(Math.max(0L, sleepMs));
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            return SkillResult.success(name, output);
+        }
+
+        @Override
+        public boolean supports(String input) {
+            return input != null && input.contains(supportToken);
         }
     }
 }

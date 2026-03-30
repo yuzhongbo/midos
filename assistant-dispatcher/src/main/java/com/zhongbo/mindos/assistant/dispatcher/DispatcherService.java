@@ -46,6 +46,7 @@ import java.util.logging.Logger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.TimeUnit;
 
 @Service
 public class DispatcherService implements ContextCompressionMetricsReader, DispatcherRoutingMetricsReader {
@@ -115,11 +116,20 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
     private final int skillGuardRecentWindowSize;
     private final int skillGuardRepeatInputThreshold;
     private final long skillGuardCooldownSeconds;
+    private final boolean preExecuteHeavySkillLoopGuardEnabled;
+    private final Set<String> preExecuteHeavySkillLoopGuardSkills;
+    private final long eqCoachImTimeoutMs;
+    private final String eqCoachImTimeoutReply;
     private final boolean promptInjectionGuardEnabled;
     private final List<String> promptInjectionRiskTerms;
     private final String promptInjectionSafeReply;
     private final int llmRoutingShortlistMaxSkills;
     private final boolean llmRoutingConversationalBypassEnabled;
+    private final boolean realtimeIntentBypassEnabled;
+    private final Set<String> realtimeIntentTerms;
+    private final boolean realtimeIntentMemoryShrinkEnabled;
+    private final int realtimeIntentMemoryShrinkMaxChars;
+    private final boolean realtimeIntentMemoryShrinkIncludePersona;
     private final String skillPreAnalyzeMode;
     private final int skillPreAnalyzeConfidenceThreshold;
     private final Set<String> skillPreAnalyzeSkipSkills;
@@ -150,6 +160,8 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
     private final AtomicLong skillPreAnalyzeAcceptedCount = new AtomicLong();
     private final AtomicLong skillPreAnalyzeSkippedByGateCount = new AtomicLong();
     private final AtomicLong skillPreAnalyzeSkippedBySkillCount = new AtomicLong();
+    private final AtomicLong detectedSkillLoopSkipBlockedCount = new AtomicLong();
+    private final AtomicLong skillTimeoutTriggeredCount = new AtomicLong();
     private final AtomicLong memoryHitRequestCount = new AtomicLong();
     private final AtomicLong memoryHitSemanticCount = new AtomicLong();
     private final AtomicLong memoryHitProceduralCount = new AtomicLong();
@@ -185,11 +197,20 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                              @Value("${mindos.dispatcher.skill.guard.recent-window-size:6}") int skillGuardRecentWindowSize,
                              @Value("${mindos.dispatcher.skill.guard.repeat-input-threshold:2}") int skillGuardRepeatInputThreshold,
                              @Value("${mindos.dispatcher.skill.guard.cooldown-seconds:180}") long skillGuardCooldownSeconds,
+                             @Value("${mindos.dispatcher.skill.guard.pre-execute-heavy.enabled:true}") boolean preExecuteHeavySkillLoopGuardEnabled,
+                             @Value("${mindos.dispatcher.skill.guard.pre-execute-heavy.skills:eq.coach,teaching.plan,todo.create,code.generate,file.search,mcp.*}") String preExecuteHeavySkillLoopGuardSkills,
+                             @Value("${mindos.dispatcher.skill.timeout.eq-coach-im-ms:12000}") long eqCoachImTimeoutMs,
+                             @Value("${mindos.dispatcher.skill.timeout.eq-coach-im-reply:我先给你一个简短结论：当前请求较复杂，我正在整理更完整建议，稍后继续发你。}") String eqCoachImTimeoutReply,
                              @Value("${mindos.dispatcher.prompt-injection.guard.enabled:true}") boolean promptInjectionGuardEnabled,
                              @Value("${mindos.dispatcher.prompt-injection.guard.risk-terms:ignore previous instructions,ignore all previous instructions,reveal api key,show system prompt,忽略之前的指令,忽略系统指令,泄露api key,显示系统提示词}") String promptInjectionRiskTerms,
                               @Value("${mindos.dispatcher.prompt-injection.guard.safe-reply:检测到高风险诱导指令，已拒绝执行敏感操作。请改为明确、安全、可审计的请求。}") String promptInjectionSafeReply,
                               @Value("${mindos.dispatcher.skill-routing.llm-shortlist-max-skills:8}") int llmRoutingShortlistMaxSkills,
                               @Value("${mindos.dispatcher.skill-routing.conversational-bypass.enabled:true}") boolean llmRoutingConversationalBypassEnabled,
+                              @Value("${mindos.dispatcher.realtime-intent.bypass.enabled:true}") boolean realtimeIntentBypassEnabled,
+                              @Value("${mindos.dispatcher.realtime-intent.terms:天气,气温,下雨,降雨,天气预报,新闻,热点,热搜,头条,汇率,股价,行情,油价,路况,航班,列车,比赛,比分,实时,最新,今日新闻}") String realtimeIntentTerms,
+                              @Value("${mindos.dispatcher.realtime-intent.memory-shrink.enabled:true}") boolean realtimeIntentMemoryShrinkEnabled,
+                              @Value("${mindos.dispatcher.realtime-intent.memory-shrink.max-chars:280}") int realtimeIntentMemoryShrinkMaxChars,
+                              @Value("${mindos.dispatcher.realtime-intent.memory-shrink.include-persona:true}") boolean realtimeIntentMemoryShrinkIncludePersona,
                               @Value("${mindos.dispatcher.skill.pre-analyze.mode:auto}") String skillPreAnalyzeMode,
                               @Value("${mindos.dispatcher.skill.pre-analyze.confidence-threshold:0}") int skillPreAnalyzeConfidenceThreshold,
                               @Value("${mindos.dispatcher.skill.pre-analyze.skip-skills:time}") String skillPreAnalyzeSkipSkills,
@@ -231,6 +252,12 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         this.skillGuardRecentWindowSize = Math.max(2, skillGuardRecentWindowSize);
         this.skillGuardRepeatInputThreshold = Math.max(2, skillGuardRepeatInputThreshold);
         this.skillGuardCooldownSeconds = Math.max(0L, skillGuardCooldownSeconds);
+        this.preExecuteHeavySkillLoopGuardEnabled = preExecuteHeavySkillLoopGuardEnabled;
+        this.preExecuteHeavySkillLoopGuardSkills = parseCsvSet(preExecuteHeavySkillLoopGuardSkills);
+        this.eqCoachImTimeoutMs = Math.max(0L, eqCoachImTimeoutMs);
+        this.eqCoachImTimeoutReply = eqCoachImTimeoutReply == null || eqCoachImTimeoutReply.isBlank()
+                ? "我先给你一个简短结论：当前请求较复杂，我正在整理更完整建议，稍后继续发你。"
+                : eqCoachImTimeoutReply;
         this.promptInjectionGuardEnabled = promptInjectionGuardEnabled;
         this.promptInjectionRiskTerms = parseRiskTerms(promptInjectionRiskTerms);
         this.promptInjectionSafeReply = promptInjectionSafeReply == null || promptInjectionSafeReply.isBlank()
@@ -238,6 +265,11 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                 : promptInjectionSafeReply;
         this.llmRoutingShortlistMaxSkills = Math.max(1, llmRoutingShortlistMaxSkills);
         this.llmRoutingConversationalBypassEnabled = llmRoutingConversationalBypassEnabled;
+        this.realtimeIntentBypassEnabled = realtimeIntentBypassEnabled;
+        this.realtimeIntentTerms = parseCsvSet(realtimeIntentTerms);
+        this.realtimeIntentMemoryShrinkEnabled = realtimeIntentMemoryShrinkEnabled;
+        this.realtimeIntentMemoryShrinkMaxChars = Math.max(120, realtimeIntentMemoryShrinkMaxChars);
+        this.realtimeIntentMemoryShrinkIncludePersona = realtimeIntentMemoryShrinkIncludePersona;
         this.skillPreAnalyzeMode = normalizeSkillPreAnalyzeMode(skillPreAnalyzeMode);
         this.skillPreAnalyzeConfidenceThreshold = Math.max(0, skillPreAnalyzeConfidenceThreshold);
         this.skillPreAnalyzeSkipSkills = parseCsvSet(skillPreAnalyzeSkipSkills);
@@ -307,14 +339,11 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                 memoryContextMaxChars,
                 resolvedProfileContext
         );
+        boolean realtimeIntentInput = isRealtimeIntent(userInput);
         SkillContext context = new SkillContext(userId, userInput, resolvedProfileContext);
         Map<String, Object> llmContext = new LinkedHashMap<>();
         llmContext.put("userId", userId);
-        llmContext.put("memoryContext", memoryContext);
-        llmContext.put("memory.recent", promptMemoryContext.recentConversation());
-        llmContext.put("memory.semantic", promptMemoryContext.semanticContext());
-        llmContext.put("memory.procedural", promptMemoryContext.proceduralHints());
-        llmContext.put("memory.persona", promptMemoryContext.personaSnapshot());
+        populateFallbackMemoryContext(llmContext, memoryContext, promptMemoryContext, realtimeIntentInput);
         llmContext.put("input", userInput);
         llmContext.put("routeStage", "llm-fallback");
         llmContext.put("profile", resolvedProfileContext);
@@ -322,8 +351,8 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         applyStageLlmRoute("llm-fallback", resolvedProfileContext, llmContext);
 
         return metaOrchestratorService.orchestrate(
-                        () -> executeSinglePass(userId, userInput, context, memoryContext, promptMemoryContext, llmContext, routingDecisionRef, replayProbe),
-                        () -> CompletableFuture.completedFuture(buildLlmFallbackResult(memoryContext, promptMemoryContext, userInput, llmContext))
+                        () -> executeSinglePass(userId, userInput, context, memoryContext, promptMemoryContext, llmContext, realtimeIntentInput, routingDecisionRef, replayProbe),
+                        () -> CompletableFuture.completedFuture(buildLlmFallbackResult(memoryContext, promptMemoryContext, userInput, llmContext, realtimeIntentInput))
                 )
                 .thenApply(orchestration -> {
                     SkillResult result = orchestration.result();
@@ -391,14 +420,11 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                 memoryContextMaxChars,
                 resolvedProfileContext
         );
+        boolean realtimeIntentInput = isRealtimeIntent(userInput);
         SkillContext context = new SkillContext(userId, userInput, resolvedProfileContext);
         Map<String, Object> llmContext = new LinkedHashMap<>();
         llmContext.put("userId", userId);
-        llmContext.put("memoryContext", memoryContext);
-        llmContext.put("memory.recent", promptMemoryContext.recentConversation());
-        llmContext.put("memory.semantic", promptMemoryContext.semanticContext());
-        llmContext.put("memory.procedural", promptMemoryContext.proceduralHints());
-        llmContext.put("memory.persona", promptMemoryContext.personaSnapshot());
+        populateFallbackMemoryContext(llmContext, memoryContext, promptMemoryContext, realtimeIntentInput);
         llmContext.put("input", userInput);
         llmContext.put("routeStage", "llm-fallback");
         llmContext.put("profile", resolvedProfileContext);
@@ -409,7 +435,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                 .thenApply(routingOutcome -> {
                     routingDecisionRef.set(routingOutcome.routingDecision());
                     return routingOutcome.result().orElseGet(() ->
-                            buildLlmFallbackStreamResult(memoryContext, promptMemoryContext, userInput, llmContext, deltaConsumer));
+                            buildLlmFallbackStreamResult(memoryContext, promptMemoryContext, userInput, llmContext, realtimeIntentInput, deltaConsumer));
                 })
                 .thenApply(result -> {
                     SkillResult normalized = result;
@@ -445,22 +471,24 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                                                              String memoryContext,
                                                              PromptMemoryContextDto promptMemoryContext,
                                                              Map<String, Object> llmContext,
+                                                             boolean realtimeIntentInput,
                                                              java.util.concurrent.atomic.AtomicReference<RoutingDecisionDto> routingDecisionRef,
                                                              RoutingReplayProbe replayProbe) {
         return routeToSkillAsync(userId, userInput, context, memoryContext, replayProbe)
                 .thenApply(routingOutcome -> {
                     routingDecisionRef.set(routingOutcome.routingDecision());
                     return routingOutcome.result().orElseGet(() ->
-                        buildLlmFallbackResult(memoryContext, promptMemoryContext, userInput, llmContext));
+                        buildLlmFallbackResult(memoryContext, promptMemoryContext, userInput, llmContext, realtimeIntentInput));
                 });
     }
 
     private SkillResult buildLlmFallbackResult(String memoryContext,
                                                PromptMemoryContextDto promptMemoryContext,
                                                String userInput,
-                                               Map<String, Object> llmContext) {
+                                               Map<String, Object> llmContext,
+                                               boolean realtimeIntentInput) {
         return SkillResult.success("llm", llmClient.generateResponse(
-                buildFallbackPrompt(memoryContext, promptMemoryContext, userInput),
+                buildFallbackPrompt(memoryContext, promptMemoryContext, userInput, realtimeIntentInput),
                 llmContext
         ));
     }
@@ -469,8 +497,9 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                                                      PromptMemoryContextDto promptMemoryContext,
                                                      String userInput,
                                                      Map<String, Object> llmContext,
+                                                     boolean realtimeIntentInput,
                                                      Consumer<String> deltaConsumer) {
-        String prompt = buildFallbackPrompt(memoryContext, promptMemoryContext, userInput);
+        String prompt = buildFallbackPrompt(memoryContext, promptMemoryContext, userInput, realtimeIntentInput);
         StringBuilder aggregated = new StringBuilder();
         llmClient.streamResponse(prompt, llmContext, chunk -> {
             if (chunk == null || chunk.isBlank()) {
@@ -585,6 +614,11 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         List<String> rejectedReasons = new java.util.ArrayList<>();
         Optional<SkillDsl> explicitDsl = skillDslParser.parse(userInput);
         if (explicitDsl.isPresent()) {
+            if (isSkillPreExecuteGuardBlocked(userId, explicitDsl.get().skill(), userInput)) {
+                LOGGER.info("Dispatcher guard=loop-skip, userId=" + userId + ", skill=" + explicitDsl.get().skill());
+                rejectedReasons.add("explicit skill blocked by loop guard before execution");
+                return CompletableFuture.completedFuture(new RoutingOutcome(Optional.empty(), fallbackRoutingDecision(rejectedReasons)));
+            }
             Optional<SkillResult> blocked = maybeBlockByCapability(explicitDsl.get().skill());
             if (blocked.isPresent()) {
                 return CompletableFuture.completedFuture(new RoutingOutcome(blocked, new RoutingDecisionDto(
@@ -596,7 +630,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                 )));
             }
             LOGGER.info("Dispatcher route=explicit-dsl, userId=" + userId + ", skill=" + explicitDsl.get().skill());
-            return explicitDsl.map(dsl -> skillEngine.executeDslAsync(dsl, context)
+            return explicitDsl.map(dsl -> applySkillTimeoutIfNeeded(dsl.skill(), context, skillEngine.executeDslAsync(dsl, context))
                             .thenApply(result -> new RoutingOutcome(Optional.of(result), new RoutingDecisionDto(
                                     "explicit-dsl",
                                     dsl.skill(),
@@ -617,6 +651,11 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
             ruleDsl = Optional.empty();
         }
         if (ruleDsl.isPresent()) {
+            if (isSkillPreExecuteGuardBlocked(userId, ruleDsl.get().skill(), userInput)) {
+                LOGGER.info("Dispatcher guard=loop-skip, userId=" + userId + ", skill=" + ruleDsl.get().skill());
+                rejectedReasons.add("rule-based skill blocked by loop guard before execution");
+                return CompletableFuture.completedFuture(new RoutingOutcome(Optional.empty(), fallbackRoutingDecision(rejectedReasons)));
+            }
             replayProbe.ruleCandidate = ruleDsl.get().skill();
             Optional<SkillResult> blocked = maybeBlockByCapability(ruleDsl.get().skill());
             if (blocked.isPresent()) {
@@ -629,7 +668,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                 )));
             }
             LOGGER.info("Dispatcher route=rule, userId=" + userId + ", skill=" + ruleDsl.get().skill());
-            return ruleDsl.map(dsl -> skillEngine.executeDslAsync(dsl, context)
+            return ruleDsl.map(dsl -> applySkillTimeoutIfNeeded(dsl.skill(), context, skillEngine.executeDslAsync(dsl, context))
                             .thenApply(result -> new RoutingOutcome(Optional.of(result), new RoutingDecisionDto(
                                     "rule",
                                     dsl.skill(),
@@ -655,34 +694,37 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         }
         rejectedReasons.add("input is not a meta help question");
 
-        return skillEngine.executeDetectedSkillAsync(context)
-                .thenCompose(detectedSkill -> {
-                    if (detectedSkill.isPresent()) {
-                        Optional<SkillResult> blocked = maybeBlockByCapability(detectedSkill.get().skillName());
-                        if (blocked.isPresent()) {
-                            return CompletableFuture.completedFuture(new RoutingOutcome(blocked, new RoutingDecisionDto(
-                                    "security.guard",
-                                    detectedSkill.get().skillName(),
-                                    0.95,
-                                    List.of("auto-detected skill matched but capability guard blocked execution"),
-                                    List.copyOf(rejectedReasons)
-                            )));
-                        }
-                        if (isSkillLoopGuardBlocked(userId, detectedSkill.get().skillName(), userInput)) {
-                            LOGGER.info("Dispatcher guard=loop-skip, userId=" + userId + ", skill=" + detectedSkill.get().skillName());
-                            rejectedReasons.add("detected skill blocked by loop guard");
-                            return CompletableFuture.completedFuture(new RoutingOutcome(Optional.empty(), fallbackRoutingDecision(rejectedReasons)));
-                        }
-                        LOGGER.info("Dispatcher route=detected-skill, userId=" + userId + ", skill=" + detectedSkill.get().skillName());
-                        return CompletableFuture.completedFuture(new RoutingOutcome(detectedSkill, new RoutingDecisionDto(
-                                "detected-skill",
-                                detectedSkill.get().skillName(),
-                                0.92,
-                                List.of("registered skill.supports matched the input"),
-                                List.copyOf(rejectedReasons)
-                        )));
-                    }
-                    rejectedReasons.add("no registered skill.supports match");
+        Optional<String> detectedSkillName = skillEngine.detectSkillName(context.input());
+        if (detectedSkillName.isPresent()) {
+            String skillName = detectedSkillName.get();
+            Optional<SkillResult> blocked = maybeBlockByCapability(skillName);
+            if (blocked.isPresent()) {
+                return CompletableFuture.completedFuture(new RoutingOutcome(blocked, new RoutingDecisionDto(
+                        "security.guard",
+                        skillName,
+                        0.95,
+                        List.of("auto-detected skill matched but capability guard blocked execution"),
+                        List.copyOf(rejectedReasons)
+                )));
+            }
+            if (isSkillLoopGuardBlocked(userId, skillName, userInput)) {
+                LOGGER.info("Dispatcher guard=loop-skip, userId=" + userId + ", skill=" + skillName);
+                detectedSkillLoopSkipBlockedCount.incrementAndGet();
+                rejectedReasons.add("detected skill blocked by loop guard");
+                return CompletableFuture.completedFuture(new RoutingOutcome(Optional.empty(), fallbackRoutingDecision(rejectedReasons)));
+            }
+            LOGGER.info("Dispatcher route=detected-skill, userId=" + userId + ", skill=" + skillName);
+            return applySkillTimeoutForOptionalResult(skillName, context, skillEngine.executeSkillByNameAsync(skillName, context))
+                    .thenApply(result -> new RoutingOutcome(result, new RoutingDecisionDto(
+                            "detected-skill",
+                            skillName,
+                            0.92,
+                            List.of("registered skill.supports matched the input"),
+                            List.copyOf(rejectedReasons)
+                    )));
+        }
+
+        rejectedReasons.add("no registered skill.supports match");
 
                     Optional<SkillDsl> habitDsl = detectSkillWithMemoryHabits(userId, userInput, context.attributes());
                     if (habitDsl.isPresent()
@@ -693,6 +735,11 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                         habitDsl = Optional.empty();
                     }
                     if (habitDsl.isPresent()) {
+                        if (isSkillPreExecuteGuardBlocked(userId, habitDsl.get().skill(), userInput)) {
+                            LOGGER.info("Dispatcher guard=loop-skip, userId=" + userId + ", skill=" + habitDsl.get().skill());
+                            rejectedReasons.add("habit-based skill blocked by loop guard before execution");
+                            return CompletableFuture.completedFuture(new RoutingOutcome(Optional.empty(), fallbackRoutingDecision(rejectedReasons)));
+                        }
                         Optional<SkillResult> blocked = maybeBlockByCapability(habitDsl.get().skill());
                         if (blocked.isPresent()) {
                             return CompletableFuture.completedFuture(new RoutingOutcome(blocked, new RoutingDecisionDto(
@@ -704,7 +751,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                             )));
                         }
                         LOGGER.info("Dispatcher route=memory-habit, userId=" + userId + ", skill=" + habitDsl.get().skill());
-                        return habitDsl.map(dsl -> skillEngine.executeDslAsync(dsl, context)
+                        return habitDsl.map(dsl -> applySkillTimeoutIfNeeded(dsl.skill(), context, skillEngine.executeDslAsync(dsl, context))
                                         .thenApply(result -> new RoutingOutcome(
                                                 Optional.of(enrichMemoryHabitResult(result, dsl.skill(), context.attributes())),
                                                 new RoutingDecisionDto(
@@ -719,6 +766,14 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                     rejectedReasons.add("habit route confidence gate not satisfied");
 
                     skillPreAnalyzeRequestCount.incrementAndGet();
+                    if (isRealtimeIntent(userInput)) {
+                        replayProbe.preAnalyzeCandidate = "SKIPPED_REALTIME";
+                        skillPreAnalyzeSkippedByGateCount.incrementAndGet();
+                        rejectedReasons.add("realtime intent bypassed skill pre-analyze and went directly to llm fallback");
+                        LOGGER.info("Dispatcher route=llm-fallback, userId=" + userId + ", reason=realtime-intent-bypass");
+                        return CompletableFuture.completedFuture(new RoutingOutcome(Optional.empty(), fallbackRoutingDecision(rejectedReasons)));
+                    }
+
                     if (!shouldRunSkillPreAnalyze(userId, userInput)) {
                         replayProbe.preAnalyzeCandidate = "SKIPPED_BY_GATE";
                         skillPreAnalyzeSkippedByGateCount.incrementAndGet();
@@ -745,6 +800,11 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                     if (llmDsl.isPresent()) {
                         replayProbe.preAnalyzeCandidate = llmDsl.get().skill();
                         skillPreAnalyzeAcceptedCount.incrementAndGet();
+                        if (isSkillPreExecuteGuardBlocked(userId, llmDsl.get().skill(), userInput)) {
+                            LOGGER.info("Dispatcher guard=loop-skip, userId=" + userId + ", skill=" + llmDsl.get().skill());
+                            rejectedReasons.add("LLM-routed skill blocked by loop guard before execution");
+                            return CompletableFuture.completedFuture(new RoutingOutcome(Optional.empty(), fallbackRoutingDecision(rejectedReasons)));
+                        }
                         Optional<SkillResult> blocked = maybeBlockByCapability(llmDsl.get().skill());
                         if (blocked.isPresent()) {
                             return CompletableFuture.completedFuture(new RoutingOutcome(blocked, new RoutingDecisionDto(
@@ -755,13 +815,13 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                                     List.copyOf(rejectedReasons)
                             )));
                         }
-                        if (isSkillLoopGuardBlocked(userId, llmDsl.get().skill(), userInput)) {
-                            LOGGER.info("Dispatcher guard=loop-skip, userId=" + userId + ", skill=" + llmDsl.get().skill());
-                            rejectedReasons.add("LLM-routed skill blocked by loop guard");
-                            return CompletableFuture.completedFuture(new RoutingOutcome(Optional.empty(), fallbackRoutingDecision(rejectedReasons)));
-                        }
+                                if (isSkillLoopGuardBlocked(userId, llmDsl.get().skill(), userInput)) {
+                                    LOGGER.info("Dispatcher guard=loop-skip, userId=" + userId + ", skill=" + llmDsl.get().skill());
+                                    rejectedReasons.add("LLM-routed skill blocked by loop guard");
+                                    return CompletableFuture.completedFuture(new RoutingOutcome(Optional.empty(), fallbackRoutingDecision(rejectedReasons)));
+                                }
                         LOGGER.info("Dispatcher route=llm-dsl, userId=" + userId + ", skill=" + llmDsl.get().skill());
-                        return llmDsl.map(dsl -> skillEngine.executeDslAsync(dsl, context)
+                        return llmDsl.map(dsl -> applySkillTimeoutIfNeeded(dsl.skill(), context, skillEngine.executeDslAsync(dsl, context))
                                         .thenApply(result -> new RoutingOutcome(Optional.of(result), new RoutingDecisionDto(
                                                 "llm-dsl",
                                                 dsl.skill(),
@@ -778,8 +838,95 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
 
                     LOGGER.info("Dispatcher route=llm-fallback, userId=" + userId);
                     rejectedReasons.add("LLM router returned NONE or no shortlist candidate was selected");
-                    return CompletableFuture.completedFuture(new RoutingOutcome(Optional.empty(), fallbackRoutingDecision(rejectedReasons)));
-                });
+        return CompletableFuture.completedFuture(new RoutingOutcome(Optional.empty(), fallbackRoutingDecision(rejectedReasons)));
+    }
+
+    private CompletableFuture<SkillResult> applySkillTimeoutIfNeeded(String skillName,
+                                                                      SkillContext context,
+                                                                      CompletableFuture<SkillResult> executionFuture) {
+        if (executionFuture == null
+                || eqCoachImTimeoutMs <= 0L
+                || !"eq.coach".equals(skillName)
+                || context == null
+                || !isImInteractionContext(context.attributes())) {
+            return executionFuture;
+        }
+        SkillResult timeoutFallback = SkillResult.success(skillName, eqCoachImTimeoutReply);
+        CompletableFuture<SkillResult> timeoutFuture = CompletableFuture.supplyAsync(
+                () -> timeoutFallback,
+                CompletableFuture.delayedExecutor(eqCoachImTimeoutMs, TimeUnit.MILLISECONDS)
+        );
+        return executionFuture.applyToEither(timeoutFuture, result -> {
+            if (result == timeoutFallback) {
+                skillTimeoutTriggeredCount.incrementAndGet();
+            }
+            return result;
+        });
+    }
+
+    private CompletableFuture<Optional<SkillResult>> applySkillTimeoutForOptionalResult(String skillName,
+                                                                                         SkillContext context,
+                                                                                         CompletableFuture<Optional<SkillResult>> executionFuture) {
+        if (executionFuture == null
+                || eqCoachImTimeoutMs <= 0L
+                || !"eq.coach".equals(skillName)
+                || context == null
+                || !isImInteractionContext(context.attributes())) {
+            return executionFuture;
+        }
+        Optional<SkillResult> timeoutFallback = Optional.of(SkillResult.success(skillName, eqCoachImTimeoutReply));
+        CompletableFuture<Optional<SkillResult>> timeoutFuture = CompletableFuture.supplyAsync(
+                () -> timeoutFallback,
+                CompletableFuture.delayedExecutor(eqCoachImTimeoutMs, TimeUnit.MILLISECONDS)
+        );
+        return executionFuture.applyToEither(timeoutFuture, result -> {
+            if (result == timeoutFallback) {
+                skillTimeoutTriggeredCount.incrementAndGet();
+            }
+            return result;
+        });
+    }
+
+    private boolean isSkillPreExecuteGuardBlocked(String userId, String skillName, String userInput) {
+        if (!preExecuteHeavySkillLoopGuardEnabled || !isPreExecuteHeavySkill(skillName)) {
+            return false;
+        }
+        return isSkillLoopGuardBlocked(userId, skillName, userInput);
+    }
+
+    private boolean isPreExecuteHeavySkill(String skillName) {
+        if (skillName == null || skillName.isBlank() || preExecuteHeavySkillLoopGuardSkills.isEmpty()) {
+            return false;
+        }
+        String normalized = skillName.trim().toLowerCase(Locale.ROOT);
+        for (String configured : preExecuteHeavySkillLoopGuardSkills) {
+            if (configured == null || configured.isBlank()) {
+                continue;
+            }
+            String candidate = configured.trim().toLowerCase(Locale.ROOT);
+            if (candidate.endsWith(".*")) {
+                String prefix = candidate.substring(0, candidate.length() - 1);
+                if (!prefix.isBlank() && normalized.startsWith(prefix)) {
+                    return true;
+                }
+                continue;
+            }
+            if (normalized.equals(candidate)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean isImInteractionContext(Map<String, Object> attributes) {
+        if (attributes == null || attributes.isEmpty()) {
+            return false;
+        }
+        if (attributes.containsKey("imPlatform") || attributes.containsKey("imSenderId") || attributes.containsKey("imChatId")) {
+            return true;
+        }
+        Object channel = attributes.get("interactionChannel");
+        return channel != null && "im".equalsIgnoreCase(String.valueOf(channel));
     }
 
     private Optional<SkillDsl> detectSkillWithRules(String userInput) {
@@ -1582,13 +1729,58 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
 
     private String buildFallbackPrompt(String memoryContext,
                                        PromptMemoryContextDto promptMemoryContext,
-                                       String userInput) {
+                                       String userInput,
+                                       boolean realtimeIntentInput) {
+        if (shouldApplyRealtimeMemoryShrink(realtimeIntentInput)) {
+            return buildRealtimeFallbackPrompt(promptMemoryContext, userInput);
+        }
         String structuredContext = buildStructuredMemoryPromptContext(promptMemoryContext);
         String prompt = "Answer naturally using the context when helpful.\n"
                 + capText(memoryContext, memoryContextMaxChars) + "\n"
                 + (structuredContext.isBlank() ? "" : capText(structuredContext, memoryContextMaxChars) + "\n")
                 + "User input: " + capText(userInput, 400);
         return capText(prompt, promptMaxChars);
+    }
+
+    private boolean shouldApplyRealtimeMemoryShrink(boolean realtimeIntentInput) {
+        return realtimeIntentInput && realtimeIntentMemoryShrinkEnabled;
+    }
+
+    private String buildRealtimeFallbackPrompt(PromptMemoryContextDto promptMemoryContext, String userInput) {
+        StringBuilder prompt = new StringBuilder("Answer briefly with the freshest facts and avoid stale historical assumptions.\n");
+        if (realtimeIntentMemoryShrinkIncludePersona && promptMemoryContext != null
+                && promptMemoryContext.personaSnapshot() != null
+                && !promptMemoryContext.personaSnapshot().isEmpty()) {
+            prompt.append("Persona:\n")
+                    .append(capText(promptMemoryContext.personaSnapshot().toString(), realtimeIntentMemoryShrinkMaxChars / 2))
+                    .append('\n');
+        }
+        prompt.append("User input: ")
+                .append(capText(userInput, 400));
+        return capText(prompt.toString(), Math.min(promptMaxChars, realtimeIntentMemoryShrinkMaxChars + 220));
+    }
+
+    private void populateFallbackMemoryContext(Map<String, Object> llmContext,
+                                               String memoryContext,
+                                               PromptMemoryContextDto promptMemoryContext,
+                                               boolean realtimeIntentInput) {
+        if (shouldApplyRealtimeMemoryShrink(realtimeIntentInput)) {
+            llmContext.put("memoryContext", "");
+            llmContext.put("memory.recent", "");
+            llmContext.put("memory.semantic", "");
+            llmContext.put("memory.procedural", "");
+            Object persona = realtimeIntentMemoryShrinkIncludePersona && promptMemoryContext != null
+                    ? promptMemoryContext.personaSnapshot()
+                    : Map.of();
+            llmContext.put("memory.persona", persona == null ? Map.of() : persona);
+            llmContext.put("memory.shrinkApplied", true);
+            return;
+        }
+        llmContext.put("memoryContext", memoryContext);
+        llmContext.put("memory.recent", promptMemoryContext == null ? "" : promptMemoryContext.recentConversation());
+        llmContext.put("memory.semantic", promptMemoryContext == null ? "" : promptMemoryContext.semanticContext());
+        llmContext.put("memory.procedural", promptMemoryContext == null ? "" : promptMemoryContext.proceduralHints());
+        llmContext.put("memory.persona", promptMemoryContext == null ? Map.of() : promptMemoryContext.personaSnapshot());
     }
 
     private String buildStructuredMemoryPromptContext(PromptMemoryContextDto promptMemoryContext) {
@@ -2013,7 +2205,9 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                 skillPreAnalyzeExecutedCount.get(),
                 skillPreAnalyzeAcceptedCount.get(),
                 skillPreAnalyzeSkippedByGateCount.get(),
-                skillPreAnalyzeSkippedBySkillCount.get()
+                skillPreAnalyzeSkippedBySkillCount.get(),
+                detectedSkillLoopSkipBlockedCount.get(),
+                skillTimeoutTriggeredCount.get()
         );
     }
 
@@ -2248,6 +2442,32 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                 || normalizedInput.startsWith("好的")
                 || normalizedInput.startsWith("hello")
                 || normalizedInput.startsWith("thanks"));
+    }
+
+    private boolean isRealtimeIntent(String userInput) {
+        if (!realtimeIntentBypassEnabled || userInput == null || userInput.isBlank()) {
+            return false;
+        }
+        String normalizedInput = normalize(userInput);
+        if (normalizedInput.isBlank()) {
+            return false;
+        }
+        for (String term : realtimeIntentTerms) {
+            if (normalizedInput.contains(term)) {
+                return true;
+            }
+        }
+        return containsAny(normalizedInput,
+                "今天天气",
+                "明天天气",
+                "后天天气",
+                "天气怎么样",
+                "天气如何",
+                "天气预报",
+                "今日新闻",
+                "最新新闻",
+                "热点新闻",
+                "实时新闻");
     }
 
     private String extractRememberedKnowledge(String input) {

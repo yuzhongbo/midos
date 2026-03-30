@@ -24,6 +24,7 @@ class DingtalkStreamMessageDispatcher {
     private static final Logger LOGGER = Logger.getLogger(DingtalkStreamMessageDispatcher.class.getName());
     private static final long ECHO_SUPPRESSION_TTL_MILLIS = 180_000L;
     private static final int ECHO_SUPPRESSION_MAX_ENTRIES = 256;
+    private static final String TIMEOUT_BRIDGE_PREFIX = "久等了，这是完整回复：\n";
 
     private final ImGatewayService imGatewayService;
     private final DingtalkConversationSender conversationSender;
@@ -119,6 +120,7 @@ class DingtalkStreamMessageDispatcher {
 
         CompletableFuture<String> replyFuture = imGatewayService.chatAsync(ImPlatform.DINGTALK, senderId, conversationId, text);
         AtomicBoolean waitingSent = new AtomicBoolean(false);
+        AtomicBoolean timeoutObserved = new AtomicBoolean(false);
         ScheduledFuture<?> waitingTask = null;
         if (settings.streamForceWaiting()) {
             boolean sent = sendText(conversationId, settings.streamWaitingText(), sessionWebhook);
@@ -149,21 +151,41 @@ class DingtalkStreamMessageDispatcher {
             }, settings.streamWaitingDelayMs(), TimeUnit.MILLISECONDS);
         }
 
-        CompletableFuture<String> guardedReplyFuture = replyFuture.completeOnTimeout(
-                ImReplySanitizer.TIMEOUT_IM_FALLBACK_REPLY,
-                settings.streamFinalTimeoutMs(),
-                TimeUnit.MILLISECONDS
-        );
+        ScheduledFuture<?> timeoutTask = waitingScheduler.schedule(() -> {
+            if (replyFuture.isDone()) {
+                return;
+            }
+            timeoutObserved.set(true);
+            boolean sent = sendText(conversationId, settings.streamWaitingText(), sessionWebhook);
+            if (sent) {
+                waitingSent.set(true);
+            }
+            logEvent(sent ? Level.INFO : Level.WARNING,
+                    sent ? "dingtalk.stream.timeout.notice.sent" : "dingtalk.stream.timeout.notice.failed",
+                    Map.of(
+                            "conversationHash", safeHash(conversationId),
+                            "senderHash", safeHash(senderId),
+                            "replyLength", settings.streamWaitingText().length(),
+                            "timeoutMs", settings.streamFinalTimeoutMs(),
+                            "hadWaitingStatus", waitingSent.get()
+                    ));
+        }, settings.streamFinalTimeoutMs(), TimeUnit.MILLISECONDS);
 
         ScheduledFuture<?> finalWaitingTask = waitingTask;
-        guardedReplyFuture.whenComplete((reply, error) -> {
+        replyFuture.whenComplete((reply, error) -> {
             if (finalWaitingTask != null) {
                 finalWaitingTask.cancel(false);
             }
-            boolean timeoutFallback = error == null && ImReplySanitizer.TIMEOUT_IM_FALLBACK_REPLY.equals(reply);
+            timeoutTask.cancel(false);
             String finalReply = error == null
                     ? reply
                     : ImReplySanitizer.FRIENDLY_IM_FALLBACK_REPLY;
+            if (error == null && timeoutObserved.get()) {
+                String normalizedFinal = finalReply == null ? "" : finalReply.trim();
+                if (!normalizedFinal.isBlank() && !normalizedFinal.startsWith(TIMEOUT_BRIDGE_PREFIX.trim())) {
+                    finalReply = TIMEOUT_BRIDGE_PREFIX + normalizedFinal;
+                }
+            }
             if (error != null) {
                 LOGGER.log(Level.WARNING,
                         "DingTalk stream async reply failed, conversationHash=" + safeHash(conversationId),
@@ -178,7 +200,7 @@ class DingtalkStreamMessageDispatcher {
                             "replyLength", safeLength(finalReply),
                             "hadWaitingStatus", waitingSent.get(),
                             "errorFallback", error != null,
-                            "timeoutFallback", timeoutFallback
+                            "timeoutObserved", timeoutObserved.get()
                     ));
             if (!sent && waitingSent.get()) {
                 LOGGER.warning("DingTalk stream final reply could not be delivered after waiting status, conversationHash="

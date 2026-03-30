@@ -7,7 +7,9 @@ public record SkillPreAnalyzeMetricsDto(
         long executed,
         long accepted,
         long skippedByGate,
-        long skippedBySkill
+        long skippedBySkill,
+        long detectedSkillLoopSkipBlocked,
+        long skillTimeoutTriggered
 ) {
 }
 

@@ -43,6 +43,10 @@ public class SkillEngine {
         return executeDetectedSkillAsync(context).join();
     }
 
+    public Optional<String> detectSkillName(String input) {
+        return skillRegistry.detect(input).map(Skill::name);
+    }
+
     public CompletableFuture<Optional<SkillResult>> executeDetectedSkillAsync(SkillContext context) {
         Optional<Skill> detectedSkill = skillRegistry.detect(context.input());
         if (detectedSkill.isEmpty()) {
@@ -53,6 +57,21 @@ public class SkillEngine {
         Map<String, Object> parameters = new LinkedHashMap<>(context.attributes());
         return CompletableFuture.supplyAsync(
                 () -> runWithTiming(skill.name(), context.userId(), context.input(), parameters, () -> skill.run(context)),
+                skillExecutor
+        ).thenApply(Optional::of);
+    }
+
+    public CompletableFuture<Optional<SkillResult>> executeSkillByNameAsync(String skillName, SkillContext context) {
+        if (skillName == null || skillName.isBlank()) {
+            return CompletableFuture.completedFuture(Optional.empty());
+        }
+        Optional<Skill> skill = skillRegistry.getSkill(skillName);
+        if (skill.isEmpty()) {
+            return CompletableFuture.completedFuture(Optional.empty());
+        }
+        Map<String, Object> parameters = new LinkedHashMap<>(context.attributes());
+        return CompletableFuture.supplyAsync(
+                () -> runWithTiming(skillName, context.userId(), context.input(), parameters, () -> skill.get().run(context)),
                 skillExecutor
         ).thenApply(Optional::of);
     }

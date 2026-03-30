@@ -397,6 +397,10 @@ curl -X POST http://localhost:8080/api/skills/load-mcp \
   - provider endpoint map: `mindos.llm.provider-endpoints=openai:https://api.openai.com/v1/chat/completions,local:http://localhost:11434/v1/chat/completions,gemini:https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent,qwen:https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions`
   - provider key map: `mindos.llm.provider-keys=openai:sk-xxx,local:dummy-key,qwen:sk-qwen`
   - retry controls: `mindos.llm.retry.max-attempts` (default `3`), `mindos.llm.retry.delay-ms` (default `300`)
+  - Ark web search tool controls for `/responses` endpoints:
+    - `mindos.llm.ark.web-search.enabled` (default `true`)
+    - `mindos.llm.ark.web-search.stages` (comma-separated route stages such as `llm-fallback,skill-postprocess`; empty means no stage restriction)
+    - `mindos.llm.ark.web-search.platforms` (comma-separated channel/platform names such as `im,dingtalk`; empty means no platform restriction)
   - short TTL response cache (optional):
     - `mindos.llm.cache.enabled` (default `false`)
     - `mindos.llm.cache.ttl-seconds` (default `60`)
@@ -430,7 +434,7 @@ If you prefer cleaner secret handling for Gemini, use the same endpoint without 
     - `llmCache`: short TTL response cache status and effectiveness (`enabled`, `hitCount`, `missCount`, `hitRate`, `entryCount`, `ttlSeconds`, `maxEntries`)
     - `memoryWriteGate`: secondary semantic-duplicate write gate effectiveness (`secondaryDuplicateGateEnabled`, `secondaryDuplicateChecks`, `secondaryDuplicateIntercepted`, `secondaryDuplicateInterceptRate`)
     - `contextCompression`: dispatcher prompt-context compression effectiveness (`requests`, `compressedRequests`, `totalInputChars`, `totalOutputChars`, `avgCompressionRatio`, `summarizedTurns`)
-    - `skillPreAnalyze`: dispatcher pre-analyze gating stats (`mode`, `confidenceThreshold`, `requests`, `executed`, `accepted`, `skippedByGate`, `skippedBySkill`)
+    - `skillPreAnalyze`: dispatcher pre-analyze/guard stats (`mode`, `confidenceThreshold`, `requests`, `executed`, `accepted`, `skippedByGate`, `skippedBySkill`, `detectedSkillLoopSkipBlocked`, `skillTimeoutTriggered`)
     - `memoryHits`: prompt-memory retrieval hit stats (`requests`, `semanticHits`, `proceduralHits`, `rollupHits`, `approximateHitRate`)
     - `memoryContribution`: per-turn memory segment tags used for final reply construction (`requests`, `recentTagged`, `semanticTagged`, `proceduralTagged`, `personaTagged`, `rollupTagged`)
     - `llmCacheWindowHitRate`: cache hit rate within current `windowMinutes` only (better for release-over-release online effectiveness tracking)
@@ -464,6 +468,11 @@ If you prefer cleaner secret handling for Gemini, use the same endpoint without 
 - Dispatcher LLM skill-routing optimization controls:
   - `mindos.dispatcher.skill-routing.llm-shortlist-max-skills` (default `8`): only the top candidate skills are exposed to the LLM router prompt, reducing false positives and token cost when the skill catalog grows.
   - `mindos.dispatcher.skill-routing.conversational-bypass.enabled` (default `true`): short small-talk inputs such as `谢谢/好的/hello` skip the LLM skill-selection pass and go straight to normal chat fallback.
+  - `mindos.dispatcher.realtime-intent.bypass.enabled` (default `true`): weather/news/market-like realtime intents skip skill pre-analyze and go directly to `llm-fallback`, which can then cooperate with Ark `/responses` web search.
+  - `mindos.dispatcher.realtime-intent.terms` (comma-separated, default includes `天气/新闻/热点/汇率/股价/路况/航班/比赛/实时/最新`): configurable realtime intent cues for the fast path.
+  - `mindos.dispatcher.realtime-intent.memory-shrink.enabled` (default `true`): when realtime intents land on `llm-fallback`, suppresses regular memory sections to avoid stale topic contamination.
+  - `mindos.dispatcher.realtime-intent.memory-shrink.max-chars` (default `280`): cap for the shrunken realtime fallback prompt context budget.
+  - `mindos.dispatcher.realtime-intent.memory-shrink.include-persona` (default `true`): keeps only persona snapshot in the shrunken realtime fallback context (other memory segments stay suppressed).
   - `mindos.dispatcher.skill.pre-analyze.mode=auto|always|never` (default `auto`): controls whether low-certainty requests go through LLM skill pre-analysis.
   - `mindos.dispatcher.skill.pre-analyze.confidence-threshold` (default `0`): in `auto` mode, skip pre-analysis when best candidate confidence is below this threshold.
   - `mindos.dispatcher.skill.pre-analyze.skip-skills` (default `time`): skill names that should not be selected by LLM pre-analysis.
@@ -490,6 +499,10 @@ If you prefer cleaner secret handling for Gemini, use the same endpoint without 
   - `mindos.dispatcher.skill.guard.recent-window-size` (default `6`), recent procedural entries scanned for loop fingerprints.
   - `mindos.dispatcher.skill.guard.repeat-input-threshold` (default `2`), repeated same-skill + same-input fingerprints allowed within cooldown before blocking.
   - `mindos.dispatcher.skill.guard.cooldown-seconds` (default `180`), cooldown window for repeated same-input loop detection.
+  - `mindos.dispatcher.skill.guard.pre-execute-heavy.enabled` (default `true`), run loop guard before execution for configured heavy skills on explicit/rule/habit/llm-dsl routes.
+  - `mindos.dispatcher.skill.guard.pre-execute-heavy.skills` (default `eq.coach,teaching.plan,todo.create,code.generate,file.search,mcp.*`), heavy skill exact names/prefixes covered by pre-execute loop guard.
+  - `mindos.dispatcher.skill.timeout.eq-coach-im-ms` (default `12000`), IM-only timeout guard for `eq.coach` execution to avoid very long silent waits.
+  - `mindos.dispatcher.skill.timeout.eq-coach-im-reply` (default short Chinese fallback), timeout reply text returned when the IM `eq.coach` guard triggers.
 - Prompt-injection safety guard (default enabled):
   - `mindos.dispatcher.prompt-injection.guard.enabled` (default `true`)
   - `mindos.dispatcher.prompt-injection.guard.risk-terms` (comma-separated risky phrases)
@@ -695,7 +708,7 @@ Behavior in stream mode:
 - if the reply finishes before `mindos.im.dingtalk.stream.waiting-delay-ms`, MindOS sends only the final answer;
 - when `mindos.im.dingtalk.stream.force-waiting=true`, MindOS always sends waiting text first (even for fast replies) to avoid “silent” windows;
 - if the reply is still running after that delay, MindOS first sends the waiting text, then pushes the final answer when the dispatcher finishes;
-- if async processing exceeds `mindos.im.dingtalk.stream.final-timeout-ms`, MindOS sends a timeout-friendly fallback reply to avoid hanging conversations;
+- if async processing exceeds `mindos.im.dingtalk.stream.final-timeout-ms`, MindOS sends another waiting notice (non-terminal) and still delivers the real final reply when processing completes;
 - if stream startup fails (for example DingTalk `503 ServiceUnavailable`), MindOS retries with exponential backoff using `mindos.im.dingtalk.stream.reconnect.*` settings;
 - webhook timeout settings still apply to `/api/im/dingtalk/events`, but they are no longer the primary receive path once DingTalk is switched to `Stream 模式推送` in the developer console.
 
