@@ -295,6 +295,12 @@ public class AssistantSdkClient {
                 "Failed to call MindOS MCP skill reload endpoint");
     }
 
+    public Map<String, Object> reloadCloudApiSkills() {
+        return postForMap(baseUri.resolve("/api/skills/reload-cloud"), Map.of(),
+                "MindOS cloud API skill reload call interrupted",
+                "Failed to call MindOS cloud API skill reload endpoint");
+    }
+
     public Map<String, Object> loadMcpServer(String alias, String url) {
         return loadMcpServer(alias, url, Map.of());
     }

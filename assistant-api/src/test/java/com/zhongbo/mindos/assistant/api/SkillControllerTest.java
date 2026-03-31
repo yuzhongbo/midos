@@ -65,6 +65,14 @@ class SkillControllerTest {
     }
 
     @Test
+    void shouldReloadCloudApiSkills() throws Exception {
+        mockMvc.perform(post("/api/skills/reload-cloud"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("ok"))
+                .andExpect(jsonPath("$.reloaded").isNumber());
+    }
+
+    @Test
     void shouldRejectLoadMcpRequestWithoutAlias() throws Exception {
         mockMvc.perform(post("/api/skills/load-mcp")
                         .contentType(MediaType.APPLICATION_JSON)

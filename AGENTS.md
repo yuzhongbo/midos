@@ -12,22 +12,21 @@ This repository is a lightweight, single-user personal AI assistant backend. Opt
 - Modules and boundaries:
   - `assistant-api`: REST entrypoint and Spring Boot app
   - `assistant-dispatcher`: routes user input to skills/LLM
-  - `assistant-memory`: episodic, semantic, procedural memory services (single-host file-backed central repository default; JDBC central repository auto-enabled when a `DataSource` exists; in-memory fallback kept)
-  - `assistant-skill`: skill interface, registry, DSL execution, example skills; `loader/` sub-package for custom JSON skills and external JAR plugins; `mcp/` sub-package for MCP tool adapters over HTTP JSON-RPC
+  - `assistant-memory`: episodic, semantic, procedural memory services (in-memory default; JDBC central repository auto-enabled when a `DataSource` exists)
+  - `assistant-skill`: skill interface, registry, DSL execution, example skills; `loader/` sub-package for custom JSON skills and external JAR plugins; `mcp/` sub-package for MCP tool adapters over HTTP JSON-RPC; `cloudapi/` sub-package for semantic cloud API skill adapters
   - `assistant-llm`: API-key-based LLM client adapter (supports global/per-user keys plus provider-specific keys/endpoints; stubbed response when key missing)
   - `assistant-common`: shared contracts (`SkillDsl`, `SkillContext`, `SkillResult`, `LlmClient`)
   - `assistant-sdk`: Java SDK for client-side server calls
   - `mindos-cli`: Picocli command-line client using `assistant-sdk`; default entrypoint opens an interactive chat session and slash commands handle common session/profile/memory actions in one window
-- Runtime flow: `/chat` (backward compatible with `/api/chat`; JSON + SSE stream via `text/event-stream`) -> dispatcher -> (DSL/skill engine or LLM fallback) -> memory updates.
-- IM integration flow (optional): `/api/im/feishu/events`, `/api/im/dingtalk/events`, `/api/im/wechat/events` -> dispatcher chat route -> platform text response. DingTalk also supports optional robot Stream 模式推送 for slow replies; when enabled, MindOS sends a short waiting status and then pushes the final answer asynchronously.
+- Runtime flow: `/chat` (backward compatible with `/api/chat`) -> dispatcher -> (DSL/skill engine or LLM fallback) -> memory updates.
+- IM integration flow (optional): `/api/im/feishu/events`, `/api/im/dingtalk/events`, `/api/im/wechat/events` -> dispatcher chat route -> platform text response.
 - IM 文本也支持 memory 自然语言入口：如“查看记忆风格”“按任务聚焦压缩这段记忆：...”“根据这段话微调记忆风格：...”。
 - Multi-terminal memory flow: `/api/memory/{userId}/sync` with cursor-based pull (`GET`) and idempotent push (`POST eventId`).
 - Long-task orchestration flow: `/api/tasks/{userId}` for create/list/detail + `/api/tasks/{userId}/claim` for lease-based worker claiming + `/api/tasks/{userId}/{taskId}/progress|status` for multi-day progress updates.
 - Long-task auto-advancer: `/api/tasks/{userId}/auto-run` manual trigger plus optional background scheduler via `mindos.tasks.auto-run.*` properties.
 - Persona inspection flow: `/api/memory/{userId}/persona` (`GET`) returns the confirmed long-term persona profile learned for that user.
 - Persona explain flow: `/api/memory/{userId}/persona/explain` (`GET`) returns confirmed profile plus pending override candidates for debug visibility.
-- Memory retrieve-preview flow: `/api/memory/{userId}/retrieve-preview` (`GET`) returns prompt memory context preview; optional admin-token gating via `mindos.security.memory.retrieve-preview.require-admin-token`.
-- LLM metrics flow: `/api/metrics/llm` (`GET`) returns windowed call stats (provider aggregates, success/fallback rate, latency, estimated token usage, optional recent calls) plus `securityAudit` writer summary (`queueDepth`, `enqueuedCount`, `writtenCount`, fallback/flush counters); `/api/metrics/llm/routing-replay` (`GET`) exposes recent routing replay samples.
+- LLM metrics flow: `/api/metrics/llm` (`GET`) returns windowed call stats (provider aggregates, success/fallback rate, latency, estimated token usage, optional recent calls) plus `securityAudit` writer summary (`queueDepth`, `enqueuedCount`, `writtenCount`, fallback/flush counters).
 - LLM auto-routing supports optional stage mapping via `mindos.llm.routing.mode` and `mindos.llm.routing.stage-map`; per-request `profile.llmProvider` can still force a single provider or `auto`.
 - Memory compression planning flow: `/api/memory/{userId}/style` (`GET`/`POST`) + `/api/memory/{userId}/compress-plan` (`POST`) for gradual compression with per-user style profile.
 - `compress-plan` 可选 `focus`（learning/task/review）；`style` 更新可选 `autoTune=true&sampleText=...` 做轻量风格微调。
@@ -37,19 +36,17 @@ This repository is a lightweight, single-user personal AI assistant backend. Opt
 - `eq.coach` 风险词支持系统属性覆盖（`mindos.eq.coach.risk.high-terms`、`mindos.eq.coach.risk.medium-terms`，逗号分隔）。
 
 ## Repository map
-- `assistant-api/src/main/java/com/zhongbo/mindos/assistant/api/ChatController.java`: chat HTTP interface (`/chat` + `/api/chat`, JSON + SSE stream).
-- `assistant-api/src/main/java/com/zhongbo/mindos/assistant/api/MemorySyncController.java`: memory sync/style/compress-plan/persona APIs and prompt memory retrieve-preview endpoint.
+- `assistant-api/src/main/java/com/zhongbo/mindos/assistant/api/ChatController.java`: chat HTTP interface.
+- `assistant-api/src/main/java/com/zhongbo/mindos/assistant/api/MemorySyncController.java`: memory sync/style/compress-plan/persona APIs.
 - `assistant-api/src/main/java/com/zhongbo/mindos/assistant/api/SkillController.java`: lists/reloads custom skills and loads external JAR skills.
 - `assistant-api/src/main/java/com/zhongbo/mindos/assistant/api/LongTaskController.java`: long-task APIs for multi-worker claiming and progress updates.
 - `assistant-api/src/main/java/com/zhongbo/mindos/assistant/api/LlmMetricsController.java`: LLM metrics API and recent-call window query.
 - `assistant-api/src/main/java/com/zhongbo/mindos/assistant/api/SecurityChallengeController.java`: challenge issuing + security audit query/read APIs.
 - `assistant-api/src/main/java/com/zhongbo/mindos/assistant/api/im/ImWebhookController.java`: Feishu/DingTalk/WeChat webhook adapter entrypoints.
-- `assistant-api/src/main/java/com/zhongbo/mindos/assistant/api/im/`: also contains DingTalk stream-mode lifecycle / outbound sender helpers.
 - `assistant-skill/src/main/java/com/zhongbo/mindos/assistant/skill/mcp/McpSkillLoader.java`: maps configured MCP servers to namespaced skills (`mcp.<alias>.<tool>`).
 - `assistant-dispatcher/src/main/java/com/zhongbo/mindos/assistant/dispatcher/DispatcherService.java`: intent routing and memory orchestration.
-- `assistant-dispatcher/src/main/java/com/zhongbo/mindos/assistant/dispatcher/MetaOrchestratorService.java`: post-reply critique/rewrite orchestrator used by dispatcher.
 - `assistant-skill/src/main/java/com/zhongbo/mindos/assistant/skill/SkillEngine.java`: skill execution + procedural logging.
-- `assistant-memory/src/main/java/com/zhongbo/mindos/assistant/memory/`: memory stores plus central repository selection in `CentralMemoryRepositoryConfig` (JDBC when `DataSource` exists; otherwise file-backed default with in-memory fallback).
+- `assistant-memory/src/main/java/com/zhongbo/mindos/assistant/memory/`: in-memory stores plus optional JDBC-backed central memory repository selection (`CentralMemoryRepositoryConfig`).
 - `assistant-api/src/main/resources/application.properties`: app and LLM settings.
 - `assistant-api/src/main/resources/application-solo.properties`: single-user experience profile overrides (cache/context/rollup/metrics token requirement).
 - `assistant-sdk/src/main/java/com/zhongbo/mindos/assistant/sdk/AssistantSdkClient.java`: client-side HTTP SDK skeleton.
@@ -62,19 +59,13 @@ This repository is a lightweight, single-user personal AI assistant backend. Opt
 - Run API locally: `./mvnw -pl assistant-api -am spring-boot:run`
 - Run API locally in solo profile: `./mvnw -pl assistant-api -am spring-boot:run -Dspring-boot.run.profiles=solo`
 - Solo helper scripts: `./run-mindos-solo.sh`, `./solo-cli.sh`, `./solo-smoke.sh`, `./solo-stop.sh` (CLI semantics unchanged; wrappers only set defaults/check health)
-- Windows self-use helpers: `run-mindos-solo.bat`, `solo-smoke.bat`, `install-mindos-server.bat` (package `assistant-api`, run solo profile, smoke-check `/chat` + `/api/metrics/llm`)
-- Portable Windows bundle export: `./export-mindos-windows-dist.sh /path/to/output-dir` (builds `assistant-api` and writes copy-ready `mindos-server.bat` / `mindos-server-smoke.bat` / `mindos-server-stop.bat` next to the jar)
 - Build all modules: `./mvnw clean package`
 - Fast SDK/CLI validation: `./mvnw -q -pl assistant-sdk,mindos-cli -am test`
 - Fast memory sync API validation: `./mvnw -q -pl assistant-api -am test -Dtest=MemorySyncControllerTest`
 - Fast memory sync performance baseline validation: `./mvnw -q -pl assistant-memory -am test -Dtest=MemorySyncServiceTest#shouldMeetBasicSyncPerformanceBaseline -Dsurefire.failIfNoSpecifiedTests=false` (optional tuning: `-Dmindos.memory.sync.perf-baseline-ms=5000 -Dmindos.memory.sync.perf-retries=2`)
 - Fast skill management API validation: `./mvnw -q -pl assistant-api -am test -Dtest=SkillControllerTest`
 - Fast security audit API validation: `./mvnw -q -pl assistant-api -am test -Dtest=SecurityAuditApiTest`
-- Fast memory retrieve-preview security validation: `./mvnw -q -pl assistant-api -am test -Dtest=MemoryRetrievePreviewSecurityTest`
-- Fast LLM metrics API validation: `./mvnw -q -pl assistant-api -am test -Dtest=LlmMetricsControllerTest`
 - Fast IM webhook validation: `./mvnw -q -pl assistant-api -am test -Dtest=im.ImWebhookControllerTest`
-- Signed DingTalk webhook quick call (when signature verification enabled): `./dingtalk-signed-call.sh --base-url https://bot.example.com --secret '<dingtalk-sign-secret>' --text 'echo hi'`
-- DingTalk stream mode config keys: `mindos.im.dingtalk.stream.*` and `mindos.im.dingtalk.outbound.*`; if新增或调整键名/默认值，需同步更新 `README.md` 与 Windows/env 模板。
 - Fast solo profile smoke validation: `./mvnw -q -pl assistant-api -am test -Dtest=SoloProfileSmokeTest`
 
 ## Project conventions
@@ -84,7 +75,6 @@ This repository is a lightweight, single-user personal AI assistant backend. Opt
 - Provider routing override for one chat request is passed via `AssistantProfileDto.llmProvider`; named cost/quality selection can also use `AssistantProfileDto.llmPreset`, both forwarded by `ChatController` into dispatcher/LLM context.
 - Dispatcher prompt/reply budget and loop guard are configurable via `mindos.dispatcher.prompt.max-chars`, `mindos.dispatcher.memory-context.max-chars`, `mindos.dispatcher.llm-reply.max-chars`, `mindos.dispatcher.skill.guard.max-consecutive`, `mindos.dispatcher.skill.guard.recent-window-size`, `mindos.dispatcher.skill.guard.repeat-input-threshold`, and `mindos.dispatcher.skill.guard.cooldown-seconds`.
 - Prompt-injection guard and risky operation policy are configurable via `mindos.dispatcher.prompt-injection.guard.*` and `mindos.security.risky-ops.*` / `mindos.security.skill.*`.
-- Routing replay sample retention for `/api/metrics/llm/routing-replay` is configurable via `mindos.dispatcher.routing-replay.max-samples`.
 - One-time challenge approval uses `/api/security/challenge` and `mindos.security.risky-ops.challenge-*`; skill capability whitelist uses `mindos.security.skill.capability-*`; structured audit logs use `mindos.security.audit.*`.
 - Metrics endpoint auth is configurable via `mindos.security.metrics.require-admin-token` (default enabled, validates `mindos.security.risky-ops.admin-token-*`).
 - Challenge approval is strict (`operation + resource + actor + IP`, one-time consume); security audit supports traceId and recent-event query via `/api/security/audit` and filtered signed-cursor query via `/api/security/audit/query` (JWT-style cursor + expiry + key-version `kid`).
@@ -92,8 +82,8 @@ This repository is a lightweight, single-user personal AI assistant backend. Opt
 - Dispatcher auto-routing can execute registered skills via `Skill.supports(...)`, so MCP tool descriptions/names should stay specific enough to avoid accidental matches.
 - New skills should implement `Skill` and be autodiscovered as Spring components.
 - Preserve `contextLoads()` smoke test in `assistant-api` when adding integrations.
-- Keep this repo single-user by default; central memory repository fallback order is JDBC (when `DataSource` exists) -> file-backed (`mindos.memory.file-repo.*`) -> in-memory.
-- If wiring persistence, follow `CentralMemoryRepositoryConfig`: keep file/in-memory fallback and let JDBC activation remain conditional on `DataSource` presence.
+- Keep this repo single-user and in-memory by default; persistence can be layered later.
+- If wiring persistence, follow `CentralMemoryRepositoryConfig`: keep in-memory fallback and let JDBC activation be conditional on `DataSource` presence.
 
 ## Agent checklist
 - Before edits, confirm target module ownership and dependency direction.
@@ -165,6 +155,59 @@ This repository is a lightweight, single-user personal AI assistant backend. Opt
   - `assistant-api/src/test/java/com/zhongbo/mindos/assistant/api/im/ImWebhookControllerTest.java`
   - `mindos-cli/src/test/java/com/zhongbo/mindos/assistant/cli/CommandNluParserTest.java`
   - `mindos-cli/src/test/java/com/zhongbo/mindos/assistant/cli/MindosCliApplicationTest.java`
+
+---
+
+### 云端 API Skill（cloudapi）
+
+#### 设计目标
+允许通过 JSON 配置文件定义调用任意云端 REST API 的 Skill，并通过语义关键词实现自动路由匹配。
+
+#### 核心文件
+- `assistant-skill/src/main/java/com/zhongbo/mindos/assistant/skill/cloudapi/CloudApiSkillDefinition.java`：JSON 定义 record，描述 API endpoint、参数模板、关键词等
+- `assistant-skill/src/main/java/com/zhongbo/mindos/assistant/skill/cloudapi/CloudApiSkill.java`：实现 `Skill` 接口，语义匹配 + HTTP 调用 + 结果提取
+- `assistant-skill/src/main/java/com/zhongbo/mindos/assistant/skill/cloudapi/CloudApiSkillLoader.java`：Spring 组件，从配置目录加载 `.json` 定义并注册到 `SkillRegistry`
+
+#### 配置方式（application.properties）
+```properties
+mindos.skills.cloud-api.config-dir=/path/to/cloud-skills
+```
+
+#### 定义文件示例（weather-query.json）
+```json
+{
+  "name": "weather.query",
+  "description": "Queries current weather for a given city",
+  "keywords": ["天气", "weather", "温度", "forecast"],
+  "url": "https://api.weatherstack.com/current",
+  "method": "GET",
+  "queryParams": {
+    "access_key": "${apiKey}",
+    "query": "${input.city}"
+  },
+  "apiKey": "your-api-key",
+  "resultPath": "current",
+  "resultTemplate": "天气：${weather_descriptions}, 温度：${temperature}°C, 湿度：${humidity}%"
+}
+```
+
+#### 模板占位符规则
+- `${input}` — 完整用户输入文本
+- `${input.fieldName}` — SkillContext 中的 attribute 字段
+- `${apiKey}` — 定义文件中的 `apiKey` 字段
+- `${env.VAR_NAME}` — 系统环境变量
+
+#### 语义匹配规则（supports()）
+1. 用户输入以 skill name 开头时匹配
+2. 输入包含任一 `keywords` 关键词时匹配（大小写不敏感）
+
+#### API 热重载
+- `POST /api/skills/reload-cloud` — 从配置目录重新加载所有云端 API skill 定义
+- SDK：`client.reloadCloudApiSkills()`
+
+#### 回归测试
+- `assistant-skill/src/test/java/com/zhongbo/mindos/assistant/skill/cloudapi/CloudApiSkillTest.java`
+- `assistant-skill/src/test/java/com/zhongbo/mindos/assistant/skill/cloudapi/CloudApiSkillLoaderTest.java`
 
 ---
 
