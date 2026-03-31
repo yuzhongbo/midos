@@ -20,6 +20,7 @@ import com.zhongbo.mindos.assistant.skill.Skill;
 import com.zhongbo.mindos.assistant.skill.SkillDslExecutor;
 import com.zhongbo.mindos.assistant.skill.SkillEngine;
 import com.zhongbo.mindos.assistant.skill.SkillRegistry;
+import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalysisService;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayDeque;
@@ -59,7 +60,7 @@ class DispatcherServiceTest {
                 new FixedSkill("code.generate", "Generate code and repair Spring API bugs", "代码修复完成"),
                 new FixedSkill("eq.coach", "Coach emotional communication conflicts", "沟通建议"),
                 new FixedSkill("teaching.plan", "Generate study plans and teaching plans", "学习计划")
-        ), 1);
+        ), 1, false);
 
         DispatchResult result = service.dispatch("coding-user", "帮我修复 Spring 接口 bug");
 
@@ -94,6 +95,23 @@ class DispatcherServiceTest {
         assertFalse(llmClient.routingPrompts().isEmpty());
         assertTrue(llmClient.routingPrompts().get(0).contains("echo - Echo text for generic confirmation requests"));
         assertEquals("llm-dsl", result.executionTrace().routing().route());
+    }
+
+    @Test
+    void shouldRouteViaSemanticAnalysisWhenHeuristicsSuggestLocalSkill() {
+        MemoryManager memoryManager = createMemoryManager();
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of("stub"));
+        DispatcherService service = createDispatcher(memoryManager, llmClient, List.of(
+                new FixedSkill("todo.create", "Creates todo items from natural language", "待办已创建")
+        ), 2, true);
+
+        DispatchResult result = service.dispatch("semantic-user", "帮我创建一个待办，截止周五前提交周报");
+
+        assertEquals("todo.create", result.channel());
+        assertEquals("semantic-analysis", result.executionTrace().routing().route());
+        assertEquals("todo.create", result.executionTrace().routing().selectedSkill());
+        assertEquals(0, llmClient.routingCallCount());
+        assertEquals(0, llmClient.fallbackCallCount());
     }
 
     @Test
@@ -133,9 +151,18 @@ class DispatcherServiceTest {
                                                RecordingLlmClient llmClient,
                                                List<Skill> skills,
                                                int llmShortlistMaxSkills) {
+        return createDispatcher(memoryManager, llmClient, skills, llmShortlistMaxSkills, true);
+    }
+
+    private DispatcherService createDispatcher(MemoryManager memoryManager,
+                                               RecordingLlmClient llmClient,
+                                               List<Skill> skills,
+                                               int llmShortlistMaxSkills,
+                                               boolean semanticAnalysisEnabled) {
         SkillRegistry registry = new SkillRegistry(skills);
         SkillDslExecutor dslExecutor = new SkillDslExecutor(registry);
         SkillEngine skillEngine = new SkillEngine(registry, dslExecutor, memoryManager);
+        SemanticAnalysisService semanticAnalysisService = new SemanticAnalysisService(llmClient, registry, semanticAnalysisEnabled, false, "");
         SkillDslParser parser = new SkillDslParser(new SkillDslValidator());
         MetaOrchestratorService metaOrchestratorService = new MetaOrchestratorService(false);
         SkillCapabilityPolicy capabilityPolicy = new SkillCapabilityPolicy(false, "fs.read,fs.write,exec,net", "");
@@ -148,6 +175,7 @@ class DispatcherServiceTest {
                 personaCoreService,
                 memoryManager,
                 llmClient,
+                semanticAnalysisService,
                 false,
                 true,
                 2,
@@ -170,7 +198,8 @@ class DispatcherServiceTest {
                 llmShortlistMaxSkills,
                 true,
                 2,
-                4
+                4,
+                0.72
         );
     }
 
@@ -246,4 +275,3 @@ class DispatcherServiceTest {
         }
     }
 }
-

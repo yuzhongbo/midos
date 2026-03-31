@@ -155,6 +155,21 @@ Chat 与记忆操作：
 - `把服务端地址改成 localhost:19090` -> `/server http://localhost:19090`（自动补全协议，需确认）
 - `请接入mcp https://docs.example.com/mcp，简称 docs-cn` -> `/skill load-mcp --alias docs-cn --url ...`（需确认）
 
+### 语义分析 skill 与前置意图整理
+
+- 内置 `semantic.analyze` skill，可显式查看系统如何理解你的请求，例如：
+  - `semantic 帮我修复 Spring 接口 bug`
+  - `请先做语义分析：帮我创建一个待办，截止周五前提交周报`
+- Dispatcher 默认会先做一层轻量语义整理，再决定：
+  - 直接路由到本地 skill
+  - 交给 LLM 做自然回复
+  - 把语义整理结果附加到后续提示词中，提升意图理解准确率
+- 可选配置：
+  - `mindos.dispatcher.semantic-analysis.enabled=true`：启用语义整理
+  - `mindos.dispatcher.semantic-analysis.llm-enabled=true`：允许额外调用 LLM 做语义分析
+  - `mindos.dispatcher.semantic-analysis.delegate-skill=mcp.<alias>.<tool>`：把语义分析委托给已接入的 MCP skill
+  - `mindos.dispatcher.semantic-analysis.route-min-confidence=0.72`：语义分析直接路由到本地 skill 的最小置信度
+
 ### 高级/排障命令速查（可选）
 
 仅在排障或高级场景使用；平时建议直接自然语言输入。
@@ -508,4 +523,3 @@ curl -X POST http://localhost:8080/api/skills/load-mcp \
 ./mvnw -q -pl assistant-api -am test -Dtest=MemorySyncControllerTest
 ./mvnw -q test
 ```
-
