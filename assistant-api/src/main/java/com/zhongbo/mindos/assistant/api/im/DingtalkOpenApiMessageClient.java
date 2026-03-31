@@ -24,6 +24,7 @@ import java.util.logging.Logger;
 public class DingtalkOpenApiMessageClient {
 
     private static final Logger LOGGER = Logger.getLogger(DingtalkOpenApiMessageClient.class.getName());
+    private static final long DEFAULT_ACCESS_TOKEN_EXPIRY_SECONDS = 7200L;
 
     private final HttpClient httpClient;
     private final ObjectMapper objectMapper;
@@ -148,7 +149,7 @@ public class DingtalkOpenApiMessageClient {
             }
             // Accept common DingTalk token field variants across v1/legacy responses (camelCase and snake_case).
             String token = readText(response, "accessToken", "access_token");
-            long expiresIn = readLong(response, 7200L, "expireIn", "expiresIn", "expires_in");
+            long expiresIn = readLong(response, DEFAULT_ACCESS_TOKEN_EXPIRY_SECONDS, "expireIn", "expiresIn", "expires_in");
             if (token.isBlank()) {
                 LOGGER.warning("DingTalk OpenAPI access token response missing token field");
                 return null;

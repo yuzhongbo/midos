@@ -528,7 +528,7 @@ public class ImGatewayService {
         if (platform != ImPlatform.DINGTALK) {
             return null;
         }
-        List<LongTask> pending = memoryManager.listLongTasks(userId, "BLOCKED").stream()
+        List<LongTask> pending = memoryManager.listLongTasks(userId, LongTaskStatus.BLOCKED.name()).stream()
                 .filter(this::isPendingCompensationTask)
                 .limit(MAX_COMPENSATION_RESULTS)
                 .toList();
