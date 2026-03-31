@@ -86,6 +86,33 @@ class ImWebhookControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.msgtype").value("text"))
                 .andExpect(jsonPath("$.text.content").isNotEmpty());
+
+        mockMvc.perform(get("/api/memory/ding-user/retrieve-preview")
+                        .param("query", "echo hi")
+                        .param("maxChars", "900")
+                        .param("language", "zh-CN"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.recentConversation").isString())
+                .andExpect(jsonPath("$.semanticContext").isString())
+                .andExpect(jsonPath("$.proceduralHints").isString())
+                .andExpect(jsonPath("$.debugTopItems").isArray())
+                .andExpect(jsonPath("$.personaSnapshot.language").value("zh-CN"));
+    }
+
+    @Test
+    void shouldCapDingtalkWebhookReplyLength() throws Exception {
+        String longPayload = "{" +
+                "\"senderId\":\"ding-cap-user\"," +
+                "\"conversationId\":\"conv-cap\"," +
+                "\"text\":{\"content\":\"echo 12345678901234567890123456789012345678901234567890123456789012345678901234567890\"}" +
+                "}";
+
+        mockMvc.perform(post("/api/im/dingtalk/events")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(longPayload))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.msgtype").value("text"))
+                .andExpect(jsonPath("$.text.content").value(org.hamcrest.Matchers.matchesPattern("^.{1,80}$")));
     }
 
     @Test
@@ -292,6 +319,24 @@ class ImWebhookControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.msgtype").value("text"))
                 .andExpect(jsonPath("$.text.content").value(org.hamcrest.Matchers.containsString("关键约束已保留")));
+    }
+
+    @Test
+    void shouldReturnFriendlyFallbackWhenImLlmIsUnavailable() throws Exception {
+        String payload = "{" +
+                "\"senderId\":\"ding-llm-user\"," +
+                "\"conversationId\":\"conv-llm\"," +
+                "\"text\":{\"content\":\"继续按之前方式\"}" +
+                "}";
+
+        mockMvc.perform(post("/api/im/dingtalk/events")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(payload))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.msgtype").value("text"))
+                .andExpect(jsonPath("$.text.content").value(ImReplySanitizer.AUTH_IM_FALLBACK_REPLY))
+                .andExpect(jsonPath("$.text.content").value(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("[LLM"))))
+                .andExpect(jsonPath("$.text.content").value(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("继续按之前方式"))));
     }
 
     @Test

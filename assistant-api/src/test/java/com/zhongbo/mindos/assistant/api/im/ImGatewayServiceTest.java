@@ -1,5 +1,6 @@
 package com.zhongbo.mindos.assistant.api.im;
 
+import com.zhongbo.mindos.assistant.common.ImDegradedReplyMarker;
 import com.zhongbo.mindos.assistant.dispatcher.DispatchResult;
 import com.zhongbo.mindos.assistant.dispatcher.DispatcherService;
 import com.zhongbo.mindos.assistant.memory.MemoryConsolidationService;
@@ -11,8 +12,17 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.logging.Handler;
+import java.util.logging.Level;
+import java.util.logging.LogRecord;
+import java.util.logging.Logger;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.contains;
@@ -84,6 +94,95 @@ class ImGatewayServiceTest {
 
         assertTrue(reply.contains("normal"));
         verify(dispatcherService).dispatch(eq("im:wechat:u2"), eq("要"), any());
+    }
+
+    @Test
+    void shouldSanitizeLeakedSkeletonPromptFromDispatcherReply() {
+        DispatcherService dispatcherService = mock(DispatcherService.class);
+        MemoryManager memoryManager = mock(MemoryManager.class);
+        MemoryConsolidationService consolidationService = new MemoryConsolidationService();
+        ImGatewayService service = new ImGatewayService(dispatcherService, memoryManager, consolidationService);
+
+        when(dispatcherService.dispatch(eq("im:dingtalk:u4"), eq("优化记忆"), any()))
+                .thenReturn(new DispatchResult(
+                        "[LLM gemini] skeleton response for user im:dingtalk:u4: Answer naturally using the context when helpful.\n"
+                                + "Recent conversation:\n"
+                                + "- user: 你好测试一下\n"
+                                + "Relevant knowledge:\n"
+                                + "- none\n"
+                                + "User skill habits:\n"
+                                + "- none\n"
+                                + "User input: 优化记忆",
+                        "llm"
+                ));
+
+        Logger logger = Logger.getLogger(ImGatewayService.class.getName());
+        CapturingHandler handler = new CapturingHandler();
+        Level previousLevel = logger.getLevel();
+        logger.setLevel(Level.ALL);
+        logger.addHandler(handler);
+
+        String reply;
+        try {
+            reply = service.chat(ImPlatform.DINGTALK, "u4", "c4", "优化记忆");
+        } finally {
+            logger.removeHandler(handler);
+            logger.setLevel(previousLevel);
+        }
+
+        assertEquals(ImReplySanitizer.FRIENDLY_IM_FALLBACK_REPLY, reply);
+        String logs = handler.joinedMessages();
+        assertTrue(logs.contains("\"event\":\"im.reply.degraded\""));
+        assertTrue(logs.contains("\"platform\":\"dingtalk\""));
+        assertTrue(logs.contains("\"replySource\":\"dispatcher:llm\""));
+        assertTrue(logs.contains("\"provider\":\"gemini\""));
+        assertTrue(logs.contains("\"errorCategory\":\"unavailable\""));
+        assertTrue(logs.contains("\"fallbackKind\":\"friendly\""));
+        assertTrue(logs.contains("llm_marker"));
+        assertTrue(logs.contains("skeleton_mode"));
+        assertTrue(logs.contains("prompt_template_leak"));
+    }
+
+    @Test
+    void shouldCompleteAsyncDingtalkReplyThroughDispatcher() throws Exception {
+        DispatcherService dispatcherService = mock(DispatcherService.class);
+        MemoryManager memoryManager = mock(MemoryManager.class);
+        MemoryConsolidationService consolidationService = new MemoryConsolidationService();
+        ImGatewayService service = new ImGatewayService(dispatcherService, memoryManager, consolidationService);
+
+        when(dispatcherService.dispatchAsync(eq("im:dingtalk:u5"), eq("继续生成"), any()))
+                .thenReturn(java.util.concurrent.CompletableFuture.completedFuture(new DispatchResult(
+                        ImDegradedReplyMarker.encode("gemini", "timeout"),
+                        "llm"
+                )));
+
+        String reply = service.chatAsync(ImPlatform.DINGTALK, "u5", "c5", "继续生成").get(1, TimeUnit.SECONDS);
+
+        assertEquals(ImReplySanitizer.TIMEOUT_IM_FALLBACK_REPLY, reply);
+        service.shutdown();
+    }
+
+    @Test
+    void shouldReturnAsyncFutureBeforeSlowDispatcherCompletes() throws Exception {
+        DispatcherService dispatcherService = mock(DispatcherService.class);
+        MemoryManager memoryManager = mock(MemoryManager.class);
+        MemoryConsolidationService consolidationService = new MemoryConsolidationService();
+        ImGatewayService service = new ImGatewayService(dispatcherService, memoryManager, consolidationService);
+
+        CompletableFuture<DispatchResult> slowReply = new CompletableFuture<>();
+        when(dispatcherService.dispatchAsync(eq("im:dingtalk:u6"), eq("继续"), any()))
+                .thenReturn(slowReply);
+
+        long startedAt = System.nanoTime();
+        CompletableFuture<String> replyFuture = service.chatAsync(ImPlatform.DINGTALK, "u6", "c6", "继续");
+        long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt);
+
+        assertFalse(replyFuture.isDone());
+        assertTrue(elapsedMs < 200, "chatAsync should return quickly so stream waiting status can be scheduled");
+
+        slowReply.complete(new DispatchResult("好的，继续。", "llm"));
+        assertEquals("好的，继续。", replyFuture.get(1, TimeUnit.SECONDS));
+        service.shutdown();
     }
 
     @Test
