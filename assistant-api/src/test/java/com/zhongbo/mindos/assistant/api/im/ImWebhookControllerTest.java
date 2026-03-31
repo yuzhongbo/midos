@@ -1,6 +1,9 @@
 package com.zhongbo.mindos.assistant.api.im;
 
 import com.sun.net.httpserver.HttpServer;
+import com.zhongbo.mindos.assistant.memory.MemoryManager;
+import com.zhongbo.mindos.assistant.memory.model.LongTask;
+import com.zhongbo.mindos.assistant.memory.model.LongTaskStatus;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -9,6 +12,7 @@ import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.net.InetSocketAddress;
+import java.net.ServerSocket;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -35,6 +39,9 @@ class ImWebhookControllerTest {
 
     @Autowired
     private MockMvc mockMvc;
+
+    @Autowired
+    private MemoryManager memoryManager;
 
     @Test
     void shouldHandleFeishuChallengeAndTextEvent() throws Exception {
@@ -118,6 +125,93 @@ class ImWebhookControllerTest {
         } finally {
             callbackServer.stop(0);
         }
+    }
+
+    @Test
+    void shouldSupportDingtalkProgressAndResultQueriesAfterAsyncDeliveryFailure() throws Exception {
+        int unusedPort = reserveUnusedPort();
+        String payload = "{" +
+                "\"senderId\":\"ding-query-user\"," +
+                "\"conversationId\":\"conv-query\"," +
+                "\"sessionWebhook\":\"http://127.0.0.1:" + unusedPort + "/callback\"," +
+                "\"sessionWebhookExpiredTime\":" + (System.currentTimeMillis() + 60_000L) + "," +
+                "\"text\":{\"content\":\"echo query result\"}" +
+                "}";
+
+        mockMvc.perform(post("/api/im/dingtalk/events")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(payload))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.text.content").value(org.hamcrest.Matchers.containsString("正在处理中")));
+
+        LongTask blockedTask = awaitTask("im:dingtalk:ding-query-user", LongTaskStatus.BLOCKED, 5);
+        org.junit.jupiter.api.Assertions.assertNotNull(blockedTask);
+
+        String progressPayload = "{" +
+                "\"senderId\":\"ding-query-user\"," +
+                "\"conversationId\":\"conv-query\"," +
+                "\"text\":{\"content\":\"查进度 " + blockedTask.taskId() + "\"}" +
+                "}";
+
+        mockMvc.perform(post("/api/im/dingtalk/events")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(progressPayload))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.msgtype").value("text"))
+                .andExpect(jsonPath("$.text.content").value(org.hamcrest.Matchers.containsString(blockedTask.taskId())))
+                .andExpect(jsonPath("$.text.content").value(org.hamcrest.Matchers.containsString("未成功送达")))
+                .andExpect(jsonPath("$.text.content").value(org.hamcrest.Matchers.containsString("query result")));
+
+        String resultPayload = "{" +
+                "\"senderId\":\"ding-query-user\"," +
+                "\"conversationId\":\"conv-query\"," +
+                "\"text\":{\"content\":\"查看结果 " + blockedTask.taskId() + "\"}" +
+                "}";
+
+        mockMvc.perform(post("/api/im/dingtalk/events")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(resultPayload))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.msgtype").value("text"))
+                .andExpect(jsonPath("$.text.content").value(org.hamcrest.Matchers.containsString(blockedTask.taskId())))
+                .andExpect(jsonPath("$.text.content").value(org.hamcrest.Matchers.containsString("query result")));
+    }
+
+    @Test
+    void shouldCompensateUndeliveredAsyncResultOnNextDingtalkMessage() throws Exception {
+        int unusedPort = reserveUnusedPort();
+        String payload = "{" +
+                "\"senderId\":\"ding-comp-user\"," +
+                "\"conversationId\":\"conv-comp\"," +
+                "\"sessionWebhook\":\"http://127.0.0.1:" + unusedPort + "/callback\"," +
+                "\"sessionWebhookExpiredTime\":" + (System.currentTimeMillis() + 60_000L) + "," +
+                "\"text\":{\"content\":\"echo compensation result\"}" +
+                "}";
+
+        mockMvc.perform(post("/api/im/dingtalk/events")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(payload))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.text.content").value(org.hamcrest.Matchers.containsString("正在处理中")));
+
+        LongTask blockedTask = awaitTask("im:dingtalk:ding-comp-user", LongTaskStatus.BLOCKED, 5);
+        org.junit.jupiter.api.Assertions.assertNotNull(blockedTask);
+
+        String nextPayload = "{" +
+                "\"senderId\":\"ding-comp-user\"," +
+                "\"conversationId\":\"conv-comp\"," +
+                "\"text\":{\"content\":\"echo after compensation\"}" +
+                "}";
+
+        mockMvc.perform(post("/api/im/dingtalk/events")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(nextPayload))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.msgtype").value("text"))
+                .andExpect(jsonPath("$.text.content").value(org.hamcrest.Matchers.containsString("补偿通知")))
+                .andExpect(jsonPath("$.text.content").value(org.hamcrest.Matchers.containsString(blockedTask.taskId())))
+                .andExpect(jsonPath("$.text.content").value(org.hamcrest.Matchers.containsString("compensation result")))
+                .andExpect(jsonPath("$.text.content").value(org.hamcrest.Matchers.containsString("after compensation")));
     }
 
     @Test
@@ -208,5 +302,23 @@ class ImWebhookControllerTest {
                         .content(xml))
                 .andExpect(status().isOk())
                 .andExpect(content().string(org.hamcrest.Matchers.containsString("<MsgType><![CDATA[text]]></MsgType>")));
+    }
+
+    private LongTask awaitTask(String userId, LongTaskStatus expectedStatus, int timeoutSeconds) throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(timeoutSeconds);
+        while (System.nanoTime() < deadline) {
+            LongTask latest = memoryManager.listLongTasks(userId, null).stream().findFirst().orElse(null);
+            if (latest != null && latest.status() == expectedStatus) {
+                return latest;
+            }
+            Thread.sleep(50L);
+        }
+        return memoryManager.listLongTasks(userId, null).stream().findFirst().orElse(null);
+    }
+
+    private int reserveUnusedPort() throws Exception {
+        try (ServerSocket socket = new ServerSocket(0)) {
+            return socket.getLocalPort();
+        }
     }
 }

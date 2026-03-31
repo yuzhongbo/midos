@@ -26,6 +26,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 @Service
 public class ImGatewayService {
@@ -36,7 +38,29 @@ public class ImGatewayService {
     private static final String PROP_TODO_WINDOW_P2 = "mindos.todo.window.p2";
     private static final String PROP_TODO_WINDOW_P3 = "mindos.todo.window.p3";
     private static final String PROP_TODO_LEGEND = "mindos.todo.legend";
+    private static final String DINGTALK_ASYNC_TASK_TITLE = "钉钉消息处理";
     private static final List<String> DINGTALK_ASYNC_STEPS = List.of("等待后台处理", "生成回复", "回推钉钉结果");
+    private static final List<String> DEFAULT_DINGTALK_ALLOWED_HOSTS = List.of(
+            "localhost",
+            "127.0.0.1",
+            ".dingtalk.com",
+            ".dingtalkapps.com"
+    );
+    private static final int DEFAULT_DINGTALK_CONNECT_TIMEOUT_MS = 3000;
+    private static final int DEFAULT_DINGTALK_REQUEST_TIMEOUT_MS = 10000;
+    private static final long DEFAULT_DINGTALK_EXPIRY_SKEW_SECONDS = 5L;
+    private static final int DEFAULT_DINGTALK_EXECUTOR_THREADS = 2;
+    private static final String[] DINGTALK_PROGRESS_QUERY_TERMS = {
+            "查进度", "查看进度", "进度", "任务进度", "查看状态", "查状态", "进度查询", "status"
+    };
+    private static final String[] DINGTALK_RESULT_QUERY_TERMS = {
+            "查结果", "查看结果", "结果", "任务结果", "最终结果", "处理结果", "结果查询"
+    };
+    private static final String DINGTALK_RESULT_NOTE_PREFIX = "[ASYNC_RESULT] ";
+    private static final String DINGTALK_COMPENSATED_NOTE_PREFIX = "[COMPENSATED] ";
+    private static final Pattern TASK_ID_PATTERN = Pattern.compile(
+            "\\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\\b");
+    private static final int MAX_COMPENSATION_RESULTS = 2;
 
     private final DispatcherService dispatcherService;
     private final MemoryManager memoryManager;
@@ -59,14 +83,16 @@ public class ImGatewayService {
                 memoryManager,
                 memoryConsolidationService,
                 new DingtalkAsyncReplyClient(
-                        java.net.http.HttpClient.newBuilder().connectTimeout(java.time.Duration.ofSeconds(3)).build(),
+                        java.net.http.HttpClient.newBuilder()
+                                .connectTimeout(java.time.Duration.ofMillis(DEFAULT_DINGTALK_CONNECT_TIMEOUT_MS))
+                                .build(),
                         new com.fasterxml.jackson.databind.ObjectMapper().findAndRegisterModules(),
-                        java.time.Duration.ofSeconds(10),
-                        List.of("localhost", "127.0.0.1", ".dingtalk.com", ".dingtalkapps.com"),
+                        java.time.Duration.ofMillis(DEFAULT_DINGTALK_REQUEST_TIMEOUT_MS),
+                        DEFAULT_DINGTALK_ALLOWED_HOSTS,
                         true),
                 true,
-                2,
-                5L,
+                DEFAULT_DINGTALK_EXECUTOR_THREADS,
+                DEFAULT_DINGTALK_EXPIRY_SKEW_SECONDS,
                 "已收到，正在处理中。任务ID：%s。处理完成后我会继续把结果发到当前会话。",
                 "你刚才的请求已处理完成：");
     }
@@ -128,7 +154,7 @@ public class ImGatewayService {
         String userId = buildUserId(ImPlatform.DINGTALK, senderId);
         LongTask task = memoryManager.createLongTask(
                 userId,
-                "钉钉消息处理",
+                DINGTALK_ASYNC_TASK_TITLE,
                 normalizedText,
                 DINGTALK_ASYNC_STEPS,
                 null,
@@ -179,18 +205,21 @@ public class ImGatewayService {
                     context.taskId(),
                     "im-dingtalk-async",
                     "生成回复",
-                    "已生成回复内容",
+                    DINGTALK_RESULT_NOTE_PREFIX + reply,
                     "",
                     Instant.now(),
                     false
             );
             if (!isWebhookUsable(context.sessionWebhookExpiresAt())) {
-                memoryManager.updateLongTaskStatus(
+                memoryManager.updateLongTaskProgress(
                         context.userId(),
                         context.taskId(),
-                        LongTaskStatus.BLOCKED,
+                        "im-dingtalk-async",
+                        null,
                         "钉钉 sessionWebhook 已过期，未能回推最终结果",
-                        Instant.now()
+                        "钉钉 sessionWebhook 已过期，未能回推最终结果",
+                        Instant.now(),
+                        false
                 );
                 return;
             }
@@ -207,21 +236,27 @@ public class ImGatewayService {
                         true
                 );
             } else {
-                memoryManager.updateLongTaskStatus(
+                memoryManager.updateLongTaskProgress(
                         context.userId(),
                         context.taskId(),
-                        LongTaskStatus.BLOCKED,
+                        "im-dingtalk-async",
+                        null,
                         "钉钉异步回推失败，请稍后重试或通过任务接口查看结果",
-                        Instant.now()
+                        "钉钉异步回推失败，请稍后重试或通过任务接口查看结果",
+                        Instant.now(),
+                        false
                 );
             }
         } catch (Exception ex) {
-            memoryManager.updateLongTaskStatus(
+            memoryManager.updateLongTaskProgress(
                     context.userId(),
                     context.taskId(),
-                    LongTaskStatus.BLOCKED,
+                    "im-dingtalk-async",
+                    null,
                     "钉钉消息处理失败: " + ex.getMessage(),
-                    Instant.now()
+                    "钉钉消息处理失败: " + ex.getMessage(),
+                    Instant.now(),
+                    false
             );
         } finally {
             pendingDingtalkReplies.remove(context.taskId());
@@ -235,13 +270,23 @@ public class ImGatewayService {
         profileContext.put("imSenderId", senderId == null ? "" : senderId);
         profileContext.put("imChatId", chatId == null ? "" : chatId);
 
+        String asyncTaskReply = tryHandleDingtalkAsyncTaskIntent(platform, userId, normalizedText);
+        if (asyncTaskReply != null) {
+            return asyncTaskReply;
+        }
+
         String memoryReply = tryHandleMemoryPlanningIntent(userId, normalizedText);
         if (memoryReply != null) {
             return memoryReply;
         }
 
         DispatchResult result = dispatcherService.dispatch(userId, normalizedText, profileContext);
-        return result.reply();
+        String reply = result.reply();
+        String compensationNotice = buildPendingCompensationNotice(platform, userId);
+        if (compensationNotice == null || compensationNotice.isBlank()) {
+            return reply;
+        }
+        return compensationNotice + "\n\n" + reply;
     }
 
     private Instant resolveSessionWebhookExpiry(Long sessionWebhookExpiredTime) {
@@ -269,6 +314,196 @@ public class ImGatewayService {
             normalizedReply = "已处理完成，但当前没有可返回的文本结果。";
         }
         return dingtalkAsyncResultPrefix + "\n" + normalizedReply;
+    }
+
+    private String tryHandleDingtalkAsyncTaskIntent(ImPlatform platform, String userId, String message) {
+        if (platform != ImPlatform.DINGTALK || message == null || message.isBlank()) {
+            return null;
+        }
+        boolean resultIntent = isDingtalkResultQuery(message);
+        boolean progressIntent = isDingtalkProgressQuery(message);
+        if (!resultIntent && !progressIntent) {
+            return null;
+        }
+        LongTask task = resolveQueriedDingtalkTask(userId, message);
+        if (task == null) {
+            return "当前没有可查询的钉钉异步任务。你也可以把任务ID发给我，我帮你精确查询。";
+        }
+        return resultIntent ? buildDingtalkResultReply(task, true) : buildDingtalkProgressReply(task);
+    }
+
+    private String buildDingtalkProgressReply(LongTask task) {
+        StringBuilder builder = new StringBuilder("当前任务进度：");
+        builder.append("\n- 任务ID：").append(task.taskId());
+        builder.append("\n- 状态：").append(describeTaskStatus(task.status()));
+        builder.append("\n- 进度：").append(task.progressPercent()).append("%");
+        builder.append("\n- 已完成步骤：").append(task.completedSteps().size());
+        builder.append("\n- 待完成步骤：").append(task.pendingSteps().size());
+        if (!task.pendingSteps().isEmpty()) {
+            builder.append("\n- 当前待处理：").append(task.pendingSteps().get(0));
+        }
+        if (task.status() == LongTaskStatus.BLOCKED && task.blockedReason() != null && !task.blockedReason().isBlank()) {
+            builder.append("\n- 阻塞原因：").append(task.blockedReason());
+        }
+        String result = extractAsyncResult(task);
+        if (task.status() == LongTaskStatus.BLOCKED && result != null) {
+            builder.append("\n- 已生成结果，因主动回推未成功，我现在补发给你：\n").append(result);
+            markCompensationDelivered(task, "progress-query");
+        }
+        return builder.toString();
+    }
+
+    private String buildDingtalkResultReply(LongTask task, boolean markCompensated) {
+        String result = extractAsyncResult(task);
+        if (result == null || result.isBlank()) {
+            return "这个任务暂时还没有可查看的最终结果。当前状态是："
+                    + describeTaskStatus(task.status())
+                    + "。如果你愿意，可以稍后回复“查进度”继续确认。";
+        }
+        StringBuilder builder = new StringBuilder();
+        builder.append("任务结果（").append(task.taskId()).append("）：");
+        if (task.status() == LongTaskStatus.BLOCKED) {
+            builder.append("\n之前 sessionWebhook 已失效或回推失败，我现在补发给你：");
+        }
+        builder.append("\n").append(result);
+        if (markCompensated && task.status() == LongTaskStatus.BLOCKED) {
+            markCompensationDelivered(task, "result-query");
+        }
+        return builder.toString();
+    }
+
+    private String buildPendingCompensationNotice(ImPlatform platform, String userId) {
+        if (platform != ImPlatform.DINGTALK) {
+            return null;
+        }
+        List<LongTask> pending = memoryManager.listLongTasks(userId, "BLOCKED").stream()
+                .filter(this::isPendingCompensationTask)
+                .limit(MAX_COMPENSATION_RESULTS)
+                .toList();
+        if (pending.isEmpty()) {
+            return null;
+        }
+        StringBuilder builder = new StringBuilder("补偿通知：我发现你有之前未成功送达的处理结果，先补发给你：");
+        for (LongTask task : pending) {
+            String result = extractAsyncResult(task);
+            builder.append("\n\n[任务ID ").append(task.taskId()).append("]");
+            if (task.blockedReason() != null && !task.blockedReason().isBlank()) {
+                builder.append("\n原因：").append(task.blockedReason());
+            }
+            if (result != null && !result.isBlank()) {
+                builder.append("\n结果：").append(result);
+            }
+            markCompensationDelivered(task, "next-message");
+        }
+        return builder.toString();
+    }
+
+    private boolean isPendingCompensationTask(LongTask task) {
+        return task != null
+                && DINGTALK_ASYNC_TASK_TITLE.equals(task.title())
+                && task.status() == LongTaskStatus.BLOCKED
+                && extractAsyncResult(task) != null
+                && !hasTaskNotePrefix(task, DINGTALK_COMPENSATED_NOTE_PREFIX);
+    }
+
+    private void markCompensationDelivered(LongTask task, String channel) {
+        if (!isPendingCompensationTask(task)) {
+            return;
+        }
+        String completedStep = task.pendingSteps().contains("回推钉钉结果")
+                ? "回推钉钉结果"
+                : (task.pendingSteps().isEmpty() ? null : task.pendingSteps().get(0));
+        memoryManager.updateLongTaskProgress(
+                task.userId(),
+                task.taskId(),
+                "im-dingtalk-compensation",
+                completedStep,
+                DINGTALK_COMPENSATED_NOTE_PREFIX + channel,
+                "",
+                Instant.now(),
+                true
+        );
+    }
+
+    private LongTask resolveQueriedDingtalkTask(String userId, String message) {
+        String explicitTaskId = extractTaskId(message);
+        if (explicitTaskId != null) {
+            LongTask task = memoryManager.getLongTask(userId, explicitTaskId);
+            if (task != null && DINGTALK_ASYNC_TASK_TITLE.equals(task.title())) {
+                return task;
+            }
+        }
+        return memoryManager.listLongTasks(userId, null).stream()
+                .filter(task -> DINGTALK_ASYNC_TASK_TITLE.equals(task.title()))
+                .findFirst()
+                .orElse(null);
+    }
+
+    private String extractTaskId(String message) {
+        if (message == null || message.isBlank()) {
+            return null;
+        }
+        Matcher matcher = TASK_ID_PATTERN.matcher(message);
+        return matcher.find() ? matcher.group() : null;
+    }
+
+    private boolean isDingtalkProgressQuery(String message) {
+        String normalized = memoryConsolidationService.normalizeText(message).toLowerCase();
+        return containsAny(normalized, DINGTALK_PROGRESS_QUERY_TERMS);
+    }
+
+    private boolean isDingtalkResultQuery(String message) {
+        String normalized = memoryConsolidationService.normalizeText(message).toLowerCase();
+        return containsAny(normalized, DINGTALK_RESULT_QUERY_TERMS);
+    }
+
+    private String describeTaskStatus(LongTaskStatus status) {
+        if (status == null) {
+            return "未知";
+        }
+        return switch (status) {
+            case PENDING -> "等待处理";
+            case RUNNING -> "处理中";
+            case BLOCKED -> "未成功送达";
+            case COMPLETED -> "已完成";
+            case CANCELLED -> "已取消";
+        };
+    }
+
+    private String extractAsyncResult(LongTask task) {
+        if (task == null || task.recentNotes() == null) {
+            return null;
+        }
+        for (int i = task.recentNotes().size() - 1; i >= 0; i--) {
+            String normalized = stripNoteAuthor(task.recentNotes().get(i));
+            if (normalized.startsWith(DINGTALK_RESULT_NOTE_PREFIX)) {
+                return normalized.substring(DINGTALK_RESULT_NOTE_PREFIX.length()).trim();
+            }
+        }
+        return null;
+    }
+
+    private boolean hasTaskNotePrefix(LongTask task, String prefix) {
+        if (task == null || task.recentNotes() == null || prefix == null) {
+            return false;
+        }
+        for (String note : task.recentNotes()) {
+            if (stripNoteAuthor(note).startsWith(prefix)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private String stripNoteAuthor(String note) {
+        if (note == null) {
+            return "";
+        }
+        int separator = note.indexOf(": ");
+        if (separator < 0 || separator + 2 >= note.length()) {
+            return note;
+        }
+        return note.substring(separator + 2);
     }
 
     private String tryHandleMemoryPlanningIntent(String userId, String message) {

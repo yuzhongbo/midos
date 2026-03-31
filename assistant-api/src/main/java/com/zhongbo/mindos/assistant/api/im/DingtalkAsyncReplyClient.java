@@ -72,7 +72,7 @@ public class DingtalkAsyncReplyClient {
             }
             return allowInsecureLocalhostHttp
                     && "http".equals(scheme)
-                    && ("localhost".equals(host) || "127.0.0.1".equals(host));
+                    && isLocalLoopbackHost(host);
         } catch (Exception ex) {
             LOGGER.log(Level.FINE, "Invalid DingTalk session webhook", ex);
             return false;
@@ -120,6 +120,13 @@ public class DingtalkAsyncReplyClient {
             }
         }
         return false;
+    }
+
+    private boolean isLocalLoopbackHost(String host) {
+        return "localhost".equals(host)
+                || "127.0.0.1".equals(host)
+                || "::1".equals(host)
+                || "[::1]".equals(host);
     }
 
     private static List<String> parseAllowedHosts(String raw) {
