@@ -104,6 +104,7 @@ public class ImGatewayService {
                         "https://api.dingtalk.com/v1.0/oauth2/accessToken",
                         "https://api.dingtalk.com/v1.0/im/messages/sendToConversation",
                         "https://api.dingtalk.com/v1.0/robot/oToMessages/batchSend",
+                        DingtalkOpenApiMessageClient.SendMode.CONVERSATION_FIRST,
                         60L,
                         DEFAULT_DINGTALK_ALLOWED_HOSTS,
                         true),

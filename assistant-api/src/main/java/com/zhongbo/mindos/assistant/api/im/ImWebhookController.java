@@ -129,7 +129,7 @@ public class ImWebhookController {
             text = content == null ? "" : String.valueOf(content);
         }
         String senderId = String.valueOf(body.getOrDefault("senderId", ""));
-        String chatId = String.valueOf(body.getOrDefault("conversationId", ""));
+        String chatId = resolveDingtalkConversationId(body);
         String sessionWebhook = String.valueOf(body.getOrDefault("sessionWebhook", ""));
         Long sessionWebhookExpiredTime = asLong(body.get("sessionWebhookExpiredTime"));
         ImGatewayService.AsyncReplyAck asyncReplyAck = imGatewayService.startDingtalkAsyncReply(
@@ -312,6 +312,17 @@ public class ImWebhookController {
         } catch (NumberFormatException ex) {
             return null;
         }
+    }
+
+    private String resolveDingtalkConversationId(Map<String, Object> body) {
+        Object openConversationId = body.get("openConversationId");
+        if (openConversationId != null) {
+            String normalized = String.valueOf(openConversationId).trim();
+            if (!normalized.isEmpty()) {
+                return normalized;
+            }
+        }
+        return String.valueOf(body.getOrDefault("conversationId", ""));
     }
 
     private record WechatMessage(String toUser, String fromUser, String msgType, String content) {

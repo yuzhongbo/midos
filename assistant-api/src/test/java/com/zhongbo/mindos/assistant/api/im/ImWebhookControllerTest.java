@@ -87,6 +87,22 @@ class ImWebhookControllerTest {
     }
 
     @Test
+    void shouldHandleDingtalkTextEventWithOpenConversationId() throws Exception {
+        String payload = "{" +
+                "\"senderId\":\"ding-open-user\"," +
+                "\"openConversationId\":\"open-conv-1\"," +
+                "\"text\":{\"content\":\"echo hi open\"}" +
+                "}";
+
+        mockMvc.perform(post("/api/im/dingtalk/events")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(payload))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.msgtype").value("text"))
+                .andExpect(jsonPath("$.text.content").isNotEmpty());
+    }
+
+    @Test
     void shouldAcknowledgeAndPushAsyncDingtalkReplyWhenSessionWebhookProvided() throws Exception {
         CountDownLatch latch = new CountDownLatch(1);
         AtomicReference<String> callbackBody = new AtomicReference<>("");

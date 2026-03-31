@@ -35,6 +35,7 @@ public class DingtalkOpenApiMessageClient {
     private final String accessTokenUrl;
     private final String sendToConversationUrl;
     private final String batchSendUrl;
+    private final SendMode preferredSendMode;
     private final long refreshSkewSeconds;
     private final List<String> allowedHosts;
     private final boolean allowInsecureLocalhostHttp;
@@ -50,6 +51,7 @@ public class DingtalkOpenApiMessageClient {
             @Value("${mindos.im.dingtalk.openapi-fallback.access-token-url:https://api.dingtalk.com/v1.0/oauth2/accessToken}") String accessTokenUrl,
             @Value("${mindos.im.dingtalk.openapi-fallback.send-to-conversation-url:https://api.dingtalk.com/v1.0/im/messages/sendToConversation}") String sendToConversationUrl,
             @Value("${mindos.im.dingtalk.openapi-fallback.batch-send-url:https://api.dingtalk.com/v1.0/robot/oToMessages/batchSend}") String batchSendUrl,
+            @Value("${mindos.im.dingtalk.openapi-fallback.preferred-send-mode:conversation-first}") String preferredSendMode,
             @Value("${mindos.im.dingtalk.openapi-fallback.access-token-refresh-skew-seconds:60}") long refreshSkewSeconds,
             @Value("${mindos.im.dingtalk.openapi-fallback.connect-timeout-ms:3000}") long connectTimeoutMillis,
             @Value("${mindos.im.dingtalk.openapi-fallback.request-timeout-ms:10000}") long requestTimeoutMillis,
@@ -67,6 +69,7 @@ public class DingtalkOpenApiMessageClient {
                 accessTokenUrl,
                 sendToConversationUrl,
                 batchSendUrl,
+                parseSendMode(preferredSendMode),
                 refreshSkewSeconds,
                 parseAllowedHosts(allowedHosts),
                 allowInsecureLocalhostHttp);
@@ -82,6 +85,7 @@ public class DingtalkOpenApiMessageClient {
                                  String accessTokenUrl,
                                  String sendToConversationUrl,
                                  String batchSendUrl,
+                                 SendMode preferredSendMode,
                                  long refreshSkewSeconds,
                                  List<String> allowedHosts,
                                  boolean allowInsecureLocalhostHttp) {
@@ -95,6 +99,7 @@ public class DingtalkOpenApiMessageClient {
         this.accessTokenUrl = normalize(accessTokenUrl);
         this.sendToConversationUrl = normalize(sendToConversationUrl);
         this.batchSendUrl = normalize(batchSendUrl);
+        this.preferredSendMode = preferredSendMode == null ? SendMode.CONVERSATION_FIRST : preferredSendMode;
         this.refreshSkewSeconds = Math.max(0L, refreshSkewSeconds);
         this.allowedHosts = allowedHosts == null ? List.of() : List.copyOf(allowedHosts);
         this.allowInsecureLocalhostHttp = allowInsecureLocalhostHttp;
@@ -109,10 +114,10 @@ public class DingtalkOpenApiMessageClient {
         if (accessToken == null || accessToken.isBlank()) {
             return false;
         }
-        if (!normalize(openConversationId).isBlank() && sendToConversation(accessToken, openConversationId, normalizedText)) {
-            return true;
-        }
-        return !normalize(senderId).isBlank() && sendToUsers(accessToken, List.of(senderId.trim()), normalizedText);
+        return switch (preferredSendMode) {
+            case USER_FIRST -> tryUserThenConversation(accessToken, senderId, openConversationId, normalizedText);
+            case CONVERSATION_FIRST -> tryConversationThenUser(accessToken, senderId, openConversationId, normalizedText);
+        };
     }
 
     boolean isEnabled() {
@@ -141,6 +146,7 @@ public class DingtalkOpenApiMessageClient {
             if (response == null) {
                 return null;
             }
+            // Accept both v1-style camelCase and legacy snake_case field names for compatibility with DingTalk variants.
             String token = readText(response, "accessToken", "access_token");
             long expiresIn = readLong(response, 7200L, "expireIn", "expiresIn", "expires_in");
             if (token.isBlank()) {
@@ -320,8 +326,35 @@ public class DingtalkOpenApiMessageClient {
                 .toList();
     }
 
+    private static SendMode parseSendMode(String raw) {
+        String normalized = raw == null ? "" : raw.trim().toLowerCase(Locale.ROOT);
+        return switch (normalized) {
+            case "user-first", "users-first", "batch-user-first" -> SendMode.USER_FIRST;
+            default -> SendMode.CONVERSATION_FIRST;
+        };
+    }
+
+    private boolean tryConversationThenUser(String accessToken, String senderId, String openConversationId, String text) {
+        if (!normalize(openConversationId).isBlank() && sendToConversation(accessToken, openConversationId, text)) {
+            return true;
+        }
+        return !normalize(senderId).isBlank() && sendToUsers(accessToken, List.of(senderId.trim()), text);
+    }
+
+    private boolean tryUserThenConversation(String accessToken, String senderId, String openConversationId, String text) {
+        if (!normalize(senderId).isBlank() && sendToUsers(accessToken, List.of(senderId.trim()), text)) {
+            return true;
+        }
+        return !normalize(openConversationId).isBlank() && sendToConversation(accessToken, openConversationId, text);
+    }
+
     private String normalize(String value) {
         return value == null ? "" : value.trim();
+    }
+
+    enum SendMode {
+        CONVERSATION_FIRST,
+        USER_FIRST
     }
 
     private record CachedAccessToken(String accessToken, Instant expiresAt) {
