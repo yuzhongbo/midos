@@ -102,17 +102,102 @@ set "MINDOS_SMOKE_TIMEOUT_SECONDS=8"
 set "MINDOS_PAUSE_ON_EXIT=true"
 
 REM LLM routing / provider selection
+REM Preset switch:
+REM   OPENROUTER_INTENT -> coding=gpt, realtime/news=grok, emotional=gemini
+REM   DOUBAO_STABLE     -> single-provider doubao (fast troubleshooting baseline)
+REM   QWEN_STABLE       -> single-provider qwen (safe fallback)
+set "MINDOS_LLM_PROFILE=OPENROUTER_INTENT"
+
+REM Shared provider credentials/model ids (edit once)
+set "MINDOS_OPENROUTER_KEY=REPLACE_WITH_OPENROUTER_KEY"
+set "MINDOS_DOUBAO_ARK_KEY=REPLACE_WITH_DOUBAO_ARK_KEY"
+set "MINDOS_DOUBAO_ENDPOINT_ID=REPLACE_WITH_DOUBAO_ENDPOINT_ID"
+set "MINDOS_QWEN_KEY=REPLACE_WITH_QWEN_KEY"
+set "MINDOS_QWEN_MODEL=qwen3.5-plus"
+
 set "MINDOS_LLM_HTTP_ENABLED=true"
-set "MINDOS_LLM_PROVIDER=qwen"
+set "MINDOS_LLM_MODE=OPENROUTER"
+set "MINDOS_LLM_PROVIDER=gpt"
 set "MINDOS_LLM_ROUTING_MODE=fixed"
-REM Keep provider endpoints on built-in defaults for qwen/doubao to reduce bat editing risk.
-REM To switch default provider later, change only MINDOS_LLM_PROVIDER to qwen or doubao.
-set "MINDOS_LLM_PROVIDER_KEYS=qwen:REPLACE_WITH_YOUR_NEW_QWEN_KEY,doubao:REPLACE_WITH_YOUR_DOUBAO_KEY"
-REM Doubao Ark Chat also requires a real Model ID or Endpoint ID.
-REM The REPLACE_WITH value is ignored until you replace it with a real Ark Endpoint ID or Model ID.
-set "MINDOS_LLM_PROVIDER_MODELS=qwen:qwen3.5-plus,doubao:REPLACE_WITH_YOUR_DOUBAO_ENDPOINT_ID"
+set "MINDOS_LLM_PROVIDER_ENDPOINTS=gpt:https://openrouter.ai/api/v1/chat/completions,grok:https://openrouter.ai/api/v1/chat/completions,gemini:https://openrouter.ai/api/v1/chat/completions"
+set "MINDOS_LLM_PROVIDER_KEYS=gpt:%MINDOS_OPENROUTER_KEY%,grok:%MINDOS_OPENROUTER_KEY%,gemini:%MINDOS_OPENROUTER_KEY%,doubao:%MINDOS_DOUBAO_ARK_KEY%,qwen:%MINDOS_QWEN_KEY%"
+set "MINDOS_LLM_PROVIDER_MODELS=gpt:openai/gpt-5.2,grok:x-ai/grok-4,gemini:google/gemini-2.5-pro,doubao:%MINDOS_DOUBAO_ENDPOINT_ID%,qwen:%MINDOS_QWEN_MODEL%"
+
+REM ===== Harness metadata (experiment tracking) =====
+set "MINDOS_HARNESS_STRATEGY_ID=or-intent-v1"
+set "MINDOS_HARNESS_EXPERIMENT_ID=exp-20260330"
+set "MINDOS_HARNESS_BASELINE_ID=baseline-fixed-gpt"
+
+REM ===== Harness observability knobs =====
+set "MINDOS_DISPATCHER_ROUTING_REPLAY_MAX_SAMPLES=500"
+set "MINDOS_LLM_METRICS_CACHE_WINDOW_LOW_SAMPLE_THRESHOLD=30"
+
+REM ===== Harness manual canary toggles =====
+REM A (default): intent-routing strategy
+REM set "MINDOS_DISPATCHER_INTENT_ROUTING_ENABLED=true"
+REM B (baseline): fixed gpt only
+REM set "MINDOS_DISPATCHER_INTENT_ROUTING_ENABLED=false"
+REM set "MINDOS_LLM_PROVIDER=gpt"
+REM C (fallback): doubao single provider
+REM set "MINDOS_LLM_PROFILE=DOUBAO_STABLE"
 set "MINDOS_LLM_RETRY_MAX_ATTEMPTS=1"
-set "MINDOS_LLM_RETRY_DELAY_MS=100"
+set "MINDOS_LLM_RETRY_DELAY_MS=0"
+
+REM Rollback toggles (uncomment one line if needed)
+REM set "MINDOS_DISPATCHER_INTENT_ROUTING_ENABLED=false"
+REM set "MINDOS_LLM_PROVIDER=gpt"
+REM set "MINDOS_LLM_PROFILE=QWEN_STABLE"
+
+REM Intent + difficulty based model routing (coding->gpt, realtime/news->grok, emotional->gemini)
+set "MINDOS_DISPATCHER_INTENT_ROUTING_ENABLED=true"
+set "MINDOS_DISPATCHER_INTENT_ROUTING_DEFAULT_PROVIDER=gpt"
+set "MINDOS_DISPATCHER_INTENT_ROUTING_CODE_PROVIDER=gpt"
+set "MINDOS_DISPATCHER_INTENT_ROUTING_REALTIME_PROVIDER=grok"
+set "MINDOS_DISPATCHER_INTENT_ROUTING_EMOTIONAL_PROVIDER=gemini"
+set "MINDOS_DISPATCHER_INTENT_ROUTING_MODEL_CODE_EASY=openai/gpt-5-mini"
+set "MINDOS_DISPATCHER_INTENT_ROUTING_MODEL_CODE_MEDIUM=openai/gpt-5.2"
+set "MINDOS_DISPATCHER_INTENT_ROUTING_MODEL_CODE_HARD=openai/gpt-5.2"
+set "MINDOS_DISPATCHER_INTENT_ROUTING_MODEL_REALTIME_EASY=x-ai/grok-4-fast"
+set "MINDOS_DISPATCHER_INTENT_ROUTING_MODEL_REALTIME_MEDIUM=x-ai/grok-4"
+set "MINDOS_DISPATCHER_INTENT_ROUTING_MODEL_REALTIME_HARD=x-ai/grok-4"
+set "MINDOS_DISPATCHER_INTENT_ROUTING_MODEL_EMOTIONAL_EASY=google/gemini-2.5-flash"
+set "MINDOS_DISPATCHER_INTENT_ROUTING_MODEL_EMOTIONAL_MEDIUM=google/gemini-2.5-pro"
+set "MINDOS_DISPATCHER_INTENT_ROUTING_MODEL_EMOTIONAL_HARD=google/gemini-2.5-pro"
+set "MINDOS_DISPATCHER_INTENT_ROUTING_MODEL_GENERAL_EASY=openai/gpt-5-mini"
+set "MINDOS_DISPATCHER_INTENT_ROUTING_MODEL_GENERAL_MEDIUM=openai/gpt-5.2"
+set "MINDOS_DISPATCHER_INTENT_ROUTING_MODEL_GENERAL_HARD=openai/gpt-5.2"
+set "MINDOS_DISPATCHER_INTENT_ROUTING_HARD_INPUT_LENGTH_THRESHOLD=180"
+set "MINDOS_DISPATCHER_SKILL_PRE_ANALYZE_MODE=never"
+set "MINDOS_DISPATCHER_SKILL_FINALIZE_WITH_LLM_ENABLED=false"
+set "MINDOS_SKILL_CODE_GENERATE_LLM_PROVIDER=gpt"
+set "MINDOS_SKILL_CODE_GENERATE_MODEL_EASY=openai/gpt-5-mini"
+set "MINDOS_SKILL_CODE_GENERATE_MODEL_MEDIUM=openai/gpt-5.2"
+set "MINDOS_SKILL_CODE_GENERATE_MODEL_HARD=openai/gpt-5.2"
+
+if /I "%MINDOS_LLM_PROFILE%"=="DOUBAO_STABLE" (
+  set "MINDOS_LLM_MODE=DOUBAO"
+  set "MINDOS_LLM_PROVIDER=doubao"
+  set "MINDOS_DISPATCHER_INTENT_ROUTING_ENABLED=false"
+  set "MINDOS_SKILL_CODE_GENERATE_LLM_PROVIDER=doubao"
+  set "MINDOS_SKILL_CODE_GENERATE_MODEL_EASY=%MINDOS_DOUBAO_ENDPOINT_ID%"
+  set "MINDOS_SKILL_CODE_GENERATE_MODEL_MEDIUM=%MINDOS_DOUBAO_ENDPOINT_ID%"
+  set "MINDOS_SKILL_CODE_GENERATE_MODEL_HARD=%MINDOS_DOUBAO_ENDPOINT_ID%"
+)
+
+REM Auto-fallback guard: if Doubao profile is selected but required values are still placeholders,
+REM switch to qwen to avoid repeated auth/missing-model degraded replies.
+if /I "%MINDOS_LLM_PROFILE%"=="DOUBAO_STABLE" if "%MINDOS_DOUBAO_ARK_KEY%"=="REPLACE_WITH_DOUBAO_ARK_KEY" set "MINDOS_LLM_PROFILE=QWEN_STABLE"
+if /I "%MINDOS_LLM_PROFILE%"=="DOUBAO_STABLE" if "%MINDOS_DOUBAO_ENDPOINT_ID%"=="REPLACE_WITH_DOUBAO_ENDPOINT_ID" set "MINDOS_LLM_PROFILE=QWEN_STABLE"
+
+if /I "%MINDOS_LLM_PROFILE%"=="QWEN_STABLE" (
+  set "MINDOS_LLM_MODE=OPENROUTER"
+  set "MINDOS_LLM_PROVIDER=qwen"
+  set "MINDOS_DISPATCHER_INTENT_ROUTING_ENABLED=false"
+  set "MINDOS_SKILL_CODE_GENERATE_LLM_PROVIDER=qwen"
+  set "MINDOS_SKILL_CODE_GENERATE_MODEL_EASY=%MINDOS_QWEN_MODEL%"
+  set "MINDOS_SKILL_CODE_GENERATE_MODEL_MEDIUM=%MINDOS_QWEN_MODEL%"
+  set "MINDOS_SKILL_CODE_GENERATE_MODEL_HARD=%MINDOS_QWEN_MODEL%"
+)
 
 REM Optional cache overrides
 set "MINDOS_LLM_CACHE_ENABLED=true"
@@ -195,22 +280,82 @@ set "MINDOS_SMOKE_TIMEOUT_SECONDS=8"
 set "MINDOS_PAUSE_ON_EXIT=true"
 
 REM LLM routing / provider selection
+REM Preset switch:
+REM   OPENROUTER_INTENT -> coding=gpt, realtime/news=grok, emotional=gemini
+REM   DOUBAO_STABLE     -> single-provider doubao (fast troubleshooting baseline)
+REM   QWEN_STABLE       -> single-provider qwen (safe fallback)
+set "MINDOS_LLM_PROFILE=OPENROUTER_INTENT"
+
+REM Shared provider credentials/model ids (edit once)
+set "MINDOS_OPENROUTER_KEY=REPLACE_WITH_OPENROUTER_KEY"
+set "MINDOS_DOUBAO_ARK_KEY=REPLACE_WITH_DOUBAO_ARK_KEY"
+set "MINDOS_DOUBAO_ENDPOINT_ID=REPLACE_WITH_DOUBAO_ENDPOINT_ID"
+set "MINDOS_QWEN_KEY=REPLACE_WITH_QWEN_KEY"
+set "MINDOS_QWEN_MODEL=qwen3.5-plus"
+
 set "MINDOS_LLM_HTTP_ENABLED=true"
-set "MINDOS_LLM_PROVIDER=qwen"
+set "MINDOS_LLM_MODE=OPENROUTER"
+set "MINDOS_LLM_PROVIDER=gpt"
 set "MINDOS_LLM_ROUTING_MODE=fixed"
-set "MINDOS_LLM_ROUTING_STAGE_MAP=llm-dsl:qwen,llm-fallback:qwen"
-set "MINDOS_LLM_ROUTING_PRESET_MAP=cost:qwen,balanced:qwen,quality:qwen"
 set "MINDOS_LLM_RETRY_MAX_ATTEMPTS=1"
-set "MINDOS_LLM_RETRY_DELAY_MS=100"
-REM Safer multi-provider key map: keep qwen as default, keep doubao ready for quick switching.
-REM Change only MINDOS_LLM_PROVIDER to qwen or doubao when you want to switch defaults.
-set "MINDOS_LLM_PROVIDER_KEYS=qwen:REPLACE_WITH_YOUR_NEW_QWEN_KEY,doubao:REPLACE_WITH_YOUR_DOUBAO_KEY"
-REM Doubao Ark Chat requires a real Model ID or Endpoint ID in addition to the API key.
-REM The REPLACE_WITH value is ignored until you replace it with a real Ark Endpoint ID or Model ID.
-set "MINDOS_LLM_PROVIDER_MODELS=qwen:qwen3.5-plus,doubao:REPLACE_WITH_YOUR_DOUBAO_ENDPOINT_ID"
+set "MINDOS_LLM_RETRY_DELAY_MS=0"
+set "MINDOS_LLM_PROVIDER_ENDPOINTS=gpt:https://openrouter.ai/api/v1/chat/completions,grok:https://openrouter.ai/api/v1/chat/completions,gemini:https://openrouter.ai/api/v1/chat/completions"
+set "MINDOS_LLM_PROVIDER_KEYS=gpt:%MINDOS_OPENROUTER_KEY%,grok:%MINDOS_OPENROUTER_KEY%,gemini:%MINDOS_OPENROUTER_KEY%,doubao:%MINDOS_DOUBAO_ARK_KEY%,qwen:%MINDOS_QWEN_KEY%"
+set "MINDOS_LLM_PROVIDER_MODELS=gpt:openai/gpt-5.2,grok:x-ai/grok-4,gemini:google/gemini-2.5-pro,doubao:%MINDOS_DOUBAO_ENDPOINT_ID%,qwen:%MINDOS_QWEN_MODEL%"
+
+REM Intent + difficulty based model routing (coding->gpt, realtime/news->grok, emotional->gemini)
+set "MINDOS_DISPATCHER_INTENT_ROUTING_ENABLED=true"
+set "MINDOS_DISPATCHER_INTENT_ROUTING_DEFAULT_PROVIDER=gpt"
+set "MINDOS_DISPATCHER_INTENT_ROUTING_CODE_PROVIDER=gpt"
+set "MINDOS_DISPATCHER_INTENT_ROUTING_REALTIME_PROVIDER=grok"
+set "MINDOS_DISPATCHER_INTENT_ROUTING_EMOTIONAL_PROVIDER=gemini"
+set "MINDOS_DISPATCHER_INTENT_ROUTING_MODEL_CODE_EASY=openai/gpt-5-mini"
+set "MINDOS_DISPATCHER_INTENT_ROUTING_MODEL_CODE_MEDIUM=openai/gpt-5.2"
+set "MINDOS_DISPATCHER_INTENT_ROUTING_MODEL_CODE_HARD=openai/gpt-5.2"
+set "MINDOS_DISPATCHER_INTENT_ROUTING_MODEL_REALTIME_EASY=x-ai/grok-4-fast"
+set "MINDOS_DISPATCHER_INTENT_ROUTING_MODEL_REALTIME_MEDIUM=x-ai/grok-4"
+set "MINDOS_DISPATCHER_INTENT_ROUTING_MODEL_REALTIME_HARD=x-ai/grok-4"
+set "MINDOS_DISPATCHER_INTENT_ROUTING_MODEL_EMOTIONAL_EASY=google/gemini-2.5-flash"
+set "MINDOS_DISPATCHER_INTENT_ROUTING_MODEL_EMOTIONAL_MEDIUM=google/gemini-2.5-pro"
+set "MINDOS_DISPATCHER_INTENT_ROUTING_MODEL_EMOTIONAL_HARD=google/gemini-2.5-pro"
+set "MINDOS_DISPATCHER_INTENT_ROUTING_MODEL_GENERAL_EASY=openai/gpt-5-mini"
+set "MINDOS_DISPATCHER_INTENT_ROUTING_MODEL_GENERAL_MEDIUM=openai/gpt-5.2"
+set "MINDOS_DISPATCHER_INTENT_ROUTING_MODEL_GENERAL_HARD=openai/gpt-5.2"
+set "MINDOS_DISPATCHER_INTENT_ROUTING_HARD_INPUT_LENGTH_THRESHOLD=180"
+set "MINDOS_DISPATCHER_SKILL_PRE_ANALYZE_MODE=never"
+set "MINDOS_DISPATCHER_SKILL_FINALIZE_WITH_LLM_ENABLED=false"
+set "MINDOS_SKILL_CODE_GENERATE_LLM_PROVIDER=gpt"
+set "MINDOS_SKILL_CODE_GENERATE_MODEL_EASY=openai/gpt-5-mini"
+set "MINDOS_SKILL_CODE_GENERATE_MODEL_MEDIUM=openai/gpt-5.2"
+set "MINDOS_SKILL_CODE_GENERATE_MODEL_HARD=openai/gpt-5.2"
+
+if /I "%MINDOS_LLM_PROFILE%"=="DOUBAO_STABLE" (
+  set "MINDOS_LLM_MODE=DOUBAO"
+  set "MINDOS_LLM_PROVIDER=doubao"
+  set "MINDOS_DISPATCHER_INTENT_ROUTING_ENABLED=false"
+  set "MINDOS_SKILL_CODE_GENERATE_LLM_PROVIDER=doubao"
+  set "MINDOS_SKILL_CODE_GENERATE_MODEL_EASY=%MINDOS_DOUBAO_ENDPOINT_ID%"
+  set "MINDOS_SKILL_CODE_GENERATE_MODEL_MEDIUM=%MINDOS_DOUBAO_ENDPOINT_ID%"
+  set "MINDOS_SKILL_CODE_GENERATE_MODEL_HARD=%MINDOS_DOUBAO_ENDPOINT_ID%"
+)
+
+REM Auto-fallback guard: if Doubao profile is selected but required values are still placeholders,
+REM switch to qwen to avoid repeated auth/missing-model degraded replies.
+if /I "%MINDOS_LLM_PROFILE%"=="DOUBAO_STABLE" if "%MINDOS_DOUBAO_ARK_KEY%"=="REPLACE_WITH_DOUBAO_ARK_KEY" set "MINDOS_LLM_PROFILE=QWEN_STABLE"
+if /I "%MINDOS_LLM_PROFILE%"=="DOUBAO_STABLE" if "%MINDOS_DOUBAO_ENDPOINT_ID%"=="REPLACE_WITH_DOUBAO_ENDPOINT_ID" set "MINDOS_LLM_PROFILE=QWEN_STABLE"
+
+if /I "%MINDOS_LLM_PROFILE%"=="QWEN_STABLE" (
+  set "MINDOS_LLM_MODE=OPENROUTER"
+  set "MINDOS_LLM_PROVIDER=qwen"
+  set "MINDOS_DISPATCHER_INTENT_ROUTING_ENABLED=false"
+  set "MINDOS_SKILL_CODE_GENERATE_LLM_PROVIDER=qwen"
+  set "MINDOS_SKILL_CODE_GENERATE_MODEL_EASY=%MINDOS_QWEN_MODEL%"
+  set "MINDOS_SKILL_CODE_GENERATE_MODEL_MEDIUM=%MINDOS_QWEN_MODEL%"
+  set "MINDOS_SKILL_CODE_GENERATE_MODEL_HARD=%MINDOS_QWEN_MODEL%"
+)
 REM Multi-provider map example (more fragile because commas split entries):
-REM set "MINDOS_LLM_PROVIDER_ENDPOINTS=openai:https://ai.example.com/openai/v1/chat/completions,gemini:https://ai.example.com/gemini/v1beta/models/gemini-2.0-flash:generateContent,qwen:https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
-REM set "MINDOS_LLM_PROVIDER_KEYS=openai:paste-openai-key-here,gemini:paste-gemini-key-here,qwen:paste-qwen-key-here"
+REM set "MINDOS_LLM_PROVIDER_ENDPOINTS=openai:https://ai.example.com/openai/v1/chat/completions,gemini:https://ai.example.com/gemini/v1beta/models/gemini-2.0-flash:generateContent,gpt:https://openrouter.ai/api/v1/chat/completions"
+REM set "MINDOS_LLM_PROVIDER_KEYS=openai:paste-openai-key-here,gemini:paste-gemini-key-here,gpt:paste-openrouter-key-here"
 
 REM Optional cache overrides
 set "MINDOS_LLM_CACHE_ENABLED=true"
@@ -489,8 +634,9 @@ MindOS Windows server bundle
    - keep each line in the form: set "KEY=value"
    - edit only the text to the right of the first '='
    - start from the safe defaults in mindos-server.env.bat
-   - enable one LLM provider first; use mindos-server.full.env.bat only when you really need multi-provider maps
-   - if you use Doubao Ark, also set MINDOS_LLM_PROVIDER_MODELS=doubao:<Model ID or Endpoint ID>
+   - choose mode first: MINDOS_LLM_MODE=OPENROUTER (default) or MINDOS_LLM_MODE=DOUBAO
+   - OPENROUTER mode uses intent routing (coding->gpt, realtime/news->grok, emotional->gemini)
+   - if you use Doubao Ark, set MINDOS_LLM_PROVIDER_MODELS=doubao:<Model ID or Endpoint ID>
    - MINDOS_IM_DINGTALK_* / MINDOS_IM_WECHAT_* stay disabled until you have real bot credentials
    - MINDOS_SERVER_PORT for local port
 
@@ -514,6 +660,7 @@ Notes:
 - Default Spring profile is solo.
 - All launcher scripts auto-load mindos-server.env.bat from the same directory.
 - mindos-server.full.env.bat is a commented reference file only; it is NOT auto-loaded.
+- use mindos-server.full.env.bat for harness/canary examples, then copy selected lines back to mindos-server.env.bat.
 - In provider maps, commas split entries and the first colon splits provider name from value.
 - Doubao Ark Chat uses Authorization: Bearer <ARK_API_KEY> and requires a real Model ID or Endpoint ID.
 - Avoid unescaped special characters in values: & | < > % ^ !

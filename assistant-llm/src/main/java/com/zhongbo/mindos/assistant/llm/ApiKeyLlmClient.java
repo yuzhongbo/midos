@@ -38,9 +38,13 @@ import java.util.function.Consumer;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 @Component
 public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
+
+    private static final Logger LOGGER = Logger.getLogger(ApiKeyLlmClient.class.getName());
 
     private static final Map<String, String> PROVIDER_ALIASES = Map.ofEntries(
             Map.entry("qwen", "qwen"),
@@ -186,11 +190,14 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
                 return output;
             } catch (RuntimeException ex) {
                 lastError = ex;
+                logLlmAttemptFailure(safeContext, selectedProvider, selectedEndpoint, selectedModel, attempt, maxRetries, ex, false);
                 if (attempt < maxRetries) {
                     sleepBeforeRetry();
                 }
             }
         }
+
+        logLlmFinalFailure(safeContext, selectedProvider, selectedEndpoint, selectedModel, maxRetries, lastError, false);
 
         String output = buildRequestFailureReply(safeContext, selectedProvider, maxRetries, lastError);
         recordMetric(startedAt, safeContext, selectedProvider, selectedEndpoint, false, maxRetries > 1, prompt, output,
@@ -244,11 +251,13 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
                 return;
             } catch (RuntimeException ex) {
                 lastError = ex;
+                logLlmAttemptFailure(safeContext, selectedProvider, selectedEndpoint, selectedModel, attempt, maxRetries, ex, true);
                 if (attempt < maxRetries) {
                     sleepBeforeRetry();
                 }
             }
         }
+        logLlmFinalFailure(safeContext, selectedProvider, selectedEndpoint, selectedModel, maxRetries, lastError, true);
         if (onDelta != null) {
             onDelta.accept(buildRequestFailureReply(safeContext, selectedProvider, maxRetries, lastError));
         }
@@ -1262,6 +1271,62 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
             return "runtime_error";
         }
         return simple.toLowerCase(Locale.ROOT);
+    }
+
+    private void logLlmAttemptFailure(Map<String, Object> context,
+                                      String providerName,
+                                      String endpointValue,
+                                      String model,
+                                      int attempt,
+                                      int maxAttempts,
+                                      RuntimeException ex,
+                                      boolean streamMode) {
+        String routeStage = context == null ? null : asText(context.get("routeStage"));
+        String userId = context == null ? null : asText(context.get("userId"));
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("event", "llm.call.attempt.failed");
+        payload.put("streamMode", streamMode);
+        payload.put("provider", normalizeProvider(providerName));
+        payload.put("model", model == null ? "" : model);
+        payload.put("endpoint", sanitizeEndpointForMetrics(endpointValue));
+        payload.put("routeStage", routeStage == null ? "" : routeStage);
+        payload.put("attempt", attempt);
+        payload.put("maxAttempts", maxAttempts);
+        payload.put("errorType", ex == null ? "runtime_error" : simplifyErrorType(ex));
+        payload.put("message", ex == null || ex.getMessage() == null ? "" : abbreviate(ex.getMessage(), 260));
+        payload.put("userHash", userId == null ? "" : Integer.toHexString(userId.hashCode()));
+        try {
+            LOGGER.warning(objectMapper.writeValueAsString(payload));
+        } catch (JsonProcessingException jsonEx) {
+            LOGGER.log(Level.WARNING, String.valueOf(payload), jsonEx);
+        }
+    }
+
+    private void logLlmFinalFailure(Map<String, Object> context,
+                                    String providerName,
+                                    String endpointValue,
+                                    String model,
+                                    int maxAttempts,
+                                    RuntimeException ex,
+                                    boolean streamMode) {
+        String routeStage = context == null ? null : asText(context.get("routeStage"));
+        String userId = context == null ? null : asText(context.get("userId"));
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("event", "llm.call.failed");
+        payload.put("streamMode", streamMode);
+        payload.put("provider", normalizeProvider(providerName));
+        payload.put("model", model == null ? "" : model);
+        payload.put("endpoint", sanitizeEndpointForMetrics(endpointValue));
+        payload.put("routeStage", routeStage == null ? "" : routeStage);
+        payload.put("maxAttempts", maxAttempts);
+        payload.put("errorType", ex == null ? "runtime_error" : simplifyErrorType(ex));
+        payload.put("message", ex == null || ex.getMessage() == null ? "" : abbreviate(ex.getMessage(), 260));
+        payload.put("userHash", userId == null ? "" : Integer.toHexString(userId.hashCode()));
+        try {
+            LOGGER.warning(objectMapper.writeValueAsString(payload));
+        } catch (JsonProcessingException jsonEx) {
+            LOGGER.log(Level.WARNING, String.valueOf(payload), jsonEx);
+        }
     }
 
     private String asText(Object value) {

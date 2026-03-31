@@ -95,6 +95,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
 
     private final SkillEngine skillEngine;
     private final SkillDslParser skillDslParser;
+    private final IntentModelRoutingPolicy intentModelRoutingPolicy;
     private final MetaOrchestratorService metaOrchestratorService;
     private final SkillCapabilityPolicy skillCapabilityPolicy;
     private final PersonaCoreService personaCoreService;
@@ -176,6 +177,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
 
     public DispatcherService(SkillEngine skillEngine,
                              SkillDslParser skillDslParser,
+                             IntentModelRoutingPolicy intentModelRoutingPolicy,
                              MetaOrchestratorService metaOrchestratorService,
                              SkillCapabilityPolicy skillCapabilityPolicy,
                              PersonaCoreService personaCoreService,
@@ -231,6 +233,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                               @Value("${mindos.dispatcher.memory-context.history-summary-min-turns:4}") int memoryContextHistorySummaryMinTurns) {
         this.skillEngine = skillEngine;
         this.skillDslParser = skillDslParser;
+        this.intentModelRoutingPolicy = intentModelRoutingPolicy;
         this.metaOrchestratorService = metaOrchestratorService;
         this.skillCapabilityPolicy = skillCapabilityPolicy;
         this.personaCoreService = personaCoreService;
@@ -349,6 +352,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         llmContext.put("profile", resolvedProfileContext);
         copyInteractionContext(resolvedProfileContext, llmContext);
         applyStageLlmRoute("llm-fallback", resolvedProfileContext, llmContext);
+        intentModelRoutingPolicy.applyForFallback(userInput, promptMemoryContext, realtimeIntentInput, resolvedProfileContext, llmContext);
 
         return metaOrchestratorService.orchestrate(
                         () -> executeSinglePass(userId, userInput, context, memoryContext, promptMemoryContext, llmContext, realtimeIntentInput, routingDecisionRef, replayProbe),
@@ -430,6 +434,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         llmContext.put("profile", resolvedProfileContext);
         copyInteractionContext(resolvedProfileContext, llmContext);
         applyStageLlmRoute("llm-fallback", resolvedProfileContext, llmContext);
+        intentModelRoutingPolicy.applyForFallback(userInput, promptMemoryContext, realtimeIntentInput, resolvedProfileContext, llmContext);
 
         return routeToSkillAsync(userId, userInput, context, memoryContext, replayProbe)
                 .thenApply(routingOutcome -> {

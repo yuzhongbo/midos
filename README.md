@@ -137,9 +137,10 @@ mindos-server-stop.bat
 
 `mindos-server.env.bat` is the single place to edit self-hosted variables such as:
 - keep each line in the form `set "KEY=value"` and edit only the text to the right of the first `=`
-- enable one LLM provider first with `MINDOS_LLM_HTTP_ENABLED=true`, `MINDOS_LLM_PROVIDER=qwen`, and one `MINDOS_LLM_PROVIDER_KEYS=qwen:...` line
+- choose mode first with `MINDOS_LLM_MODE=OPENROUTER` (default) or `MINDOS_LLM_MODE=DOUBAO`
+- in `OPENROUTER` mode, keep `MINDOS_DISPATCHER_INTENT_ROUTING_ENABLED=true` and fill one `MINDOS_LLM_PROVIDER_KEYS=gpt:...,grok:...,gemini:...` line
 - if you switch to Doubao Ark, also set `MINDOS_LLM_PROVIDER_MODELS=doubao:<Model ID or Endpoint ID>` because the Chat API requires a real model identifier and uses `Authorization: Bearer <ARK_API_KEY>`
-- the exported Windows template keeps `doubao:REPLACE_WITH_YOUR_DOUBAO_ENDPOINT_ID` on the same line; leaving that placeholder unchanged is safe because MindOS ignores it until you replace it with a real Ark Model ID / Endpoint ID
+- the exported Windows templates keep `doubao:REPLACE_WITH_DOUBAO_ENDPOINT_ID` on the same line; leaving that placeholder unchanged is safe until you enable `DOUBAO` mode
 - add other providers only when you actually need cross-provider switching
 - keep `MINDOS_IM_DINGTALK_*` / `MINDOS_IM_WECHAT_*` disabled until you have real bot credentials
 - `MINDOS_SERVER_PORT` for local service port
@@ -476,6 +477,16 @@ If you prefer cleaner secret handling for Gemini, use the same endpoint without 
   - `mindos.dispatcher.skill.pre-analyze.mode=auto|always|never` (default `auto`): controls whether low-certainty requests go through LLM skill pre-analysis.
   - `mindos.dispatcher.skill.pre-analyze.confidence-threshold` (default `0`): in `auto` mode, skip pre-analysis when best candidate confidence is below this threshold.
   - `mindos.dispatcher.skill.pre-analyze.skip-skills` (default `time`): skill names that should not be selected by LLM pre-analysis.
+  - intent + difficulty model routing for `llm-fallback` (optional, especially useful for OpenRouter multi-model setups):
+    - `mindos.dispatcher.intent-routing.enabled` (default `true`)
+    - `mindos.dispatcher.intent-routing.default-provider` / `code-provider` / `realtime-provider` / `emotional-provider`
+    - model tiers by intent and difficulty:
+      - `mindos.dispatcher.intent-routing.model.general.easy|medium|hard`
+      - `mindos.dispatcher.intent-routing.model.code.easy|medium|hard`
+      - `mindos.dispatcher.intent-routing.model.realtime.easy|medium|hard`
+      - `mindos.dispatcher.intent-routing.model.emotional.easy|medium|hard`
+    - emotional intent cue terms: `mindos.dispatcher.intent-routing.emotional-terms`
+    - hard-input threshold: `mindos.dispatcher.intent-routing.hard-input-length-threshold` (default `180`)
   - `mindos.dispatcher.llm-dsl.provider` / `mindos.dispatcher.llm-dsl.preset` (default empty): stage-specific provider/preset defaults for `llm-dsl` routing calls when profile override is absent.
   - `mindos.dispatcher.llm-fallback.provider` / `mindos.dispatcher.llm-fallback.preset` (default empty): stage-specific provider/preset defaults for normal chat fallback when profile override is absent.
   - `mindos.dispatcher.skill.finalize-with-llm.enabled` (default `false` in base profile, `true` in `solo`): runs an LLM postprocess stage to convert structured skill output into a concise user-facing conclusion.
@@ -663,6 +674,9 @@ If you prefer cleaner secret handling for Gemini, use the same endpoint without 
   Set `"response": "llm"` to route the input to the configured LLM instead.
 - **External skill JARs**: set `mindos.skills.external-jars=https://host/skill.jar` (comma-separated). JARs must implement `Skill` and declare it in `META-INF/services/com.zhongbo.mindos.assistant.skill.Skill`. Load a JAR at runtime via `POST /api/skills/load-jar {"url":"..."}`.
 - **MCP skills**: set `mindos.skills.mcp-servers=docs:http://localhost:8081/mcp,search:https://example.com/mcp`. Each remote MCP tool is exposed as a namespaced skill like `mcp.docs.searchDocs`. Dispatcher auto-detection can route natural requests such as `search docs for auth guide` to matching MCP tools, and explicit DSL can target the full skill name. Reload all configured MCP servers via `POST /api/skills/reload-mcp`, or attach one server at runtime via `POST /api/skills/load-mcp {"alias":"docs","url":"http://localhost:8081/mcp"}`.
+- `code.generate` can be pinned to a provider and difficulty-tier models via:
+  - `mindos.skill.code-generate.llm-provider`
+  - `mindos.skill.code-generate.model.easy|medium|hard`
 - Skill management API: `GET /api/skills` lists all registered skills.
 - Chat-style skill discovery is supported for everyday phrasing such as `你有哪些技能？`, `你能做什么？`, and `你还可以学习哪些技能？`.
 

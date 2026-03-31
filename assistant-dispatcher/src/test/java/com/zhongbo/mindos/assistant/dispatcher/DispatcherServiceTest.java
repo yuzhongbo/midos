@@ -508,12 +508,34 @@ class DispatcherServiceTest {
         SkillDslExecutor dslExecutor = new SkillDslExecutor(registry);
         SkillEngine skillEngine = new SkillEngine(registry, dslExecutor, memoryManager);
         SkillDslParser parser = new SkillDslParser(new SkillDslValidator());
+        IntentModelRoutingPolicy intentModelRoutingPolicy = new IntentModelRoutingPolicy(
+                false,
+                "gpt",
+                "gpt",
+                "grok",
+                "gemini",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                "情绪,焦虑",
+                180
+        );
         MetaOrchestratorService metaOrchestratorService = new MetaOrchestratorService(false);
         SkillCapabilityPolicy capabilityPolicy = new SkillCapabilityPolicy(false, "fs.read,fs.write,exec,net", "");
         PersonaCoreService personaCoreService = new PersonaCoreService(memoryManager, false, 2, "unknown,null,n/a");
         return new DispatcherService(
                 skillEngine,
                 parser,
+                intentModelRoutingPolicy,
                 metaOrchestratorService,
                 capabilityPolicy,
                 personaCoreService,
