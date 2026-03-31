@@ -5,17 +5,26 @@ import com.zhongbo.mindos.assistant.dispatcher.DispatchResult;
 import com.zhongbo.mindos.assistant.dispatcher.DispatcherService;
 import com.zhongbo.mindos.assistant.memory.MemoryConsolidationService;
 import com.zhongbo.mindos.assistant.memory.MemoryManager;
+import com.zhongbo.mindos.assistant.memory.model.LongTask;
+import com.zhongbo.mindos.assistant.memory.model.LongTaskStatus;
 import com.zhongbo.mindos.assistant.memory.model.MemoryCompressionPlan;
 import com.zhongbo.mindos.assistant.memory.model.MemoryCompressionStep;
 import com.zhongbo.mindos.assistant.memory.model.MemoryStyleProfile;
+import jakarta.annotation.PreDestroy;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 @Service
 public class ImGatewayService {
@@ -26,19 +35,67 @@ public class ImGatewayService {
     private static final String PROP_TODO_WINDOW_P2 = "mindos.todo.window.p2";
     private static final String PROP_TODO_WINDOW_P3 = "mindos.todo.window.p3";
     private static final String PROP_TODO_LEGEND = "mindos.todo.legend";
+    private static final List<String> DINGTALK_ASYNC_STEPS = List.of("等待后台处理", "生成回复", "回推钉钉结果");
 
     private final DispatcherService dispatcherService;
     private final MemoryManager memoryManager;
     private final MemoryConsolidationService memoryConsolidationService;
+    private final DingtalkAsyncReplyClient dingtalkAsyncReplyClient;
+    private final ExecutorService dingtalkAsyncExecutor;
+    private final boolean dingtalkAsyncReplyEnabled;
+    private final long dingtalkAsyncReplyExpirySkewSeconds;
+    private final String dingtalkAsyncAcceptedTemplate;
+    private final String dingtalkAsyncResultPrefix;
     private final Map<String, String> pendingKeyPointReviews = new ConcurrentHashMap<>();
     private final Map<String, List<String>> pendingTodoFromReview = new ConcurrentHashMap<>();
+    private final Map<String, DingtalkAsyncTaskContext> pendingDingtalkReplies = new ConcurrentHashMap<>();
 
     ImGatewayService(DispatcherService dispatcherService,
                      MemoryManager memoryManager,
                      MemoryConsolidationService memoryConsolidationService) {
+        this(dispatcherService,
+                memoryManager,
+                memoryConsolidationService,
+                new DingtalkAsyncReplyClient(
+                        java.net.http.HttpClient.newBuilder().connectTimeout(java.time.Duration.ofSeconds(3)).build(),
+                        new com.fasterxml.jackson.databind.ObjectMapper().findAndRegisterModules(),
+                        java.time.Duration.ofSeconds(10),
+                        List.of("localhost", "127.0.0.1", ".dingtalk.com", ".dingtalkapps.com")),
+                true,
+                2,
+                5L,
+                "已收到，正在处理中。任务ID：%s。处理完成后我会继续把结果发到当前会话。",
+                "你刚才的请求已处理完成：");
+    }
+
+    @Autowired
+    ImGatewayService(DispatcherService dispatcherService,
+                     MemoryManager memoryManager,
+                     MemoryConsolidationService memoryConsolidationService,
+                     DingtalkAsyncReplyClient dingtalkAsyncReplyClient,
+                     @Value("${mindos.im.dingtalk.async-reply.enabled:true}") boolean dingtalkAsyncReplyEnabled,
+                     @Value("${mindos.im.dingtalk.async-reply.executor-threads:2}") int dingtalkAsyncExecutorThreads,
+                     @Value("${mindos.im.dingtalk.async-reply.expiry-skew-seconds:5}") long dingtalkAsyncReplyExpirySkewSeconds,
+                     @Value("${mindos.im.dingtalk.async-reply.accepted-template:已收到，正在处理中。任务ID：%s。处理完成后我会继续把结果发到当前会话。}") String dingtalkAsyncAcceptedTemplate,
+                     @Value("${mindos.im.dingtalk.async-reply.result-prefix:你刚才的请求已处理完成：}") String dingtalkAsyncResultPrefix) {
         this.dispatcherService = dispatcherService;
         this.memoryManager = memoryManager;
         this.memoryConsolidationService = memoryConsolidationService;
+        this.dingtalkAsyncReplyClient = dingtalkAsyncReplyClient;
+        this.dingtalkAsyncReplyEnabled = dingtalkAsyncReplyEnabled;
+        this.dingtalkAsyncReplyExpirySkewSeconds = Math.max(0L, dingtalkAsyncReplyExpirySkewSeconds);
+        this.dingtalkAsyncAcceptedTemplate = dingtalkAsyncAcceptedTemplate == null || dingtalkAsyncAcceptedTemplate.isBlank()
+                ? "已收到，正在处理中。任务ID：%s。处理完成后我会继续把结果发到当前会话。"
+                : dingtalkAsyncAcceptedTemplate;
+        this.dingtalkAsyncResultPrefix = dingtalkAsyncResultPrefix == null || dingtalkAsyncResultPrefix.isBlank()
+                ? "你刚才的请求已处理完成："
+                : dingtalkAsyncResultPrefix;
+        this.dingtalkAsyncExecutor = Executors.newFixedThreadPool(Math.max(1, dingtalkAsyncExecutorThreads), runnable -> {
+            Thread thread = new Thread(runnable);
+            thread.setName("mindos-dingtalk-async");
+            thread.setDaemon(true);
+            return thread;
+        });
     }
 
     String chat(ImPlatform platform, String senderId, String chatId, String text) {
@@ -46,7 +103,129 @@ public class ImGatewayService {
         if (normalizedText.isBlank()) {
             return "请发送文本消息，我会继续协助你。";
         }
+        return buildReply(platform, senderId, chatId, normalizedText);
+    }
 
+    AsyncReplyAck startDingtalkAsyncReply(String senderId,
+                                          String chatId,
+                                          String text,
+                                          String sessionWebhook,
+                                          Long sessionWebhookExpiredTime) {
+        String normalizedText = text == null ? "" : text.trim();
+        if (normalizedText.isBlank()) {
+            return null;
+        }
+        if (!dingtalkAsyncReplyEnabled || !dingtalkAsyncReplyClient.isUsableSessionWebhook(sessionWebhook)) {
+            return null;
+        }
+        Instant expiresAt = resolveSessionWebhookExpiry(sessionWebhookExpiredTime);
+        if (expiresAt != null && expiresAt.isBefore(Instant.now().plusSeconds(dingtalkAsyncReplyExpirySkewSeconds))) {
+            return null;
+        }
+        String userId = buildUserId(ImPlatform.DINGTALK, senderId);
+        LongTask task = memoryManager.createLongTask(
+                userId,
+                "钉钉消息处理",
+                normalizedText,
+                DINGTALK_ASYNC_STEPS,
+                null,
+                Instant.now()
+        );
+        DingtalkAsyncTaskContext context = new DingtalkAsyncTaskContext(
+                task.taskId(),
+                userId,
+                senderId == null ? "" : senderId,
+                chatId == null ? "" : chatId,
+                normalizedText,
+                sessionWebhook.trim(),
+                expiresAt
+        );
+        pendingDingtalkReplies.put(task.taskId(), context);
+        dingtalkAsyncExecutor.submit(() -> processDingtalkAsyncReply(context));
+        return new AsyncReplyAck(task.taskId(), String.format(dingtalkAsyncAcceptedTemplate, task.taskId()));
+    }
+
+    @PreDestroy
+    void shutdownAsyncExecutor() {
+        dingtalkAsyncExecutor.shutdown();
+        try {
+            if (!dingtalkAsyncExecutor.awaitTermination(5, TimeUnit.SECONDS)) {
+                dingtalkAsyncExecutor.shutdownNow();
+            }
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+            dingtalkAsyncExecutor.shutdownNow();
+        }
+    }
+
+    private void processDingtalkAsyncReply(DingtalkAsyncTaskContext context) {
+        memoryManager.updateLongTaskProgress(
+                context.userId(),
+                context.taskId(),
+                "im-dingtalk-async",
+                "等待后台处理",
+                "已开始处理钉钉消息",
+                "",
+                Instant.now(),
+                false
+        );
+        try {
+            String reply = buildReply(ImPlatform.DINGTALK, context.senderId(), context.chatId(), context.inputText());
+            memoryManager.updateLongTaskProgress(
+                    context.userId(),
+                    context.taskId(),
+                    "im-dingtalk-async",
+                    "生成回复",
+                    "已生成回复内容",
+                    "",
+                    Instant.now(),
+                    false
+            );
+            if (isSessionWebhookExpired(context.sessionWebhookExpiresAt())) {
+                memoryManager.updateLongTaskStatus(
+                        context.userId(),
+                        context.taskId(),
+                        LongTaskStatus.BLOCKED,
+                        "钉钉 sessionWebhook 已过期，未能回推最终结果",
+                        Instant.now()
+                );
+                return;
+            }
+            boolean sent = dingtalkAsyncReplyClient.sendText(context.sessionWebhook(), formatAsyncResult(reply));
+            if (sent) {
+                memoryManager.updateLongTaskProgress(
+                        context.userId(),
+                        context.taskId(),
+                        "im-dingtalk-async",
+                        "回推钉钉结果",
+                        "已将结果回推到钉钉会话",
+                        "",
+                        Instant.now(),
+                        true
+                );
+            } else {
+                memoryManager.updateLongTaskStatus(
+                        context.userId(),
+                        context.taskId(),
+                        LongTaskStatus.BLOCKED,
+                        "钉钉异步回推失败，请稍后重试或通过任务接口查看结果",
+                        Instant.now()
+                );
+            }
+        } catch (Exception ex) {
+            memoryManager.updateLongTaskStatus(
+                    context.userId(),
+                    context.taskId(),
+                    LongTaskStatus.BLOCKED,
+                    "钉钉消息处理失败: " + ex.getMessage(),
+                    Instant.now()
+            );
+        } finally {
+            pendingDingtalkReplies.remove(context.taskId());
+        }
+    }
+
+    private String buildReply(ImPlatform platform, String senderId, String chatId, String normalizedText) {
         String userId = buildUserId(platform, senderId);
         Map<String, Object> profileContext = new LinkedHashMap<>();
         profileContext.put("imPlatform", platform.name().toLowerCase());
@@ -60,6 +239,29 @@ public class ImGatewayService {
 
         DispatchResult result = dispatcherService.dispatch(userId, normalizedText, profileContext);
         return result.reply();
+    }
+
+    private Instant resolveSessionWebhookExpiry(Long sessionWebhookExpiredTime) {
+        if (sessionWebhookExpiredTime == null || sessionWebhookExpiredTime <= 0L) {
+            return null;
+        }
+        try {
+            return Instant.ofEpochMilli(sessionWebhookExpiredTime);
+        } catch (Exception ex) {
+            return null;
+        }
+    }
+
+    private boolean isSessionWebhookExpired(Instant expiresAt) {
+        return expiresAt != null && expiresAt.isBefore(Instant.now().plusSeconds(dingtalkAsyncReplyExpirySkewSeconds));
+    }
+
+    private String formatAsyncResult(String reply) {
+        String normalizedReply = reply == null ? "" : reply.trim();
+        if (normalizedReply.isBlank()) {
+            normalizedReply = "已处理完成，但当前没有可返回的文本结果。";
+        }
+        return dingtalkAsyncResultPrefix + "\n" + normalizedReply;
     }
 
     private String tryHandleMemoryPlanningIntent(String userId, String message) {
@@ -410,5 +612,18 @@ public class ImGatewayService {
             String legend
     ) {
     }
-}
 
+    record AsyncReplyAck(String taskId, String acceptedReply) {
+    }
+
+    private record DingtalkAsyncTaskContext(
+            String taskId,
+            String userId,
+            String senderId,
+            String chatId,
+            String inputText,
+            String sessionWebhook,
+            Instant sessionWebhookExpiresAt
+    ) {
+    }
+}

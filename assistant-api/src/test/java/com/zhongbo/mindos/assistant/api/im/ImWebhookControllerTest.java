@@ -1,11 +1,18 @@
 package com.zhongbo.mindos.assistant.api.im;
 
+import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
+
+import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -69,6 +76,47 @@ class ImWebhookControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.msgtype").value("text"))
                 .andExpect(jsonPath("$.text.content").isNotEmpty());
+    }
+
+    @Test
+    void shouldAcknowledgeAndPushAsyncDingtalkReplyWhenSessionWebhookProvided() throws Exception {
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicReference<String> callbackBody = new AtomicReference<>("");
+        HttpServer callbackServer = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        callbackServer.createContext("/callback", exchange -> {
+            callbackBody.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            byte[] response = "{\"errcode\":0}".getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+            latch.countDown();
+        });
+        callbackServer.start();
+        try {
+            long expiresAt = System.currentTimeMillis() + 60_000L;
+            String payload = "{" +
+                    "\"senderId\":\"ding-async-user\"," +
+                    "\"conversationId\":\"conv-async\"," +
+                    "\"sessionWebhook\":\"http://127.0.0.1:" + callbackServer.getAddress().getPort() + "/callback\"," +
+                    "\"sessionWebhookExpiredTime\":" + expiresAt + "," +
+                    "\"text\":{\"content\":\"echo async hi\"}" +
+                    "}";
+
+            mockMvc.perform(post("/api/im/dingtalk/events")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(payload))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.msgtype").value("text"))
+                    .andExpect(jsonPath("$.text.content").value(org.hamcrest.Matchers.containsString("正在处理中")))
+                    .andExpect(jsonPath("$.text.content").value(org.hamcrest.Matchers.containsString("任务ID")));
+
+            org.junit.jupiter.api.Assertions.assertTrue(latch.await(5, TimeUnit.SECONDS));
+            org.junit.jupiter.api.Assertions.assertTrue(callbackBody.get().contains("\"msgtype\":\"text\""));
+            org.junit.jupiter.api.Assertions.assertTrue(callbackBody.get().contains("你刚才的请求已处理完成："));
+            org.junit.jupiter.api.Assertions.assertTrue(callbackBody.get().contains("async hi"));
+        } finally {
+            callbackServer.stop(0);
+        }
     }
 
     @Test
@@ -161,4 +209,3 @@ class ImWebhookControllerTest {
                 .andExpect(content().string(org.hamcrest.Matchers.containsString("<MsgType><![CDATA[text]]></MsgType>")));
     }
 }
-

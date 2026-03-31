@@ -130,6 +130,21 @@ public class ImWebhookController {
         }
         String senderId = String.valueOf(body.getOrDefault("senderId", ""));
         String chatId = String.valueOf(body.getOrDefault("conversationId", ""));
+        String sessionWebhook = String.valueOf(body.getOrDefault("sessionWebhook", ""));
+        Long sessionWebhookExpiredTime = asLong(body.get("sessionWebhookExpiredTime"));
+        ImGatewayService.AsyncReplyAck asyncReplyAck = imGatewayService.startDingtalkAsyncReply(
+                senderId,
+                chatId,
+                text,
+                sessionWebhook,
+                sessionWebhookExpiredTime
+        );
+        if (asyncReplyAck != null) {
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("msgtype", "text");
+            payload.put("text", Map.of("content", asyncReplyAck.acceptedReply()));
+            return ResponseEntity.ok(payload);
+        }
         String reply = imGatewayService.chat(ImPlatform.DINGTALK, senderId, chatId, text);
 
         Map<String, Object> payload = new LinkedHashMap<>();
@@ -285,7 +300,20 @@ public class ImWebhookController {
         return value == null || value.isBlank();
     }
 
+    private Long asLong(Object value) {
+        if (value instanceof Number number) {
+            return number.longValue();
+        }
+        if (value == null) {
+            return null;
+        }
+        try {
+            return Long.parseLong(String.valueOf(value).trim());
+        } catch (NumberFormatException ex) {
+            return null;
+        }
+    }
+
     private record WechatMessage(String toUser, String fromUser, String msgType, String content) {
     }
 }
-
