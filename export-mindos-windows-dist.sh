@@ -84,180 +84,62 @@ cp "$JAR_PATH" "$OUTPUT_DIR/$JAR_NAME"
 
 cat > "$OUTPUT_DIR/mindos-server.env.bat" <<'BAT'
 @echo off
-REM Edit this file on Windows before starting MindOS.
-REM Keep the set "KEY=value" format unchanged.
-REM Only edit the text to the right of the first '='.
-REM Avoid special CMD symbols in values unless you fully understand escaping rules.
+REM Minimal config loader. Place secrets in mindos-secrets.properties (KEY=value, # or ; for comments).
 
+set "ROOT_DIR=%~dp0"
 set "MINDOS_ENV_LOADED="
 
-REM Core runtime
-set "MINDOS_SPRING_PROFILE=solo"
-set "MINDOS_SERVER_PORT=8080"
-set "MINDOS_SERVER=http://localhost:8080"
-set "MINDOS_MEMORY_FILE_REPO_ENABLED=true"
-set "MINDOS_MEMORY_FILE_REPO_BASE_DIR=data/memory-sync"
-set "MINDOS_USER=solo-smoke-user"
-set "MINDOS_SMOKE_TIMEOUT_SECONDS=8"
-set "MINDOS_PAUSE_ON_EXIT=true"
-
-REM LLM routing / provider selection
-REM Preset switch:
-REM   OPENROUTER_INTENT -> coding=gpt, realtime/news=grok, emotional=gemini
-REM   DOUBAO_STABLE     -> single-provider doubao (fast troubleshooting baseline)
-REM   QWEN_STABLE       -> single-provider qwen (safe fallback)
-set "MINDOS_LLM_PROFILE=OPENROUTER_INTENT"
-
-REM Shared provider credentials/model ids (edit once)
-set "MINDOS_OPENROUTER_KEY=REPLACE_WITH_OPENROUTER_KEY"
-set "MINDOS_DOUBAO_ARK_KEY=REPLACE_WITH_DOUBAO_ARK_KEY"
-set "MINDOS_DOUBAO_ENDPOINT_ID=REPLACE_WITH_DOUBAO_ENDPOINT_ID"
-set "MINDOS_QWEN_KEY=REPLACE_WITH_QWEN_KEY"
-set "MINDOS_QWEN_MODEL=qwen3.5-plus"
-
-set "MINDOS_LLM_HTTP_ENABLED=true"
-set "MINDOS_LLM_MODE=OPENROUTER"
-set "MINDOS_LLM_PROVIDER=gpt"
-set "MINDOS_LLM_ROUTING_MODE=fixed"
-set "MINDOS_LLM_PROVIDER_ENDPOINTS=gpt:https://openrouter.ai/api/v1/chat/completions,grok:https://openrouter.ai/api/v1/chat/completions,gemini:https://openrouter.ai/api/v1/chat/completions"
-set "MINDOS_LLM_PROVIDER_KEYS=gpt:%MINDOS_OPENROUTER_KEY%,grok:%MINDOS_OPENROUTER_KEY%,gemini:%MINDOS_OPENROUTER_KEY%,doubao:%MINDOS_DOUBAO_ARK_KEY%,qwen:%MINDOS_QWEN_KEY%"
-set "MINDOS_LLM_PROVIDER_MODELS=gpt:openai/gpt-5.2,grok:x-ai/grok-4,gemini:google/gemini-2.5-pro,doubao:%MINDOS_DOUBAO_ENDPOINT_ID%,qwen:%MINDOS_QWEN_MODEL%"
-
-REM ===== Harness metadata (experiment tracking) =====
-set "MINDOS_HARNESS_STRATEGY_ID=or-intent-v1"
-set "MINDOS_HARNESS_EXPERIMENT_ID=exp-20260330"
-set "MINDOS_HARNESS_BASELINE_ID=baseline-fixed-gpt"
-
-REM ===== Harness observability knobs =====
-set "MINDOS_DISPATCHER_ROUTING_REPLAY_MAX_SAMPLES=500"
-set "MINDOS_LLM_METRICS_CACHE_WINDOW_LOW_SAMPLE_THRESHOLD=30"
-
-REM ===== Harness manual canary toggles =====
-REM A (default): intent-routing strategy
-REM set "MINDOS_DISPATCHER_INTENT_ROUTING_ENABLED=true"
-REM B (baseline): fixed gpt only
-REM set "MINDOS_DISPATCHER_INTENT_ROUTING_ENABLED=false"
-REM set "MINDOS_LLM_PROVIDER=gpt"
-REM C (fallback): doubao single provider
-REM set "MINDOS_LLM_PROFILE=DOUBAO_STABLE"
-set "MINDOS_LLM_RETRY_MAX_ATTEMPTS=1"
-set "MINDOS_LLM_RETRY_DELAY_MS=0"
-
-REM Rollback toggles (uncomment one line if needed)
-REM set "MINDOS_DISPATCHER_INTENT_ROUTING_ENABLED=false"
-REM set "MINDOS_LLM_PROVIDER=gpt"
-REM set "MINDOS_LLM_PROFILE=QWEN_STABLE"
-
-REM Intent + difficulty based model routing (coding->gpt, realtime/news->grok, emotional->gemini)
-set "MINDOS_DISPATCHER_INTENT_ROUTING_ENABLED=true"
-set "MINDOS_DISPATCHER_INTENT_ROUTING_DEFAULT_PROVIDER=gpt"
-set "MINDOS_DISPATCHER_INTENT_ROUTING_CODE_PROVIDER=gpt"
-set "MINDOS_DISPATCHER_INTENT_ROUTING_REALTIME_PROVIDER=grok"
-set "MINDOS_DISPATCHER_INTENT_ROUTING_EMOTIONAL_PROVIDER=gemini"
-set "MINDOS_DISPATCHER_INTENT_ROUTING_MODEL_CODE_EASY=openai/gpt-5-mini"
-set "MINDOS_DISPATCHER_INTENT_ROUTING_MODEL_CODE_MEDIUM=openai/gpt-5.2"
-set "MINDOS_DISPATCHER_INTENT_ROUTING_MODEL_CODE_HARD=openai/gpt-5.2"
-set "MINDOS_DISPATCHER_INTENT_ROUTING_MODEL_REALTIME_EASY=x-ai/grok-4-fast"
-set "MINDOS_DISPATCHER_INTENT_ROUTING_MODEL_REALTIME_MEDIUM=x-ai/grok-4"
-set "MINDOS_DISPATCHER_INTENT_ROUTING_MODEL_REALTIME_HARD=x-ai/grok-4"
-set "MINDOS_DISPATCHER_INTENT_ROUTING_MODEL_EMOTIONAL_EASY=google/gemini-2.5-flash"
-set "MINDOS_DISPATCHER_INTENT_ROUTING_MODEL_EMOTIONAL_MEDIUM=google/gemini-2.5-pro"
-set "MINDOS_DISPATCHER_INTENT_ROUTING_MODEL_EMOTIONAL_HARD=google/gemini-2.5-pro"
-set "MINDOS_DISPATCHER_INTENT_ROUTING_MODEL_GENERAL_EASY=openai/gpt-5-mini"
-set "MINDOS_DISPATCHER_INTENT_ROUTING_MODEL_GENERAL_MEDIUM=openai/gpt-5.2"
-set "MINDOS_DISPATCHER_INTENT_ROUTING_MODEL_GENERAL_HARD=openai/gpt-5.2"
-set "MINDOS_DISPATCHER_INTENT_ROUTING_HARD_INPUT_LENGTH_THRESHOLD=180"
-set "MINDOS_DISPATCHER_SKILL_PRE_ANALYZE_MODE=never"
-set "MINDOS_DISPATCHER_SKILL_FINALIZE_WITH_LLM_ENABLED=false"
-set "MINDOS_SKILL_CODE_GENERATE_LLM_PROVIDER=gpt"
-set "MINDOS_SKILL_CODE_GENERATE_MODEL_EASY=openai/gpt-5-mini"
-set "MINDOS_SKILL_CODE_GENERATE_MODEL_MEDIUM=openai/gpt-5.2"
-set "MINDOS_SKILL_CODE_GENERATE_MODEL_HARD=openai/gpt-5.2"
-
-if /I "%MINDOS_LLM_PROFILE%"=="DOUBAO_STABLE" (
-  set "MINDOS_LLM_MODE=DOUBAO"
-  set "MINDOS_LLM_PROVIDER=doubao"
-  set "MINDOS_DISPATCHER_INTENT_ROUTING_ENABLED=false"
-  set "MINDOS_SKILL_CODE_GENERATE_LLM_PROVIDER=doubao"
-  set "MINDOS_SKILL_CODE_GENERATE_MODEL_EASY=%MINDOS_DOUBAO_ENDPOINT_ID%"
-  set "MINDOS_SKILL_CODE_GENERATE_MODEL_MEDIUM=%MINDOS_DOUBAO_ENDPOINT_ID%"
-  set "MINDOS_SKILL_CODE_GENERATE_MODEL_HARD=%MINDOS_DOUBAO_ENDPOINT_ID%"
+if exist "%ROOT_DIR%mindos-secrets.properties" (
+  for /f "usebackq tokens=1,* delims==" %%A in (`powershell -NoProfile -Command "Get-Content -Path '%ROOT_DIR%mindos-secrets.properties' | Where-Object { $_ -and $_.Trim().Length -gt 0 -and -not $_.Trim().StartsWith('#') -and -not $_.Trim().StartsWith(';') }"`) do (
+    if not "%%A"=="" set "%%A=%%B"
+  )
 )
 
-REM Auto-fallback guard: if Doubao profile is selected but required values are still placeholders,
-REM switch to qwen to avoid repeated auth/missing-model degraded replies.
-if /I "%MINDOS_LLM_PROFILE%"=="DOUBAO_STABLE" if "%MINDOS_DOUBAO_ARK_KEY%"=="REPLACE_WITH_DOUBAO_ARK_KEY" set "MINDOS_LLM_PROFILE=QWEN_STABLE"
-if /I "%MINDOS_LLM_PROFILE%"=="DOUBAO_STABLE" if "%MINDOS_DOUBAO_ENDPOINT_ID%"=="REPLACE_WITH_DOUBAO_ENDPOINT_ID" set "MINDOS_LLM_PROFILE=QWEN_STABLE"
+if not defined MINDOS_SPRING_PROFILE set "MINDOS_SPRING_PROFILE=solo"
+if not defined MINDOS_SERVER_PORT set "MINDOS_SERVER_PORT=8080"
+if not defined MINDOS_MEMORY_FILE_REPO_ENABLED set "MINDOS_MEMORY_FILE_REPO_ENABLED=true"
+if not defined MINDOS_MEMORY_FILE_REPO_BASE_DIR set "MINDOS_MEMORY_FILE_REPO_BASE_DIR=data/memory-sync"
+if not defined MINDOS_PAUSE_ON_EXIT set "MINDOS_PAUSE_ON_EXIT=true"
 
-if /I "%MINDOS_LLM_PROFILE%"=="QWEN_STABLE" (
-  set "MINDOS_LLM_MODE=OPENROUTER"
-  set "MINDOS_LLM_PROVIDER=qwen"
-  set "MINDOS_DISPATCHER_INTENT_ROUTING_ENABLED=false"
-  set "MINDOS_SKILL_CODE_GENERATE_LLM_PROVIDER=qwen"
-  set "MINDOS_SKILL_CODE_GENERATE_MODEL_EASY=%MINDOS_QWEN_MODEL%"
-  set "MINDOS_SKILL_CODE_GENERATE_MODEL_MEDIUM=%MINDOS_QWEN_MODEL%"
-  set "MINDOS_SKILL_CODE_GENERATE_MODEL_HARD=%MINDOS_QWEN_MODEL%"
-)
+REM LLM routing (intent-based via OpenRouter by default)
+if not defined MINDOS_LLM_PROFILE set "MINDOS_LLM_PROFILE=OPENROUTER_INTENT"
+if not defined MINDOS_LLM_MODE set "MINDOS_LLM_MODE=OPENROUTER"
+if not defined MINDOS_LLM_PROVIDER set "MINDOS_LLM_PROVIDER=gpt"
+if not defined MINDOS_LLM_ROUTING_MODE set "MINDOS_LLM_ROUTING_MODE=fixed"
+if not defined MINDOS_OPENROUTER_KEY set "MINDOS_OPENROUTER_KEY=REPLACE_WITH_OPENROUTER_KEY"
+if not defined MINDOS_QWEN_KEY set "MINDOS_QWEN_KEY=REPLACE_WITH_QWEN_KEY"
+if not defined MINDOS_QWEN_MODEL set "MINDOS_QWEN_MODEL=qwen3.5-plus"
+if not defined MINDOS_DOUBAO_ARK_KEY set "MINDOS_DOUBAO_ARK_KEY=REPLACE_WITH_DOUBAO_ARK_KEY"
+if not defined MINDOS_DOUBAO_ENDPOINT_ID set "MINDOS_DOUBAO_ENDPOINT_ID=REPLACE_WITH_DOUBAO_ENDPOINT_ID"
+if not defined MINDOS_LLM_PROVIDER_ENDPOINTS set "MINDOS_LLM_PROVIDER_ENDPOINTS=gpt:https://openrouter.ai/api/v1/chat/completions,grok:https://openrouter.ai/api/v1/chat/completions,gemini:https://openrouter.ai/api/v1/chat/completions"
+if not defined MINDOS_LLM_PROVIDER_KEYS set "MINDOS_LLM_PROVIDER_KEYS=gpt:%MINDOS_OPENROUTER_KEY%,grok:%MINDOS_OPENROUTER_KEY%,gemini:%MINDOS_OPENROUTER_KEY%,doubao:%MINDOS_DOUBAO_ARK_KEY%,qwen:%MINDOS_QWEN_KEY%"
+if not defined MINDOS_LLM_PROVIDER_MODELS set "MINDOS_LLM_PROVIDER_MODELS=gpt:openai/gpt-5.2,grok:x-ai/grok-4,gemini:google/gemini-2.5-pro,doubao:%MINDOS_DOUBAO_ENDPOINT_ID%,qwen:%MINDOS_QWEN_MODEL%"
+if not defined MINDOS_SECURITY_METRICS_REQUIRE_ADMIN_TOKEN set "MINDOS_SECURITY_METRICS_REQUIRE_ADMIN_TOKEN=false"
 
-REM Optional cache overrides
-set "MINDOS_LLM_CACHE_ENABLED=true"
-set "MINDOS_LLM_CACHE_TTL_SECONDS=120"
-set "MINDOS_LLM_CACHE_MAX_ENTRIES=512"
+REM Optional IM credentials (leave blank to disable)
+if not defined MINDOS_IM_DINGTALK_APP_KEY set "MINDOS_IM_DINGTALK_APP_KEY="
+if not defined MINDOS_IM_DINGTALK_APP_SECRET set "MINDOS_IM_DINGTALK_APP_SECRET="
+if not defined MINDOS_IM_DINGTALK_APP_TOKEN set "MINDOS_IM_DINGTALK_APP_TOKEN="
+if not defined MINDOS_IM_DINGTALK_APP_AES_KEY set "MINDOS_IM_DINGTALK_APP_AES_KEY="
 
-REM DingTalk / WeChat bot integration
-set "MINDOS_IM_ENABLED=true"
-set "MINDOS_IM_DINGTALK_ENABLED=true"
-set "MINDOS_IM_DINGTALK_VERIFY_SIGNATURE=false"
-set "MINDOS_IM_DINGTALK_SECRET="
-set "MINDOS_IM_DINGTALK_REPLY_TIMEOUT_MS=2500"
-set "MINDOS_IM_DINGTALK_REPLY_MAX_CHARS=1200"
-
-REM Stream required fields (replace placeholders)
-set "MINDOS_IM_DINGTALK_STREAM_ENABLED=true"
-set "MINDOS_IM_DINGTALK_STREAM_CLIENT_ID=REPLACE_WITH_YOUR_APP_KEY"
-set "MINDOS_IM_DINGTALK_STREAM_CLIENT_SECRET=REPLACE_WITH_YOUR_APP_SECRET"
-set "MINDOS_IM_DINGTALK_STREAM_TOPIC=/v1.0/im/bot/messages/get"
-set "MINDOS_IM_DINGTALK_STREAM_RECONNECT_ENABLED=true"
-set "MINDOS_IM_DINGTALK_STREAM_RECONNECT_INITIAL_DELAY_MS=1000"
-set "MINDOS_IM_DINGTALK_STREAM_RECONNECT_MAX_DELAY_MS=60000"
-set "MINDOS_IM_DINGTALK_STREAM_RECONNECT_MULTIPLIER=2.0"
-set "MINDOS_IM_DINGTALK_STREAM_RECONNECT_JITTER_RATIO=0.2"
-set "MINDOS_IM_DINGTALK_STREAM_RECONNECT_MAX_ATTEMPTS=0"
-set "MINDOS_IM_DINGTALK_OUTBOUND_ENABLED=true"
-set "MINDOS_IM_DINGTALK_OUTBOUND_ROBOT_CODE=REPLACE_WITH_YOUR_ROBOT_CODE"
-
-REM Slow-model experience preset (choose one)
-REM chat (fast feel)
-REM set "MINDOS_IM_DINGTALK_STREAM_WAITING_DELAY_MS=200"
-REM set "MINDOS_IM_DINGTALK_STREAM_WAITING_TEXT=Got it. Processing now, full reply is coming soon."
-REM set "MINDOS_DISPATCHER_LLM_REPLY_MAX_CHARS=700"
-REM set "MINDOS_DISPATCHER_PROMPT_MAX_CHARS=2000"
-REM set "MINDOS_DISPATCHER_MEMORY_CONTEXT_MAX_CHARS=1200"
-
-REM speed-first preset (recommended when model feels slow)
-set "MINDOS_IM_DINGTALK_STREAM_WAITING_DELAY_MS=200"
-set "MINDOS_IM_DINGTALK_STREAM_WAITING_TEXT=Got it. Processing now, full reply is coming soon."
-set "MINDOS_DISPATCHER_LLM_REPLY_MAX_CHARS=700"
-set "MINDOS_DISPATCHER_PROMPT_MAX_CHARS=2000"
-set "MINDOS_DISPATCHER_MEMORY_CONTEXT_MAX_CHARS=1200"
-set "MINDOS_DISPATCHER_MEMORY_CONTEXT_KEEP_RECENT_TURNS=1"
-
-REM writing (quality)
-REM set "MINDOS_IM_DINGTALK_STREAM_WAITING_DELAY_MS=500"
-REM set "MINDOS_IM_DINGTALK_STREAM_WAITING_TEXT=I am preparing a more complete answer, please give me a bit more time."
-REM set "MINDOS_DISPATCHER_LLM_REPLY_MAX_CHARS=1200"
-REM set "MINDOS_DISPATCHER_PROMPT_MAX_CHARS=3000"
-REM set "MINDOS_DISPATCHER_MEMORY_CONTEXT_MAX_CHARS=1800"
-set "MINDOS_IM_WECHAT_ENABLED=false"
-set "MINDOS_IM_WECHAT_VERIFY_SIGNATURE=true"
-set "MINDOS_IM_WECHAT_TOKEN="
-
-REM Metrics endpoint auth for local single-user usage
-set "MINDOS_SECURITY_METRICS_REQUIRE_ADMIN_TOKEN=false"
-
-REM Sentinel: launcher scripts verify this to detect env parsing failures.
 set "MINDOS_ENV_LOADED=1"
 BAT
+
+cat > "$OUTPUT_DIR/mindos-secrets.properties" <<'PROPS'
+# Only edit the values on the right side. Lines starting with # or ; are ignored.
+# LLM providers
+MINDOS_OPENROUTER_KEY=REPLACE_WITH_OPENROUTER_KEY
+MINDOS_QWEN_KEY=REPLACE_WITH_QWEN_KEY
+MINDOS_QWEN_MODEL=qwen3.5-plus
+MINDOS_DOUBAO_ARK_KEY=REPLACE_WITH_DOUBAO_ARK_KEY
+MINDOS_DOUBAO_ENDPOINT_ID=REPLACE_WITH_DOUBAO_ENDPOINT_ID
+
+# Optional IM / webhooks (leave empty to disable)
+MINDOS_IM_DINGTALK_APP_KEY=
+MINDOS_IM_DINGTALK_APP_SECRET=
+MINDOS_IM_DINGTALK_APP_TOKEN=
+MINDOS_IM_DINGTALK_APP_AES_KEY=
+PROPS
 
 cat > "$OUTPUT_DIR/mindos-server.full.env.bat" <<'BAT'
 @echo off
@@ -630,15 +512,10 @@ cat > "$OUTPUT_DIR/README-windows-server.txt" <<'TXT'
 MindOS Windows server bundle
 ============================
 
-1) Edit mindos-server.env.bat before startup:
-   - keep each line in the form: set "KEY=value"
-   - edit only the text to the right of the first '='
-   - start from the safe defaults in mindos-server.env.bat
-   - choose mode first: MINDOS_LLM_MODE=OPENROUTER (default) or MINDOS_LLM_MODE=DOUBAO
-   - OPENROUTER mode uses intent routing (coding->gpt, realtime/news->grok, emotional->gemini)
-   - if you use Doubao Ark, set MINDOS_LLM_PROVIDER_MODELS=doubao:<Model ID or Endpoint ID>
-   - MINDOS_IM_DINGTALK_* / MINDOS_IM_WECHAT_* stay disabled until you have real bot credentials
-   - MINDOS_SERVER_PORT for local port
+1) Edit only secrets in mindos-secrets.properties (KEY=value, # for comment):
+   - OPENROUTER/DOUBAO/QWEN keys and optional DingTalk webhook secrets live here
+   - leave empty values to disable the channel
+   - mindos-server.env.bat keeps sane defaults and auto-loads the properties file
 
 2) Start service:
    mindos-server.bat
@@ -658,9 +535,9 @@ Notes:
 - The service starts in background and writes logs to logs\assistant-api.out and logs\assistant-api.err.
 - PID file is stored in run\assistant-api.pid.
 - Default Spring profile is solo.
-- All launcher scripts auto-load mindos-server.env.bat from the same directory.
+- All launcher scripts auto-load mindos-server.env.bat (which itself loads mindos-secrets.properties if present).
 - mindos-server.full.env.bat is a commented reference file only; it is NOT auto-loaded.
-- use mindos-server.full.env.bat for harness/canary examples, then copy selected lines back to mindos-server.env.bat.
+- Use mindos-server.full.env.bat for harness/canary examples, then copy selected lines back to mindos-server.env.bat if you need overrides.
 - In provider maps, commas split entries and the first colon splits provider name from value.
 - Doubao Ark Chat uses Authorization: Bearer <ARK_API_KEY> and requires a real Model ID or Endpoint ID.
 - Avoid unescaped special characters in values: & | < > % ^ !
@@ -668,4 +545,3 @@ TXT
 
 echo "[DONE] Windows bundle exported to: $OUTPUT_DIR"
 echo "       Copy this whole directory to your Windows machine, then run mindos-server.bat"
-
