@@ -2658,6 +2658,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         if (semanticAnalysis == null
                 || !semanticAnalysis.hasSuggestedSkill()
                 || !semanticAnalysis.isConfident(semanticAnalysisRouteMinConfidence)
+                // Keep code.generate on the LLM shortlist path so provider/preset stage routing still applies.
                 || "code.generate".equals(semanticAnalysis.suggestedSkill())
                 || !isKnownSkillName(semanticAnalysis.suggestedSkill())) {
             return Optional.empty();

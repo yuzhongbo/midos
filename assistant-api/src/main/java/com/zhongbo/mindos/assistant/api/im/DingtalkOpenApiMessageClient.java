@@ -146,7 +146,7 @@ public class DingtalkOpenApiMessageClient {
             if (response == null) {
                 return null;
             }
-            // Accept both v1-style camelCase and legacy snake_case field names for compatibility with DingTalk variants.
+            // Accept common DingTalk token field variants across v1/legacy responses (camelCase and snake_case).
             String token = readText(response, "accessToken", "access_token");
             long expiresIn = readLong(response, 7200L, "expireIn", "expiresIn", "expires_in");
             if (token.isBlank()) {

@@ -283,6 +283,9 @@ public class ImWebhookController {
         }
     }
 
+    /**
+     * DingTalk proactive conversation send prefers openConversationId when the event provides it.
+     */
     private String resolveDingtalkConversationId(JsonNode body) {
         if (body == null || body.isMissingNode()) {
             return "";
