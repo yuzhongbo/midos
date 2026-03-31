@@ -25,6 +25,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 @Service
 public class ImGatewayService {
@@ -46,6 +47,7 @@ public class ImGatewayService {
     private final long dingtalkAsyncReplyExpirySkewSeconds;
     private final String dingtalkAsyncAcceptedTemplate;
     private final String dingtalkAsyncResultPrefix;
+    private final AtomicInteger dingtalkAsyncThreadCounter = new AtomicInteger(1);
     private final Map<String, String> pendingKeyPointReviews = new ConcurrentHashMap<>();
     private final Map<String, List<String>> pendingTodoFromReview = new ConcurrentHashMap<>();
     private final Map<String, DingtalkAsyncTaskContext> pendingDingtalkReplies = new ConcurrentHashMap<>();
@@ -60,7 +62,8 @@ public class ImGatewayService {
                         java.net.http.HttpClient.newBuilder().connectTimeout(java.time.Duration.ofSeconds(3)).build(),
                         new com.fasterxml.jackson.databind.ObjectMapper().findAndRegisterModules(),
                         java.time.Duration.ofSeconds(10),
-                        List.of("localhost", "127.0.0.1", ".dingtalk.com", ".dingtalkapps.com")),
+                        List.of("localhost", "127.0.0.1", ".dingtalk.com", ".dingtalkapps.com"),
+                        true),
                 true,
                 2,
                 5L,
@@ -92,7 +95,7 @@ public class ImGatewayService {
                 : dingtalkAsyncResultPrefix;
         this.dingtalkAsyncExecutor = Executors.newFixedThreadPool(Math.max(1, dingtalkAsyncExecutorThreads), runnable -> {
             Thread thread = new Thread(runnable);
-            thread.setName("mindos-dingtalk-async");
+            thread.setName("mindos-dingtalk-async-" + dingtalkAsyncThreadCounter.getAndIncrement());
             thread.setDaemon(true);
             return thread;
         });
@@ -119,7 +122,7 @@ public class ImGatewayService {
             return null;
         }
         Instant expiresAt = resolveSessionWebhookExpiry(sessionWebhookExpiredTime);
-        if (expiresAt != null && expiresAt.isBefore(Instant.now().plusSeconds(dingtalkAsyncReplyExpirySkewSeconds))) {
+        if (!isWebhookUsable(expiresAt)) {
             return null;
         }
         String userId = buildUserId(ImPlatform.DINGTALK, senderId);
@@ -181,7 +184,7 @@ public class ImGatewayService {
                     Instant.now(),
                     false
             );
-            if (isSessionWebhookExpired(context.sessionWebhookExpiresAt())) {
+            if (!isWebhookUsable(context.sessionWebhookExpiresAt())) {
                 memoryManager.updateLongTaskStatus(
                         context.userId(),
                         context.taskId(),
@@ -252,8 +255,12 @@ public class ImGatewayService {
         }
     }
 
-    private boolean isSessionWebhookExpired(Instant expiresAt) {
+    private boolean isSessionWebhookNearExpiry(Instant expiresAt) {
         return expiresAt != null && expiresAt.isBefore(Instant.now().plusSeconds(dingtalkAsyncReplyExpirySkewSeconds));
+    }
+
+    private boolean isWebhookUsable(Instant expiresAt) {
+        return !isSessionWebhookNearExpiry(expiresAt);
     }
 
     private String formatAsyncResult(String reply) {

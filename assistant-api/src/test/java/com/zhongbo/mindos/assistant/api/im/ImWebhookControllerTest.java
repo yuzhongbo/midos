@@ -27,7 +27,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
         "mindos.im.wechat.enabled=true",
         "mindos.im.feishu.verify-signature=false",
         "mindos.im.dingtalk.verify-signature=false",
-        "mindos.im.wechat.verify-signature=false"
+        "mindos.im.wechat.verify-signature=false",
+        "mindos.im.dingtalk.async-reply.allow-insecure-localhost-http=true"
 })
 @AutoConfigureMockMvc
 class ImWebhookControllerTest {

@@ -27,28 +27,33 @@ public class DingtalkAsyncReplyClient {
     private final ObjectMapper objectMapper;
     private final Duration requestTimeout;
     private final List<String> allowedHosts;
+    private final boolean allowInsecureLocalhostHttp;
 
     @Autowired
     public DingtalkAsyncReplyClient(
             @Value("${mindos.im.dingtalk.async-reply.connect-timeout-ms:3000}") long connectTimeoutMs,
             @Value("${mindos.im.dingtalk.async-reply.request-timeout-ms:10000}") long requestTimeoutMs,
-            @Value("${mindos.im.dingtalk.async-reply.allowed-hosts:localhost,127.0.0.1,.dingtalk.com,.dingtalkapps.com}") String allowedHosts) {
+            @Value("${mindos.im.dingtalk.async-reply.allowed-hosts:localhost,127.0.0.1,.dingtalk.com,.dingtalkapps.com}") String allowedHosts,
+            @Value("${mindos.im.dingtalk.async-reply.allow-insecure-localhost-http:false}") boolean allowInsecureLocalhostHttp) {
         this(HttpClient.newBuilder()
                         .connectTimeout(Duration.ofMillis(Math.max(1000L, connectTimeoutMs)))
                         .build(),
                 new ObjectMapper().findAndRegisterModules(),
                 Duration.ofMillis(Math.max(1000L, requestTimeoutMs)),
-                parseAllowedHosts(allowedHosts));
+                parseAllowedHosts(allowedHosts),
+                allowInsecureLocalhostHttp);
     }
 
     DingtalkAsyncReplyClient(HttpClient httpClient,
                              ObjectMapper objectMapper,
                              Duration requestTimeout,
-                             List<String> allowedHosts) {
+                             List<String> allowedHosts,
+                             boolean allowInsecureLocalhostHttp) {
         this.httpClient = httpClient;
         this.objectMapper = objectMapper;
         this.requestTimeout = requestTimeout;
         this.allowedHosts = allowedHosts == null ? List.of() : List.copyOf(allowedHosts);
+        this.allowInsecureLocalhostHttp = allowInsecureLocalhostHttp;
     }
 
     public boolean isUsableSessionWebhook(String sessionWebhook) {
@@ -65,7 +70,9 @@ public class DingtalkAsyncReplyClient {
             if ("https".equals(scheme)) {
                 return true;
             }
-            return "http".equals(scheme) && ("localhost".equals(host) || "127.0.0.1".equals(host));
+            return allowInsecureLocalhostHttp
+                    && "http".equals(scheme)
+                    && ("localhost".equals(host) || "127.0.0.1".equals(host));
         } catch (Exception ex) {
             LOGGER.log(Level.FINE, "Invalid DingTalk session webhook", ex);
             return false;
