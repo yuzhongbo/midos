@@ -24,10 +24,17 @@ import java.security.MessageDigest;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 @RestController
 @RequestMapping("/api/im")
 public class ImWebhookController {
+
+    private static final Logger LOGGER = Logger.getLogger(ImWebhookController.class.getName());
 
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final ImGatewayService imGatewayService;
@@ -58,6 +65,12 @@ public class ImWebhookController {
 
     @Value("${mindos.im.dingtalk.secret:}")
     private String dingtalkSecret;
+
+    @Value("${mindos.im.dingtalk.reply-timeout-ms:2500}")
+    private long dingtalkReplyTimeoutMs;
+
+    @Value("${mindos.im.dingtalk.reply-max-chars:1200}")
+    private int dingtalkReplyMaxChars;
 
     @Value("${mindos.im.wechat.token:}")
     private String wechatToken;
@@ -97,7 +110,7 @@ public class ImWebhookController {
             String text = extractFeishuText(message.path("content").asText(""));
             String senderId = event.path("sender").path("sender_id").path("open_id").asText("");
             String chatId = message.path("chat_id").asText("");
-            String reply = imGatewayService.chat(ImPlatform.FEISHU, senderId, chatId, text);
+            String reply = ImReplySanitizer.sanitize(imGatewayService.chat(ImPlatform.FEISHU, senderId, chatId, text));
 
             Map<String, Object> content = new LinkedHashMap<>();
             content.put("text", reply);
@@ -112,7 +125,7 @@ public class ImWebhookController {
 
     @PostMapping(value = "/dingtalk/events", produces = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<Map<String, Object>> dingtalkEvents(
-            @RequestBody Map<String, Object> body,
+            @RequestBody(required = false) String rawBody,
             @RequestParam(value = "timestamp", required = false) String timestamp,
             @RequestParam(value = "sign", required = false) String sign) {
         if (!isPlatformEnabled(dingtalkEnabled)) {
@@ -122,15 +135,42 @@ public class ImWebhookController {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(Map.of("message", "invalid signature"));
         }
 
-        Object textNode = body.get("text");
+        // DingTalk validation probes may send empty or non-standard payloads.
+        String bodyForLog = rawBody == null ? "" : rawBody;
+        LOGGER.fine("DingTalk event received, bodyLength=" + bodyForLog.length());
+
         String text = "";
-        if (textNode instanceof Map<?, ?> map) {
-            Object content = map.get("content");
-            text = content == null ? "" : String.valueOf(content);
+        String senderId = "";
+        String chatId = "";
+        String sessionWebhook = "";
+        Long sessionWebhookExpiredTime = null;
+        try {
+            JsonNode body = rawBody == null || rawBody.isBlank() ? objectMapper.createObjectNode() : objectMapper.readTree(rawBody);
+            JsonNode textNode = body.path("text");
+            text = textNode.path("content").asText("");
+            senderId = body.path("senderId").asText("");
+            chatId = resolveDingtalkConversationId(body);
+            sessionWebhook = body.path("sessionWebhook").asText("");
+            sessionWebhookExpiredTime = asLong(body.path("sessionWebhookExpiredTime"));
+        } catch (Exception ignored) {
+            // Keep empty defaults for malformed payload; still return 200 for platform checks.
         }
-        String senderId = String.valueOf(body.getOrDefault("senderId", ""));
-        String chatId = String.valueOf(body.getOrDefault("conversationId", ""));
-        String reply = imGatewayService.chat(ImPlatform.DINGTALK, senderId, chatId, text);
+
+        ImGatewayService.AsyncReplyAck asyncReplyAck = imGatewayService.startDingtalkAsyncReply(
+                senderId,
+                chatId,
+                text,
+                sessionWebhook,
+                sessionWebhookExpiredTime
+        );
+        if (asyncReplyAck != null) {
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("msgtype", "text");
+            payload.put("text", Map.of("content", asyncReplyAck.acceptedReply()));
+            return ResponseEntity.ok(payload);
+        }
+
+        String reply = resolveDingtalkReply(senderId, chatId, text);
 
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("msgtype", "text");
@@ -168,7 +208,7 @@ public class ImWebhookController {
             if (!"text".equalsIgnoreCase(message.msgType)) {
                 return ResponseEntity.ok("success");
             }
-            String reply = imGatewayService.chat(ImPlatform.WECHAT, message.fromUser, message.toUser, message.content);
+            String reply = ImReplySanitizer.sanitize(imGatewayService.chat(ImPlatform.WECHAT, message.fromUser, message.toUser, message.content));
             String responseXml = "<xml>"
                     + "<ToUserName><![CDATA[" + message.fromUser + "]]></ToUserName>"
                     + "<FromUserName><![CDATA[" + message.toUser + "]]></FromUserName>"
@@ -176,7 +216,9 @@ public class ImWebhookController {
                     + "<MsgType><![CDATA[text]]></MsgType>"
                     + "<Content><![CDATA[" + escapeCdata(reply) + "]]></Content>"
                     + "</xml>";
-            return ResponseEntity.ok(responseXml);
+            return ResponseEntity.ok()
+                    .contentType(new MediaType("text", "xml", StandardCharsets.UTF_8))
+                    .body(responseXml);
         } catch (Exception ex) {
             return ResponseEntity.ok("success");
         }
@@ -189,6 +231,72 @@ public class ImWebhookController {
     private ResponseEntity<Map<String, Object>> disabled() {
         return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(Map.of("message", "im integration disabled"));
     }
+
+    private String resolveDingtalkReply(String senderId, String chatId, String text) {
+        long timeoutMs = Math.max(300L, dingtalkReplyTimeoutMs);
+        CompletableFuture<String> replyFuture = imGatewayService.chatAsync(ImPlatform.DINGTALK, senderId, chatId, text);
+        try {
+            return capForDingtalk(ImReplySanitizer.sanitize(replyFuture.get(timeoutMs, TimeUnit.MILLISECONDS)));
+        } catch (TimeoutException ex) {
+            replyFuture.cancel(true);
+            LOGGER.warning("DingTalk reply timed out before webhook response: senderHash="
+                    + safeHash(senderId) + ", chatHash=" + safeHash(chatId) + ", timeoutMs=" + timeoutMs);
+            return ImReplySanitizer.TIMEOUT_IM_FALLBACK_REPLY;
+        } catch (Exception ex) {
+            LOGGER.log(Level.WARNING,
+                    "DingTalk reply failed before webhook response: senderHash=" + safeHash(senderId)
+                            + ", chatHash=" + safeHash(chatId),
+                    ex);
+            return ImReplySanitizer.FRIENDLY_IM_FALLBACK_REPLY;
+        }
+    }
+
+    private String capForDingtalk(String reply) {
+        if (reply == null) {
+            return "";
+        }
+        int maxChars = Math.max(200, dingtalkReplyMaxChars);
+        if (reply.length() <= maxChars) {
+            return reply;
+        }
+        return reply.substring(0, maxChars - 1) + "…";
+    }
+
+    private String safeHash(String value) {
+        if (value == null || value.isBlank()) {
+            return "n/a";
+        }
+        return Integer.toHexString(value.trim().hashCode());
+    }
+
+    private Long asLong(JsonNode value) {
+        if (value == null || value.isMissingNode() || value.isNull()) {
+            return null;
+        }
+        if (value.isNumber()) {
+            return value.longValue();
+        }
+        try {
+            return Long.parseLong(value.asText("").trim());
+        } catch (NumberFormatException ex) {
+            return null;
+        }
+    }
+
+    /**
+     * DingTalk proactive conversation send prefers openConversationId when the event provides it.
+     */
+    private String resolveDingtalkConversationId(JsonNode body) {
+        if (body == null || body.isMissingNode()) {
+            return "";
+        }
+        String openConversationId = body.path("openConversationId").asText("");
+        if (!openConversationId.isBlank()) {
+            return openConversationId;
+        }
+        return body.path("conversationId").asText("");
+    }
+
 
     private boolean verifyFeishu(String rawBody, String timestamp, String nonce, String signature) {
         if (isBlank(feishuSecret)) {
@@ -288,4 +396,3 @@ public class ImWebhookController {
     private record WechatMessage(String toUser, String fromUser, String msgType, String content) {
     }
 }
-

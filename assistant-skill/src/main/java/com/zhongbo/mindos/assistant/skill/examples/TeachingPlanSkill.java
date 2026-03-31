@@ -40,7 +40,7 @@ public class TeachingPlanSkill implements Skill {
 
     @Override
     public String description() {
-        return "Generates a personalized teaching/study plan with multi-dimensional student profile and LLM-backed optimization.";
+        return "根据目标、周期、薄弱点和学习风格生成个性化教学/学习计划。";
     }
 
     @Override
@@ -161,20 +161,28 @@ public class TeachingPlanSkill implements Skill {
 
     private String renderPlan(PlanRequest request, Map<String, Object> plan) {
         StringBuilder output = new StringBuilder();
-        output.append("[教学规划]\n");
-        output.append("学生ID: ").append(request.studentId()).append('\n');
-        output.append("主题: ").append(request.topic()).append('\n');
-        output.append("对象: ").append(request.gradeOrLevel()).append('\n');
-        output.append("目标: ").append(request.goal()).append('\n');
-        output.append("周期: ").append(request.durationWeeks()).append(" 周\n");
-        output.append("每周投入: ").append(request.weeklyHours()).append(" 小时\n");
-        output.append("薄弱点: ").append(joinOrDefault(request.weakTopics())).append('\n');
-        output.append("优势项: ").append(joinOrDefault(request.strongTopics())).append('\n');
-        output.append("学习风格: ").append(joinOrDefault(request.learningStyle())).append('\n');
-        output.append("约束: ").append(joinOrDefault(request.constraints())).append("\n\n");
+        output.append("我先按你给的信息，整理了一版可直接执行的学习规划。\n");
+        output.append("这次会以 ")
+                .append(request.topic())
+                .append(" 为主线，目标是 ")
+                .append(request.goal())
+                .append("，周期 ")
+                .append(request.durationWeeks())
+                .append(" 周，每周大约 ")
+                .append(request.weeklyHours())
+                .append(" 小时。\n");
+        output.append("如果我理解有偏差，你直接改学生画像字段我就能同步重排。\n\n");
 
-        output.append("规划概览: ").append(String.valueOf(plan.getOrDefault("summary", ""))).append("\n\n");
-        output.append("阶段安排:\n");
+        output.append("学生画像小结：学生ID ").append(request.studentId())
+                .append("，对象 ").append(request.gradeOrLevel())
+                .append("，薄弱点 ").append(joinOrDefault(request.weakTopics()))
+                .append("，优势项 ").append(joinOrDefault(request.strongTopics()))
+                .append("，学习风格 ").append(joinOrDefault(request.learningStyle()))
+                .append("，约束 ").append(joinOrDefault(request.constraints()))
+                .append("。\n\n");
+
+        output.append("整体策略：").append(String.valueOf(plan.getOrDefault("summary", ""))).append("\n\n");
+        output.append("分阶段安排（先看全局节奏）：\n");
         for (Map<String, Object> phase : asMapList(plan.get("coursePath"))) {
             output.append("- ").append(stringValue(phase.get("phase"), "阶段"))
                     .append(" | 重点: ").append(joinFlexible(phase.get("focus")))
@@ -183,7 +191,7 @@ public class TeachingPlanSkill implements Skill {
                     .append('\n');
         }
 
-        output.append("\n每周建议:\n");
+        output.append("\n近期每周建议（先给你前几周抓手）：\n");
         for (Map<String, Object> week : asMapList(plan.get("weeklyPlan"))) {
             int weekNo = numberValue(week.get("week"), 0);
             output.append("- 第 ").append(weekNo).append(" 周: ");
@@ -203,10 +211,14 @@ public class TeachingPlanSkill implements Skill {
         }
 
         Map<String, Object> assessment = asMap(plan.get("assessment"));
-        output.append("\n评估机制: KPI=").append(joinFlexible(assessment.get("kpi")))
-                .append("; 检查点=").append(joinFlexible(assessment.get("checkpoints"))).append('\n');
-        output.append("风险提示: ").append(joinRiskAlerts(plan.get("riskAlerts"))).append('\n');
-        output.append("调整规则: ").append(joinFlexible(plan.get("adjustmentRules")));
+        output.append("\n我们怎么判断这套计划是否有效：KPI=").append(joinFlexible(assessment.get("kpi")))
+                .append("；检查点=").append(joinFlexible(assessment.get("checkpoints"))).append("。\n");
+        output.append("风险提醒：").append(joinRiskAlerts(plan.get("riskAlerts"))).append("。\n");
+        output.append("调整规则：").append(joinFlexible(plan.get("adjustmentRules"))).append("。\n\n");
+        output.append("如果你愿意，我下一条可以继续给你：\n");
+        output.append("1) 按天拆到可打卡任务；\n");
+        output.append("2) 按考试日期倒排冲刺版；\n");
+        output.append("3) 按薄弱点生成专项练习清单。\n");
         return output.toString();
     }
 

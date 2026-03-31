@@ -31,7 +31,7 @@ public class TodoCreateSkill implements Skill {
 
     @Override
     public String description() {
-        return "Creates a todo item from task description and due date (skeleton placeholder).";
+        return "根据任务描述和截止时间生成待办事项，适合快速记任务。";
     }
 
     @Override
@@ -60,7 +60,10 @@ public class TodoCreateSkill implements Skill {
                 LOGGER.log(Level.WARNING, "LLM call failed for todo.create skill, fallback to local output", ex);
             }
         }
-        String output = "[todo.create] Placeholder: todo '" + task + "' scheduled for " + dueDate + ".";
+        String output = "好的，我先帮你记下这件事：\n"
+                + "- 待办：" + task + "\n"
+                + "- 截止：" + dueDate + "\n"
+                + "如果你愿意，我可以继续帮你拆成今天/本周的执行步骤。";
         return SkillResult.success(name(), output);
     }
 

@@ -1,11 +1,13 @@
 package com.zhongbo.mindos.assistant.api;
 
 import com.zhongbo.mindos.assistant.common.ContextCompressionMetricsReader;
+import com.zhongbo.mindos.assistant.common.DispatcherRoutingMetricsReader;
 import com.zhongbo.mindos.assistant.common.LlmMetricsReader;
 import com.zhongbo.mindos.assistant.common.LlmCacheMetricsReader;
 import com.zhongbo.mindos.assistant.common.MemoryWriteGateMetricsReader;
 import com.zhongbo.mindos.assistant.common.dto.LlmCacheWindowMetricsDto;
 import com.zhongbo.mindos.assistant.common.dto.LlmMetricsResponseDto;
+import com.zhongbo.mindos.assistant.common.dto.RoutingReplayDatasetDto;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -24,6 +26,7 @@ public class LlmMetricsController {
     private final LlmCacheMetricsReader llmCacheMetricsReader;
     private final MemoryWriteGateMetricsReader memoryWriteGateMetricsReader;
     private final ContextCompressionMetricsReader contextCompressionMetricsReader;
+    private final DispatcherRoutingMetricsReader dispatcherRoutingMetricsReader;
     private final SecurityAuditLogService securityAuditLogService;
 
     public LlmMetricsController(@Value("${mindos.security.metrics.require-admin-token:true}") boolean requireAdminToken,
@@ -32,7 +35,8 @@ public class LlmMetricsController {
                                 LlmMetricsReader llmMetricsReader,
                                 LlmCacheMetricsReader llmCacheMetricsReader,
                                 MemoryWriteGateMetricsReader memoryWriteGateMetricsReader,
-                                 ContextCompressionMetricsReader contextCompressionMetricsReader,
+                                ContextCompressionMetricsReader contextCompressionMetricsReader,
+                                DispatcherRoutingMetricsReader dispatcherRoutingMetricsReader,
                                 SecurityAuditLogService securityAuditLogService) {
         this.requireAdminToken = requireAdminToken;
         this.llmCacheWindowLowSampleThreshold = Math.max(1L, llmCacheWindowLowSampleThreshold);
@@ -41,6 +45,7 @@ public class LlmMetricsController {
         this.llmCacheMetricsReader = llmCacheMetricsReader;
         this.memoryWriteGateMetricsReader = memoryWriteGateMetricsReader;
         this.contextCompressionMetricsReader = contextCompressionMetricsReader;
+        this.dispatcherRoutingMetricsReader = dispatcherRoutingMetricsReader;
         this.securityAuditLogService = securityAuditLogService;
     }
 
@@ -69,11 +74,23 @@ public class LlmMetricsController {
                 llmCacheMetricsReader.snapshotCacheMetrics(),
                 memoryWriteGateMetricsReader.snapshotWriteGateMetrics(),
                 contextCompressionMetricsReader.snapshotContextCompressionMetrics(),
+                dispatcherRoutingMetricsReader.snapshotSkillPreAnalyzeMetrics(),
+                dispatcherRoutingMetricsReader.snapshotMemoryHitMetrics(),
+                dispatcherRoutingMetricsReader.snapshotMemoryContributionMetrics(),
                 windowCache.hitRate(),
                 windowCache.hits(),
                 windowCache.misses(),
                 llmCacheWindowLowSample
         );
+    }
+
+    @GetMapping("/routing-replay")
+    public RoutingReplayDatasetDto getRoutingReplay(@RequestParam(defaultValue = "200") int limit,
+                                                    HttpServletRequest request) {
+        if (requireAdminToken) {
+            adminTokenGuard.verify(request, "metrics-reader", "security.metrics.llm.read", "llm-metrics");
+        }
+        return dispatcherRoutingMetricsReader.snapshotRoutingReplay(limit);
     }
 }
 

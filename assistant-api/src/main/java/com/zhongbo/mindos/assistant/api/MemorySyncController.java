@@ -4,6 +4,7 @@ import com.zhongbo.mindos.assistant.common.dto.ConversationTurnDto;
 import com.zhongbo.mindos.assistant.common.dto.MemoryCompressionPlanRequestDto;
 import com.zhongbo.mindos.assistant.common.dto.MemoryCompressionPlanResponseDto;
 import com.zhongbo.mindos.assistant.common.dto.MemoryCompressionStepDto;
+import com.zhongbo.mindos.assistant.common.dto.PromptMemoryContextDto;
 import com.zhongbo.mindos.assistant.common.dto.MemoryStyleProfileDto;
 import com.zhongbo.mindos.assistant.common.dto.MemorySyncRequestDto;
 import com.zhongbo.mindos.assistant.common.dto.MemorySyncResponseDto;
@@ -25,6 +26,9 @@ import com.zhongbo.mindos.assistant.memory.model.PreferenceProfile;
 import com.zhongbo.mindos.assistant.memory.model.PreferenceProfileExplain;
 import com.zhongbo.mindos.assistant.memory.model.ProceduralMemoryEntry;
 import com.zhongbo.mindos.assistant.memory.model.SemanticMemoryEntry;
+import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -32,17 +36,31 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.ResponseStatusException;
 
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/memory")
 public class MemorySyncController {
 
     private final MemoryManager memoryManager;
+    private final boolean retrievePreviewRequireAdminToken;
+    private final String adminTokenHeader;
+    private final String adminToken;
 
-    public MemorySyncController(MemoryManager memoryManager) {
+    public MemorySyncController(MemoryManager memoryManager,
+                                @Value("${mindos.security.memory.retrieve-preview.require-admin-token:false}") boolean retrievePreviewRequireAdminToken,
+                                @Value("${mindos.security.risky-ops.admin-token-header:X-MindOS-Admin-Token}") String adminTokenHeader,
+                                @Value("${mindos.security.risky-ops.admin-token:}") String adminToken) {
         this.memoryManager = memoryManager;
+        this.retrievePreviewRequireAdminToken = retrievePreviewRequireAdminToken;
+        this.adminTokenHeader = adminTokenHeader == null || adminTokenHeader.isBlank()
+                ? "X-MindOS-Admin-Token"
+                : adminTokenHeader.trim();
+        this.adminToken = adminToken == null ? "" : adminToken.trim();
     }
 
     @GetMapping("/{userId}/sync")
@@ -70,6 +88,37 @@ public class MemorySyncController {
                 applyResult.deduplicatedCount(),
                 applyResult.keySignalInputCount(),
                 applyResult.keySignalStoredCount());
+    }
+
+    @GetMapping("/{userId}/retrieve-preview")
+    public PromptMemoryContextDto retrievePreview(@PathVariable String userId,
+                                                  @RequestParam String query,
+                                                  @RequestParam(defaultValue = "1600") int maxChars,
+                                                  @RequestParam(required = false) String language,
+                                                  @RequestParam(required = false) String timezone,
+                                                  @RequestParam(required = false) String style,
+                                                  @RequestParam(required = false) String role,
+                                                  HttpServletRequest request) {
+        validateRetrievePreviewToken(request);
+        Map<String, Object> profileContext = new LinkedHashMap<>();
+        putIfPresent(profileContext, "language", language);
+        putIfPresent(profileContext, "timezone", timezone);
+        putIfPresent(profileContext, "style", style);
+        putIfPresent(profileContext, "role", role);
+        return memoryManager.buildPromptMemoryContext(userId, query, maxChars, profileContext);
+    }
+
+    private void validateRetrievePreviewToken(HttpServletRequest request) {
+        if (!retrievePreviewRequireAdminToken) {
+            return;
+        }
+        if (adminToken.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "retrieve-preview admin token is not configured");
+        }
+        String provided = request == null ? null : request.getHeader(adminTokenHeader);
+        if (!adminToken.equals(provided)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "invalid admin token");
+        }
     }
 
     @GetMapping("/{userId}/persona")
@@ -212,6 +261,12 @@ public class MemorySyncController {
 
     private MemoryCompressionStepDto toDto(MemoryCompressionStep step) {
         return new MemoryCompressionStepDto(step.stage(), step.content(), step.length());
+    }
+
+    private void putIfPresent(Map<String, Object> payload, String key, String value) {
+        if (value != null && !value.isBlank()) {
+            payload.put(key, value.trim());
+        }
     }
 }
 

@@ -12,7 +12,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-@SpringBootTest
+@SpringBootTest(properties = "mindos.memory.file-repo.enabled=false")
 @AutoConfigureMockMvc
 class MemorySyncControllerTest {
 
@@ -52,6 +52,64 @@ class MemorySyncControllerTest {
                 .andExpect(jsonPath("$.episodic[0].content").value("hello from terminal A"))
                 .andExpect(jsonPath("$.semantic[0].text").value("order api design"))
                 .andExpect(jsonPath("$.procedural[0].skillName").value("code.generate"));
+
+        mockMvc.perform(get("/api/memory/local-user/retrieve-preview")
+                        .param("query", "order api")
+                        .param("maxChars", "1000"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.recentConversation").isNotEmpty())
+                .andExpect(jsonPath("$.semanticContext").isNotEmpty())
+                .andExpect(jsonPath("$.proceduralHints").isNotEmpty())
+                .andExpect(jsonPath("$.debugTopItems").isArray())
+                .andExpect(jsonPath("$.debugTopItems[0].type").isNotEmpty())
+                .andExpect(jsonPath("$.debugTopItems[0].finalScore").isNumber());
+    }
+
+    @Test
+    void shouldTrimRetrievePreviewByMaxChars() throws Exception {
+        String payload = "{" +
+                "\"eventId\":\"evt-preview-trim\"," +
+                "\"episodic\":[{" +
+                "\"role\":\"user\",\"content\":\"请记住这是一段很长很长的上下文内容用于测试长度控制\"}]," +
+                "\"semantic\":[{" +
+                "\"text\":\"这是一条较长的语义记忆文本，用于观察 retrieve-preview 的 budget 裁剪行为\"}]," +
+                "\"procedural\":[{" +
+                "\"skillName\":\"todo.create\",\"input\":\"准备周报\",\"success\":true}]" +
+                "}";
+
+        mockMvc.perform(post("/api/memory/preview-user/sync")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(payload))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(get("/api/memory/preview-user/retrieve-preview")
+                        .param("query", "上下文")
+                        .param("maxChars", "420"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.recentConversation").isString())
+                .andExpect(jsonPath("$.semanticContext").isString())
+                .andExpect(jsonPath("$.proceduralHints").isString())
+                .andExpect(jsonPath("$.personaSnapshot").isMap());
+    }
+
+    @Test
+    void shouldExposeStructuredMemoryAfterChatTurn() throws Exception {
+        mockMvc.perform(post("/chat")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"userId\":\"preview-chat-user\",\"message\":\"给我一个数学学习计划，目标是期末提分，六周，每周八小时\",\"profile\":{\"language\":\"zh-CN\",\"timezone\":\"Asia/Shanghai\"}}"))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(get("/api/memory/preview-chat-user/retrieve-preview")
+                        .param("query", "继续按之前方式")
+                        .param("maxChars", "1200")
+                        .param("language", "zh-CN")
+                        .param("timezone", "Asia/Shanghai"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.recentConversation").isNotEmpty())
+                .andExpect(jsonPath("$.semanticContext").isString())
+                .andExpect(jsonPath("$.proceduralHints").isString())
+                .andExpect(jsonPath("$.personaSnapshot.language").value("zh-CN"))
+                .andExpect(jsonPath("$.personaSnapshot.timezone").value("Asia/Shanghai"));
     }
 
     @Test

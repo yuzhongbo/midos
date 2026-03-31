@@ -33,6 +33,7 @@ build/
 
 # Runtime logs
 assistant-api/logs/
+assistant-api/data/memory-sync/*.jsonl
 
 logs/
 /server.log

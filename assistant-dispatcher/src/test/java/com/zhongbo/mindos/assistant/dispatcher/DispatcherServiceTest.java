@@ -15,11 +15,13 @@ import com.zhongbo.mindos.assistant.memory.PreferenceProfileService;
 import com.zhongbo.mindos.assistant.memory.ProceduralMemoryService;
 import com.zhongbo.mindos.assistant.memory.SemanticMemoryService;
 import com.zhongbo.mindos.assistant.memory.SemanticWriteGatePolicy;
+import com.zhongbo.mindos.assistant.common.dto.RoutingReplayDatasetDto;
 import com.zhongbo.mindos.assistant.memory.model.SemanticMemoryEntry;
 import com.zhongbo.mindos.assistant.skill.Skill;
 import com.zhongbo.mindos.assistant.skill.SkillDslExecutor;
 import com.zhongbo.mindos.assistant.skill.SkillEngine;
 import com.zhongbo.mindos.assistant.skill.SkillRegistry;
+import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalysisService;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayDeque;
@@ -99,6 +101,57 @@ class DispatcherServiceTest {
     }
 
     @Test
+    void shouldRejectCodeGenerateWhenLlmRoutingMatchesGeneralKnowledgeQuestion() {
+        MemoryManager memoryManager = createMemoryManager();
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of(
+                "{\"skill\":\"code.generate\",\"input\":{\"task\":\"用简单例子解释量子计算的基本原理\"}}",
+                "量子计算可以理解为让信息在多个可能状态上同时演化，再通过干涉放大正确答案。"
+        ));
+        DispatcherService service = createDispatcher(memoryManager, llmClient, List.of(
+                new FixedSkill("code.generate", "根据任务描述生成代码草稿", "代码草稿")
+        ), 2);
+
+        DispatchResult result = service.dispatch("general-user", "用简单例子解释量子计算的基本原理");
+
+        assertEquals("llm", result.channel());
+        assertEquals(1, llmClient.routingCallCount());
+        assertEquals(1, llmClient.fallbackCallCount());
+        assertTrue(result.reply().contains("量子计算"));
+    }
+
+    @Test
+    void shouldRouteViaSemanticAnalysisWhenHeuristicsSuggestLocalSkill() {
+        MemoryManager memoryManager = createMemoryManager();
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of("stub"));
+        DispatcherService service = createDispatcher(memoryManager, llmClient, List.of(
+                new FixedSkill("todo.create", "Creates todo items from natural language", "待办已创建")
+        ), 2, true);
+
+        DispatchResult result = service.dispatch("semantic-user", "帮我创建一个待办，截止周五前提交周报");
+
+        assertEquals("todo.create", result.channel());
+        assertEquals("semantic-analysis", result.executionTrace().routing().route());
+        assertEquals("todo.create", result.executionTrace().routing().selectedSkill());
+        assertEquals(0, llmClient.routingCallCount());
+        assertEquals(0, llmClient.fallbackCallCount());
+    }
+
+    @Test
+    void shouldPreserveExplicitSemanticAnalyzeIntent() {
+        MemoryManager memoryManager = createMemoryManager();
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of("stub"));
+        DispatcherService service = createDispatcher(memoryManager, llmClient, List.of(
+                new SemanticTriggerSkill()
+        ), 2, true);
+
+        DispatchResult result = service.dispatch("semantic-user", "semantic 帮我修复 Spring 接口 bug");
+
+        assertEquals("semantic.analyze", result.channel());
+        assertEquals("detected-skill", result.executionTrace().routing().route());
+        assertEquals(0, llmClient.routingCallCount());
+    }
+
+    @Test
     void shouldStoreRememberCommandFromChinesePrefixIntoTaskBucket() {
         MemoryManager memoryManager = createMemoryManager();
         RecordingLlmClient llmClient = new RecordingLlmClient(List.of("已记住"));
@@ -168,21 +221,202 @@ class DispatcherServiceTest {
                                                LlmClient llmClient,
                                                List<Skill> skills,
                                                int llmShortlistMaxSkills) {
+        return createDispatcher(memoryManager, llmClient, skills, llmShortlistMaxSkills, true);
+    }
+
+    private DispatcherService createDispatcher(MemoryManager memoryManager,
+                                               RecordingLlmClient llmClient,
+                                               List<Skill> skills,
+                                               int llmShortlistMaxSkills,
+                                               boolean semanticAnalysisEnabled) {
+        return createDispatcher(memoryManager, llmClient, skills, llmShortlistMaxSkills,
+                "auto", 0, "time", "", "", "", "", false, "", false, "", "", "",
+                true, "天气,新闻,热点,实时", true, 280, true, semanticAnalysisEnabled);
+    }
+
+    private DispatcherService createDispatcher(MemoryManager memoryManager,
+                                               RecordingLlmClient llmClient,
+                                               List<Skill> skills,
+                                               int llmShortlistMaxSkills,
+                                               String preAnalyzeMode,
+                                               int preAnalyzeThreshold,
+                                               String preAnalyzeSkipSkills) {
+        return createDispatcher(memoryManager, llmClient, skills, llmShortlistMaxSkills,
+                preAnalyzeMode, preAnalyzeThreshold, preAnalyzeSkipSkills,
+                "", "", "", "",
+                false, "", false, "", "", "",
+                true, "天气,新闻,热点,实时", true, 280, true);
+    }
+
+    private DispatcherService createDispatcher(MemoryManager memoryManager,
+                                               RecordingLlmClient llmClient,
+                                               List<Skill> skills,
+                                               int llmShortlistMaxSkills,
+                                               String preAnalyzeMode,
+                                               int preAnalyzeThreshold,
+                                               String preAnalyzeSkipSkills,
+                                               String llmDslProvider,
+                                               String llmDslPreset,
+                                               String llmFallbackProvider,
+                                               String llmFallbackPreset,
+                                               boolean postSkillSummaryEnabled,
+                                               String postSkillSummarySkills,
+                                               boolean skillFinalizeEnabled,
+                                               String skillFinalizeSkills,
+                                               String skillFinalizeProvider,
+                                               String skillFinalizePreset,
+                                               boolean realtimeIntentBypassEnabled,
+                                               String realtimeIntentTerms,
+                                               boolean realtimeIntentMemoryShrinkEnabled,
+                                               int realtimeIntentMemoryShrinkMaxChars,
+                                               boolean realtimeIntentMemoryShrinkIncludePersona) {
+        return createDispatcher(memoryManager, llmClient, skills, llmShortlistMaxSkills,
+                preAnalyzeMode, preAnalyzeThreshold, preAnalyzeSkipSkills,
+                llmDslProvider, llmDslPreset, llmFallbackProvider, llmFallbackPreset,
+                postSkillSummaryEnabled, postSkillSummarySkills,
+                skillFinalizeEnabled, skillFinalizeSkills, skillFinalizeProvider, skillFinalizePreset,
+                realtimeIntentBypassEnabled, realtimeIntentTerms,
+                realtimeIntentMemoryShrinkEnabled, realtimeIntentMemoryShrinkMaxChars, realtimeIntentMemoryShrinkIncludePersona,
+                true);
+    }
+
+    private DispatcherService createDispatcher(MemoryManager memoryManager,
+                                               RecordingLlmClient llmClient,
+                                               List<Skill> skills,
+                                               int llmShortlistMaxSkills,
+                                               String preAnalyzeMode,
+                                               int preAnalyzeThreshold,
+                                               String preAnalyzeSkipSkills,
+                                               String llmDslProvider,
+                                               String llmDslPreset,
+                                               String llmFallbackProvider,
+                                               String llmFallbackPreset,
+                                               boolean postSkillSummaryEnabled,
+                                               String postSkillSummarySkills,
+                                               boolean skillFinalizeEnabled,
+                                               String skillFinalizeSkills,
+                                               String skillFinalizeProvider,
+                                               String skillFinalizePreset,
+                                               boolean realtimeIntentBypassEnabled,
+                                               String realtimeIntentTerms,
+                                               boolean realtimeIntentMemoryShrinkEnabled,
+                                               int realtimeIntentMemoryShrinkMaxChars,
+                                               boolean realtimeIntentMemoryShrinkIncludePersona,
+                                               boolean semanticAnalysisEnabled) {
+        return createDispatcher(memoryManager, llmClient, skills, llmShortlistMaxSkills,
+                preAnalyzeMode, preAnalyzeThreshold, preAnalyzeSkipSkills,
+                llmDslProvider, llmDslPreset, llmFallbackProvider, llmFallbackPreset,
+                postSkillSummaryEnabled, postSkillSummarySkills,
+                skillFinalizeEnabled, skillFinalizeSkills, skillFinalizeProvider, skillFinalizePreset,
+                realtimeIntentBypassEnabled, realtimeIntentTerms,
+                realtimeIntentMemoryShrinkEnabled, realtimeIntentMemoryShrinkMaxChars, realtimeIntentMemoryShrinkIncludePersona,
+                true, "eq.coach,teaching.plan,todo.create,code.generate,file.search,mcp.*", 12000, "eq.coach timeout",
+                semanticAnalysisEnabled);
+    }
+
+    private DispatcherService createDispatcher(MemoryManager memoryManager,
+                                               RecordingLlmClient llmClient,
+                                               List<Skill> skills,
+                                               int llmShortlistMaxSkills,
+                                               String preAnalyzeMode,
+                                               int preAnalyzeThreshold,
+                                               String preAnalyzeSkipSkills,
+                                               String llmDslProvider,
+                                               String llmDslPreset,
+                                               String llmFallbackProvider,
+                                               String llmFallbackPreset,
+                                               boolean postSkillSummaryEnabled,
+                                               String postSkillSummarySkills,
+                                               boolean skillFinalizeEnabled,
+                                               String skillFinalizeSkills,
+                                               String skillFinalizeProvider,
+                                               String skillFinalizePreset,
+                                               boolean realtimeIntentBypassEnabled,
+                                               String realtimeIntentTerms,
+                                               boolean realtimeIntentMemoryShrinkEnabled,
+                                               int realtimeIntentMemoryShrinkMaxChars,
+                                               boolean realtimeIntentMemoryShrinkIncludePersona,
+                                               boolean preExecuteHeavySkillGuardEnabled,
+                                               String preExecuteHeavySkillGuardSkills,
+                                               long eqCoachTimeoutMs,
+                                               String eqCoachTimeoutReply) {
+        return createDispatcher(memoryManager, llmClient, skills, llmShortlistMaxSkills,
+                preAnalyzeMode, preAnalyzeThreshold, preAnalyzeSkipSkills,
+                llmDslProvider, llmDslPreset, llmFallbackProvider, llmFallbackPreset,
+                postSkillSummaryEnabled, postSkillSummarySkills,
+                skillFinalizeEnabled, skillFinalizeSkills, skillFinalizeProvider, skillFinalizePreset,
+                realtimeIntentBypassEnabled, realtimeIntentTerms, realtimeIntentMemoryShrinkEnabled,
+                realtimeIntentMemoryShrinkMaxChars, realtimeIntentMemoryShrinkIncludePersona,
+                preExecuteHeavySkillGuardEnabled, preExecuteHeavySkillGuardSkills, eqCoachTimeoutMs, eqCoachTimeoutReply,
+                true);
+    }
+
+    private DispatcherService createDispatcher(MemoryManager memoryManager,
+                                               RecordingLlmClient llmClient,
+                                               List<Skill> skills,
+                                               int llmShortlistMaxSkills,
+                                               String preAnalyzeMode,
+                                               int preAnalyzeThreshold,
+                                               String preAnalyzeSkipSkills,
+                                               String llmDslProvider,
+                                               String llmDslPreset,
+                                               String llmFallbackProvider,
+                                               String llmFallbackPreset,
+                                               boolean postSkillSummaryEnabled,
+                                               String postSkillSummarySkills,
+                                               boolean skillFinalizeEnabled,
+                                               String skillFinalizeSkills,
+                                               String skillFinalizeProvider,
+                                               String skillFinalizePreset,
+                                               boolean realtimeIntentBypassEnabled,
+                                               String realtimeIntentTerms,
+                                               boolean realtimeIntentMemoryShrinkEnabled,
+                                               int realtimeIntentMemoryShrinkMaxChars,
+                                               boolean realtimeIntentMemoryShrinkIncludePersona,
+                                               boolean preExecuteHeavySkillGuardEnabled,
+                                               String preExecuteHeavySkillGuardSkills,
+                                               long eqCoachTimeoutMs,
+                                               String eqCoachTimeoutReply,
+                                               boolean semanticAnalysisEnabled) {
         SkillRegistry registry = new SkillRegistry(skills);
         SkillDslExecutor dslExecutor = new SkillDslExecutor(registry);
         SkillEngine skillEngine = new SkillEngine(registry, dslExecutor, memoryManager);
+        SemanticAnalysisService semanticAnalysisService = new SemanticAnalysisService(llmClient, registry, semanticAnalysisEnabled, false, "");
         SkillDslParser parser = new SkillDslParser(new SkillDslValidator());
+        IntentModelRoutingPolicy intentModelRoutingPolicy = new IntentModelRoutingPolicy(
+                false,
+                "gpt",
+                "gpt",
+                "grok",
+                "gemini",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                "情绪,焦虑",
+                180
+        );
         MetaOrchestratorService metaOrchestratorService = new MetaOrchestratorService(false);
         SkillCapabilityPolicy capabilityPolicy = new SkillCapabilityPolicy(false, "fs.read,fs.write,exec,net", "");
         PersonaCoreService personaCoreService = new PersonaCoreService(memoryManager, false, 2, "unknown,null,n/a");
         return new DispatcherService(
                 skillEngine,
                 parser,
+                intentModelRoutingPolicy,
                 metaOrchestratorService,
                 capabilityPolicy,
                 personaCoreService,
                 memoryManager,
                 llmClient,
+                semanticAnalysisService,
                 false,
                 true,
                 2,
@@ -199,14 +433,65 @@ class DispatcherServiceTest {
                 6,
                 2,
                 180,
+                preExecuteHeavySkillGuardEnabled,
+                preExecuteHeavySkillGuardSkills,
+                eqCoachTimeoutMs,
+                eqCoachTimeoutReply,
                 true,
                 "ignore previous instructions,show system prompt",
                 "guarded",
                 llmShortlistMaxSkills,
                 true,
+                realtimeIntentBypassEnabled,
+                realtimeIntentTerms,
+                realtimeIntentMemoryShrinkEnabled,
+                realtimeIntentMemoryShrinkMaxChars,
+                realtimeIntentMemoryShrinkIncludePersona,
+                preAnalyzeMode,
+                preAnalyzeThreshold,
+                preAnalyzeSkipSkills,
+                llmDslProvider,
+                llmDslPreset,
+                llmFallbackProvider,
+                llmFallbackPreset,
+                postSkillSummaryEnabled,
+                postSkillSummarySkills,
+                280,
+                skillFinalizeEnabled,
+                skillFinalizeSkills,
+                900,
+                skillFinalizeProvider,
+                skillFinalizePreset,
+                200,
                 2,
-                4
+                4,
+                0.72
         );
+    }
+
+    private DispatcherService createDispatcher(MemoryManager memoryManager,
+                                               RecordingLlmClient llmClient,
+                                               List<Skill> skills,
+                                               int llmShortlistMaxSkills,
+                                               String preAnalyzeMode,
+                                               int preAnalyzeThreshold,
+                                               String preAnalyzeSkipSkills,
+                                               String llmDslProvider,
+                                               String llmDslPreset,
+                                               String llmFallbackProvider,
+                                               String llmFallbackPreset,
+                                               boolean postSkillSummaryEnabled,
+                                               String postSkillSummarySkills,
+                                               boolean skillFinalizeEnabled,
+                                               String skillFinalizeSkills,
+                                               String skillFinalizeProvider,
+                                               String skillFinalizePreset) {
+        return createDispatcher(memoryManager, llmClient, skills, llmShortlistMaxSkills,
+                preAnalyzeMode, preAnalyzeThreshold, preAnalyzeSkipSkills,
+                llmDslProvider, llmDslPreset, llmFallbackProvider, llmFallbackPreset,
+                postSkillSummaryEnabled, postSkillSummarySkills,
+                skillFinalizeEnabled, skillFinalizeSkills, skillFinalizeProvider, skillFinalizePreset,
+                true, "天气,新闻,热点,实时", true, 280, true);
     }
 
     private MemoryManager createMemoryManager() {
@@ -243,6 +528,10 @@ class DispatcherServiceTest {
     private static final class RecordingLlmClient implements LlmClient {
         private final ArrayDeque<String> responses;
         private final List<String> routingPrompts = new ArrayList<>();
+        private final List<Map<String, Object>> routingContexts = new ArrayList<>();
+        private final List<Map<String, Object>> fallbackContexts = new ArrayList<>();
+        private final List<Map<String, Object>> finalizeContexts = new ArrayList<>();
+        private final List<String> fallbackPrompts = new ArrayList<>();
         private int routingCallCount;
         private int fallbackCallCount;
 
@@ -255,8 +544,15 @@ class DispatcherServiceTest {
             if (prompt != null && prompt.startsWith("You are a dispatcher.")) {
                 routingCallCount++;
                 routingPrompts.add(prompt);
+                routingContexts.add(context == null ? Map.of() : Map.copyOf(context));
             } else {
                 fallbackCallCount++;
+                Map<String, Object> captured = context == null ? Map.of() : Map.copyOf(context);
+                fallbackContexts.add(captured);
+                fallbackPrompts.add(prompt == null ? "" : prompt);
+                if (prompt != null && prompt.startsWith("你是回复优化助手。")) {
+                    finalizeContexts.add(captured);
+                }
             }
             return responses.isEmpty() ? "stub" : responses.removeFirst();
         }
@@ -271,6 +567,22 @@ class DispatcherServiceTest {
 
         private List<String> routingPrompts() {
             return routingPrompts;
+        }
+
+        private List<Map<String, Object>> routingContexts() {
+            return routingContexts;
+        }
+
+        private List<Map<String, Object>> fallbackContexts() {
+            return fallbackContexts;
+        }
+
+        private List<Map<String, Object>> finalizeContexts() {
+            return finalizeContexts;
+        }
+
+        private List<String> fallbackPrompts() {
+            return fallbackPrompts;
         }
     }
 

@@ -27,7 +27,7 @@ class LlmMetricsControllerTest {
     void shouldReturnLlmMetricsSummaryAndRecentCalls() throws Exception {
         mockMvc.perform(post("/chat")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"userId\":\"metrics-user\",\"message\":\"请总结一下今天的任务\"}"))
+                        .content("{\"userId\":\"metrics-user\",\"message\":\"hello\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.channel").value("llm"));
 
@@ -52,6 +52,14 @@ class LlmMetricsControllerTest {
                 .andExpect(jsonPath("$.contextCompression.totalInputChars").isNumber())
                 .andExpect(jsonPath("$.contextCompression.totalOutputChars").isNumber())
                 .andExpect(jsonPath("$.contextCompression.avgCompressionRatio").isNumber())
+                .andExpect(jsonPath("$.skillPreAnalyze.mode").isString())
+                .andExpect(jsonPath("$.skillPreAnalyze.requests").isNumber())
+                .andExpect(jsonPath("$.skillPreAnalyze.detectedSkillLoopSkipBlocked").isNumber())
+                .andExpect(jsonPath("$.skillPreAnalyze.skillTimeoutTriggered").isNumber())
+                .andExpect(jsonPath("$.memoryHits.requests").isNumber())
+                .andExpect(jsonPath("$.memoryHits.approximateHitRate").isNumber())
+                .andExpect(jsonPath("$.memoryContribution.requests").isNumber())
+                .andExpect(jsonPath("$.memoryContribution.semanticTagged").isNumber())
                 .andExpect(jsonPath("$.llmCacheWindowHitRate").isNumber())
                 .andExpect(jsonPath("$.llmCacheWindowHits").isNumber())
                 .andExpect(jsonPath("$.llmCacheWindowMisses").isNumber())
@@ -69,6 +77,24 @@ class LlmMetricsControllerTest {
                         .header("X-MindOS-Admin-Token", "wrong-token")
                         .param("windowMinutes", "60"))
                 .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void shouldReturnRoutingReplayDatasetWhenAuthorized() throws Exception {
+        mockMvc.perform(post("/chat")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"userId\":\"metrics-replay-user\",\"message\":\"谢谢\"}"))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(get("/api/metrics/llm/routing-replay")
+                        .header("X-MindOS-Admin-Token", "test-admin-token")
+                        .param("limit", "200"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.limit").value(200))
+                .andExpect(jsonPath("$.totalCaptured").isNumber())
+                .andExpect(jsonPath("$.samples").isArray())
+                .andExpect(jsonPath("$.byRoute").isMap())
+                .andExpect(jsonPath("$.byFinalChannel").isMap());
     }
 }
 

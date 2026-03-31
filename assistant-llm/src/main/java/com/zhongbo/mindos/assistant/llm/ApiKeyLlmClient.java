@@ -2,7 +2,9 @@ package com.zhongbo.mindos.assistant.llm;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.zhongbo.mindos.assistant.common.ImDegradedReplyMarker;
 import com.zhongbo.mindos.assistant.common.LlmCacheMetricsReader;
 import com.zhongbo.mindos.assistant.common.LlmClient;
 import com.zhongbo.mindos.assistant.common.dto.LlmCallMetricDto;
@@ -12,19 +14,37 @@ import com.zhongbo.mindos.assistant.common.dsl.SkillDSL;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.net.URI;
+import java.net.URLEncoder;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.ArrayDeque;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
+import java.util.function.Consumer;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 @Component
 public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
+
+    private static final Logger LOGGER = Logger.getLogger(ApiKeyLlmClient.class.getName());
 
     private static final Map<String, String> PROVIDER_ALIASES = Map.ofEntries(
             Map.entry("qwen", "qwen"),
@@ -52,12 +72,12 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
             Map.entry("ernie", "https://qianfan.baidubce.com/v2/chat/completions"),
             Map.entry("glm", "https://open.bigmodel.cn/api/paas/v4/chat/completions")
     );
-
     private final String provider;
     private final String routingMode;
     private final String endpoint;
     private final String globalApiKey;
     private final Map<String, String> providerEndpoints;
+    private final Map<String, String> providerModels;
     private final Map<String, String> providerApiKeys;
     private final Map<String, String> stageProviderMap;
     private final Map<String, String> presetProviderMap;
@@ -66,31 +86,44 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
     private final LlmMetricsService llmMetricsService;
     private final int maxRetries;
     private final long retryDelayMs;
+    private final boolean httpEnabled;
     private final boolean responseCacheEnabled;
     private final long responseCacheTtlMillis;
     private final int responseCacheMaxEntries;
+    private final boolean arkWebSearchEnabled;
+    private final Set<String> arkWebSearchStages;
+    private final Set<String> arkWebSearchPlatforms;
     private final ConcurrentHashMap<String, CachedResponse> responseCache = new ConcurrentHashMap<>();
     private final AtomicLong cacheHitCount = new AtomicLong();
     private final AtomicLong cacheMissCount = new AtomicLong();
     private final Object cacheAccessWindowLock = new Object();
     private final ArrayDeque<CacheAccessEvent> cacheAccessEvents = new ArrayDeque<>();
     private static final int MAX_CACHE_ACCESS_EVENTS = 10_000;
+    private static final Duration HTTP_TIMEOUT = Duration.ofSeconds(30);
     private final ObjectMapper objectMapper = new ObjectMapper();
+    private final HttpClient httpClient = HttpClient.newBuilder()
+            .connectTimeout(Duration.ofSeconds(10))
+            .build();
 
     public ApiKeyLlmClient(@Value("${mindos.llm.provider:openai}") String provider,
                            @Value("${mindos.llm.routing.mode:fixed}") String routingMode,
                            @Value("${mindos.llm.endpoint:https://api.example.com/v1/chat/completions}") String endpoint,
                            @Value("${mindos.llm.api-key:}") String globalApiKey,
                            @Value("${mindos.llm.provider-endpoints:}") String providerEndpoints,
+                           @Value("${mindos.llm.provider-models:}") String providerModels,
                            @Value("${mindos.llm.provider-keys:}") String providerKeys,
                            @Value("${mindos.llm.routing.stage-map:llm-dsl:openai,llm-fallback:openai}") String stageProviderMap,
                            @Value("${mindos.llm.routing.preset-map:cost:openai,balanced:openai,quality:openai}") String presetProviderMap,
                            @Value("${mindos.llm.user-keys:}") String userKeys,
                            @Value("${mindos.llm.retry.max-attempts:3}") int maxRetries,
                            @Value("${mindos.llm.retry.delay-ms:300}") long retryDelayMs,
+                           @Value("${mindos.llm.http.enabled:false}") boolean httpEnabled,
                            @Value("${mindos.llm.cache.enabled:false}") boolean responseCacheEnabled,
                            @Value("${mindos.llm.cache.ttl-seconds:60}") long responseCacheTtlSeconds,
                            @Value("${mindos.llm.cache.max-entries:256}") int responseCacheMaxEntries,
+                           @Value("${mindos.llm.ark.web-search.enabled:true}") boolean arkWebSearchEnabled,
+                           @Value("${mindos.llm.ark.web-search.stages:}") String arkWebSearchStages,
+                           @Value("${mindos.llm.ark.web-search.platforms:}") String arkWebSearchPlatforms,
                            UserApiKeyService userApiKeyService,
                            LlmMetricsService llmMetricsService) {
         this.provider = provider;
@@ -98,15 +131,20 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
         this.endpoint = endpoint;
         this.globalApiKey = globalApiKey;
         this.providerEndpoints = parseProviderConfig(providerEndpoints);
+        this.providerModels = parseProviderConfig(providerModels);
         this.providerApiKeys = parseProviderConfig(providerKeys);
         this.stageProviderMap = parseProviderConfig(stageProviderMap);
         this.presetProviderMap = parseProviderConfig(presetProviderMap);
         this.userApiKeys = parseUserKeys(userKeys);
         this.maxRetries = Math.max(1, maxRetries);
         this.retryDelayMs = Math.max(0L, retryDelayMs);
+        this.httpEnabled = httpEnabled;
         this.responseCacheEnabled = responseCacheEnabled;
         this.responseCacheTtlMillis = Math.max(1_000L, responseCacheTtlSeconds * 1_000L);
         this.responseCacheMaxEntries = Math.max(16, responseCacheMaxEntries);
+        this.arkWebSearchEnabled = arkWebSearchEnabled;
+        this.arkWebSearchStages = parseCsvSet(arkWebSearchStages);
+        this.arkWebSearchPlatforms = parseCsvSet(arkWebSearchPlatforms);
         this.userApiKeyService = userApiKeyService;
         this.llmMetricsService = llmMetricsService;
     }
@@ -123,14 +161,20 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
 
         String selectedProvider = resolveProvider(safeContext);
         String selectedEndpoint = resolveEndpoint(selectedProvider);
+        String selectedModel = resolveModel(safeContext, normalizeProvider(selectedProvider));
         String apiKey = resolveApiKey(safeContext, selectedProvider);
         if (apiKey == null || apiKey.isBlank()) {
-            String output = "[LLM stub] No API key resolved. Configure mindos.llm.api-key, mindos.llm.provider-keys, or mindos.llm.user-keys.";
+            String output = buildMissingApiKeyReply(safeContext, selectedProvider);
             recordMetric(startedAt, safeContext, selectedProvider, selectedEndpoint, false, false, prompt, output, "missing_api_key");
             return output;
         }
+        if (selectedModel == null || selectedModel.isBlank()) {
+            String output = buildMissingModelReply(safeContext, selectedProvider);
+            recordMetric(startedAt, safeContext, selectedProvider, selectedEndpoint, false, false, prompt, output, "missing_model");
+            return output;
+        }
 
-        String cacheKey = buildCacheKey(prompt, safeContext, selectedProvider, selectedEndpoint);
+        String cacheKey = buildCacheKey(prompt, safeContext, selectedProvider, selectedEndpoint, selectedModel);
         String cached = getCachedResponse(cacheKey);
         if (cached != null) {
             recordMetric(startedAt, safeContext, selectedProvider, selectedEndpoint, true, false, prompt, cached, null);
@@ -140,23 +184,83 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
         RuntimeException lastError = null;
         for (int attempt = 1; attempt <= maxRetries; attempt++) {
             try {
-                String output = callProvider(selectedProvider, selectedEndpoint, prompt, safeContext, apiKey);
+                String output = callProvider(selectedProvider, selectedEndpoint, selectedModel, prompt, safeContext, apiKey, null, null);
                 putCachedResponse(cacheKey, output);
                 recordMetric(startedAt, safeContext, selectedProvider, selectedEndpoint, true, attempt > 1, prompt, output, null);
                 return output;
             } catch (RuntimeException ex) {
                 lastError = ex;
+                logLlmAttemptFailure(safeContext, selectedProvider, selectedEndpoint, selectedModel, attempt, maxRetries, ex, false);
                 if (attempt < maxRetries) {
                     sleepBeforeRetry();
                 }
             }
         }
 
-        String reason = lastError == null ? "unknown" : lastError.getMessage();
-        String output = "[LLM error] Failed after " + maxRetries + " attempt(s): " + reason;
+        logLlmFinalFailure(safeContext, selectedProvider, selectedEndpoint, selectedModel, maxRetries, lastError, false);
+
+        String output = buildRequestFailureReply(safeContext, selectedProvider, maxRetries, lastError);
         recordMetric(startedAt, safeContext, selectedProvider, selectedEndpoint, false, maxRetries > 1, prompt, output,
                 lastError == null ? "runtime_error" : simplifyErrorType(lastError));
         return output;
+    }
+
+    @Override
+    public void streamResponse(String prompt, Map<String, Object> context, Consumer<String> onDelta) {
+        Map<String, Object> safeContext = context == null ? Map.of() : context;
+        if (prompt == null || prompt.isBlank()) {
+            if (onDelta != null) {
+                onDelta.accept("[LLM error] Prompt cannot be empty.");
+            }
+            return;
+        }
+        String selectedProvider = resolveProvider(safeContext);
+        String selectedEndpoint = resolveEndpoint(selectedProvider);
+        String selectedModel = resolveModel(safeContext, normalizeProvider(selectedProvider));
+        String apiKey = resolveApiKey(safeContext, selectedProvider);
+        if (apiKey == null || apiKey.isBlank()) {
+            if (onDelta != null) {
+                onDelta.accept(buildMissingApiKeyReply(safeContext, selectedProvider));
+            }
+            return;
+        }
+        if (selectedModel == null || selectedModel.isBlank()) {
+            if (onDelta != null) {
+                onDelta.accept(buildMissingModelReply(safeContext, selectedProvider));
+            }
+            return;
+        }
+
+        RuntimeException lastError = null;
+        AtomicBoolean streamed = new AtomicBoolean(false);
+        for (int attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+                String output = callProvider(
+                        selectedProvider,
+                        selectedEndpoint,
+                        selectedModel,
+                        prompt,
+                        safeContext,
+                        apiKey,
+                        onDelta,
+                        streamed
+                );
+                if (onDelta != null && !streamed.get() && output != null && !output.isBlank()) {
+                    onDelta.accept(output);
+                }
+                return;
+            } catch (RuntimeException ex) {
+                lastError = ex;
+                logLlmAttemptFailure(safeContext, selectedProvider, selectedEndpoint, selectedModel, attempt, maxRetries, ex, true);
+                if (attempt < maxRetries) {
+                    sleepBeforeRetry();
+                }
+            }
+        }
+        logLlmFinalFailure(safeContext, selectedProvider, selectedEndpoint, selectedModel, maxRetries, lastError, true);
+        if (onDelta != null) {
+            onDelta.accept(buildRequestFailureReply(safeContext, selectedProvider, maxRetries, lastError));
+        }
     }
 
     @Override
@@ -253,10 +357,19 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
 
     private String callProvider(String providerName,
                                 String endpointValue,
+                                String model,
                                 String prompt,
                                 Map<String, Object> context,
-                                String apiKey) {
+                                String apiKey,
+                                Consumer<String> deltaConsumer,
+                                AtomicBoolean streamEmitted) {
         String normalized = normalizeProvider(providerName);
+        if (httpEnabled && isNativeGeminiEndpoint(endpointValue)) {
+            return callNativeGeminiProvider(endpointValue, prompt, context, apiKey, deltaConsumer, streamEmitted);
+        }
+        if (httpEnabled && isOpenAiCompatibleProvider(normalized, endpointValue)) {
+            return callOpenAiCompatibleProvider(endpointValue, model, prompt, context, apiKey, deltaConsumer, streamEmitted);
+        }
         if (normalized.contains("openai")
                 || "deepseek".equals(normalized)
                 || "qwen".equals(normalized)
@@ -264,15 +377,701 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
                 || "doubao".equals(normalized)
                 || "hunyuan".equals(normalized)
                 || "ernie".equals(normalized)
-                || "glm".equals(normalized)) {
-            return "[LLM " + normalized + "] skeleton call to " + endpointValue + " with apiKey=" + mask(apiKey) + ": " + prompt;
+                || "glm".equals(normalized)
+                || "gemini".equals(normalized)
+                || "grok".equals(normalized)) {
+            return buildSkeletonReply(context, normalized, endpointValue, apiKey);
         }
         if (normalized.contains("local") || normalized.contains("llama") || normalized.contains("mpt")) {
-            return "[LLM local] skeleton call to " + endpointValue + " with apiKey=" + mask(apiKey) + ": " + prompt;
+            return buildSkeletonReply(context, "local", endpointValue, apiKey);
         }
 
-        String userId = context == null ? "unknown" : String.valueOf(context.getOrDefault("userId", "unknown"));
-        return "[LLM " + providerName + "] skeleton response for user " + userId + ": " + prompt;
+        return buildSkeletonReply(context, providerName, endpointValue, apiKey);
+    }
+
+    private boolean isOpenAiCompatibleProvider(String normalizedProvider, String endpointValue) {
+        if (normalizedProvider.contains("local") || normalizedProvider.contains("llama") || normalizedProvider.contains("mpt")) {
+            return false;
+        }
+        if (normalizedProvider.contains("openai")
+                || "deepseek".equals(normalizedProvider)
+                || "qwen".equals(normalizedProvider)
+                || "kimi".equals(normalizedProvider)
+                || "doubao".equals(normalizedProvider)
+                || "hunyuan".equals(normalizedProvider)
+                || "ernie".equals(normalizedProvider)
+                || "glm".equals(normalizedProvider)
+                || "gemini".equals(normalizedProvider)
+                || "grok".equals(normalizedProvider)) {
+            return true;
+        }
+        return endpointValue != null && endpointValue.contains("/chat/completions");
+    }
+
+    private boolean isNativeGeminiEndpoint(String endpointValue) {
+        if (endpointValue == null || endpointValue.isBlank()) {
+            return false;
+        }
+        return endpointValue.trim().toLowerCase(Locale.ROOT).contains(":generatecontent");
+    }
+
+    private String callOpenAiCompatibleProvider(String endpointValue,
+                                                String model,
+                                                String prompt,
+                                                Map<String, Object> context,
+                                                String apiKey,
+                                                Consumer<String> deltaConsumer,
+                                                AtomicBoolean streamEmitted) {
+        String endpointText = endpointValue == null ? "" : endpointValue.trim();
+        if (endpointText.isBlank()) {
+            throw new RuntimeException("empty endpoint");
+        }
+        try {
+            boolean responsesEndpoint = isResponsesEndpoint(endpointText);
+            Map<String, Object> requestPayload = responsesEndpoint
+                    ? buildResponsesRequestPayload(model, prompt, context)
+                    : buildChatCompletionsRequestPayload(model, prompt, context);
+
+            Double temperature = resolveTemperature(context);
+            if (temperature != null) {
+                requestPayload.put("temperature", temperature);
+            }
+            Integer maxTokens = resolveMaxTokens(context);
+            if (maxTokens != null) {
+                requestPayload.put("max_tokens", maxTokens);
+            }
+
+            String requestBody = objectMapper.writeValueAsString(requestPayload);
+            HttpRequest request = HttpRequest.newBuilder(URI.create(endpointText))
+                    .timeout(HTTP_TIMEOUT)
+                    .header("Content-Type", "application/json")
+                    .header("Accept", "text/event-stream")
+                    .header("Authorization", "Bearer " + apiKey)
+                    .POST(HttpRequest.BodyPublishers.ofString(requestBody))
+                    .build();
+
+            HttpResponse<InputStream> response = httpClient.send(request, HttpResponse.BodyHandlers.ofInputStream());
+            int status = response.statusCode();
+            String body = readResponseBody(response.body());
+            if (status < 200 || status >= 300) {
+                throw new RuntimeException("http_" + status + ": " + abbreviate(body, 300));
+            }
+
+            String content = responsesEndpoint
+                    ? extractResponsesText(body, deltaConsumer, streamEmitted)
+                    : extractAssistantText(body, deltaConsumer, streamEmitted);
+            if (content == null || content.isBlank()) {
+                throw new RuntimeException("empty_response_content");
+            }
+            return content;
+        } catch (IOException | InterruptedException ex) {
+            if (ex instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
+            throw new RuntimeException("http_call_failed: " + ex.getMessage(), ex);
+        }
+    }
+
+    private String callNativeGeminiProvider(String endpointValue,
+                                            String prompt,
+                                            Map<String, Object> context,
+                                            String apiKey,
+                                            Consumer<String> deltaConsumer,
+                                            AtomicBoolean streamEmitted) {
+        String endpointText = endpointValue == null ? "" : endpointValue.trim();
+        if (endpointText.isBlank()) {
+            throw new RuntimeException("empty endpoint");
+        }
+        try {
+            Map<String, Object> requestPayload = new LinkedHashMap<>();
+            requestPayload.put("contents", List.of(Map.of("parts", List.of(Map.of("text", prompt)))));
+
+            Map<String, Object> generationConfig = new LinkedHashMap<>();
+            Double temperature = resolveTemperature(context);
+            if (temperature != null) {
+                generationConfig.put("temperature", temperature);
+            }
+            Integer maxTokens = resolveMaxTokens(context);
+            if (maxTokens != null) {
+                generationConfig.put("maxOutputTokens", maxTokens);
+            }
+            if (!generationConfig.isEmpty()) {
+                requestPayload.put("generationConfig", generationConfig);
+            }
+
+            String requestBody = objectMapper.writeValueAsString(requestPayload);
+            HttpRequest request = HttpRequest.newBuilder(URI.create(buildNativeGeminiStreamRequestUrl(endpointText, apiKey)))
+                    .timeout(HTTP_TIMEOUT)
+                    .header("Content-Type", "application/json")
+                    .header("Accept", "text/event-stream")
+                    .POST(HttpRequest.BodyPublishers.ofString(requestBody))
+                    .build();
+
+            HttpResponse<InputStream> response = httpClient.send(request, HttpResponse.BodyHandlers.ofInputStream());
+            int status = response.statusCode();
+            String body = readResponseBody(response.body());
+            if (status < 200 || status >= 300) {
+                throw new RuntimeException("http_" + status + ": " + abbreviate(body, 300));
+            }
+
+            String content = extractGeminiText(body, deltaConsumer, streamEmitted);
+            if (content == null || content.isBlank()) {
+                throw new RuntimeException("empty_response_content");
+            }
+            return content;
+        } catch (IOException | InterruptedException ex) {
+            if (ex instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
+            throw new RuntimeException("http_call_failed: " + ex.getMessage(), ex);
+        }
+    }
+
+    private String extractAssistantText(String responseBody,
+                                        Consumer<String> deltaConsumer,
+                                        AtomicBoolean streamEmitted) {
+        if (looksLikeSsePayload(responseBody)) {
+            String streamed = extractOpenAiCompatibleStreamText(responseBody, deltaConsumer, streamEmitted);
+            if (streamed != null && !streamed.isBlank()) {
+                return streamed;
+            }
+        }
+        try {
+            JsonNode root = objectMapper.readTree(responseBody == null ? "" : responseBody);
+            String content = extractAssistantText(root);
+            return content == null ? null : content.trim();
+        } catch (Exception ex) {
+            throw new RuntimeException("invalid_response_json", ex);
+        }
+    }
+
+    private String extractResponsesText(String responseBody,
+                                        Consumer<String> deltaConsumer,
+                                        AtomicBoolean streamEmitted) {
+        if (looksLikeSsePayload(responseBody)) {
+            String streamed = extractResponsesStreamText(responseBody, deltaConsumer, streamEmitted);
+            if (streamed != null && !streamed.isBlank()) {
+                return streamed;
+            }
+        }
+        try {
+            JsonNode root = objectMapper.readTree(responseBody == null ? "" : responseBody);
+            String content = extractResponsesText(root);
+            return content == null ? null : content.trim();
+        } catch (Exception ex) {
+            throw new RuntimeException("invalid_response_json", ex);
+        }
+    }
+
+    private String extractGeminiText(String responseBody,
+                                     Consumer<String> deltaConsumer,
+                                     AtomicBoolean streamEmitted) {
+        if (looksLikeSsePayload(responseBody)) {
+            String streamed = extractGeminiStreamText(responseBody, deltaConsumer, streamEmitted);
+            if (streamed != null && !streamed.isBlank()) {
+                return streamed;
+            }
+        }
+        try {
+            JsonNode root = objectMapper.readTree(responseBody == null ? "" : responseBody);
+            String content = extractGeminiText(root);
+            return content == null ? null : content.trim();
+        } catch (Exception ex) {
+            throw new RuntimeException("invalid_response_json", ex);
+        }
+    }
+
+    private String buildNativeGeminiRequestUrl(String endpointText, String apiKey) {
+        if (endpointText.contains("key=")) {
+            return endpointText;
+        }
+        String separator = endpointText.contains("?") ? "&" : "?";
+        return endpointText + separator + "key=" + URLEncoder.encode(apiKey, java.nio.charset.StandardCharsets.UTF_8);
+    }
+
+    private String buildNativeGeminiStreamRequestUrl(String endpointText, String apiKey) {
+        String streamEndpoint = endpointText.replace(":generateContent", ":streamGenerateContent");
+        String url = buildNativeGeminiRequestUrl(streamEndpoint, apiKey);
+        if (url.contains("alt=")) {
+            return url;
+        }
+        String separator = url.contains("?") ? "&" : "?";
+        return url + separator + "alt=" + URLEncoder.encode("sse", java.nio.charset.StandardCharsets.UTF_8);
+    }
+
+    private String readResponseBody(InputStream bodyStream) throws IOException {
+        if (bodyStream == null) {
+            return "";
+        }
+        try (InputStream input = bodyStream;
+             BufferedReader reader = new BufferedReader(new InputStreamReader(input, java.nio.charset.StandardCharsets.UTF_8))) {
+            StringBuilder builder = new StringBuilder();
+            String line;
+            boolean first = true;
+            while ((line = reader.readLine()) != null) {
+                if (!first) {
+                    builder.append('\n');
+                }
+                builder.append(line);
+                first = false;
+            }
+            return builder.toString();
+        }
+    }
+
+    private boolean looksLikeSsePayload(String responseBody) {
+        return responseBody != null && responseBody.contains("data:");
+    }
+
+    private String extractOpenAiCompatibleStreamText(String responseBody,
+                                                     Consumer<String> deltaConsumer,
+                                                     AtomicBoolean streamEmitted) {
+        return extractSseText(responseBody, false, deltaConsumer, streamEmitted);
+    }
+
+    private String extractResponsesStreamText(String responseBody,
+                                              Consumer<String> deltaConsumer,
+                                              AtomicBoolean streamEmitted) {
+        if (responseBody == null || responseBody.isBlank()) {
+            return null;
+        }
+        StringBuilder aggregated = new StringBuilder();
+        for (String rawLine : responseBody.split("\\R")) {
+            String line = rawLine.trim();
+            if (!line.startsWith("data:")) {
+                continue;
+            }
+            String payload = line.substring("data:".length()).trim();
+            if (payload.isBlank() || "[DONE]".equals(payload)) {
+                continue;
+            }
+            String chunk = extractResponsesChunkText(payload);
+            if (chunk != null && !chunk.isBlank()) {
+                aggregated.append(chunk);
+                if (deltaConsumer != null) {
+                    deltaConsumer.accept(chunk);
+                    if (streamEmitted != null) {
+                        streamEmitted.set(true);
+                    }
+                }
+            }
+        }
+        return aggregated.isEmpty() ? null : aggregated.toString().trim();
+    }
+
+    private String extractGeminiStreamText(String responseBody,
+                                           Consumer<String> deltaConsumer,
+                                           AtomicBoolean streamEmitted) {
+        return extractSseText(responseBody, true, deltaConsumer, streamEmitted);
+    }
+
+    private String extractSseText(String responseBody,
+                                  boolean geminiFormat,
+                                  Consumer<String> deltaConsumer,
+                                  AtomicBoolean streamEmitted) {
+        if (responseBody == null || responseBody.isBlank()) {
+            return null;
+        }
+        StringBuilder aggregated = new StringBuilder();
+        for (String rawLine : responseBody.split("\\R")) {
+            String line = rawLine.trim();
+            if (!line.startsWith("data:")) {
+                continue;
+            }
+            String payload = line.substring("data:".length()).trim();
+            if (payload.isBlank() || "[DONE]".equals(payload)) {
+                continue;
+            }
+            String chunk = geminiFormat ? extractGeminiChunkText(payload) : extractAssistantChunkText(payload);
+            if (chunk != null && !chunk.isBlank()) {
+                aggregated.append(chunk);
+                if (deltaConsumer != null) {
+                    deltaConsumer.accept(chunk);
+                    if (streamEmitted != null) {
+                        streamEmitted.set(true);
+                    }
+                }
+            }
+        }
+        return aggregated.isEmpty() ? null : aggregated.toString().trim();
+    }
+
+    private String extractAssistantChunkText(String chunkPayload) {
+        try {
+            return extractAssistantText(objectMapper.readTree(chunkPayload));
+        } catch (Exception ex) {
+            throw new RuntimeException("invalid_response_json", ex);
+        }
+    }
+
+    private String extractGeminiChunkText(String chunkPayload) {
+        try {
+            return extractGeminiText(objectMapper.readTree(chunkPayload));
+        } catch (Exception ex) {
+            throw new RuntimeException("invalid_response_json", ex);
+        }
+    }
+
+    private String extractResponsesChunkText(String chunkPayload) {
+        try {
+            JsonNode root = objectMapper.readTree(chunkPayload);
+            String eventType = root.path("type").asText("");
+            if (eventType.startsWith("response.output_text.")) {
+                String delta = root.path("delta").asText("");
+                if (!delta.isBlank()) {
+                    return delta;
+                }
+                String text = root.path("text").asText("");
+                if (!text.isBlank()) {
+                    return text;
+                }
+            }
+            if (eventType.startsWith("response.")) {
+                return extractResponsesText(root.path("response"));
+            }
+            return extractResponsesText(root);
+        } catch (Exception ex) {
+            throw new RuntimeException("invalid_response_json", ex);
+        }
+    }
+
+    private String extractAssistantText(JsonNode root) {
+        if (root == null || root.isMissingNode()) {
+            return null;
+        }
+        StringBuilder builder = new StringBuilder();
+        JsonNode choices = root.path("choices");
+        if (choices.isArray()) {
+            for (JsonNode choice : choices) {
+                appendContentNode(builder, choice.path("delta").path("content"));
+                appendContentNode(builder, choice.path("message").path("content"));
+            }
+        }
+        appendContentNode(builder, root.path("output_text"));
+        return builder.isEmpty() ? null : builder.toString();
+    }
+
+    private String extractGeminiText(JsonNode root) {
+        if (root == null || root.isMissingNode()) {
+            return null;
+        }
+        StringBuilder builder = new StringBuilder();
+        JsonNode parts = root.path("candidates").path(0).path("content").path("parts");
+        if (parts.isArray()) {
+            for (JsonNode part : parts) {
+                appendContentNode(builder, part.path("text"));
+            }
+        }
+        appendContentNode(builder, root.path("text"));
+        return builder.isEmpty() ? null : builder.toString();
+    }
+
+    private String extractResponsesText(JsonNode root) {
+        if (root == null || root.isMissingNode()) {
+            return null;
+        }
+        StringBuilder builder = new StringBuilder();
+        appendContentNode(builder, root.path("output_text"));
+        JsonNode output = root.path("output");
+        if (output.isArray()) {
+            for (JsonNode item : output) {
+                appendContentNode(builder, item.path("text"));
+                JsonNode content = item.path("content");
+                if (content.isArray()) {
+                    for (JsonNode contentItem : content) {
+                        if (!"output_text".equals(contentItem.path("type").asText(""))) {
+                            continue;
+                        }
+                        appendContentNode(builder, contentItem.path("text"));
+                    }
+                }
+            }
+        }
+        return builder.isEmpty() ? null : builder.toString();
+    }
+
+    private boolean isResponsesEndpoint(String endpointText) {
+        return endpointText != null && endpointText.toLowerCase(Locale.ROOT).contains("/responses");
+    }
+
+    private Map<String, Object> buildChatCompletionsRequestPayload(String model,
+                                                                   String prompt,
+                                                                   Map<String, Object> context) {
+        Map<String, Object> requestPayload = new LinkedHashMap<>();
+        requestPayload.put("model", model);
+        requestPayload.put("messages", List.of(Map.of("role", "user", "content", prompt)));
+        requestPayload.put("stream", true);
+
+        Double temperature = resolveTemperature(context);
+        if (temperature != null) {
+            requestPayload.put("temperature", temperature);
+        }
+        Integer maxTokens = resolveMaxTokens(context);
+        if (maxTokens != null) {
+            requestPayload.put("max_tokens", maxTokens);
+        }
+        return requestPayload;
+    }
+
+    private Map<String, Object> buildResponsesRequestPayload(String model,
+                                                             String prompt,
+                                                             Map<String, Object> context) {
+        Map<String, Object> requestPayload = new LinkedHashMap<>();
+        requestPayload.put("model", model);
+        requestPayload.put("stream", true);
+        requestPayload.put("input", List.of(Map.of(
+                "role", "user",
+                "content", List.of(Map.of(
+                        "type", "input_text",
+                        "text", prompt
+                ))
+        )));
+        if (shouldAttachArkWebSearchTool(context)) {
+            requestPayload.put("tools", List.of(Map.of(
+                    "type", "web_search",
+                    "max_keyword", 3
+            )));
+        }
+
+        Double temperature = resolveTemperature(context);
+        if (temperature != null) {
+            requestPayload.put("temperature", temperature);
+        }
+        Integer maxTokens = resolveMaxTokens(context);
+        if (maxTokens != null) {
+            requestPayload.put("max_output_tokens", maxTokens);
+        }
+        return requestPayload;
+    }
+
+    private boolean shouldAttachArkWebSearchTool(Map<String, Object> context) {
+        if (!arkWebSearchEnabled) {
+            return false;
+        }
+        if (!arkWebSearchStages.isEmpty()) {
+            String routeStage = asText(context == null ? null : context.get("routeStage"));
+            if (routeStage == null || !arkWebSearchStages.contains(routeStage.trim().toLowerCase(Locale.ROOT))) {
+                return false;
+            }
+        }
+        if (arkWebSearchPlatforms.isEmpty()) {
+            return true;
+        }
+        String interactionChannel = asText(context == null ? null : context.get("interactionChannel"));
+        String imPlatform = asText(context == null ? null : context.get("imPlatform"));
+        if (imPlatform == null && context != null) {
+            imPlatform = asText(asObjectMap(context.get("profile")).get("imPlatform"));
+        }
+
+        if (interactionChannel != null && arkWebSearchPlatforms.contains(interactionChannel.trim().toLowerCase(Locale.ROOT))) {
+            return true;
+        }
+        return imPlatform != null && arkWebSearchPlatforms.contains(imPlatform.trim().toLowerCase(Locale.ROOT));
+    }
+
+    private void appendContentNode(StringBuilder builder, JsonNode node) {
+        if (node == null || node.isMissingNode() || node.isNull()) {
+            return;
+        }
+        if (node.isTextual()) {
+            String text = node.asText("");
+            if (!text.trim().isBlank()) {
+                builder.append(text);
+            }
+            return;
+        }
+        if (node.isArray()) {
+            for (JsonNode item : node) {
+                if (item.isTextual()) {
+                    appendContentNode(builder, item);
+                } else {
+                    appendContentNode(builder, item.path("text"));
+                    appendContentNode(builder, item.path("content"));
+                }
+            }
+        }
+    }
+
+    private String resolveModel(Map<String, Object> context, String normalizedProvider) {
+        if (context != null) {
+            String model = asText(context.get("model"));
+            if (model != null) {
+                return model;
+            }
+        }
+        String configuredModel = providerModels.get(normalizedProvider);
+        if (!isTemplatePlaceholder(configuredModel)) {
+            configuredModel = asText(configuredModel);
+            if (configuredModel != null) {
+                return configuredModel;
+            }
+        }
+        if ("qwen".equals(normalizedProvider)) {
+            return "qwen3.5-plus";
+        }
+        if ("doubao".equals(normalizedProvider)) {
+            return null;
+        }
+        return normalizedProvider;
+    }
+
+    private boolean isTemplatePlaceholder(String value) {
+        if (value == null) {
+            return false;
+        }
+        String normalized = value.trim().toUpperCase(Locale.ROOT);
+        return normalized.startsWith("REPLACE_WITH_") || normalized.startsWith("YOUR_");
+    }
+
+    private Double resolveTemperature(Map<String, Object> context) {
+        if (context == null) {
+            return null;
+        }
+        Object raw = context.get("temperature");
+        if (raw instanceof Number number) {
+            return number.doubleValue();
+        }
+        if (raw instanceof String text && !text.isBlank()) {
+            try {
+                return Double.parseDouble(text.trim());
+            } catch (NumberFormatException ignored) {
+                return null;
+            }
+        }
+        return null;
+    }
+
+    private Integer resolveMaxTokens(Map<String, Object> context) {
+        if (context == null) {
+            return null;
+        }
+        Object raw = context.get("maxTokens");
+        if (raw == null) {
+            raw = context.get("max_tokens");
+        }
+        if (raw instanceof Number number) {
+            return number.intValue();
+        }
+        if (raw instanceof String text && !text.isBlank()) {
+            try {
+                return Integer.parseInt(text.trim());
+            } catch (NumberFormatException ignored) {
+                return null;
+            }
+        }
+        return null;
+    }
+
+    private String abbreviate(String text, int maxLength) {
+        if (text == null) {
+            return "";
+        }
+        String trimmed = text.trim();
+        if (trimmed.length() <= maxLength) {
+            return trimmed;
+        }
+        return trimmed.substring(0, maxLength) + "...";
+    }
+
+    private String buildMissingApiKeyReply(Map<String, Object> context, String providerName) {
+        if (isImContext(context)) {
+            return buildImDegradedReply(providerName, "auth_failure");
+        }
+        return "[LLM " + normalizeProvider(providerName) + "] unavailable: missing API key.";
+    }
+
+    private String buildMissingModelReply(Map<String, Object> context, String providerName) {
+        if (isImContext(context)) {
+            return buildImDegradedReply(providerName, "unavailable");
+        }
+        String normalizedProvider = normalizeProvider(providerName);
+        if ("doubao".equals(normalizedProvider)) {
+            return "[LLM doubao] unavailable: missing Model ID / Endpoint ID. Configure mindos.llm.provider-models=doubao:<endpoint-or-model-id> or pass context.model.";
+        }
+        return "[LLM " + normalizedProvider + "] unavailable: missing model.";
+    }
+
+    private String buildRequestFailureReply(Map<String, Object> context,
+                                            String providerName,
+                                            int attempts,
+                                            RuntimeException lastError) {
+        if (isImContext(context)) {
+            return buildImDegradedReply(providerName, classifyImErrorCategory(lastError));
+        }
+        return "[LLM " + normalizeProvider(providerName) + "] request failed after " + Math.max(1, attempts)
+                + " attempt(s). Please retry later.";
+    }
+
+    private String buildSkeletonReply(Map<String, Object> context,
+                                      String providerName,
+                                      String endpointValue,
+                                      String apiKey) {
+        if (isImContext(context)) {
+            return buildImDegradedReply(providerName, "unavailable");
+        }
+        String normalizedProvider = normalizeProvider(providerName);
+        String resolvedEndpoint = endpointValue == null || endpointValue.isBlank() ? "n/a" : endpointValue;
+        return "[LLM " + normalizedProvider + "] fallback mode active. endpoint=" + resolvedEndpoint
+                + ", apiKey=" + mask(apiKey);
+    }
+
+    private String buildImDegradedReply(String providerName, String errorCategory) {
+        return ImDegradedReplyMarker.encode(normalizeProvider(providerName), errorCategory);
+    }
+
+    private String classifyImErrorCategory(RuntimeException lastError) {
+        if (lastError == null) {
+            return "unavailable";
+        }
+        String message = lastError.getMessage() == null ? "" : lastError.getMessage().toLowerCase(Locale.ROOT);
+        if (message.contains("http_401") || message.contains("http_403") || message.contains("missing api key")) {
+            return "auth_failure";
+        }
+        if (message.contains("timeout") || message.contains("timed out") || message.contains("http_408") || message.contains("http_504")) {
+            return "timeout";
+        }
+        if (message.contains("http_502") || message.contains("http_503") || message.contains("http_500")
+                || message.contains("http_501") || message.contains("http_505")) {
+            return "upstream_5xx";
+        }
+        if (message.contains("empty_response_content") || message.contains("invalid_response_json")) {
+            return "empty_response";
+        }
+        return "unavailable";
+    }
+
+    private boolean isImContext(Map<String, Object> context) {
+        if (context == null || context.isEmpty()) {
+            return false;
+        }
+        String interactionChannel = asText(context.get("interactionChannel"));
+        if ("im".equalsIgnoreCase(interactionChannel)) {
+            return true;
+        }
+        if (asText(context.get("imPlatform")) != null
+                || asText(context.get("imSenderId")) != null
+                || asText(context.get("imChatId")) != null) {
+            return true;
+        }
+        Map<String, Object> profile = asObjectMap(context.get("profile"));
+        return asText(profile.get("imPlatform")) != null
+                || asText(profile.get("imSenderId")) != null
+                || asText(profile.get("imChatId")) != null;
+    }
+
+    private String resolveInteractionCacheKey(Map<String, Object> context) {
+        if (context == null || context.isEmpty()) {
+            return "default";
+        }
+        if (isImContext(context)) {
+            String imPlatform = asText(context.get("imPlatform"));
+            if (imPlatform == null) {
+                imPlatform = asText(asObjectMap(context.get("profile")).get("imPlatform"));
+            }
+            return "im:" + (imPlatform == null ? "unknown" : imPlatform.toLowerCase(Locale.ROOT));
+        }
+        String interactionChannel = asText(context.get("interactionChannel"));
+        return interactionChannel == null ? "default" : interactionChannel.toLowerCase(Locale.ROOT);
     }
 
     private String resolveApiKey(Map<String, Object> context, String providerName) {
@@ -388,6 +1187,24 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
         return Map.copyOf(parsed);
     }
 
+    private Set<String> parseCsvSet(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return Set.of();
+        }
+        LinkedHashSet<String> parsed = new LinkedHashSet<>();
+        String[] parts = raw.split(",");
+        for (String part : parts) {
+            if (part == null) {
+                continue;
+            }
+            String normalized = part.trim().toLowerCase(Locale.ROOT);
+            if (!normalized.isBlank()) {
+                parsed.add(normalized);
+            }
+        }
+        return parsed.isEmpty() ? Set.of() : Set.copyOf(parsed);
+    }
+
     private String normalizeProvider(String value) {
         if (value == null || value.isBlank()) {
             return "openai";
@@ -419,7 +1236,7 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
                 Instant.now(),
                 userId,
                 normalizeProvider(providerValue),
-                endpointResolved,
+                sanitizeEndpointForMetrics(endpointResolved),
                 routeStage,
                 success,
                 retried,
@@ -429,6 +1246,13 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
                 promptTokens + responseTokens,
                 errorType
         ));
+    }
+
+    private String sanitizeEndpointForMetrics(String endpointValue) {
+        if (endpointValue == null || endpointValue.isBlank()) {
+            return endpointValue;
+        }
+        return endpointValue.replaceAll("([?&]key=)[^&]+", "$1***");
     }
 
     private int estimateTokens(String text) {
@@ -447,6 +1271,62 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
             return "runtime_error";
         }
         return simple.toLowerCase(Locale.ROOT);
+    }
+
+    private void logLlmAttemptFailure(Map<String, Object> context,
+                                      String providerName,
+                                      String endpointValue,
+                                      String model,
+                                      int attempt,
+                                      int maxAttempts,
+                                      RuntimeException ex,
+                                      boolean streamMode) {
+        String routeStage = context == null ? null : asText(context.get("routeStage"));
+        String userId = context == null ? null : asText(context.get("userId"));
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("event", "llm.call.attempt.failed");
+        payload.put("streamMode", streamMode);
+        payload.put("provider", normalizeProvider(providerName));
+        payload.put("model", model == null ? "" : model);
+        payload.put("endpoint", sanitizeEndpointForMetrics(endpointValue));
+        payload.put("routeStage", routeStage == null ? "" : routeStage);
+        payload.put("attempt", attempt);
+        payload.put("maxAttempts", maxAttempts);
+        payload.put("errorType", ex == null ? "runtime_error" : simplifyErrorType(ex));
+        payload.put("message", ex == null || ex.getMessage() == null ? "" : abbreviate(ex.getMessage(), 260));
+        payload.put("userHash", userId == null ? "" : Integer.toHexString(userId.hashCode()));
+        try {
+            LOGGER.warning(objectMapper.writeValueAsString(payload));
+        } catch (JsonProcessingException jsonEx) {
+            LOGGER.log(Level.WARNING, String.valueOf(payload), jsonEx);
+        }
+    }
+
+    private void logLlmFinalFailure(Map<String, Object> context,
+                                    String providerName,
+                                    String endpointValue,
+                                    String model,
+                                    int maxAttempts,
+                                    RuntimeException ex,
+                                    boolean streamMode) {
+        String routeStage = context == null ? null : asText(context.get("routeStage"));
+        String userId = context == null ? null : asText(context.get("userId"));
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("event", "llm.call.failed");
+        payload.put("streamMode", streamMode);
+        payload.put("provider", normalizeProvider(providerName));
+        payload.put("model", model == null ? "" : model);
+        payload.put("endpoint", sanitizeEndpointForMetrics(endpointValue));
+        payload.put("routeStage", routeStage == null ? "" : routeStage);
+        payload.put("maxAttempts", maxAttempts);
+        payload.put("errorType", ex == null ? "runtime_error" : simplifyErrorType(ex));
+        payload.put("message", ex == null || ex.getMessage() == null ? "" : abbreviate(ex.getMessage(), 260));
+        payload.put("userHash", userId == null ? "" : Integer.toHexString(userId.hashCode()));
+        try {
+            LOGGER.warning(objectMapper.writeValueAsString(payload));
+        } catch (JsonProcessingException jsonEx) {
+            LOGGER.log(Level.WARNING, String.valueOf(payload), jsonEx);
+        }
     }
 
     private String asText(Object value) {
@@ -487,7 +1367,8 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
     private String buildCacheKey(String prompt,
                                  Map<String, Object> context,
                                  String providerName,
-                                 String endpointValue) {
+                                 String endpointValue,
+                                 String model) {
         if (!responseCacheEnabled) {
             return null;
         }
@@ -495,13 +1376,16 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
         String routeStage = asText(context.get("routeStage"));
         String profileProvider = asText(context.get("llmProvider"));
         String profilePreset = asText(context.get("llmPreset"));
+        String interactionCacheKey = resolveInteractionCacheKey(context);
         return String.join("\u001F",
                 normalizeProvider(providerName),
                 endpointValue == null ? "" : endpointValue,
+                model == null ? "" : model,
                 userId == null ? "" : userId,
                 routeStage == null ? "" : routeStage,
                 profileProvider == null ? "" : profileProvider,
                 profilePreset == null ? "" : profilePreset,
+                interactionCacheKey,
                 prompt == null ? "" : prompt);
     }
 

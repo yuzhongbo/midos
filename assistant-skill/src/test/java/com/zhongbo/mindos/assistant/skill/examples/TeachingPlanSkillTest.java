@@ -34,13 +34,13 @@ class TeachingPlanSkillTest {
 
         assertTrue(result.success());
         assertEquals("teaching.plan", result.skillName());
-        assertTrue(result.output().contains("学生ID: stu-1"));
-        assertTrue(result.output().contains("主题: 数学"));
-        assertTrue(result.output().contains("目标: 期末提升15分"));
-        assertTrue(result.output().contains("周期: 6 周"));
-        assertTrue(result.output().contains("每周投入: 8 小时"));
-        assertTrue(result.output().contains("薄弱点: 函数、概率"));
-        assertTrue(result.output().contains("学习风格: 练习优先"));
+        assertTrue(result.output().contains("学生画像小结：学生ID stu-1"));
+        assertTrue(result.output().contains("这次会以 数学 为主线"));
+        assertTrue(result.output().contains("目标是 期末提升15分"));
+        assertTrue(result.output().contains("周期 6 周"));
+        assertTrue(result.output().contains("每周大约 8 小时"));
+        assertTrue(result.output().contains("薄弱点 函数、概率"));
+        assertTrue(result.output().contains("学习风格 练习优先"));
     }
 
     @Test
@@ -57,7 +57,7 @@ class TeachingPlanSkillTest {
         SkillResult result = llmSkill.run(new SkillContext("u1", "数学学习计划", Map.of("topic", "数学")));
 
         assertTrue(result.success());
-        assertTrue(result.output().contains("规划概览: 面向考试的分阶段提分计划"));
+        assertTrue(result.output().contains("整体策略：面向考试的分阶段提分计划"));
         assertTrue(result.output().contains("第 1 周"));
     }
 
@@ -68,7 +68,7 @@ class TeachingPlanSkillTest {
         SkillResult result = llmSkill.run(new SkillContext("u1", "数学学习计划", Map.of("topic", "数学")));
 
         assertTrue(result.success());
-        assertTrue(result.output().contains("规划概览: 以数学为主线"));
+        assertTrue(result.output().contains("整体策略：以数学为主线"));
     }
 
     @Test
@@ -81,7 +81,7 @@ class TeachingPlanSkillTest {
         SkillResult result = llmSkill.run(new SkillContext(null, "数学学习计划", Map.of("topic", "数学")));
 
         assertTrue(result.success());
-        assertTrue(result.output().contains("规划概览: 以数学为主线"));
+        assertTrue(result.output().contains("整体策略：以数学为主线"));
     }
 
     @Test

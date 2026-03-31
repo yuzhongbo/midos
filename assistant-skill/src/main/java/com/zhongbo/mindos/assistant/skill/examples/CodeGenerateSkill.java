@@ -5,6 +5,7 @@ import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.skill.Skill;
 import org.springframework.stereotype.Component;
+import org.springframework.beans.factory.annotation.Value;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -15,13 +16,29 @@ import java.util.logging.Logger;
 public class CodeGenerateSkill implements Skill {
     private static final Logger LOGGER = Logger.getLogger(CodeGenerateSkill.class.getName());
     private final LlmClient llmClient;
+    private final String defaultProvider;
+    private final String easyModel;
+    private final String mediumModel;
+    private final String hardModel;
+
+    public CodeGenerateSkill(LlmClient llmClient,
+                             @Value("${mindos.skill.code-generate.llm-provider:gpt}") String defaultProvider,
+                             @Value("${mindos.skill.code-generate.model.easy:}") String easyModel,
+                             @Value("${mindos.skill.code-generate.model.medium:}") String mediumModel,
+                             @Value("${mindos.skill.code-generate.model.hard:}") String hardModel) {
+        this.llmClient = llmClient;
+        this.defaultProvider = normalizeOptional(defaultProvider);
+        this.easyModel = normalizeOptional(easyModel);
+        this.mediumModel = normalizeOptional(mediumModel);
+        this.hardModel = normalizeOptional(hardModel);
+    }
 
     public CodeGenerateSkill(LlmClient llmClient) {
-        this.llmClient = llmClient;
+        this(llmClient, "gpt", null, null, null);
     }
 
     public CodeGenerateSkill() {
-        this(null);
+        this(null, "gpt", null, null, null);
     }
 
     @Override
@@ -31,7 +48,7 @@ public class CodeGenerateSkill implements Skill {
 
     @Override
     public String description() {
-        return "Generates code from a task description (skeleton placeholder).";
+        return "根据任务描述生成代码草稿，可附带语言或风格偏好。";
     }
 
     @Override
@@ -57,7 +74,9 @@ public class CodeGenerateSkill implements Skill {
                 LOGGER.log(Level.WARNING, "LLM call failed for code.generate skill, fallback to local output", ex);
             }
         }
-        String output = "[code.generate] Placeholder generated code for task: " + taskDescription;
+        String output = "我先给你一个可落地的代码起步方案：\n"
+                + "- 任务目标：" + taskDescription + "\n"
+                + "- 下一步：告诉我你希望的语言、框架或输入输出示例，我会直接补成完整代码。";
         return SkillResult.success(name(), output);
     }
 
@@ -65,7 +84,95 @@ public class CodeGenerateSkill implements Skill {
         Map<String, Object> llmContext = new LinkedHashMap<>();
         llmContext.put("userId", context.userId() == null ? "" : context.userId());
         llmContext.put("channel", name());
+        String provider = asString(context, "llmProvider", defaultProvider == null ? "gpt" : defaultProvider);
+        if (provider != null && !provider.isBlank()) {
+            llmContext.put("llmProvider", provider);
+        }
+
+        String explicitModel = asString(context, "model", "");
+        if (explicitModel == null || explicitModel.isBlank()) {
+            explicitModel = asString(context, "llmModel", "");
+        }
+        String selectedModel = explicitModel == null || explicitModel.isBlank()
+                ? modelByDifficulty(estimateDifficulty(asString(context, "task", context.input())))
+                : explicitModel.trim();
+        if (selectedModel != null && !selectedModel.isBlank()) {
+            llmContext.put("model", selectedModel);
+        }
         return llmContext;
+    }
+
+    private String modelByDifficulty(Difficulty difficulty) {
+        return switch (difficulty) {
+            case EASY -> firstNonBlank(easyModel, mediumModel, hardModel);
+            case MEDIUM -> firstNonBlank(mediumModel, hardModel, easyModel);
+            case HARD -> firstNonBlank(hardModel, mediumModel, easyModel);
+        };
+    }
+
+    private Difficulty estimateDifficulty(String taskDescription) {
+        if (taskDescription == null) {
+            return Difficulty.EASY;
+        }
+        String normalized = taskDescription.trim().toLowerCase();
+        int score = 0;
+        if (normalized.length() > 220) {
+            score += 2;
+        }
+        if (normalized.contains("\n") || normalized.contains("```") || normalized.contains("stacktrace")) {
+            score += 1;
+        }
+        if (containsAny(normalized,
+                "架构", "重构", "优化", "并发", "性能", "transaction", "分布式", "设计模式", "sql")) {
+            score += 2;
+        }
+        if (containsAny(normalized,
+                "实现", "接口", "api", "debug", "修复", "测试", "方案")) {
+            score += 1;
+        }
+
+        if (score >= 3) {
+            return Difficulty.HARD;
+        }
+        if (score <= 0) {
+            return Difficulty.EASY;
+        }
+        return Difficulty.MEDIUM;
+    }
+
+    private boolean containsAny(String normalized, String... terms) {
+        for (String term : terms) {
+            if (normalized.contains(term)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private String firstNonBlank(String... values) {
+        if (values == null) {
+            return null;
+        }
+        for (String value : values) {
+            if (value != null && !value.isBlank()) {
+                return value;
+            }
+        }
+        return null;
+    }
+
+    private String normalizeOptional(String value) {
+        if (value == null) {
+            return null;
+        }
+        String normalized = value.trim();
+        return normalized.isBlank() ? null : normalized;
+    }
+
+    private enum Difficulty {
+        EASY,
+        MEDIUM,
+        HARD
     }
 
     private String asString(SkillContext context, String key, String defaultValue) {
