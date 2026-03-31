@@ -1,6 +1,7 @@
 package com.zhongbo.mindos.assistant.api;
 
 import com.zhongbo.mindos.assistant.skill.SkillRegistry;
+import com.zhongbo.mindos.assistant.skill.cloudapi.CloudApiSkillLoader;
 import com.zhongbo.mindos.assistant.skill.loader.CustomSkillLoader;
 import com.zhongbo.mindos.assistant.skill.loader.ExternalSkillLoader;
 import com.zhongbo.mindos.assistant.skill.mcp.McpSkillLoader;
@@ -19,11 +20,12 @@ import java.util.Map;
 /**
  * REST API for skill management.
  *
- * GET  /api/skills            — list all registered skills
- * POST /api/skills/reload     — hot-reload custom JSON skills from disk
- * POST /api/skills/load-jar   — download and register an external skill JAR on demand
- * POST /api/skills/reload-mcp — reload MCP skills from configured servers
- * POST /api/skills/load-mcp   — load one MCP server on demand
+ * GET  /api/skills                 — list all registered skills
+ * POST /api/skills/reload          — hot-reload custom JSON skills from disk
+ * POST /api/skills/load-jar        — download and register an external skill JAR on demand
+ * POST /api/skills/reload-mcp      — reload MCP skills from configured servers
+ * POST /api/skills/load-mcp        — load one MCP server on demand
+ * POST /api/skills/reload-cloud    — hot-reload cloud API skills from configured directory
  */
 @RestController
 @RequestMapping("/api/skills")
@@ -33,17 +35,20 @@ public class SkillController {
     private final CustomSkillLoader customSkillLoader;
     private final ExternalSkillLoader externalSkillLoader;
     private final McpSkillLoader mcpSkillLoader;
+    private final CloudApiSkillLoader cloudApiSkillLoader;
     private final SecurityPolicyGuard securityPolicyGuard;
 
     public SkillController(SkillRegistry skillRegistry,
                            CustomSkillLoader customSkillLoader,
                            ExternalSkillLoader externalSkillLoader,
                            McpSkillLoader mcpSkillLoader,
+                           CloudApiSkillLoader cloudApiSkillLoader,
                            SecurityPolicyGuard securityPolicyGuard) {
         this.skillRegistry = skillRegistry;
         this.customSkillLoader = customSkillLoader;
         this.externalSkillLoader = externalSkillLoader;
         this.mcpSkillLoader = mcpSkillLoader;
+        this.cloudApiSkillLoader = cloudApiSkillLoader;
         this.securityPolicyGuard = securityPolicyGuard;
     }
 
@@ -148,6 +153,21 @@ public class SkillController {
         }
         response.put("status", count > 0 ? "ok" : "no_tools_found");
         return Map.copyOf(response);
+    }
+
+    /**
+     * Hot-reloads all cloud API skill definitions from the configured directory.
+     * <p>Request body: (none)</p>
+     * <p>Response: {"reloaded": 2, "dir": "/path/to/cloud-skills", "status": "ok"}</p>
+     */
+    @PostMapping("/reload-cloud")
+    public Map<String, Object> reloadCloudApiSkills() {
+        int count = cloudApiSkillLoader.reload();
+        return Map.of(
+                "reloaded", count,
+                "dir", cloudApiSkillLoader.getConfigDir() == null ? "" : cloudApiSkillLoader.getConfigDir(),
+                "status", "ok"
+        );
     }
 
     private String asTrimmedString(Object rawValue) {

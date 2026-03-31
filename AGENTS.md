@@ -13,7 +13,7 @@ This repository is a lightweight, single-user personal AI assistant backend. Opt
   - `assistant-api`: REST entrypoint and Spring Boot app
   - `assistant-dispatcher`: routes user input to skills/LLM
   - `assistant-memory`: episodic, semantic, procedural memory services (in-memory default; JDBC central repository auto-enabled when a `DataSource` exists)
-  - `assistant-skill`: skill interface, registry, DSL execution, example skills; `loader/` sub-package for custom JSON skills and external JAR plugins; `mcp/` sub-package for MCP tool adapters over HTTP JSON-RPC
+  - `assistant-skill`: skill interface, registry, DSL execution, example skills; `loader/` sub-package for custom JSON skills and external JAR plugins; `mcp/` sub-package for MCP tool adapters over HTTP JSON-RPC; `cloudapi/` sub-package for semantic cloud API skill adapters
   - `assistant-llm`: API-key-based LLM client adapter (supports global/per-user keys plus provider-specific keys/endpoints; stubbed response when key missing)
   - `assistant-common`: shared contracts (`SkillDsl`, `SkillContext`, `SkillResult`, `LlmClient`)
   - `assistant-sdk`: Java SDK for client-side server calls
@@ -155,6 +155,59 @@ This repository is a lightweight, single-user personal AI assistant backend. Opt
   - `assistant-api/src/test/java/com/zhongbo/mindos/assistant/api/im/ImWebhookControllerTest.java`
   - `mindos-cli/src/test/java/com/zhongbo/mindos/assistant/cli/CommandNluParserTest.java`
   - `mindos-cli/src/test/java/com/zhongbo/mindos/assistant/cli/MindosCliApplicationTest.java`
+
+---
+
+### 云端 API Skill（cloudapi）
+
+#### 设计目标
+允许通过 JSON 配置文件定义调用任意云端 REST API 的 Skill，并通过语义关键词实现自动路由匹配。
+
+#### 核心文件
+- `assistant-skill/src/main/java/com/zhongbo/mindos/assistant/skill/cloudapi/CloudApiSkillDefinition.java`：JSON 定义 record，描述 API endpoint、参数模板、关键词等
+- `assistant-skill/src/main/java/com/zhongbo/mindos/assistant/skill/cloudapi/CloudApiSkill.java`：实现 `Skill` 接口，语义匹配 + HTTP 调用 + 结果提取
+- `assistant-skill/src/main/java/com/zhongbo/mindos/assistant/skill/cloudapi/CloudApiSkillLoader.java`：Spring 组件，从配置目录加载 `.json` 定义并注册到 `SkillRegistry`
+
+#### 配置方式（application.properties）
+```properties
+mindos.skills.cloud-api.config-dir=/path/to/cloud-skills
+```
+
+#### 定义文件示例（weather-query.json）
+```json
+{
+  "name": "weather.query",
+  "description": "Queries current weather for a given city",
+  "keywords": ["天气", "weather", "温度", "forecast"],
+  "url": "https://api.weatherstack.com/current",
+  "method": "GET",
+  "queryParams": {
+    "access_key": "${apiKey}",
+    "query": "${input.city}"
+  },
+  "apiKey": "your-api-key",
+  "resultPath": "current",
+  "resultTemplate": "天气：${weather_descriptions}, 温度：${temperature}°C, 湿度：${humidity}%"
+}
+```
+
+#### 模板占位符规则
+- `${input}` — 完整用户输入文本
+- `${input.fieldName}` — SkillContext 中的 attribute 字段
+- `${apiKey}` — 定义文件中的 `apiKey` 字段
+- `${env.VAR_NAME}` — 系统环境变量
+
+#### 语义匹配规则（supports()）
+1. 用户输入以 skill name 开头时匹配
+2. 输入包含任一 `keywords` 关键词时匹配（大小写不敏感）
+
+#### API 热重载
+- `POST /api/skills/reload-cloud` — 从配置目录重新加载所有云端 API skill 定义
+- SDK：`client.reloadCloudApiSkills()`
+
+#### 回归测试
+- `assistant-skill/src/test/java/com/zhongbo/mindos/assistant/skill/cloudapi/CloudApiSkillTest.java`
+- `assistant-skill/src/test/java/com/zhongbo/mindos/assistant/skill/cloudapi/CloudApiSkillLoaderTest.java`
 
 ---
 
