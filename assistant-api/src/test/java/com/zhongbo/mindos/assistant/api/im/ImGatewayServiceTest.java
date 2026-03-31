@@ -25,8 +25,10 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -212,29 +214,72 @@ class ImGatewayServiceTest {
         assertTrue(todo.contains("建议两天内完成"));
     }
 
-    private static final class CapturingHandler extends Handler {
+    @Test
+    void shouldMarkTaskCompletedWhenOpenApiFallbackPushSucceeds() {
+        DispatcherService dispatcherService = mock(DispatcherService.class);
+        MemoryManager memoryManager = mock(MemoryManager.class);
+        MemoryConsolidationService consolidationService = new MemoryConsolidationService();
+        DingtalkAsyncReplyClient asyncReplyClient = mock(DingtalkAsyncReplyClient.class);
+        DingtalkOpenApiMessageClient openApiMessageClient = mock(DingtalkOpenApiMessageClient.class);
+        ImGatewayService service = new ImGatewayService(
+                dispatcherService,
+                memoryManager,
+                consolidationService,
+                asyncReplyClient,
+                openApiMessageClient
+        );
 
-        private final List<String> messages = new ArrayList<>();
+        when(openApiMessageClient.sendText(eq("ding-u4"), eq("conv-u4"), contains("最终结果")))
+                .thenReturn(true);
 
-        @Override
-        public void publish(LogRecord record) {
-            if (record != null && record.getMessage() != null) {
-                messages.add(record.getMessage());
-            }
-        }
+        assertTrue(service.tryPushViaDingtalkOpenApi("im:dingtalk:ding-u4", "task-4", "ding-u4", "conv-u4", "最终结果"));
+        verify(openApiMessageClient).sendText(eq("ding-u4"), eq("conv-u4"), contains("最终结果"));
+        verify(memoryManager).updateLongTaskProgress(
+                eq("im:dingtalk:ding-u4"),
+                eq("task-4"),
+                eq("im-dingtalk-openapi"),
+                eq("回推钉钉结果"),
+                eq("已通过钉钉 OpenAPI 主动补发结果"),
+                eq(""),
+                any(),
+                eq(true)
+        );
+    }
 
-        @Override
-        public void flush() {
-        }
+    @Test
+    void shouldKeepCompensationFallbackWhenOpenApiPushFails() {
+        DispatcherService dispatcherService = mock(DispatcherService.class);
+        MemoryManager memoryManager = mock(MemoryManager.class);
+        MemoryConsolidationService consolidationService = new MemoryConsolidationService();
+        DingtalkAsyncReplyClient asyncReplyClient = mock(DingtalkAsyncReplyClient.class);
+        DingtalkOpenApiMessageClient openApiMessageClient = mock(DingtalkOpenApiMessageClient.class);
+        ImGatewayService service = new ImGatewayService(
+                dispatcherService,
+                memoryManager,
+                consolidationService,
+                asyncReplyClient,
+                openApiMessageClient
+        );
 
-        @Override
-        public void close() {
-        }
+        when(openApiMessageClient.sendText(any(), any(), any())).thenReturn(false);
 
-        private String joinedMessages() {
-            return String.join("\n", messages);
-        }
+        org.junit.jupiter.api.Assertions.assertFalse(service.tryPushViaDingtalkOpenApi(
+                "im:dingtalk:ding-u5",
+                "task-5",
+                "ding-u5",
+                "conv-u5",
+                "最终结果"
+        ));
+        verify(memoryManager, never()).updateLongTaskProgress(
+                eq("im:dingtalk:ding-u5"),
+                eq("task-5"),
+                eq("im-dingtalk-openapi"),
+                eq("回推钉钉结果"),
+                eq("已通过钉钉 OpenAPI 主动补发结果"),
+                eq(""),
+                any(),
+                eq(true)
+        );
     }
 }
-
 

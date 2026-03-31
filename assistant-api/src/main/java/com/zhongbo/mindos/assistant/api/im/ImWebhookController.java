@@ -142,14 +142,32 @@ public class ImWebhookController {
         String text = "";
         String senderId = "";
         String chatId = "";
+        String sessionWebhook = "";
+        Long sessionWebhookExpiredTime = null;
         try {
             JsonNode body = rawBody == null || rawBody.isBlank() ? objectMapper.createObjectNode() : objectMapper.readTree(rawBody);
             JsonNode textNode = body.path("text");
             text = textNode.path("content").asText("");
             senderId = body.path("senderId").asText("");
-            chatId = body.path("conversationId").asText("");
+            chatId = resolveDingtalkConversationId(body);
+            sessionWebhook = body.path("sessionWebhook").asText("");
+            sessionWebhookExpiredTime = asLong(body.path("sessionWebhookExpiredTime"));
         } catch (Exception ignored) {
             // Keep empty defaults for malformed payload; still return 200 for platform checks.
+        }
+
+        ImGatewayService.AsyncReplyAck asyncReplyAck = imGatewayService.startDingtalkAsyncReply(
+                senderId,
+                chatId,
+                text,
+                sessionWebhook,
+                sessionWebhookExpiredTime
+        );
+        if (asyncReplyAck != null) {
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("msgtype", "text");
+            payload.put("text", Map.of("content", asyncReplyAck.acceptedReply()));
+            return ResponseEntity.ok(payload);
         }
 
         String reply = resolveDingtalkReply(senderId, chatId, text);
@@ -251,6 +269,34 @@ public class ImWebhookController {
         return Integer.toHexString(value.trim().hashCode());
     }
 
+    private Long asLong(JsonNode value) {
+        if (value == null || value.isMissingNode() || value.isNull()) {
+            return null;
+        }
+        if (value.isNumber()) {
+            return value.longValue();
+        }
+        try {
+            return Long.parseLong(value.asText("").trim());
+        } catch (NumberFormatException ex) {
+            return null;
+        }
+    }
+
+    /**
+     * DingTalk proactive conversation send prefers openConversationId when the event provides it.
+     */
+    private String resolveDingtalkConversationId(JsonNode body) {
+        if (body == null || body.isMissingNode()) {
+            return "";
+        }
+        String openConversationId = body.path("openConversationId").asText("");
+        if (!openConversationId.isBlank()) {
+            return openConversationId;
+        }
+        return body.path("conversationId").asText("");
+    }
+
 
     private boolean verifyFeishu(String rawBody, String timestamp, String nonce, String signature) {
         if (isBlank(feishuSecret)) {
@@ -350,4 +396,3 @@ public class ImWebhookController {
     private record WechatMessage(String toUser, String fromUser, String msgType, String content) {
     }
 }
-
