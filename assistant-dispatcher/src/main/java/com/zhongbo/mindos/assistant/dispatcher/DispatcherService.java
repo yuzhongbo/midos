@@ -225,7 +225,10 @@ public class DispatcherService implements ContextCompressionMetricsReader {
         );
         String memoryContext = buildMemoryContext(userId, userInput);
         List<Map<String, Object>> chatHistory = buildChatHistory(userId);
-        SkillContext context = new SkillContext(userId, userInput, resolvedProfileContext);
+        Map<String, Object> skillAttributes = new LinkedHashMap<>(resolvedProfileContext);
+        skillAttributes.put("memoryContext", memoryContext);
+        skillAttributes.put("chatHistory", chatHistory);
+        SkillContext context = new SkillContext(userId, userInput, skillAttributes);
         Map<String, Object> llmContext = new LinkedHashMap<>();
         llmContext.put("userId", userId);
         llmContext.put("memoryContext", memoryContext);

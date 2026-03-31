@@ -336,6 +336,7 @@ curl -X POST http://localhost:8080/api/skills/load-mcp \
   - `mindos.dispatcher.memory-context.keep-recent-turns` (default `2`): keep the last N raw turns verbatim in prompt context.
   - `mindos.dispatcher.memory-context.history-summary-min-turns` (default `4`): once recent conversation reaches this threshold, older turns are compressed into a short review summary before entering the prompt.
   - dispatcher also sends a provider-agnostic `chatHistory` snapshot (last few turns with timestamps) along with the prompt, so switching `llmProvider` keeps the same shared conversation context.
+  - `llm.orchestrate` skill共享上述 `memoryContext` + `chatHistory` 做多 provider 编排与降级；可调参数：`mindos.llm.orchestrate.providers`（默认 `openai,deepseek,qwen`），`mindos.llm.orchestrate.max-hops`（默认 `2`），`mindos.llm.orchestrate.prompt.max-chars`（默认 `1600`），`mindos.llm.orchestrate.history.max-items`（默认 `6`）。
   - `mindos.dispatcher.llm-reply.max-chars` (default `1200`)
   - `mindos.dispatcher.skill.guard.max-consecutive` (default `2`), blocks repeated same-skill loop routing and falls back to broader reasoning.
   - `mindos.dispatcher.skill.guard.recent-window-size` (default `6`), recent procedural entries scanned for loop fingerprints.
