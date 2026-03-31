@@ -66,6 +66,7 @@ public class ImGatewayService {
     private final MemoryManager memoryManager;
     private final MemoryConsolidationService memoryConsolidationService;
     private final DingtalkAsyncReplyClient dingtalkAsyncReplyClient;
+    private final DingtalkOpenApiMessageClient dingtalkOpenApiMessageClient;
     private final ExecutorService dingtalkAsyncExecutor;
     private final boolean dingtalkAsyncReplyEnabled;
     private final long dingtalkAsyncReplyExpirySkewSeconds;
@@ -90,6 +91,39 @@ public class ImGatewayService {
                         java.time.Duration.ofMillis(DEFAULT_DINGTALK_REQUEST_TIMEOUT_MS),
                         DEFAULT_DINGTALK_ALLOWED_HOSTS,
                         true),
+                new DingtalkOpenApiMessageClient(
+                        java.net.http.HttpClient.newBuilder()
+                                .connectTimeout(java.time.Duration.ofMillis(DEFAULT_DINGTALK_CONNECT_TIMEOUT_MS))
+                                .build(),
+                        new com.fasterxml.jackson.databind.ObjectMapper().findAndRegisterModules(),
+                        java.time.Duration.ofMillis(DEFAULT_DINGTALK_REQUEST_TIMEOUT_MS),
+                        false,
+                        "",
+                        "",
+                        "",
+                        "https://api.dingtalk.com/v1.0/oauth2/accessToken",
+                        "https://api.dingtalk.com/v1.0/im/messages/sendToConversation",
+                        "https://api.dingtalk.com/v1.0/robot/oToMessages/batchSend",
+                        60L,
+                        DEFAULT_DINGTALK_ALLOWED_HOSTS,
+                        true),
+                true,
+                DEFAULT_DINGTALK_EXECUTOR_THREADS,
+                DEFAULT_DINGTALK_EXPIRY_SKEW_SECONDS,
+                "已收到，正在处理中。任务ID：%s。处理完成后我会继续把结果发到当前会话。",
+                "你刚才的请求已处理完成：");
+    }
+
+    ImGatewayService(DispatcherService dispatcherService,
+                     MemoryManager memoryManager,
+                     MemoryConsolidationService memoryConsolidationService,
+                     DingtalkAsyncReplyClient dingtalkAsyncReplyClient,
+                     DingtalkOpenApiMessageClient dingtalkOpenApiMessageClient) {
+        this(dispatcherService,
+                memoryManager,
+                memoryConsolidationService,
+                dingtalkAsyncReplyClient,
+                dingtalkOpenApiMessageClient,
                 true,
                 DEFAULT_DINGTALK_EXECUTOR_THREADS,
                 DEFAULT_DINGTALK_EXPIRY_SKEW_SECONDS,
@@ -102,6 +136,7 @@ public class ImGatewayService {
                      MemoryManager memoryManager,
                      MemoryConsolidationService memoryConsolidationService,
                      DingtalkAsyncReplyClient dingtalkAsyncReplyClient,
+                     DingtalkOpenApiMessageClient dingtalkOpenApiMessageClient,
                      @Value("${mindos.im.dingtalk.async-reply.enabled:true}") boolean dingtalkAsyncReplyEnabled,
                      @Value("${mindos.im.dingtalk.async-reply.executor-threads:2}") int dingtalkAsyncExecutorThreads,
                      @Value("${mindos.im.dingtalk.async-reply.expiry-skew-seconds:5}") long dingtalkAsyncReplyExpirySkewSeconds,
@@ -111,6 +146,7 @@ public class ImGatewayService {
         this.memoryManager = memoryManager;
         this.memoryConsolidationService = memoryConsolidationService;
         this.dingtalkAsyncReplyClient = dingtalkAsyncReplyClient;
+        this.dingtalkOpenApiMessageClient = dingtalkOpenApiMessageClient;
         this.dingtalkAsyncReplyEnabled = dingtalkAsyncReplyEnabled;
         this.dingtalkAsyncReplyExpirySkewSeconds = Math.max(0L, dingtalkAsyncReplyExpirySkewSeconds);
         this.dingtalkAsyncAcceptedTemplate = dingtalkAsyncAcceptedTemplate == null || dingtalkAsyncAcceptedTemplate.isBlank()
@@ -211,6 +247,9 @@ public class ImGatewayService {
                     false
             );
             if (!isWebhookUsable(context.sessionWebhookExpiresAt())) {
+                if (tryPushViaDingtalkOpenApi(context, reply)) {
+                    return;
+                }
                 memoryManager.updateLongTaskProgress(
                         context.userId(),
                         context.taskId(),
@@ -236,6 +275,9 @@ public class ImGatewayService {
                         true
                 );
             } else {
+                if (tryPushViaDingtalkOpenApi(context, reply)) {
+                    return;
+                }
                 memoryManager.updateLongTaskProgress(
                         context.userId(),
                         context.taskId(),
@@ -314,6 +356,27 @@ public class ImGatewayService {
             normalizedReply = "已处理完成，但当前没有可返回的文本结果。";
         }
         return dingtalkAsyncResultPrefix + "\n" + normalizedReply;
+    }
+
+    private boolean tryPushViaDingtalkOpenApi(DingtalkAsyncTaskContext context, String reply) {
+        return tryPushViaDingtalkOpenApi(context.userId(), context.taskId(), context.senderId(), context.chatId(), reply);
+    }
+
+    boolean tryPushViaDingtalkOpenApi(String userId, String taskId, String senderId, String chatId, String reply) {
+        if (!dingtalkOpenApiMessageClient.sendText(senderId, chatId, formatAsyncResult(reply))) {
+            return false;
+        }
+        memoryManager.updateLongTaskProgress(
+                userId,
+                taskId,
+                "im-dingtalk-openapi",
+                "回推钉钉结果",
+                "已通过钉钉 OpenAPI 主动补发结果",
+                "",
+                Instant.now(),
+                true
+        );
+        return true;
     }
 
     private String tryHandleDingtalkAsyncTaskIntent(ImPlatform platform, String userId, String message) {
@@ -412,7 +475,7 @@ public class ImGatewayService {
         }
         String completedStep = task.pendingSteps().contains("回推钉钉结果")
                 ? "回推钉钉结果"
-                : (task.pendingSteps().isEmpty() ? null : task.pendingSteps().get(0));
+                : null;
         memoryManager.updateLongTaskProgress(
                 task.userId(),
                 task.taskId(),
