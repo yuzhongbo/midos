@@ -19,7 +19,14 @@ if errorlevel 1 (
 )
 
 cd /d "%REPO_DIR%"
-call mvnw.cmd -q -pl %API_MODULE% -am clean package
+set "SKIP_TESTS=%SKIP_TESTS%"
+if "%SKIP_TESTS%"=="" set "SKIP_TESTS=0"
+
+if "%SKIP_TESTS%"=="1" (
+  call mvnw.cmd -q -pl %API_MODULE% -am clean package -DskipTests
+) else (
+  call mvnw.cmd -q -pl %API_MODULE% -am clean package
+)
 if errorlevel 1 (
   echo [MindOS] 构建失败。
   exit /b 1
@@ -98,4 +105,3 @@ echo   启动: %INSTALL_DIR%\mindos-server.bat
 echo   验活: %INSTALL_DIR%\mindos-server-smoke.bat
 echo   建议启动前编辑：%SECRETS_FILE% （填入 LLM/钉钉等密钥，留空则禁用对应通道）
 endlocal
-

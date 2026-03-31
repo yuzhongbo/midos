@@ -9,10 +9,14 @@ API_MODULE="assistant-api"
 JAR_NAME="assistant-api-0.1.0-SNAPSHOT.jar"
 INSTALL_DIR="$HOME/.mindos-server"
 
-# 构建服务端
+# 构建服务端（默认跑测试，临时加速可导出 SKIP_TESTS=1）
 cd "$REPO_DIR"
 echo "[MindOS] 构建服务端..."
-./mvnw -pl $API_MODULE -am clean package
+if [[ "${SKIP_TESTS:-0}" == "1" ]]; then
+  ./mvnw -pl $API_MODULE -am clean package -DskipTests
+else
+  ./mvnw -pl $API_MODULE -am clean package
+fi
 
 # 安装目录
 mkdir -p "$INSTALL_DIR"
