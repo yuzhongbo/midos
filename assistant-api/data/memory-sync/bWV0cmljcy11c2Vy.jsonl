@@ -1,0 +1,4 @@
+{"cursor":1,"episodic":{"role":"user","content":"hello","createdAt":"2026-03-31T04:46:00.459722253Z"},"writtenAtEpochMs":1774932360459}
+{"cursor":2,"episodic":{"role":"assistant","content":"[LLM gpt] unavailable: missing API key.","createdAt":"2026-03-31T04:46:00.463032830Z"},"writtenAtEpochMs":1774932360463}
+{"cursor":3,"episodic":{"role":"user","content":"hello","createdAt":"2026-03-31T04:50:32.391745808Z"},"writtenAtEpochMs":1774932632391}
+{"cursor":4,"episodic":{"role":"assistant","content":"[LLM gpt] unavailable: missing API key.","createdAt":"2026-03-31T04:50:32.396436321Z"},"writtenAtEpochMs":1774932632396}

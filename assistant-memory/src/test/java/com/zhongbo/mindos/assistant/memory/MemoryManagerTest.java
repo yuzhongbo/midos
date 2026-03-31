@@ -1,16 +1,35 @@
 package com.zhongbo.mindos.assistant.memory;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zhongbo.mindos.assistant.memory.model.ConversationTurn;
 import com.zhongbo.mindos.assistant.memory.model.MemorySyncSnapshot;
 import com.zhongbo.mindos.assistant.memory.model.SemanticMemoryEntry;
 import org.junit.jupiter.api.Test;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class MemoryManagerTest {
+
+    @Test
+    void shouldRestoreRecentConversationAfterRestartFromFileCentralRepository() throws Exception {
+        Path baseDir = Files.createTempDirectory("mindos-memory-test-");
+
+        MemoryManager firstInstance = createMemoryManager(new FileCentralMemoryRepository(baseDir, new ObjectMapper()));
+        firstInstance.storeUserConversation("restart-user", "这周先完成接口联调");
+        firstInstance.storeAssistantConversation("restart-user", "收到，我会继续跟进风险和截止时间");
+
+        MemoryManager restartedInstance = createMemoryManager(new FileCentralMemoryRepository(baseDir, new ObjectMapper()));
+        List<ConversationTurn> turns = restartedInstance.getRecentConversation("restart-user", 10);
+
+        assertEquals(2, turns.size());
+        assertTrue(turns.get(0).content().contains("接口联调"));
+        assertTrue(turns.get(1).content().contains("截止时间"));
+    }
 
     @Test
     void shouldNotSyncSemanticEntryRejectedBySecondaryDuplicateGate() {
@@ -80,11 +99,14 @@ class MemoryManagerTest {
     }
 
     private MemoryManager createMemoryManager() {
+        return createMemoryManager(new InMemoryCentralMemoryRepository());
+    }
+
+    private MemoryManager createMemoryManager(CentralMemoryRepository repository) {
         MemoryConsolidationService consolidationService = new MemoryConsolidationService();
         EpisodicMemoryService episodicMemoryService = new EpisodicMemoryService();
         SemanticMemoryService semanticMemoryService = new SemanticMemoryService(consolidationService);
         ProceduralMemoryService proceduralMemoryService = new ProceduralMemoryService();
-        CentralMemoryRepository repository = new InMemoryCentralMemoryRepository();
         SemanticWriteGatePolicy writeGatePolicy = new SemanticWriteGatePolicy(consolidationService);
         MemorySyncService syncService = new MemorySyncService(
                 repository,

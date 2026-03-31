@@ -479,6 +479,7 @@ curl -X POST http://localhost:8080/api/skills/load-mcp \
 - IM webhook integration (disabled by default) supports Feishu/DingTalk/WeChat text chat via `/api/im/feishu/events`, `/api/im/dingtalk/events`, `/api/im/wechat/events`; all platforms can enable signature verification independently in `application.properties`.
 - DingTalk now supports an async reply path when the event payload includes `sessionWebhook`: webhook first returns a processing receipt with task ID, then the server finishes dispatch in background and pushes the final text result back to the same DingTalk session. Related properties: `mindos.im.dingtalk.async-reply.*`; `allow-insecure-localhost-http` is intended only for local tests/debugging.
 - When a DingTalk async callback cannot be delivered (for example `sessionWebhook` expired or callback failed), the server can optionally try DingTalk OpenAPI proactive delivery first (`mindos.im.dingtalk.openapi-fallback.*`, requires the robot/app to have the corresponding DingTalk send-message permission plus `appKey/appSecret/robotCode`). In this repo the DingTalk integration is conversation-oriented (webhook payloads revolve around `conversationId` / `openConversationId` + chat replies), so the default fallback preference is `conversation-first`; if a tenant instead behaves more like direct user notification, `mindos.im.dingtalk.openapi-fallback.preferred-send-mode=user-first` can switch the primary attempt to batch user send. If OpenAPI fallback is unavailable or still fails, the final result is retained in the long-task record and can be recovered in chat with natural-language commands like `查进度` / `查看结果`, and the next ordinary DingTalk message will also carry a compensation notice with the missed result.
+- DingTalk can also run in robot stream mode. In that setup, DingTalk pushes messages over the long-lived stream connection instead of the `/api/im/dingtalk/events` webhook, and MindOS proactively sends a short “请稍等”状态 before the final reply when processing is slow.
 - IM 文本可直接触发 memory 能力：`查看记忆风格`、`按任务聚焦压缩这段记忆：...`、`根据这段话微调记忆风格：...`。
 - 若压缩结果提示“关键约束可能被弱化”，可直接回复“要/好的/ok”继续获取原文关键点清单并逐条复核（IM 与 CLI 交互窗口均支持）；复核后回复“生成待办”可一键转成按 `today / this week / later` 分组的执行清单。
 - 生成待办时会同步显示“当前待办策略”预览（阈值与建议时段），方便在对话里确认当前生效配置。
@@ -524,4 +525,25 @@ curl -X POST http://localhost:8080/api/skills/load-mcp \
 ./mvnw -q -pl assistant-sdk,mindos-cli -am test
 ./mvnw -q -pl assistant-api -am test -Dtest=MemorySyncControllerTest
 ./mvnw -q test
+```
+
+## DingTalk robot stream mode
+
+Use stream mode when webhook replies are too slow for the platform callback window and you still want users to see a waiting status before the final answer arrives.
+
+Recommended properties:
+
+```properties
+mindos.im.enabled=true
+mindos.im.dingtalk.enabled=true
+mindos.im.dingtalk.stream.enabled=true
+mindos.im.dingtalk.stream.client-id=ding-app-key
+mindos.im.dingtalk.stream.client-secret=ding-app-secret
+mindos.im.dingtalk.stream.topic=/v1.0/im/bot/messages/get
+mindos.im.dingtalk.stream.waiting-delay-ms=800
+mindos.im.dingtalk.stream.waiting-text=我正在处理这条消息，请稍等，我会继续回复你。
+mindos.im.dingtalk.stream.force-waiting=true
+mindos.im.dingtalk.stream.final-timeout-ms=30000
+mindos.im.dingtalk.stream.reconnect.enabled=true
+mindos.im.dingtalk.stream.reconnect.initial-delay-ms=1000
 ```

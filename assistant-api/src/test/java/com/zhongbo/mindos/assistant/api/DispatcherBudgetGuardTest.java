@@ -25,6 +25,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
         "mindos.dispatcher.skill.guard.recent-window-size=6",
         "mindos.dispatcher.skill.guard.repeat-input-threshold=2",
         "mindos.dispatcher.skill.guard.cooldown-seconds=3600",
+        "mindos.memory.file-repo.enabled=false",
         "mindos.llm.api-key=dummy-key"
 })
 @AutoConfigureMockMvc

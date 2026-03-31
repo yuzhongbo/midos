@@ -1,0 +1,4 @@
+{"cursor":1,"episodic":{"role":"user","content":"echo hello","createdAt":"2026-03-31T04:45:52.517744789Z"},"writtenAtEpochMs":1774932352518}
+{"cursor":2,"episodic":{"role":"assistant","content":"安全策略已阻止 skill 执行: echo，缺少能力权限: [exec]","createdAt":"2026-03-31T04:45:52.527200652Z"},"writtenAtEpochMs":1774932352527}
+{"cursor":3,"episodic":{"role":"user","content":"echo hello","createdAt":"2026-03-31T04:50:24.443905061Z"},"writtenAtEpochMs":1774932624444}
+{"cursor":4,"episodic":{"role":"assistant","content":"安全策略已阻止 skill 执行: echo，缺少能力权限: [exec]","createdAt":"2026-03-31T04:50:24.450593100Z"},"writtenAtEpochMs":1774932624450}

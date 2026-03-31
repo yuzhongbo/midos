@@ -33,7 +33,7 @@ public class EmotionalCoachSkill implements Skill {
 
     @Override
     public String description() {
-        return "Provides daily emotional-intelligence coaching with practical phrasing and action steps.";
+        return "针对沟通、冲突、道歉或安慰场景，给出高情商分析与话术建议。";
     }
 
     @Override
@@ -70,7 +70,7 @@ public class EmotionalCoachSkill implements Skill {
         int confidence = estimateConfidence(scenario);
 
         StringBuilder output = new StringBuilder();
-        output.append("[情商沟通指导 - ").append(styleLabel).append("]\n");
+        output.append("我理解你的场景了，我们先按 ").append(styleLabel).append(" 来处理。\n");
         output.append("模式: ").append(mode).append("\n");
         output.append("风险等级: ").append(riskLevel)
                 .append(" | 置信度: ").append(confidence).append("%\n\n");
@@ -96,15 +96,15 @@ public class EmotionalCoachSkill implements Skill {
     }
 
     private String buildGentleReply(String scenario, String styleLabel) {
-        return "[情商沟通指导 - " + styleLabel + "]\n"
+        return "你可以先发这类 " + styleLabel + " 话术：\n"
                 + "场景: " + scenario + "\n\n"
-                + "1) 先共情，降低对方防御\n"
+                + "1) 先共情，先把对方情绪接住\n"
                 + "- 建议话术: 我理解你现在的感受，这件事确实不容易。\n\n"
                 + "2) 再表达立场，用" + '"' + "我" + '"' + "开头\n"
                 + "- 建议话术: 我希望我们可以一起找到更稳妥的做法，我也愿意配合。\n\n"
                 + "3) 最后给可执行下一步\n"
                 + "- 建议话术: 我们先试一个小步骤，今天先确认A，明天我再跟进B。\n\n"
-                + "沟通策略\n"
+                + "沟通小提示\n"
                 + "- 少用绝对化表达（如\"你总是\"），多用事实 + 感受 + 请求\n"
                 + "- 情绪上来时先暂停 10 秒，再回复\n"
                 + "- 目标是解决问题，不是赢得争论\n\n"
@@ -112,7 +112,7 @@ public class EmotionalCoachSkill implements Skill {
     }
 
     private String buildDirectReply(String scenario, String styleLabel) {
-        return "[情商沟通指导 - " + styleLabel + "]\n"
+        return "你可以直接这样说（" + styleLabel + "）：\n"
                 + "场景: " + scenario + "\n\n"
                 + "1) 先对齐目标\n"
                 + "- 建议话术: 我想把这件事尽快解决，我们先对齐目标。\n\n"
@@ -120,14 +120,14 @@ public class EmotionalCoachSkill implements Skill {
                 + "- 建议话术: 这个点我不能接受，我需要你在今晚前给我明确回复。\n\n"
                 + "3) 给出结果导向动作\n"
                 + "- 建议话术: 现在先定方案A，若 24 小时内无反馈我会按备选方案推进。\n\n"
-                + "沟通策略\n"
+                + "沟通小提示\n"
                 + "- 句子短、结论先行、请求明确\n"
                 + "- 用时间节点约束，而不是情绪施压\n"
                 + "- 先讲事实再讲判断，避免人身归因\n\n";
     }
 
     private String buildWorkplaceReply(String scenario, String styleLabel) {
-        return "[情商沟通指导 - " + styleLabel + "]\n"
+        return "你可以用职场协作语气这样推进（" + styleLabel + "）：\n"
                 + "场景: " + scenario + "\n\n"
                 + "1) 先对齐业务目标\n"
                 + "- 建议话术: 我们都希望这个项目按时高质量交付。\n\n"
@@ -135,14 +135,14 @@ public class EmotionalCoachSkill implements Skill {
                 + "- 建议话术: 如果这个环节继续延后，会影响下游排期和评审结果。\n\n"
                 + "3) 最后提出协作方案\n"
                 + "- 建议话术: 我建议今天先完成关键项A，我负责B，明早10点同步进度。\n\n"
-                + "沟通策略\n"
+                + "沟通小提示\n"
                 + "- 聚焦目标、进度、风险，不贴标签\n"
                 + "- 对事不对人，用可量化节点推进\n"
                 + "- 关键沟通留痕，减少重复拉扯\n\n";
     }
 
     private String buildIntimateReply(String scenario, String styleLabel) {
-        return "[情商沟通指导 - " + styleLabel + "]\n"
+        return "你可以先用关系优先的表达（" + styleLabel + "）：\n"
                 + "场景: " + scenario + "\n\n"
                 + "1) 先确认关系，再谈分歧\n"
                 + "- 建议话术: 我很在乎你，也很重视我们的关系。\n\n"
@@ -150,14 +150,15 @@ public class EmotionalCoachSkill implements Skill {
                 + "- 建议话术: 当这件事发生时，我会有点委屈，也有些不安。\n\n"
                 + "3) 提出可被回应的小请求\n"
                 + "- 建议话术: 这周我们能不能先约 30 分钟，好好把这件事聊清楚？\n\n"
-                + "沟通策略\n"
+                + "沟通小提示\n"
                 + "- 先连接情感，再处理问题\n"
                 + "- 少翻旧账，多谈当下可改变的行动\n"
                 + "- 发生情绪时先暂停，等都平稳后再继续\n\n";
     }
 
     private String buildAnalysisBlock(String scenario) {
-        return "心理分析\n"
+        return "补充分析（帮你看清局势）：\n"
+                + "心理分析\n"
                 + "- 可能情绪: 紧张、委屈或被忽视，核心是希望被理解并获得确定感。\n"
                 + "- 触发因素: 预期落差、沟通节奏不一致、边界不清。\n"
                 + "- 深层需要: 被尊重、被看见、关系稳定和结果可控。\n\n"
@@ -295,7 +296,7 @@ public class EmotionalCoachSkill implements Skill {
             return "建议优先级（已聚焦 P3）\n"
                     + "- P3: " + p3Focus + "\n\n";
         }
-        return "建议优先级\n"
+        return "建议优先级（你可以按这个顺序来）\n"
                 + "- P1: " + p1Focus + "\n"
                 + "- P2: " + p2Focus + "\n"
                 + "- P3: " + p3Focus + "\n\n";
@@ -309,7 +310,7 @@ public class EmotionalCoachSkill implements Skill {
             case "p3" -> "优先完成 P3：做一轮复盘，优化后续节奏。";
             default -> "按 P1->P2->P3 顺序推进，避免同时开太多线程。";
         };
-        return "24小时行动清单\n"
+        return "接下来24小时行动清单\n"
                 + "1) 写下事实与目标（5分钟），只保留可验证信息。\n"
                 + "2) 用“事实-感受-请求”发出第一条消息（10分钟）。\n"
                 + "3) 在" + syncWindow + "约一个简短同步，确认下一步分工。\n"

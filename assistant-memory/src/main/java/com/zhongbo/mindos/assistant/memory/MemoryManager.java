@@ -1,5 +1,6 @@
 package com.zhongbo.mindos.assistant.memory;
 
+import com.zhongbo.mindos.assistant.common.dto.PromptMemoryContextDto;
 import com.zhongbo.mindos.assistant.memory.model.ConversationTurn;
 import com.zhongbo.mindos.assistant.memory.model.LongTask;
 import com.zhongbo.mindos.assistant.memory.model.LongTaskStatus;
@@ -19,6 +20,9 @@ import org.springframework.stereotype.Service;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 @Service
 public class MemoryManager {
@@ -31,10 +35,14 @@ public class MemoryManager {
     private final MemoryCompressionPlanningService memoryCompressionPlanningService;
     private final PreferenceProfileService preferenceProfileService;
     private final LongTaskService longTaskService;
+    private final PromptMemoryContextAssembler promptMemoryContextAssembler;
     private final boolean conversationRollupEnabled;
     private final int conversationRollupThresholdTurns;
     private final int conversationRollupKeepRecentTurns;
     private final int conversationRollupMinRollupTurns;
+    private final int hydrationBatchSize;
+    private final Set<String> hydratedUsers = ConcurrentHashMap.newKeySet();
+    private final Map<String, Object> hydrationLocks = new ConcurrentHashMap<>();
 
     public MemoryManager(EpisodicMemoryService episodicMemoryService,
                          SemanticMemoryService semanticMemoryService,
@@ -55,10 +63,17 @@ public class MemoryManager {
                 memoryCompressionPlanningService,
                 preferenceProfileService,
                 longTaskService,
+                new DefaultPromptMemoryContextAssembler(
+                        episodicMemoryService,
+                        semanticMemoryService,
+                        proceduralMemoryService,
+                        preferenceProfileService
+                ),
                 Boolean.parseBoolean(System.getProperty("mindos.memory.conversation-rollup.enabled", "true")),
                 Integer.getInteger("mindos.memory.conversation-rollup.threshold-turns", 24),
                 Integer.getInteger("mindos.memory.conversation-rollup.keep-recent-turns", 8),
-                Integer.getInteger("mindos.memory.conversation-rollup.min-turns", 6)
+                Integer.getInteger("mindos.memory.conversation-rollup.min-turns", 6),
+                Integer.getInteger("mindos.memory.hydration.batch-size", 512)
         );
     }
 
@@ -72,10 +87,12 @@ public class MemoryManager {
                          MemoryCompressionPlanningService memoryCompressionPlanningService,
                          PreferenceProfileService preferenceProfileService,
                          LongTaskService longTaskService,
+                         PromptMemoryContextAssembler promptMemoryContextAssembler,
                          @Value("${mindos.memory.conversation-rollup.enabled:true}") boolean conversationRollupEnabled,
                          @Value("${mindos.memory.conversation-rollup.threshold-turns:24}") int conversationRollupThresholdTurns,
                          @Value("${mindos.memory.conversation-rollup.keep-recent-turns:8}") int conversationRollupKeepRecentTurns,
-                         @Value("${mindos.memory.conversation-rollup.min-turns:6}") int conversationRollupMinRollupTurns) {
+                         @Value("${mindos.memory.conversation-rollup.min-turns:6}") int conversationRollupMinRollupTurns,
+                         @Value("${mindos.memory.hydration.batch-size:512}") int hydrationBatchSize) {
         this.episodicMemoryService = episodicMemoryService;
         this.semanticMemoryService = semanticMemoryService;
         this.proceduralMemoryService = proceduralMemoryService;
@@ -85,13 +102,16 @@ public class MemoryManager {
         this.memoryCompressionPlanningService = memoryCompressionPlanningService;
         this.preferenceProfileService = preferenceProfileService;
         this.longTaskService = longTaskService;
+        this.promptMemoryContextAssembler = promptMemoryContextAssembler;
         this.conversationRollupEnabled = conversationRollupEnabled;
         this.conversationRollupThresholdTurns = Math.max(4, conversationRollupThresholdTurns);
         this.conversationRollupKeepRecentTurns = Math.max(2, conversationRollupKeepRecentTurns);
         this.conversationRollupMinRollupTurns = Math.max(2, conversationRollupMinRollupTurns);
+        this.hydrationBatchSize = Math.max(32, hydrationBatchSize);
     }
 
     public void storeUserConversation(String userId, String message) {
+        ensureHydrated(userId);
         ConversationTurn turn = memoryConsolidationService.consolidateConversationTurn(ConversationTurn.user(message));
         episodicMemoryService.appendTurn(userId, turn);
         memorySyncService.recordEpisodic(userId, turn);
@@ -99,6 +119,7 @@ public class MemoryManager {
     }
 
     public void storeAssistantConversation(String userId, String message) {
+        ensureHydrated(userId);
         ConversationTurn turn = memoryConsolidationService.consolidateConversationTurn(ConversationTurn.assistant(message));
         episodicMemoryService.appendTurn(userId, turn);
         memorySyncService.recordEpisodic(userId, turn);
@@ -106,6 +127,7 @@ public class MemoryManager {
     }
 
     public List<ConversationTurn> getConversation(String userId) {
+        ensureHydrated(userId);
         if (conversationRollupEnabled) {
             return memorySyncService.fetchUpdates(userId, 0L, Integer.MAX_VALUE).episodic();
         }
@@ -113,6 +135,7 @@ public class MemoryManager {
     }
 
     public List<ConversationTurn> getRecentConversation(String userId, int limit) {
+        ensureHydrated(userId);
         return episodicMemoryService.getRecentConversation(userId, limit);
     }
 
@@ -121,6 +144,7 @@ public class MemoryManager {
     }
 
     public void storeKnowledge(String userId, String text, List<Double> embedding, String bucket) {
+        ensureHydrated(userId);
         SemanticMemoryEntry entry = memoryConsolidationService.consolidateSemanticEntry(SemanticMemoryEntry.of(text, embedding));
         if (entry == null || entry.text().isBlank()) {
             return;
@@ -135,18 +159,22 @@ public class MemoryManager {
     }
 
     public List<SemanticMemoryEntry> searchKnowledge(String userId, int limit) {
+        ensureHydrated(userId);
         return semanticMemoryService.search(userId, limit);
     }
 
     public List<SemanticMemoryEntry> searchKnowledge(String userId, String query, int limit) {
+        ensureHydrated(userId);
         return semanticMemoryService.search(userId, query, limit);
     }
 
     public List<SemanticMemoryEntry> searchKnowledge(String userId, String query, int limit, String preferredBucket) {
+        ensureHydrated(userId);
         return semanticMemoryService.search(userId, query, limit, preferredBucket);
     }
 
     public void logSkillUsage(String userId, String skillName, String input, boolean success) {
+        ensureHydrated(userId);
         ProceduralMemoryEntry entry = memoryConsolidationService.consolidateProceduralEntry(
                 ProceduralMemoryEntry.of(skillName, input, success)
         );
@@ -158,11 +186,49 @@ public class MemoryManager {
     }
 
     public List<ProceduralMemoryEntry> getSkillUsageHistory(String userId) {
+        ensureHydrated(userId);
         return proceduralMemoryService.getHistory(userId);
     }
 
     public List<SkillUsageStats> getSkillUsageStats(String userId) {
+        ensureHydrated(userId);
         return proceduralMemoryService.getSkillUsageStats(userId);
+    }
+
+    public PromptMemoryContextDto buildPromptMemoryContext(String userId,
+                                                           String query,
+                                                           int maxChars,
+                                                           Map<String, Object> profileContext) {
+        ensureHydrated(userId);
+        return promptMemoryContextAssembler.assemble(userId, query, maxChars, profileContext);
+    }
+
+    private void ensureHydrated(String userId) {
+        if (userId == null || userId.isBlank() || hydratedUsers.contains(userId)) {
+            return;
+        }
+        Object lock = hydrationLocks.computeIfAbsent(userId, ignored -> new Object());
+        synchronized (lock) {
+            if (hydratedUsers.contains(userId)) {
+                return;
+            }
+            long cursor = 0L;
+            while (true) {
+                MemorySyncSnapshot snapshot = memorySyncService.fetchUpdates(userId, cursor, hydrationBatchSize);
+                if (snapshot.episodic().isEmpty() && snapshot.semantic().isEmpty() && snapshot.procedural().isEmpty()) {
+                    break;
+                }
+                snapshot.episodic().forEach(turn -> episodicMemoryService.appendTurn(userId, turn));
+                snapshot.semantic().forEach(entry -> semanticMemoryService.storeAcceptedEntry(userId, entry));
+                snapshot.procedural().forEach(entry -> proceduralMemoryService.addEntry(userId, entry));
+
+                if (snapshot.cursor() <= cursor) {
+                    break;
+                }
+                cursor = snapshot.cursor();
+            }
+            hydratedUsers.add(userId);
+        }
     }
 
     public MemorySyncSnapshot fetchIncrementalUpdates(String userId, long sinceCursorExclusive, int limit) {

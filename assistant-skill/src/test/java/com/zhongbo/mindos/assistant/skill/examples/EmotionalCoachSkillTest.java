@@ -29,7 +29,7 @@ class EmotionalCoachSkillTest {
 
         assertTrue(result.success());
         assertEquals("eq.coach", result.skillName());
-        assertTrue(result.output().contains("情商沟通指导"));
+        assertTrue(result.output().contains("我理解你的场景了"));
         assertTrue(result.output().contains("场景:"));
         assertTrue(result.output().contains("建议话术"));
         assertTrue(result.output().contains("心理分析"));
@@ -37,7 +37,7 @@ class EmotionalCoachSkillTest {
         assertTrue(result.output().contains("风险等级:"));
         assertTrue(result.output().contains("置信度:"));
         assertTrue(result.output().contains("建议优先级"));
-        assertTrue(result.output().contains("24小时行动清单"));
+        assertTrue(result.output().contains("接下来24小时行动清单"));
     }
 
     @Test
