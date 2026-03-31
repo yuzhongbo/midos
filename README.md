@@ -23,6 +23,15 @@ MindOS is a lightweight, single-user personal AI assistant backend built with Ja
 ./mvnw -pl assistant-api -am spring-boot:run
 ```
 
+## Minimal runtime env (Windows)
+
+To avoid re-editing property files for every deployment, copy `env.example.bat` to `env.bat`, fill only the runtime secrets, then launch the server through that script (it forwards any extra args like `--spring.profiles.active=solo`).
+
+- LLM: `MINDOS_LLM_PROVIDER`, `MINDOS_LLM_API_KEY`, optionally `MINDOS_LLM_ENDPOINT` / `MINDOS_LLM_PROVIDER_KEYS` if you route multiple providers.
+- DingTalk webhook: set `MINDOS_IM_ENABLED=true`, `MINDOS_IM_DINGTALK_ENABLED=true`, and provide `MINDOS_IM_DINGTALK_SECRET`.
+- Optional IM: uncomment Feishu/WeChat lines if you need those platforms.
+- All other functional toggles stay in `assistant-api/src/main/resources/application.properties` (and `application-solo.properties` for solo profile).
+
 ## Solo experience mode
 
 Use the built-in `solo` Spring profile when you are the only user and want better day-to-day experience without changing CLI command behavior.
@@ -508,4 +517,3 @@ curl -X POST http://localhost:8080/api/skills/load-mcp \
 ./mvnw -q -pl assistant-api -am test -Dtest=MemorySyncControllerTest
 ./mvnw -q test
 ```
-

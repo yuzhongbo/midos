@@ -36,3 +36,4 @@ assistant-api/logs/
 
 logs/
 /server.log
+env.bat
