@@ -347,13 +347,13 @@ class DingtalkStreamMessageDispatcherTest {
                 "text", Map.of("content", "慢一点")
         ));
 
-        waitUntil(() -> sender.messages.size() >= 2, 1500);
+        waitUntil(() -> sender.messages.size() >= 1, 1500);
+        TimeUnit.MILLISECONDS.sleep(1_100L);
         slowReply.complete("最终结果已生成");
-        waitUntil(() -> sender.messages.size() >= 3, 1500);
+        waitUntil(() -> sender.messages.size() >= 2, 1500);
 
         assertEquals("处理中", sender.messages.get(0));
-        assertEquals("处理中", sender.messages.get(1));
-        assertEquals("久等了，这是完整回复：\n最终结果已生成", sender.messages.get(2));
+        assertEquals("感谢等待，以下是完整回复：\n最终结果已生成", sender.messages.get(1));
     }
 
     private void setPrivateIntField(Object target, String fieldName, int value) throws Exception {

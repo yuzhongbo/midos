@@ -73,6 +73,7 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
             Map.entry("glm", "https://open.bigmodel.cn/api/paas/v4/chat/completions")
     );
     private final String provider;
+    private final String llmProfile;
     private final String routingMode;
     private final String endpoint;
     private final String globalApiKey;
@@ -94,6 +95,7 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
     private final Set<String> arkWebSearchStages;
     private final Set<String> arkWebSearchPlatforms;
     private final ConcurrentHashMap<String, CachedResponse> responseCache = new ConcurrentHashMap<>();
+    private final Set<String> routingSampleKeys = ConcurrentHashMap.newKeySet();
     private final AtomicLong cacheHitCount = new AtomicLong();
     private final AtomicLong cacheMissCount = new AtomicLong();
     private final Object cacheAccessWindowLock = new Object();
@@ -106,6 +108,7 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
             .build();
 
     public ApiKeyLlmClient(@Value("${mindos.llm.provider:openai}") String provider,
+                           @Value("${mindos.llm.profile:}") String llmProfile,
                            @Value("${mindos.llm.routing.mode:fixed}") String routingMode,
                            @Value("${mindos.llm.endpoint:https://api.example.com/v1/chat/completions}") String endpoint,
                            @Value("${mindos.llm.api-key:}") String globalApiKey,
@@ -127,6 +130,7 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
                            UserApiKeyService userApiKeyService,
                            LlmMetricsService llmMetricsService) {
         this.provider = provider;
+        this.llmProfile = llmProfile == null ? "" : llmProfile.trim().toUpperCase(Locale.ROOT);
         this.routingMode = routingMode == null ? "fixed" : routingMode.trim().toLowerCase(Locale.ROOT);
         this.endpoint = endpoint;
         this.globalApiKey = globalApiKey;
@@ -147,6 +151,106 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
         this.arkWebSearchPlatforms = parseCsvSet(arkWebSearchPlatforms);
         this.userApiKeyService = userApiKeyService;
         this.llmMetricsService = llmMetricsService;
+        logStartupRoutingProfile();
+        logProfileDiagnostics();
+    }
+
+    private void logStartupRoutingProfile() {
+        String profileProvider = providerFromProfile();
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("event", "llm.routing.profile.effective");
+        payload.put("llmProfile", llmProfile);
+        payload.put("routingMode", routingMode);
+        payload.put("defaultProvider", normalizeProvider(provider));
+        payload.put("profileProvider", profileProvider == null ? "" : profileProvider);
+        payload.put("effectiveDefaultProvider", normalizeProvider(profileProvider == null ? provider : profileProvider));
+        payload.put("stageMapSize", stageProviderMap.size());
+        payload.put("presetMapSize", presetProviderMap.size());
+        try {
+            LOGGER.info(objectMapper.writeValueAsString(payload));
+        } catch (JsonProcessingException jsonEx) {
+            LOGGER.log(Level.INFO, String.valueOf(payload), jsonEx);
+        }
+    }
+
+    private void logProfileDiagnostics() {
+        String profileProvider = providerFromProfile();
+        if (profileProvider == null) {
+            return;
+        }
+        String normalizedProvider = normalizeProvider(profileProvider);
+        String resolvedEndpoint = resolveEndpoint(normalizedProvider);
+        String configuredModel = providerModels.get(normalizedProvider);
+        String resolvedModel = resolveModel(Map.of(), normalizedProvider);
+        String resolvedApiKey = resolveApiKey(Map.of(), normalizedProvider);
+        String configuredApiKey = providerApiKeys.get(normalizedProvider);
+
+        boolean modelMissing = resolvedModel == null || resolvedModel.isBlank();
+        boolean apiKeyMissing = resolvedApiKey == null || resolvedApiKey.isBlank() || isTemplatePlaceholder(resolvedApiKey);
+
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("event", "llm.routing.profile.diagnostics");
+        payload.put("llmProfile", llmProfile);
+        payload.put("provider", normalizedProvider);
+        payload.put("routingMode", routingMode);
+        payload.put("httpEnabled", httpEnabled);
+        payload.put("endpoint", sanitizeEndpointForMetrics(resolvedEndpoint));
+        payload.put("providerModelConfigured", configuredModel != null && !configuredModel.isBlank());
+        payload.put("providerModelPlaceholder", isTemplatePlaceholder(configuredModel));
+        payload.put("effectiveModel", resolvedModel == null ? "" : resolvedModel);
+        payload.put("providerKeyConfigured", configuredApiKey != null && !configuredApiKey.isBlank());
+        payload.put("providerKeyPlaceholder", isTemplatePlaceholder(configuredApiKey));
+        payload.put("effectiveApiKeyMissing", apiKeyMissing);
+        payload.put("effectiveApiKeyMasked", mask(resolvedApiKey));
+        payload.put("globalApiKeyPlaceholder", isTemplatePlaceholder(globalApiKey));
+        try {
+            LOGGER.info(objectMapper.writeValueAsString(payload));
+        } catch (JsonProcessingException jsonEx) {
+            LOGGER.log(Level.INFO, String.valueOf(payload), jsonEx);
+        }
+
+        if (modelMissing || apiKeyMissing) {
+            Map<String, Object> warnPayload = new LinkedHashMap<>();
+            warnPayload.put("event", "llm.routing.profile.misconfigured");
+            warnPayload.put("llmProfile", llmProfile);
+            warnPayload.put("provider", normalizedProvider);
+            warnPayload.put("missingModel", modelMissing);
+            warnPayload.put("missingApiKey", apiKeyMissing);
+            warnPayload.put("hint", "For DOUBAO_STABLE set mindos.llm.provider-models=doubao:<endpoint-or-model-id> and mindos.llm.provider-keys=doubao:<ark-key>.");
+            try {
+                LOGGER.warning(objectMapper.writeValueAsString(warnPayload));
+            } catch (JsonProcessingException jsonEx) {
+                LOGGER.log(Level.WARNING, String.valueOf(warnPayload), jsonEx);
+            }
+        }
+    }
+
+    private void logRoutingSample(Map<String, Object> context,
+                                  String providerName,
+                                  String model,
+                                  boolean streamMode) {
+        String routeStage = context == null ? null : asText(context.get("routeStage"));
+        String stageValue = routeStage == null ? "" : routeStage;
+        String normalizedProvider = normalizeProvider(providerName);
+        String normalizedModel = model == null ? "" : model.trim();
+        String sampleKey = streamMode + "|" + stageValue + "|" + normalizedProvider + "|" + normalizedModel + "|" + llmProfile;
+        if (!routingSampleKeys.add(sampleKey)) {
+            return;
+        }
+
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("event", "llm.call.routing.sample");
+        payload.put("streamMode", streamMode);
+        payload.put("routeStage", stageValue);
+        payload.put("llmProfile", llmProfile);
+        payload.put("routingMode", routingMode);
+        payload.put("provider", normalizedProvider);
+        payload.put("model", normalizedModel);
+        try {
+            LOGGER.info(objectMapper.writeValueAsString(payload));
+        } catch (JsonProcessingException jsonEx) {
+            LOGGER.log(Level.INFO, String.valueOf(payload), jsonEx);
+        }
     }
 
     @Override
@@ -162,13 +266,18 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
         String selectedProvider = resolveProvider(safeContext);
         String selectedEndpoint = resolveEndpoint(selectedProvider);
         String selectedModel = resolveModel(safeContext, normalizeProvider(selectedProvider));
+        logRoutingSample(safeContext, selectedProvider, selectedModel, false);
         String apiKey = resolveApiKey(safeContext, selectedProvider);
         if (apiKey == null || apiKey.isBlank()) {
+            logLlmPrecheckFailure(safeContext, selectedProvider, selectedEndpoint, selectedModel, apiKey,
+                    "missing_api_key", false);
             String output = buildMissingApiKeyReply(safeContext, selectedProvider);
             recordMetric(startedAt, safeContext, selectedProvider, selectedEndpoint, false, false, prompt, output, "missing_api_key");
             return output;
         }
         if (selectedModel == null || selectedModel.isBlank()) {
+            logLlmPrecheckFailure(safeContext, selectedProvider, selectedEndpoint, selectedModel, apiKey,
+                    "missing_model", false);
             String output = buildMissingModelReply(safeContext, selectedProvider);
             recordMetric(startedAt, safeContext, selectedProvider, selectedEndpoint, false, false, prompt, output, "missing_model");
             return output;
@@ -190,14 +299,16 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
                 return output;
             } catch (RuntimeException ex) {
                 lastError = ex;
-                logLlmAttemptFailure(safeContext, selectedProvider, selectedEndpoint, selectedModel, attempt, maxRetries, ex, false);
+                logLlmAttemptFailure(safeContext, selectedProvider, selectedEndpoint, selectedModel, apiKey,
+                        attempt, maxRetries, ex, false);
                 if (attempt < maxRetries) {
                     sleepBeforeRetry();
                 }
             }
         }
 
-        logLlmFinalFailure(safeContext, selectedProvider, selectedEndpoint, selectedModel, maxRetries, lastError, false);
+        logLlmFinalFailure(safeContext, selectedProvider, selectedEndpoint, selectedModel, apiKey,
+                maxRetries, lastError, false);
 
         String output = buildRequestFailureReply(safeContext, selectedProvider, maxRetries, lastError);
         recordMetric(startedAt, safeContext, selectedProvider, selectedEndpoint, false, maxRetries > 1, prompt, output,
@@ -217,14 +328,19 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
         String selectedProvider = resolveProvider(safeContext);
         String selectedEndpoint = resolveEndpoint(selectedProvider);
         String selectedModel = resolveModel(safeContext, normalizeProvider(selectedProvider));
+        logRoutingSample(safeContext, selectedProvider, selectedModel, true);
         String apiKey = resolveApiKey(safeContext, selectedProvider);
         if (apiKey == null || apiKey.isBlank()) {
+            logLlmPrecheckFailure(safeContext, selectedProvider, selectedEndpoint, selectedModel, apiKey,
+                    "missing_api_key", true);
             if (onDelta != null) {
                 onDelta.accept(buildMissingApiKeyReply(safeContext, selectedProvider));
             }
             return;
         }
         if (selectedModel == null || selectedModel.isBlank()) {
+            logLlmPrecheckFailure(safeContext, selectedProvider, selectedEndpoint, selectedModel, apiKey,
+                    "missing_model", true);
             if (onDelta != null) {
                 onDelta.accept(buildMissingModelReply(safeContext, selectedProvider));
             }
@@ -251,13 +367,15 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
                 return;
             } catch (RuntimeException ex) {
                 lastError = ex;
-                logLlmAttemptFailure(safeContext, selectedProvider, selectedEndpoint, selectedModel, attempt, maxRetries, ex, true);
+                logLlmAttemptFailure(safeContext, selectedProvider, selectedEndpoint, selectedModel, apiKey,
+                        attempt, maxRetries, ex, true);
                 if (attempt < maxRetries) {
                     sleepBeforeRetry();
                 }
             }
         }
-        logLlmFinalFailure(safeContext, selectedProvider, selectedEndpoint, selectedModel, maxRetries, lastError, true);
+        logLlmFinalFailure(safeContext, selectedProvider, selectedEndpoint, selectedModel, apiKey,
+                maxRetries, lastError, true);
         if (onDelta != null) {
             onDelta.accept(buildRequestFailureReply(safeContext, selectedProvider, maxRetries, lastError));
         }
@@ -1105,12 +1223,20 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
     }
 
     private String resolveProvider(Map<String, Object> context) {
+        boolean hasExplicitProvider = false;
         if (context != null) {
             Object requestedProvider = context.get("llmProvider");
             if (requestedProvider instanceof String providerValue && !providerValue.isBlank()) {
                 String explicit = providerValue.trim();
                 if (!"auto".equalsIgnoreCase(explicit)) {
+                    hasExplicitProvider = true;
                     return explicit;
+                }
+            }
+            if (!hasExplicitProvider) {
+                String profileProvider = providerFromProfile();
+                if (profileProvider != null) {
+                    return profileProvider;
                 }
             }
             Object requestedPreset = context.get("llmPreset");
@@ -1130,7 +1256,21 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
                 }
             }
         }
+        String profileProvider = providerFromProfile();
+        if (profileProvider != null) {
+            return profileProvider;
+        }
         return provider;
+    }
+
+    private String providerFromProfile() {
+        if ("QWEN_STABLE".equals(llmProfile)) {
+            return "qwen";
+        }
+        if ("DOUBAO_STABLE".equals(llmProfile)) {
+            return "doubao";
+        }
+        return null;
     }
 
     private String resolveEndpoint(String providerName) {
@@ -1277,6 +1417,7 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
                                       String providerName,
                                       String endpointValue,
                                       String model,
+                                      String apiKey,
                                       int attempt,
                                       int maxAttempts,
                                       RuntimeException ex,
@@ -1290,10 +1431,14 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
         payload.put("model", model == null ? "" : model);
         payload.put("endpoint", sanitizeEndpointForMetrics(endpointValue));
         payload.put("routeStage", routeStage == null ? "" : routeStage);
+        payload.put("llmProfile", llmProfile);
+        payload.put("routingMode", routingMode);
+        payload.put("httpEnabled", httpEnabled);
         payload.put("attempt", attempt);
         payload.put("maxAttempts", maxAttempts);
         payload.put("errorType", ex == null ? "runtime_error" : simplifyErrorType(ex));
         payload.put("message", ex == null || ex.getMessage() == null ? "" : abbreviate(ex.getMessage(), 260));
+        payload.put("providerConfigState", buildProviderConfigState(providerName, endpointValue, model, apiKey));
         payload.put("userHash", userId == null ? "" : Integer.toHexString(userId.hashCode()));
         try {
             LOGGER.warning(objectMapper.writeValueAsString(payload));
@@ -1306,6 +1451,7 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
                                     String providerName,
                                     String endpointValue,
                                     String model,
+                                    String apiKey,
                                     int maxAttempts,
                                     RuntimeException ex,
                                     boolean streamMode) {
@@ -1318,15 +1464,68 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
         payload.put("model", model == null ? "" : model);
         payload.put("endpoint", sanitizeEndpointForMetrics(endpointValue));
         payload.put("routeStage", routeStage == null ? "" : routeStage);
+        payload.put("llmProfile", llmProfile);
+        payload.put("routingMode", routingMode);
+        payload.put("httpEnabled", httpEnabled);
         payload.put("maxAttempts", maxAttempts);
         payload.put("errorType", ex == null ? "runtime_error" : simplifyErrorType(ex));
         payload.put("message", ex == null || ex.getMessage() == null ? "" : abbreviate(ex.getMessage(), 260));
+        payload.put("providerConfigState", buildProviderConfigState(providerName, endpointValue, model, apiKey));
         payload.put("userHash", userId == null ? "" : Integer.toHexString(userId.hashCode()));
         try {
             LOGGER.warning(objectMapper.writeValueAsString(payload));
         } catch (JsonProcessingException jsonEx) {
             LOGGER.log(Level.WARNING, String.valueOf(payload), jsonEx);
         }
+    }
+
+    private void logLlmPrecheckFailure(Map<String, Object> context,
+                                       String providerName,
+                                       String endpointValue,
+                                       String model,
+                                       String apiKey,
+                                       String reason,
+                                       boolean streamMode) {
+        String routeStage = context == null ? null : asText(context.get("routeStage"));
+        String userId = context == null ? null : asText(context.get("userId"));
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("event", "llm.call.precheck.failed");
+        payload.put("streamMode", streamMode);
+        payload.put("provider", normalizeProvider(providerName));
+        payload.put("model", model == null ? "" : model);
+        payload.put("endpoint", sanitizeEndpointForMetrics(endpointValue));
+        payload.put("routeStage", routeStage == null ? "" : routeStage);
+        payload.put("llmProfile", llmProfile);
+        payload.put("routingMode", routingMode);
+        payload.put("httpEnabled", httpEnabled);
+        payload.put("reason", reason == null ? "precheck_failed" : reason);
+        payload.put("providerConfigState", buildProviderConfigState(providerName, endpointValue, model, apiKey));
+        payload.put("userHash", userId == null ? "" : Integer.toHexString(userId.hashCode()));
+        try {
+            LOGGER.warning(objectMapper.writeValueAsString(payload));
+        } catch (JsonProcessingException jsonEx) {
+            LOGGER.log(Level.WARNING, String.valueOf(payload), jsonEx);
+        }
+    }
+
+    private Map<String, Object> buildProviderConfigState(String providerName,
+                                                         String endpointValue,
+                                                         String model,
+                                                         String apiKey) {
+        String normalizedProvider = normalizeProvider(providerName);
+        Map<String, Object> state = new LinkedHashMap<>();
+        state.put("provider", normalizedProvider);
+        state.put("endpointConfigured", endpointValue != null && !endpointValue.isBlank());
+        state.put("providerEndpointConfigured", providerEndpoints.containsKey(normalizedProvider));
+        state.put("providerModelConfigured", providerModels.containsKey(normalizedProvider));
+        state.put("providerModelPlaceholder", isTemplatePlaceholder(providerModels.get(normalizedProvider)));
+        state.put("effectiveModelMissing", model == null || model.isBlank());
+        state.put("providerKeyConfigured", providerApiKeys.containsKey(normalizedProvider));
+        state.put("providerKeyPlaceholder", isTemplatePlaceholder(providerApiKeys.get(normalizedProvider)));
+        state.put("globalKeyPlaceholder", isTemplatePlaceholder(globalApiKey));
+        state.put("effectiveApiKeyMissing", apiKey == null || apiKey.isBlank() || isTemplatePlaceholder(apiKey));
+        state.put("effectiveApiKeyMasked", mask(apiKey));
+        return state;
     }
 
     private String asText(Object value) {

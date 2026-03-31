@@ -37,7 +37,7 @@ class DingtalkIntegrationSettings {
             @Value("${mindos.im.dingtalk.stream.client-secret:}") String streamClientSecret,
             @Value("${mindos.im.dingtalk.stream.topic:/v1.0/im/bot/messages/get}") String streamTopic,
             @Value("${mindos.im.dingtalk.stream.waiting-delay-ms:800}") long streamWaitingDelayMs,
-            @Value("${mindos.im.dingtalk.stream.waiting-text:我正在处理这条消息，请稍等，我会继续回复你。}") String streamWaitingText,
+            @Value("${mindos.im.dingtalk.stream.waiting-text:\u5DF2\u6536\u5230\uFF0C\u6B63\u5728\u5904\u7406\uFF0C\u7A0D\u540E\u7ED9\u4F60\u5B8C\u6574\u56DE\u590D\u3002}") String streamWaitingText,
             @Value("${mindos.im.dingtalk.stream.force-waiting:false}") boolean streamForceWaiting,
             @Value("${mindos.im.dingtalk.stream.final-timeout-ms:30000}") long streamFinalTimeoutMs,
             @Value("${mindos.im.dingtalk.stream.reconnect.enabled:true}") boolean streamReconnectEnabled,
@@ -58,7 +58,7 @@ class DingtalkIntegrationSettings {
         this.streamTopic = normalizeStreamTopic(streamTopic);
         this.streamWaitingDelayMs = Math.max(0L, streamWaitingDelayMs);
         this.streamWaitingText = trim(streamWaitingText).isBlank()
-                ? "我正在处理这条消息，请稍等，我会继续回复你。"
+                ? "已收到，正在处理，稍后给你完整回复。"
                 : trim(streamWaitingText);
         this.streamForceWaiting = streamForceWaiting;
         this.streamFinalTimeoutMs = Math.max(1000L, streamFinalTimeoutMs);

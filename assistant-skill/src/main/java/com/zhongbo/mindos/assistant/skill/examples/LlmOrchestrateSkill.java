@@ -4,6 +4,7 @@ import com.zhongbo.mindos.assistant.common.LlmClient;
 import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.skill.Skill;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -24,6 +25,7 @@ public class LlmOrchestrateSkill implements Skill {
     private final int promptMaxChars;
     private final int historyMaxItems;
 
+    @Autowired
     public LlmOrchestrateSkill(LlmClient llmClient,
                                @Value("${mindos.llm.orchestrate.providers:openai,deepseek,qwen}") String providers,
                                @Value("${mindos.llm.orchestrate.max-hops:2}") int maxHops,

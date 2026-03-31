@@ -121,8 +121,8 @@ public class ImGatewayService {
                 true,
                 DEFAULT_DINGTALK_EXECUTOR_THREADS,
                 DEFAULT_DINGTALK_EXPIRY_SKEW_SECONDS,
-                "已收到，正在处理中。任务ID：%s。处理完成后我会继续把结果发到当前会话。",
-                "你刚才的请求已处理完成：");
+                "已收到，正在处理中。任务ID：%s。完成后我会把完整结果发回当前会话。",
+                "处理完成，以下是完整结果：");
     }
 
     ImGatewayService(DispatcherService dispatcherService,
@@ -138,8 +138,8 @@ public class ImGatewayService {
                 true,
                 DEFAULT_DINGTALK_EXECUTOR_THREADS,
                 DEFAULT_DINGTALK_EXPIRY_SKEW_SECONDS,
-                "已收到，正在处理中。任务ID：%s。处理完成后我会继续把结果发到当前会话。",
-                "你刚才的请求已处理完成：");
+                "已收到，正在处理中。任务ID：%s。完成后我会把完整结果发回当前会话。",
+                "处理完成，以下是完整结果：");
     }
 
     @Autowired
@@ -151,8 +151,8 @@ public class ImGatewayService {
                      @Value("${mindos.im.dingtalk.async-reply.enabled:true}") boolean dingtalkAsyncReplyEnabled,
                      @Value("${mindos.im.dingtalk.async-reply.executor-threads:2}") int dingtalkAsyncExecutorThreads,
                      @Value("${mindos.im.dingtalk.async-reply.expiry-skew-seconds:5}") long dingtalkAsyncReplyExpirySkewSeconds,
-                     @Value("${mindos.im.dingtalk.async-reply.accepted-template:已收到，正在处理中。任务ID：%s。处理完成后我会继续把结果发到当前会话。}") String dingtalkAsyncAcceptedTemplate,
-                     @Value("${mindos.im.dingtalk.async-reply.result-prefix:你刚才的请求已处理完成：}") String dingtalkAsyncResultPrefix) {
+                     @Value("${mindos.im.dingtalk.async-reply.accepted-template:已收到，正在处理中。任务ID：%s。完成后我会把完整结果发回当前会话。}") String dingtalkAsyncAcceptedTemplate,
+                     @Value("${mindos.im.dingtalk.async-reply.result-prefix:处理完成，以下是完整结果：}") String dingtalkAsyncResultPrefix) {
         this.dispatcherService = dispatcherService;
         this.memoryManager = memoryManager;
         this.memoryConsolidationService = memoryConsolidationService;
@@ -161,10 +161,10 @@ public class ImGatewayService {
         this.dingtalkAsyncReplyEnabled = dingtalkAsyncReplyEnabled;
         this.dingtalkAsyncReplyExpirySkewSeconds = Math.max(0L, dingtalkAsyncReplyExpirySkewSeconds);
         this.dingtalkAsyncAcceptedTemplate = dingtalkAsyncAcceptedTemplate == null || dingtalkAsyncAcceptedTemplate.isBlank()
-                ? "已收到，正在处理中。任务ID：%s。处理完成后我会继续把结果发到当前会话。"
+                ? "已收到，正在处理中。任务ID：%s。完成后我会把完整结果发回当前会话。"
                 : dingtalkAsyncAcceptedTemplate;
         this.dingtalkAsyncResultPrefix = dingtalkAsyncResultPrefix == null || dingtalkAsyncResultPrefix.isBlank()
-                ? "你刚才的请求已处理完成："
+                ? "处理完成，以下是完整结果："
                 : dingtalkAsyncResultPrefix;
         this.dingtalkAsyncExecutor = Executors.newFixedThreadPool(Math.max(1, dingtalkAsyncExecutorThreads), runnable -> {
             Thread thread = new Thread(runnable);

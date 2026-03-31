@@ -42,17 +42,26 @@ if not exist "%INSTALL_DIR%\logs" mkdir "%INSTALL_DIR%\logs"
 if not exist "%SECRETS_FILE%" (
   (
     echo # 编辑右侧值，# 或 ; 开头为注释
+    echo # 可选：MINDOS_DISPATCHER_INTENT_ROUTING_ENABLED=true/false（可在 properties 覆盖 profile 默认值）
+    echo # MINDOS_DISPATCHER_INTENT_ROUTING_ENABLED=false
     echo MINDOS_OPENROUTER_KEY=REPLACE_WITH_OPENROUTER_KEY
     echo MINDOS_QWEN_KEY=REPLACE_WITH_QWEN_KEY
     echo MINDOS_QWEN_MODEL=qwen3.5-plus
     echo MINDOS_DOUBAO_ARK_KEY=REPLACE_WITH_DOUBAO_ARK_KEY
     echo MINDOS_DOUBAO_ENDPOINT_ID=REPLACE_WITH_DOUBAO_ENDPOINT_ID
     echo.
-    echo # 可选 IM / webhook，留空即禁用
-    echo MINDOS_IM_DINGTALK_APP_KEY=
-    echo MINDOS_IM_DINGTALK_APP_SECRET=
-    echo MINDOS_IM_DINGTALK_APP_TOKEN=
-    echo MINDOS_IM_DINGTALK_APP_AES_KEY=
+    echo # 钉钉 stream 模式（长连接收消息 + 会话回推）
+    echo MINDOS_IM_DINGTALK_STREAM_CLIENT_ID=
+    echo MINDOS_IM_DINGTALK_STREAM_CLIENT_SECRET=
+    echo MINDOS_IM_DINGTALK_OUTBOUND_ROBOT_CODE=
+    echo.
+    echo # 可选 outbound 覆盖；留空则复用上面的 stream clientId/clientSecret
+    echo MINDOS_IM_DINGTALK_OUTBOUND_APP_KEY=
+    echo MINDOS_IM_DINGTALK_OUTBOUND_APP_SECRET=
+    echo.
+    echo # 兼容旧变量名（若你已有旧配置，可取消注释后继续使用）
+    echo # MINDOS_IM_DINGTALK_APP_KEY=
+    echo # MINDOS_IM_DINGTALK_APP_SECRET=
   ) > "%SECRETS_FILE%"
 )
 
@@ -71,9 +80,32 @@ echo if exist "%SECRETS_FILE%" ^
  echo   ^^^^^(echo %%%%A^| findstr /R "^[#;]" ^>nul^) ^&^& ^^^^^(echo skipp^) ^| findstr /V "skipp" ^>nul
  echo   if not "%%%%A"=="" set "%%%%A=%%%%B"
  echo ^)
+echo if not defined MINDOS_SPRING_PROFILE set "MINDOS_SPRING_PROFILE=solo"
+echo if not defined MINDOS_IM_ENABLED set "MINDOS_IM_ENABLED=true"
+echo if not defined MINDOS_IM_DINGTALK_ENABLED set "MINDOS_IM_DINGTALK_ENABLED=true"
+echo if not defined MINDOS_IM_DINGTALK_VERIFY_SIGNATURE set "MINDOS_IM_DINGTALK_VERIFY_SIGNATURE=false"
+echo if not defined MINDOS_IM_DINGTALK_REPLY_TIMEOUT_MS set "MINDOS_IM_DINGTALK_REPLY_TIMEOUT_MS=2500"
+echo if not defined MINDOS_IM_DINGTALK_REPLY_MAX_CHARS set "MINDOS_IM_DINGTALK_REPLY_MAX_CHARS=1200"
+echo if not defined MINDOS_IM_DINGTALK_STREAM_TOPIC set "MINDOS_IM_DINGTALK_STREAM_TOPIC=/v1.0/im/bot/messages/get"
+echo if not defined MINDOS_IM_DINGTALK_OUTBOUND_APP_KEY set "MINDOS_IM_DINGTALK_OUTBOUND_APP_KEY="
+echo if not defined MINDOS_IM_DINGTALK_OUTBOUND_APP_SECRET set "MINDOS_IM_DINGTALK_OUTBOUND_APP_SECRET="
+echo if defined MINDOS_IM_DINGTALK_APP_KEY if not defined MINDOS_IM_DINGTALK_STREAM_CLIENT_ID set "MINDOS_IM_DINGTALK_STREAM_CLIENT_ID=%%MINDOS_IM_DINGTALK_APP_KEY%%"
+echo if defined MINDOS_IM_DINGTALK_APP_SECRET if not defined MINDOS_IM_DINGTALK_STREAM_CLIENT_SECRET set "MINDOS_IM_DINGTALK_STREAM_CLIENT_SECRET=%%MINDOS_IM_DINGTALK_APP_SECRET%%"
+echo if defined MINDOS_IM_DINGTALK_APP_KEY if not defined MINDOS_IM_DINGTALK_OUTBOUND_APP_KEY set "MINDOS_IM_DINGTALK_OUTBOUND_APP_KEY=%%MINDOS_IM_DINGTALK_APP_KEY%%"
+echo if defined MINDOS_IM_DINGTALK_APP_SECRET if not defined MINDOS_IM_DINGTALK_OUTBOUND_APP_SECRET set "MINDOS_IM_DINGTALK_OUTBOUND_APP_SECRET=%%MINDOS_IM_DINGTALK_APP_SECRET%%"
+echo if "%%MINDOS_IM_DINGTALK_OUTBOUND_APP_KEY%%"=="" set "MINDOS_IM_DINGTALK_OUTBOUND_APP_KEY=%%MINDOS_IM_DINGTALK_STREAM_CLIENT_ID%%"
+echo if "%%MINDOS_IM_DINGTALK_OUTBOUND_APP_SECRET%%"=="" set "MINDOS_IM_DINGTALK_OUTBOUND_APP_SECRET=%%MINDOS_IM_DINGTALK_STREAM_CLIENT_SECRET%%"
+echo if not defined MINDOS_IM_DINGTALK_STREAM_ENABLED ^(
+echo   if not "%%MINDOS_IM_DINGTALK_STREAM_CLIENT_ID%%"=="" if not "%%MINDOS_IM_DINGTALK_STREAM_CLIENT_SECRET%%"=="" set "MINDOS_IM_DINGTALK_STREAM_ENABLED=true"
+echo ^)
+echo if not defined MINDOS_IM_DINGTALK_STREAM_ENABLED set "MINDOS_IM_DINGTALK_STREAM_ENABLED=false"
+echo if not defined MINDOS_IM_DINGTALK_OUTBOUND_ENABLED ^(
+echo   if not "%%MINDOS_IM_DINGTALK_OUTBOUND_ROBOT_CODE%%"=="" if not "%%MINDOS_IM_DINGTALK_OUTBOUND_APP_KEY%%"=="" if not "%%MINDOS_IM_DINGTALK_OUTBOUND_APP_SECRET%%"=="" set "MINDOS_IM_DINGTALK_OUTBOUND_ENABLED=true"
+echo ^)
+echo if not defined MINDOS_IM_DINGTALK_OUTBOUND_ENABLED set "MINDOS_IM_DINGTALK_OUTBOUND_ENABLED=false"
 echo if not exist logs mkdir logs
 echo echo [MindOS] Starting assistant-api with solo profile...
-echo java -jar "%INSTALL_DIR%\%JAR_NAME%" --spring.profiles.active=solo %%*
+echo java -jar "%INSTALL_DIR%\%JAR_NAME%" --spring.profiles.active=%%MINDOS_SPRING_PROFILE%% %%*
 echo exit /b %%ERRORLEVEL%%
 ) > "%STARTER%"
 
@@ -103,5 +135,6 @@ if "!PATH_CHECK!"=="!PATH!" (
 echo [MindOS] 服务端安装完成！
 echo   启动: %INSTALL_DIR%\mindos-server.bat
 echo   验活: %INSTALL_DIR%\mindos-server-smoke.bat
-echo   建议启动前编辑：%SECRETS_FILE% （填入 LLM/钉钉等密钥，留空则禁用对应通道）
+echo   建议启动前编辑: %SECRETS_FILE% ^(钉钉 stream 模式填写 CLIENT_ID / CLIENT_SECRET / OUTBOUND_ROBOT_CODE^)
+echo   可选：在 %SECRETS_FILE% 设置 MINDOS_DISPATCHER_INTENT_ROUTING_ENABLED=true/false 覆盖 profile 默认值
 endlocal

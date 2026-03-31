@@ -165,7 +165,7 @@ class ImWebhookControllerTest {
 
             org.junit.jupiter.api.Assertions.assertTrue(latch.await(5, TimeUnit.SECONDS));
             org.junit.jupiter.api.Assertions.assertTrue(callbackBody.get().contains("\"msgtype\":\"text\""));
-            org.junit.jupiter.api.Assertions.assertTrue(callbackBody.get().contains("你刚才的请求已处理完成："));
+            org.junit.jupiter.api.Assertions.assertTrue(callbackBody.get().contains("\u5904\u7406\u5b8c\u6210\uff0c\u4ee5\u4e0b\u662f\u5b8c\u6574\u7ed3\u679c\uff1a"));
             org.junit.jupiter.api.Assertions.assertTrue(callbackBody.get().contains("async hi"));
         } finally {
             callbackServer.stop(0);

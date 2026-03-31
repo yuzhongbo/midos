@@ -70,7 +70,7 @@ install-mindos-server.bat
 
 - `run-mindos-solo.bat`: runs `assistant-api` from source with `solo` profile via `mvnw.cmd`
 - `solo-smoke.bat`: checks `/chat` echo route and `/api/metrics/llm` using PowerShell
-- `install-mindos-server.bat`: builds `assistant-api`, installs `%USERPROFILE%\.mindos-server`, and generates `mindos-server.bat` / `mindos-server-smoke.bat`
+- `install-mindos-server.bat`: builds `assistant-api`, installs `%USERPROFILE%\.mindos-server`, generates `mindos-server.bat` / `mindos-server-smoke.bat`, and seeds `mindos-secrets.properties` with the current DingTalk stream variables
 
 `solo` profile highlights:
 - enables short-TTL LLM cache for repeated prompts
@@ -100,22 +100,15 @@ MINDOS_SERVER=http://localhost:8080 ./solo-smoke.sh
 Requirements: Java 17 in `PATH`.
 
 ```bat
-set MINDOS_LLM_PROVIDER_KEYS=qwen:sk-qwen
-set MINDOS_IM_DINGTALK_SECRET=your-dingtalk-secret
-set MINDOS_IM_DINGTALK_REPLY_TIMEOUT_MS=2500
-set MINDOS_IM_DINGTALK_STREAM_ENABLED=true
-set MINDOS_IM_DINGTALK_STREAM_CLIENT_ID=ding-app-key
-set MINDOS_IM_DINGTALK_STREAM_CLIENT_SECRET=ding-app-secret
-set MINDOS_IM_DINGTALK_OUTBOUND_ENABLED=true
-set MINDOS_IM_DINGTALK_OUTBOUND_ROBOT_CODE=dingrobotcode
 install-mindos-server.bat
+notepad %USERPROFILE%\.mindos-server\mindos-secrets.properties
 %USERPROFILE%\.mindos-server\mindos-server.bat
 %USERPROFILE%\.mindos-server\mindos-server-smoke.bat
 ```
 
 `MINDOS_IM_DINGTALK_REPLY_TIMEOUT_MS` is the synchronous webhook wait budget. Keep it modest; raising it too high does not make DingTalk wait forever, it only increases the chance that the platform times out first.
 
-To switch a DingTalk bot to long-connection stream mode, also enable `MINDOS_IM_DINGTALK_STREAM_ENABLED=true`, fill in the stream `clientId/clientSecret`, and provide `MINDOS_IM_DINGTALK_OUTBOUND_ROBOT_CODE` so MindOS can push the waiting status and the final answer back into the conversation.
+To switch a DingTalk bot to long-connection stream mode, fill in `MINDOS_IM_DINGTALK_STREAM_CLIENT_ID`, `MINDOS_IM_DINGTALK_STREAM_CLIENT_SECRET`, and `MINDOS_IM_DINGTALK_OUTBOUND_ROBOT_CODE` in `mindos-secrets.properties`; the installed launcher auto-enables stream/outbound when those values are present. In the current DingTalk console naming, `Client ID` is the old `AppKey` / `SuiteKey`, `Client Secret` is the old `AppSecret` / `SuiteSecret`, and the current stream integration does not read `AgentId` directly.
 
 Source-run option (without packaging):
 
@@ -138,18 +131,32 @@ The command above writes the bundle to the project root at `dist/mindos-windows-
 Copy the whole output directory to the Windows host, then run:
 
 ```bat
-notepad mindos-server.env.bat
+notepad mindos-secrets.properties
 mindos-server.bat
 mindos-server-smoke.bat
 mindos-server-stop.bat
 ```
 
-`mindos-server.env.bat` is the single place to edit self-hosted variables such as:
-- keep each line in the form `set "KEY=value"` and edit only the text to the right of the first `=`
-- choose mode first with `MINDOS_LLM_MODE=OPENROUTER` (default) or `MINDOS_LLM_MODE=DOUBAO`
-- in `OPENROUTER` mode, keep `MINDOS_DISPATCHER_INTENT_ROUTING_ENABLED=true` and fill one `MINDOS_LLM_PROVIDER_KEYS=gpt:...,grok:...,gemini:...` line
-- if you switch to Doubao Ark, also set `MINDOS_LLM_PROVIDER_MODELS=doubao:<Model ID or Endpoint ID>` because the Chat API requires a real model identifier and uses `Authorization: Bearer <ARK_API_KEY>`
-- the exported Windows templates keep `doubao:REPLACE_WITH_DOUBAO_ENDPOINT_ID` on the same line; leaving that placeholder unchanged is safe until you enable `DOUBAO` mode
+`mindos-secrets.properties` is the main place to edit secrets, while `mindos-server.env.bat` keeps defaults and compatibility logic:
+- keep each line in the form `KEY=value` and edit only the text to the right of the first `=`
+- for DingTalk stream mode, fill `MINDOS_IM_DINGTALK_STREAM_CLIENT_ID`, `MINDOS_IM_DINGTALK_STREAM_CLIENT_SECRET`, and `MINDOS_IM_DINGTALK_OUTBOUND_ROBOT_CODE`
+- `MINDOS_IM_DINGTALK_OUTBOUND_APP_KEY` / `_APP_SECRET` are optional; when blank, the bundle reuses the stream clientId/clientSecret
+- legacy `MINDOS_IM_DINGTALK_APP_KEY` / `_APP_SECRET` names are still accepted by the exported bundle
+- edit `mindos-server.env.bat` only when you need to override non-secret defaults such as provider mode or ports
+- if startup logs show `{"event":"dingtalk.stream.lifecycle.skipped","reason":"stream_mode_disabled"}`, the DingTalk stream credentials or enable flags were not populated
+
+Common `mindos-server.env.bat` overrides:
+- choose provider profile in `mindos-secrets.properties`:
+  - `MINDOS_LLM_PROFILE=QWEN_STABLE` (single-vendor qwen, model from `MINDOS_QWEN_MODEL`)
+  - `MINDOS_LLM_PROFILE=DOUBAO_STABLE` (single-vendor doubao, model from `MINDOS_DOUBAO_ENDPOINT_ID`)
+  - `MINDOS_LLM_PROFILE=CN_DUAL` (llm-dsl uses qwen, llm-fallback prefers doubao)
+  - `MINDOS_LLM_PROFILE=OPENAI_NATIVE` (single-vendor openai, model from `MINDOS_OPENAI_MODEL`)
+  - `MINDOS_LLM_PROFILE=GEMINI_NATIVE` (single-vendor gemini native endpoint, model from `MINDOS_GEMINI_MODEL`)
+  - `MINDOS_LLM_PROFILE=GROK_NATIVE` (single-vendor grok, model from `MINDOS_GROK_MODEL`)
+  - `MINDOS_LLM_PROFILE=OPENROUTER_INTENT` (gpt/grok/gemini over OpenRouter)
+- each profile auto-sets `MINDOS_LLM_MODE`, `MINDOS_LLM_PROVIDER`, stage-map, endpoint map, key map, and model map
+- if you switch to Doubao Ark, set a real `MINDOS_DOUBAO_ENDPOINT_ID` because Ark Chat requires a valid Model/Endpoint ID plus `Authorization: Bearer <ARK_API_KEY>`
+- if you switch to OpenRouter intent routing, fill `MINDOS_OPENROUTER_KEY`
 - add other providers only when you actually need cross-provider switching
 - keep `MINDOS_IM_DINGTALK_*` / `MINDOS_IM_WECHAT_*` disabled until you have real bot credentials
 - `MINDOS_SERVER_PORT` for local service port
@@ -159,6 +166,8 @@ The exported Windows bundle also includes `mindos-server.full.env.bat` as a comm
 LLM provider configuration notes:
 - `mindos.llm.provider-endpoints` controls provider -> chat endpoint mapping.
 - `mindos.llm.provider-models` controls provider -> model mapping.
+- `mindos.llm.profile` (or env `MINDOS_LLM_PROFILE`) can pin stable provider defaults: `QWEN_STABLE` -> `qwen`, `DOUBAO_STABLE` -> `doubao`.
+- startup logs include `llm.routing.profile.effective`, and first-hit samples include `llm.call.routing.sample` (`routeStage` -> `provider/model`) for quick routing verification.
 - `qwen` keeps the built-in default model `qwen3.5-plus` when no model is supplied.
 - `doubao` must be configured with a real Ark `Model ID` or `Endpoint ID`, for example `mindos.llm.provider-models=doubao:ep-202603290001`, before enabling live HTTP calls.
 

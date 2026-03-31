@@ -24,7 +24,7 @@ class DingtalkStreamMessageDispatcher {
     private static final Logger LOGGER = Logger.getLogger(DingtalkStreamMessageDispatcher.class.getName());
     private static final long ECHO_SUPPRESSION_TTL_MILLIS = 180_000L;
     private static final int ECHO_SUPPRESSION_MAX_ENTRIES = 256;
-    private static final String TIMEOUT_BRIDGE_PREFIX = "久等了，这是完整回复：\n";
+    private static final String TIMEOUT_BRIDGE_PREFIX = "感谢等待，以下是完整回复：\n";
 
     private final ImGatewayService imGatewayService;
     private final DingtalkConversationSender conversationSender;
@@ -156,6 +156,16 @@ class DingtalkStreamMessageDispatcher {
                 return;
             }
             timeoutObserved.set(true);
+            boolean hadWaitingStatus = waitingSent.get();
+            if (hadWaitingStatus) {
+                logEvent(Level.INFO, "dingtalk.stream.timeout.notice.skipped", Map.of(
+                        "conversationHash", safeHash(conversationId),
+                        "senderHash", safeHash(senderId),
+                        "timeoutMs", settings.streamFinalTimeoutMs(),
+                        "hadWaitingStatus", true
+                ));
+                return;
+            }
             boolean sent = sendText(conversationId, settings.streamWaitingText(), sessionWebhook);
             if (sent) {
                 waitingSent.set(true);
@@ -167,7 +177,7 @@ class DingtalkStreamMessageDispatcher {
                             "senderHash", safeHash(senderId),
                             "replyLength", settings.streamWaitingText().length(),
                             "timeoutMs", settings.streamFinalTimeoutMs(),
-                            "hadWaitingStatus", waitingSent.get()
+                            "hadWaitingStatus", hadWaitingStatus
                     ));
         }, settings.streamFinalTimeoutMs(), TimeUnit.MILLISECONDS);
 

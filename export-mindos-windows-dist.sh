@@ -88,26 +88,43 @@ REM Minimal config loader. Place secrets in mindos-secrets.properties (KEY=value
 
 set "ROOT_DIR=%~dp0"
 set "MINDOS_ENV_LOADED="
+set "MINDOS_ENV_STAGE=boot"
 
 if exist "%ROOT_DIR%mindos-secrets.properties" (
+  set "MINDOS_ENV_STAGE=loading_secrets"
   for /f "usebackq tokens=1,* delims==" %%A in (`powershell -NoProfile -Command "Get-Content -Path '%ROOT_DIR%mindos-secrets.properties' | Where-Object { $_ -and $_.Trim().Length -gt 0 -and -not $_.Trim().StartsWith('#') -and -not $_.Trim().StartsWith(';') }"`) do (
     if not "%%A"=="" set "%%A=%%B"
   )
 )
 
+set "MINDOS_ENV_STAGE=defaults"
 if not defined MINDOS_SPRING_PROFILE set "MINDOS_SPRING_PROFILE=solo"
 if not defined MINDOS_SERVER_PORT set "MINDOS_SERVER_PORT=8080"
 if not defined MINDOS_MEMORY_FILE_REPO_ENABLED set "MINDOS_MEMORY_FILE_REPO_ENABLED=true"
 if not defined MINDOS_MEMORY_FILE_REPO_BASE_DIR set "MINDOS_MEMORY_FILE_REPO_BASE_DIR=data/memory-sync"
 if not defined MINDOS_PAUSE_ON_EXIT set "MINDOS_PAUSE_ON_EXIT=true"
 
-REM LLM routing (intent-based via OpenRouter by default)
-if not defined MINDOS_LLM_PROFILE set "MINDOS_LLM_PROFILE=OPENROUTER_INTENT"
-if not defined MINDOS_LLM_MODE set "MINDOS_LLM_MODE=OPENROUTER"
-if not defined MINDOS_LLM_PROVIDER set "MINDOS_LLM_PROVIDER=gpt"
+REM LLM routing profile (override these in mindos-secrets.properties when needed)
+if not defined MINDOS_LLM_PROFILE set "MINDOS_LLM_PROFILE=QWEN_STABLE"
+if not defined MINDOS_LLM_MODE set "MINDOS_LLM_MODE=QWEN_NATIVE"
+if not defined MINDOS_LLM_PROVIDER set "MINDOS_LLM_PROVIDER=qwen"
 if not defined MINDOS_LLM_ROUTING_MODE set "MINDOS_LLM_ROUTING_MODE=fixed"
+if not defined MINDOS_LLM_ROUTING_STAGE_MAP set "MINDOS_LLM_ROUTING_STAGE_MAP=llm-dsl:qwen,llm-fallback:qwen"
+if not defined MINDOS_LLM_ROUTING_PRESET_MAP set "MINDOS_LLM_ROUTING_PRESET_MAP=cost:qwen,balanced:qwen,quality:qwen"
+if not defined MINDOS_LLM_ENDPOINT_QWEN set "MINDOS_LLM_ENDPOINT_QWEN=https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+if not defined MINDOS_LLM_ENDPOINT_DOUBAO set "MINDOS_LLM_ENDPOINT_DOUBAO=https://ark.cn-beijing.volces.com/api/v3/chat/completions"
+if not defined MINDOS_LLM_ENDPOINT_OPENROUTER set "MINDOS_LLM_ENDPOINT_OPENROUTER=https://openrouter.ai/api/v1/chat/completions"
+if not defined MINDOS_LLM_ENDPOINT_OPENAI set "MINDOS_LLM_ENDPOINT_OPENAI=https://api.openai.com/v1/chat/completions"
+if not defined MINDOS_LLM_ENDPOINT_GEMINI set "MINDOS_LLM_ENDPOINT_GEMINI=https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent"
+if not defined MINDOS_LLM_ENDPOINT_GROK set "MINDOS_LLM_ENDPOINT_GROK=https://api.x.ai/v1/chat/completions"
 if not defined MINDOS_OPENROUTER_KEY set "MINDOS_OPENROUTER_KEY=REPLACE_WITH_OPENROUTER_KEY"
+if not defined MINDOS_OPENAI_KEY set "MINDOS_OPENAI_KEY=REPLACE_WITH_OPENAI_KEY"
+if not defined MINDOS_GEMINI_KEY set "MINDOS_GEMINI_KEY=REPLACE_WITH_GEMINI_KEY"
+if not defined MINDOS_GROK_KEY set "MINDOS_GROK_KEY=REPLACE_WITH_GROK_KEY"
 if not defined MINDOS_QWEN_KEY set "MINDOS_QWEN_KEY=REPLACE_WITH_QWEN_KEY"
+if not defined MINDOS_OPENAI_MODEL set "MINDOS_OPENAI_MODEL=gpt-4.1"
+if not defined MINDOS_GEMINI_MODEL set "MINDOS_GEMINI_MODEL=gemini-2.5-pro"
+if not defined MINDOS_GROK_MODEL set "MINDOS_GROK_MODEL=grok-4"
 if not defined MINDOS_QWEN_MODEL set "MINDOS_QWEN_MODEL=qwen3.5-plus"
 if not defined MINDOS_DOUBAO_ARK_KEY set "MINDOS_DOUBAO_ARK_KEY=REPLACE_WITH_DOUBAO_ARK_KEY"
 if not defined MINDOS_DOUBAO_ENDPOINT_ID set "MINDOS_DOUBAO_ENDPOINT_ID=REPLACE_WITH_DOUBAO_ENDPOINT_ID"
@@ -115,30 +132,167 @@ if not defined MINDOS_LLM_PROVIDER_ENDPOINTS set "MINDOS_LLM_PROVIDER_ENDPOINTS=
 if not defined MINDOS_LLM_PROVIDER_KEYS set "MINDOS_LLM_PROVIDER_KEYS=gpt:%MINDOS_OPENROUTER_KEY%,grok:%MINDOS_OPENROUTER_KEY%,gemini:%MINDOS_OPENROUTER_KEY%,doubao:%MINDOS_DOUBAO_ARK_KEY%,qwen:%MINDOS_QWEN_KEY%"
 if not defined MINDOS_LLM_PROVIDER_MODELS set "MINDOS_LLM_PROVIDER_MODELS=gpt:openai/gpt-5.2,grok:x-ai/grok-4,gemini:google/gemini-2.5-pro,doubao:%MINDOS_DOUBAO_ENDPOINT_ID%,qwen:%MINDOS_QWEN_MODEL%"
 if not defined MINDOS_SECURITY_METRICS_REQUIRE_ADMIN_TOKEN set "MINDOS_SECURITY_METRICS_REQUIRE_ADMIN_TOKEN=false"
+set "MINDOS_INTENT_ROUTING_EXPLICIT="
+if defined MINDOS_DISPATCHER_INTENT_ROUTING_ENABLED set "MINDOS_INTENT_ROUTING_EXPLICIT=1"
+if not defined MINDOS_DISPATCHER_INTENT_ROUTING_ENABLED set "MINDOS_DISPATCHER_INTENT_ROUTING_ENABLED=false"
+if not defined MINDOS_DISPATCHER_SKILL_PRE_ANALYZE_MODE set "MINDOS_DISPATCHER_SKILL_PRE_ANALYZE_MODE=never"
 
 REM Optional IM credentials (leave blank to disable)
-if not defined MINDOS_IM_DINGTALK_APP_KEY set "MINDOS_IM_DINGTALK_APP_KEY="
-if not defined MINDOS_IM_DINGTALK_APP_SECRET set "MINDOS_IM_DINGTALK_APP_SECRET="
-if not defined MINDOS_IM_DINGTALK_APP_TOKEN set "MINDOS_IM_DINGTALK_APP_TOKEN="
-if not defined MINDOS_IM_DINGTALK_APP_AES_KEY set "MINDOS_IM_DINGTALK_APP_AES_KEY="
+if not defined MINDOS_IM_ENABLED set "MINDOS_IM_ENABLED=true"
+if not defined MINDOS_IM_DINGTALK_ENABLED set "MINDOS_IM_DINGTALK_ENABLED=true"
+if not defined MINDOS_IM_DINGTALK_VERIFY_SIGNATURE set "MINDOS_IM_DINGTALK_VERIFY_SIGNATURE=false"
+if not defined MINDOS_IM_DINGTALK_REPLY_TIMEOUT_MS set "MINDOS_IM_DINGTALK_REPLY_TIMEOUT_MS=2500"
+if not defined MINDOS_IM_DINGTALK_REPLY_MAX_CHARS set "MINDOS_IM_DINGTALK_REPLY_MAX_CHARS=1200"
+if not defined MINDOS_IM_DINGTALK_STREAM_CLIENT_ID set "MINDOS_IM_DINGTALK_STREAM_CLIENT_ID="
+if not defined MINDOS_IM_DINGTALK_STREAM_CLIENT_SECRET set "MINDOS_IM_DINGTALK_STREAM_CLIENT_SECRET="
+if not defined MINDOS_IM_DINGTALK_STREAM_TOPIC set "MINDOS_IM_DINGTALK_STREAM_TOPIC=/v1.0/im/bot/messages/get"
+if not defined MINDOS_IM_DINGTALK_STREAM_WAITING_TEXT set "MINDOS_IM_DINGTALK_STREAM_WAITING_TEXT=已收到，正在处理，稍后给你完整回复。"
+if not defined MINDOS_IM_DINGTALK_OUTBOUND_ROBOT_CODE set "MINDOS_IM_DINGTALK_OUTBOUND_ROBOT_CODE="
+if not defined MINDOS_IM_DINGTALK_OUTBOUND_APP_KEY set "MINDOS_IM_DINGTALK_OUTBOUND_APP_KEY="
+if not defined MINDOS_IM_DINGTALK_OUTBOUND_APP_SECRET set "MINDOS_IM_DINGTALK_OUTBOUND_APP_SECRET="
 
+REM Backward-compatible aliases for older secrets templates.
+if defined MINDOS_IM_DINGTALK_APP_KEY if not defined MINDOS_IM_DINGTALK_STREAM_CLIENT_ID set "MINDOS_IM_DINGTALK_STREAM_CLIENT_ID=%MINDOS_IM_DINGTALK_APP_KEY%"
+if defined MINDOS_IM_DINGTALK_APP_SECRET if not defined MINDOS_IM_DINGTALK_STREAM_CLIENT_SECRET set "MINDOS_IM_DINGTALK_STREAM_CLIENT_SECRET=%MINDOS_IM_DINGTALK_APP_SECRET%"
+if defined MINDOS_IM_DINGTALK_APP_KEY if not defined MINDOS_IM_DINGTALK_OUTBOUND_APP_KEY set "MINDOS_IM_DINGTALK_OUTBOUND_APP_KEY=%MINDOS_IM_DINGTALK_APP_KEY%"
+if defined MINDOS_IM_DINGTALK_APP_SECRET if not defined MINDOS_IM_DINGTALK_OUTBOUND_APP_SECRET set "MINDOS_IM_DINGTALK_OUTBOUND_APP_SECRET=%MINDOS_IM_DINGTALK_APP_SECRET%"
+
+REM Reuse stream credentials for outbound unless explicit outbound overrides are provided.
+if not defined MINDOS_IM_DINGTALK_OUTBOUND_APP_KEY if defined MINDOS_IM_DINGTALK_STREAM_CLIENT_ID set "MINDOS_IM_DINGTALK_OUTBOUND_APP_KEY=%MINDOS_IM_DINGTALK_STREAM_CLIENT_ID%"
+if not defined MINDOS_IM_DINGTALK_OUTBOUND_APP_SECRET if defined MINDOS_IM_DINGTALK_STREAM_CLIENT_SECRET set "MINDOS_IM_DINGTALK_OUTBOUND_APP_SECRET=%MINDOS_IM_DINGTALK_STREAM_CLIENT_SECRET%"
+
+REM Auto-enable stream mode when the required secrets are present.
+if not defined MINDOS_IM_DINGTALK_STREAM_ENABLED set "MINDOS_IM_DINGTALK_STREAM_ENABLED=false"
+if /I "%MINDOS_IM_DINGTALK_STREAM_ENABLED%"=="false" if defined MINDOS_IM_DINGTALK_STREAM_CLIENT_ID if defined MINDOS_IM_DINGTALK_STREAM_CLIENT_SECRET set "MINDOS_IM_DINGTALK_STREAM_ENABLED=true"
+
+REM Auto-enable outbound delivery when the required values are present.
+if not defined MINDOS_IM_DINGTALK_OUTBOUND_ENABLED set "MINDOS_IM_DINGTALK_OUTBOUND_ENABLED=false"
+if /I "%MINDOS_IM_DINGTALK_OUTBOUND_ENABLED%"=="false" if defined MINDOS_IM_DINGTALK_OUTBOUND_ROBOT_CODE if defined MINDOS_IM_DINGTALK_OUTBOUND_APP_KEY if defined MINDOS_IM_DINGTALK_OUTBOUND_APP_SECRET set "MINDOS_IM_DINGTALK_OUTBOUND_ENABLED=true"
+
+REM Provider profile switch (manual and predictable)
+if /I "%MINDOS_LLM_PROFILE%"=="DOUBAO_STABLE" (
+  set "MINDOS_LLM_MODE=DOUBAO_NATIVE"
+  set "MINDOS_LLM_PROVIDER=doubao"
+  if not defined MINDOS_INTENT_ROUTING_EXPLICIT set "MINDOS_DISPATCHER_INTENT_ROUTING_ENABLED=false"
+  set "MINDOS_LLM_ROUTING_STAGE_MAP=llm-dsl:doubao,llm-fallback:doubao"
+  set "MINDOS_LLM_ROUTING_PRESET_MAP=cost:doubao,balanced:doubao,quality:doubao"
+  set "MINDOS_LLM_PROVIDER_ENDPOINTS=doubao:%MINDOS_LLM_ENDPOINT_DOUBAO%"
+  set "MINDOS_LLM_PROVIDER_KEYS=doubao:%MINDOS_DOUBAO_ARK_KEY%"
+  set "MINDOS_LLM_PROVIDER_MODELS=doubao:%MINDOS_DOUBAO_ENDPOINT_ID%"
+)
+if /I "%MINDOS_LLM_PROFILE%"=="QWEN_STABLE" (
+  set "MINDOS_LLM_MODE=QWEN_NATIVE"
+  set "MINDOS_LLM_PROVIDER=qwen"
+  if not defined MINDOS_INTENT_ROUTING_EXPLICIT set "MINDOS_DISPATCHER_INTENT_ROUTING_ENABLED=false"
+  set "MINDOS_LLM_ROUTING_STAGE_MAP=llm-dsl:qwen,llm-fallback:qwen"
+  set "MINDOS_LLM_ROUTING_PRESET_MAP=cost:qwen,balanced:qwen,quality:qwen"
+  set "MINDOS_LLM_PROVIDER_ENDPOINTS=qwen:%MINDOS_LLM_ENDPOINT_QWEN%"
+  set "MINDOS_LLM_PROVIDER_KEYS=qwen:%MINDOS_QWEN_KEY%"
+  set "MINDOS_LLM_PROVIDER_MODELS=qwen:%MINDOS_QWEN_MODEL%"
+)
+if /I "%MINDOS_LLM_PROFILE%"=="CN_DUAL" (
+  set "MINDOS_LLM_MODE=CN_DUAL_NATIVE"
+  set "MINDOS_LLM_PROVIDER=qwen"
+  if not defined MINDOS_INTENT_ROUTING_EXPLICIT set "MINDOS_DISPATCHER_INTENT_ROUTING_ENABLED=false"
+  set "MINDOS_LLM_ROUTING_STAGE_MAP=llm-dsl:qwen,llm-fallback:doubao"
+  set "MINDOS_LLM_ROUTING_PRESET_MAP=cost:qwen,balanced:qwen,quality:doubao"
+  set "MINDOS_LLM_PROVIDER_ENDPOINTS=qwen:%MINDOS_LLM_ENDPOINT_QWEN%,doubao:%MINDOS_LLM_ENDPOINT_DOUBAO%"
+  set "MINDOS_LLM_PROVIDER_KEYS=qwen:%MINDOS_QWEN_KEY%,doubao:%MINDOS_DOUBAO_ARK_KEY%"
+  set "MINDOS_LLM_PROVIDER_MODELS=qwen:%MINDOS_QWEN_MODEL%,doubao:%MINDOS_DOUBAO_ENDPOINT_ID%"
+)
+if /I "%MINDOS_LLM_PROFILE%"=="OPENROUTER_INTENT" (
+  set "MINDOS_LLM_MODE=OPENROUTER"
+  set "MINDOS_LLM_PROVIDER=gpt"
+  if not defined MINDOS_INTENT_ROUTING_EXPLICIT set "MINDOS_DISPATCHER_INTENT_ROUTING_ENABLED=true"
+  set "MINDOS_LLM_PROVIDER_ENDPOINTS=gpt:%MINDOS_LLM_ENDPOINT_OPENROUTER%,grok:%MINDOS_LLM_ENDPOINT_OPENROUTER%,gemini:%MINDOS_LLM_ENDPOINT_OPENROUTER%"
+  set "MINDOS_LLM_PROVIDER_KEYS=gpt:%MINDOS_OPENROUTER_KEY%,grok:%MINDOS_OPENROUTER_KEY%,gemini:%MINDOS_OPENROUTER_KEY%"
+  set "MINDOS_LLM_PROVIDER_MODELS=gpt:openai/gpt-5.2,grok:x-ai/grok-4,gemini:google/gemini-2.5-pro"
+)
+if /I "%MINDOS_LLM_PROFILE%"=="OPENAI_NATIVE" (
+  set "MINDOS_LLM_MODE=OPENAI_NATIVE"
+  set "MINDOS_LLM_PROVIDER=openai"
+  if not defined MINDOS_INTENT_ROUTING_EXPLICIT set "MINDOS_DISPATCHER_INTENT_ROUTING_ENABLED=false"
+  set "MINDOS_LLM_ROUTING_STAGE_MAP=llm-dsl:openai,llm-fallback:openai"
+  set "MINDOS_LLM_ROUTING_PRESET_MAP=cost:openai,balanced:openai,quality:openai"
+  set "MINDOS_LLM_PROVIDER_ENDPOINTS=openai:%MINDOS_LLM_ENDPOINT_OPENAI%"
+  set "MINDOS_LLM_PROVIDER_KEYS=openai:%MINDOS_OPENAI_KEY%"
+  set "MINDOS_LLM_PROVIDER_MODELS=openai:%MINDOS_OPENAI_MODEL%"
+)
+if /I "%MINDOS_LLM_PROFILE%"=="GEMINI_NATIVE" (
+  set "MINDOS_LLM_MODE=GEMINI_NATIVE"
+  set "MINDOS_LLM_PROVIDER=gemini"
+  if not defined MINDOS_INTENT_ROUTING_EXPLICIT set "MINDOS_DISPATCHER_INTENT_ROUTING_ENABLED=false"
+  set "MINDOS_LLM_ROUTING_STAGE_MAP=llm-dsl:gemini,llm-fallback:gemini"
+  set "MINDOS_LLM_ROUTING_PRESET_MAP=cost:gemini,balanced:gemini,quality:gemini"
+  set "MINDOS_LLM_PROVIDER_ENDPOINTS=gemini:%MINDOS_LLM_ENDPOINT_GEMINI%"
+  set "MINDOS_LLM_PROVIDER_KEYS=gemini:%MINDOS_GEMINI_KEY%"
+  set "MINDOS_LLM_PROVIDER_MODELS=gemini:%MINDOS_GEMINI_MODEL%"
+)
+if /I "%MINDOS_LLM_PROFILE%"=="GROK_NATIVE" (
+  set "MINDOS_LLM_MODE=GROK_NATIVE"
+  set "MINDOS_LLM_PROVIDER=grok"
+  if not defined MINDOS_INTENT_ROUTING_EXPLICIT set "MINDOS_DISPATCHER_INTENT_ROUTING_ENABLED=false"
+  set "MINDOS_LLM_ROUTING_STAGE_MAP=llm-dsl:grok,llm-fallback:grok"
+  set "MINDOS_LLM_ROUTING_PRESET_MAP=cost:grok,balanced:grok,quality:grok"
+  set "MINDOS_LLM_PROVIDER_ENDPOINTS=grok:%MINDOS_LLM_ENDPOINT_GROK%"
+  set "MINDOS_LLM_PROVIDER_KEYS=grok:%MINDOS_GROK_KEY%"
+  set "MINDOS_LLM_PROVIDER_MODELS=grok:%MINDOS_GROK_MODEL%"
+)
+
+set "MINDOS_ENV_STAGE=done"
 set "MINDOS_ENV_LOADED=1"
 BAT
 
 cat > "$OUTPUT_DIR/mindos-secrets.properties" <<'PROPS'
 # Only edit the values on the right side. Lines starting with # or ; are ignored.
 # LLM providers
+# Profile switch (recommended):
+# - QWEN_STABLE / DOUBAO_STABLE / CN_DUAL (mainland vendors)
+# - OPENAI_NATIVE / GEMINI_NATIVE / GROK_NATIVE (native single-vendor)
+# - OPENROUTER_INTENT (OpenRouter multi-vendor intent routing)
+MINDOS_LLM_PROFILE=QWEN_STABLE
+# Optional manual override for display/debug (normally auto-set by profile)
+# MINDOS_LLM_MODE=QWEN_NATIVE
+# Optional explicit override (wins over profile default)
+# MINDOS_DISPATCHER_INTENT_ROUTING_ENABLED=false
+
+# Optional endpoint overrides
+# MINDOS_LLM_ENDPOINT_QWEN=https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions
+# MINDOS_LLM_ENDPOINT_DOUBAO=https://ark.cn-beijing.volces.com/api/v3/chat/completions
+# MINDOS_LLM_ENDPOINT_OPENROUTER=https://openrouter.ai/api/v1/chat/completions
+# MINDOS_LLM_ENDPOINT_OPENAI=https://api.openai.com/v1/chat/completions
+# MINDOS_LLM_ENDPOINT_GEMINI=https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent
+# MINDOS_LLM_ENDPOINT_GROK=https://api.x.ai/v1/chat/completions
+
 MINDOS_OPENROUTER_KEY=REPLACE_WITH_OPENROUTER_KEY
+MINDOS_OPENAI_KEY=REPLACE_WITH_OPENAI_KEY
+MINDOS_GEMINI_KEY=REPLACE_WITH_GEMINI_KEY
+MINDOS_GROK_KEY=REPLACE_WITH_GROK_KEY
 MINDOS_QWEN_KEY=REPLACE_WITH_QWEN_KEY
+MINDOS_OPENAI_MODEL=gpt-4.1
+MINDOS_GEMINI_MODEL=gemini-2.5-pro
+MINDOS_GROK_MODEL=grok-4
 MINDOS_QWEN_MODEL=qwen3.5-plus
 MINDOS_DOUBAO_ARK_KEY=REPLACE_WITH_DOUBAO_ARK_KEY
 MINDOS_DOUBAO_ENDPOINT_ID=REPLACE_WITH_DOUBAO_ENDPOINT_ID
 
-# Optional IM / webhooks (leave empty to disable)
-MINDOS_IM_DINGTALK_APP_KEY=
-MINDOS_IM_DINGTALK_APP_SECRET=
-MINDOS_IM_DINGTALK_APP_TOKEN=
-MINDOS_IM_DINGTALK_APP_AES_KEY=
+# DingTalk stream mode (fill these three for long-connection bot replies)
+# DingTalk console mapping:
+# - Client ID (old AppKey / SuiteKey) -> MINDOS_IM_DINGTALK_STREAM_CLIENT_ID
+# - Client Secret (old AppSecret / SuiteSecret) -> MINDOS_IM_DINGTALK_STREAM_CLIENT_SECRET
+# - Robot Code -> MINDOS_IM_DINGTALK_OUTBOUND_ROBOT_CODE
+# Note: AgentId/App ID is not read directly by the current stream integration.
+MINDOS_IM_DINGTALK_STREAM_CLIENT_ID=
+MINDOS_IM_DINGTALK_STREAM_CLIENT_SECRET=
+MINDOS_IM_DINGTALK_OUTBOUND_ROBOT_CODE=
+
+# Optional outbound overrides; leave blank to reuse the stream clientId/clientSecret above.
+MINDOS_IM_DINGTALK_OUTBOUND_APP_KEY=
+MINDOS_IM_DINGTALK_OUTBOUND_APP_SECRET=
+
+# Legacy aliases are still accepted by mindos-server.env.bat if you already used them.
+# MINDOS_IM_DINGTALK_APP_KEY=
+# MINDOS_IM_DINGTALK_APP_SECRET=
 PROPS
 
 cat > "$OUTPUT_DIR/mindos-server.full.env.bat" <<'BAT'
@@ -269,14 +423,14 @@ set "MINDOS_IM_DINGTALK_OUTBOUND_ROBOT_CODE=REPLACE_WITH_YOUR_ROBOT_CODE"
 REM Slow-model experience preset (choose one)
 REM chat (fast feel)
 REM set "MINDOS_IM_DINGTALK_STREAM_WAITING_DELAY_MS=200"
-REM set "MINDOS_IM_DINGTALK_STREAM_WAITING_TEXT=Got it. Processing now, full reply is coming soon."
+REM set "MINDOS_IM_DINGTALK_STREAM_WAITING_TEXT=已收到，正在处理，稍后给你完整回复。"
 REM set "MINDOS_DISPATCHER_LLM_REPLY_MAX_CHARS=700"
 REM set "MINDOS_DISPATCHER_PROMPT_MAX_CHARS=2000"
 REM set "MINDOS_DISPATCHER_MEMORY_CONTEXT_MAX_CHARS=1200"
 
 REM speed-first preset (recommended when model feels slow)
 set "MINDOS_IM_DINGTALK_STREAM_WAITING_DELAY_MS=200"
-set "MINDOS_IM_DINGTALK_STREAM_WAITING_TEXT=Got it. Processing now, full reply is coming soon."
+set "MINDOS_IM_DINGTALK_STREAM_WAITING_TEXT=已收到，正在处理，稍后给你完整回复。"
 set "MINDOS_DISPATCHER_LLM_REPLY_MAX_CHARS=700"
 set "MINDOS_DISPATCHER_PROMPT_MAX_CHARS=2000"
 set "MINDOS_DISPATCHER_MEMORY_CONTEXT_MAX_CHARS=1200"
@@ -284,7 +438,7 @@ set "MINDOS_DISPATCHER_MEMORY_CONTEXT_KEEP_RECENT_TURNS=1"
 
 REM writing (quality)
 REM set "MINDOS_IM_DINGTALK_STREAM_WAITING_DELAY_MS=500"
-REM set "MINDOS_IM_DINGTALK_STREAM_WAITING_TEXT=I am preparing a more complete answer, please give me a bit more time."
+REM set "MINDOS_IM_DINGTALK_STREAM_WAITING_TEXT=我正在准备更完整的回复，请再给我一点时间。"
 REM set "MINDOS_DISPATCHER_LLM_REPLY_MAX_CHARS=1200"
 REM set "MINDOS_DISPATCHER_PROMPT_MAX_CHARS=3000"
 REM set "MINDOS_DISPATCHER_MEMORY_CONTEXT_MAX_CHARS=1800"
@@ -305,17 +459,22 @@ setlocal EnableExtensions DisableDelayedExpansion
 
 set "ROOT_DIR=%~dp0"
 cd /d "%ROOT_DIR%"
+set "ENV_FILE_PRESENT="
+set "ENV_LOAD_FAILED="
 if exist "%ROOT_DIR%mindos-server.env.bat" (
+  set "ENV_FILE_PRESENT=1"
   set "MINDOS_ENV_LOADED="
   call "%ROOT_DIR%mindos-server.env.bat"
-  if errorlevel 1 (
-    echo [FAIL] mindos-server.env.bat exited with code %ERRORLEVEL%.
-    goto :pause_and_fail
-  )
-  if not "%MINDOS_ENV_LOADED%"=="1" (
-    echo [FAIL] mindos-server.env.bat did not finish loading. Check for broken quotes/encoding in the file.
-    goto :pause_and_fail
-  )
+  if errorlevel 1 set "ENV_LOAD_FAILED=1"
+)
+if defined ENV_LOAD_FAILED (
+  echo [FAIL] mindos-server.env.bat exited with a non-zero code.
+  goto :pause_and_fail
+)
+if defined ENV_FILE_PRESENT if not "%MINDOS_ENV_LOADED%"=="1" (
+  echo [FAIL] mindos-server.env.bat did not finish loading. Check for broken quotes/encoding in the file.
+  if defined MINDOS_ENV_STAGE echo [FAIL] Last env stage: %MINDOS_ENV_STAGE%
+  goto :pause_and_fail
 )
 if not exist logs mkdir logs
 if not exist run mkdir run
@@ -376,19 +535,43 @@ if not defined MINDOS_DEBUG_SHELL (
 
 set "ROOT_DIR=%~dp0"
 cd /d "%ROOT_DIR%"
+set "ENV_FILE_PRESENT="
+set "ENV_LOAD_FAILED="
 if exist "%ROOT_DIR%mindos-server.env.bat" (
+  set "ENV_FILE_PRESENT=1"
   echo [INFO] Loading config from mindos-server.env.bat...
   set "MINDOS_ENV_LOADED="
   call "%ROOT_DIR%mindos-server.env.bat"
-  set "ENV_EXIT_CODE=%ERRORLEVEL%"
-  if "%ENV_EXIT_CODE%"=="" set "ENV_EXIT_CODE=1"
-  if not "%ENV_EXIT_CODE%"=="0" (
-    echo [FAIL] mindos-server.env.bat exited with code %ENV_EXIT_CODE%.
-    exit /b %ENV_EXIT_CODE%
+  if errorlevel 1 set "ENV_LOAD_FAILED=1"
+)
+if defined ENV_LOAD_FAILED (
+  echo [FAIL] mindos-server.env.bat exited with a non-zero code.
+  exit /b 1
+)
+if defined ENV_FILE_PRESENT if not "%MINDOS_ENV_LOADED%"=="1" (
+  echo [FAIL] mindos-server.env.bat did not finish loading. Check for broken quotes/encoding in the file.
+  if defined MINDOS_ENV_STAGE echo [FAIL] Last env stage: %MINDOS_ENV_STAGE%
+  exit /b 1
+)
+if defined ENV_FILE_PRESENT (
+  echo [INFO] Effective LLM profile: %MINDOS_LLM_PROFILE%
+  echo [INFO] Effective LLM mode/provider: %MINDOS_LLM_MODE% / %MINDOS_LLM_PROVIDER%
+  echo [INFO] Intent routing enabled: %MINDOS_DISPATCHER_INTENT_ROUTING_ENABLED%
+  echo [INFO] DingTalk stream/outbound: %MINDOS_IM_DINGTALK_STREAM_ENABLED% / %MINDOS_IM_DINGTALK_OUTBOUND_ENABLED%
+  if /I not "%MINDOS_IM_DINGTALK_STREAM_ENABLED%"=="true" (
+    echo [WARN] DingTalk stream mode is disabled. Fill MINDOS_IM_DINGTALK_STREAM_CLIENT_ID and _SECRET in mindos-secrets.properties.
   )
-  if not "%MINDOS_ENV_LOADED%"=="1" (
-    echo [FAIL] mindos-server.env.bat did not finish loading. Check for broken quotes/encoding in the file.
-    exit /b 1
+  if /I "%MINDOS_IM_DINGTALK_STREAM_ENABLED%"=="true" if "%MINDOS_IM_DINGTALK_OUTBOUND_ROBOT_CODE%"=="" (
+    echo [WARN] DingTalk stream mode is enabled but MINDOS_IM_DINGTALK_OUTBOUND_ROBOT_CODE is blank.
+  )
+  if /I "%MINDOS_DOUBAO_ARK_KEY%"=="REPLACE_WITH_DOUBAO_ARK_KEY" (
+    echo [WARN] MINDOS_DOUBAO_ARK_KEY is still a placeholder.
+  )
+  if /I "%MINDOS_DOUBAO_ENDPOINT_ID%"=="REPLACE_WITH_DOUBAO_ENDPOINT_ID" (
+    echo [WARN] MINDOS_DOUBAO_ENDPOINT_ID is still a placeholder.
+  )
+  if /I "%MINDOS_QWEN_KEY%"=="REPLACE_WITH_QWEN_KEY" (
+    echo [WARN] MINDOS_QWEN_KEY is still a placeholder.
   )
 )
 
@@ -513,9 +696,10 @@ MindOS Windows server bundle
 ============================
 
 1) Edit only secrets in mindos-secrets.properties (KEY=value, # for comment):
-   - OPENROUTER/DOUBAO/QWEN keys and optional DingTalk webhook secrets live here
-   - leave empty values to disable the channel
-   - mindos-server.env.bat keeps sane defaults and auto-loads the properties file
+   - OPENROUTER/DOUBAO/QWEN keys live here
+   - for DingTalk stream mode, fill MINDOS_IM_DINGTALK_STREAM_CLIENT_ID, MINDOS_IM_DINGTALK_STREAM_CLIENT_SECRET, and MINDOS_IM_DINGTALK_OUTBOUND_ROBOT_CODE
+   - outbound app key/secret are optional; when blank, mindos-server.env.bat reuses the stream clientId/clientSecret
+   - legacy MINDOS_IM_DINGTALK_APP_KEY / _APP_SECRET names are still accepted for compatibility
 
 2) Start service:
    mindos-server.bat
@@ -536,6 +720,7 @@ Notes:
 - PID file is stored in run\assistant-api.pid.
 - Default Spring profile is solo.
 - All launcher scripts auto-load mindos-server.env.bat (which itself loads mindos-secrets.properties if present).
+- If startup logs show {"event":"dingtalk.stream.lifecycle.skipped","reason":"stream_mode_disabled"}, the stream credentials or enable flags were not populated.
 - mindos-server.full.env.bat is a commented reference file only; it is NOT auto-loaded.
 - Use mindos-server.full.env.bat for harness/canary examples, then copy selected lines back to mindos-server.env.bat if you need overrides.
 - In provider maps, commas split entries and the first colon splits provider name from value.

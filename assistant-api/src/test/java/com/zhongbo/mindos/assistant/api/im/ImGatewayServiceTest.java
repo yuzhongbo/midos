@@ -150,16 +150,16 @@ class ImGatewayServiceTest {
         MemoryConsolidationService consolidationService = new MemoryConsolidationService();
         ImGatewayService service = new ImGatewayService(dispatcherService, memoryManager, consolidationService);
 
-        when(dispatcherService.dispatchAsync(eq("im:dingtalk:u5"), eq("继续生成"), any()))
-                .thenReturn(java.util.concurrent.CompletableFuture.completedFuture(new DispatchResult(
+        when(dispatcherService.dispatch(eq("im:dingtalk:u5"), eq("继续生成"), any()))
+                .thenReturn(new DispatchResult(
                         ImDegradedReplyMarker.encode("gemini", "timeout"),
                         "llm"
-                )));
+                ));
 
         String reply = service.chatAsync(ImPlatform.DINGTALK, "u5", "c5", "继续生成").get(1, TimeUnit.SECONDS);
 
         assertEquals(ImReplySanitizer.TIMEOUT_IM_FALLBACK_REPLY, reply);
-        service.shutdown();
+        service.shutdownAsyncExecutor();
     }
 
     @Test
@@ -169,9 +169,11 @@ class ImGatewayServiceTest {
         MemoryConsolidationService consolidationService = new MemoryConsolidationService();
         ImGatewayService service = new ImGatewayService(dispatcherService, memoryManager, consolidationService);
 
-        CompletableFuture<DispatchResult> slowReply = new CompletableFuture<>();
-        when(dispatcherService.dispatchAsync(eq("im:dingtalk:u6"), eq("继续"), any()))
-                .thenReturn(slowReply);
+        when(dispatcherService.dispatch(eq("im:dingtalk:u6"), eq("继续"), any()))
+                .thenAnswer(invocation -> {
+                    TimeUnit.MILLISECONDS.sleep(300);
+                    return new DispatchResult("好的，继续。", "llm");
+                });
 
         long startedAt = System.nanoTime();
         CompletableFuture<String> replyFuture = service.chatAsync(ImPlatform.DINGTALK, "u6", "c6", "继续");
@@ -180,9 +182,8 @@ class ImGatewayServiceTest {
         assertFalse(replyFuture.isDone());
         assertTrue(elapsedMs < 200, "chatAsync should return quickly so stream waiting status can be scheduled");
 
-        slowReply.complete(new DispatchResult("好的，继续。", "llm"));
         assertEquals("好的，继续。", replyFuture.get(1, TimeUnit.SECONDS));
-        service.shutdown();
+        service.shutdownAsyncExecutor();
     }
 
     @Test
@@ -280,6 +281,33 @@ class ImGatewayServiceTest {
                 any(),
                 eq(true)
         );
+    }
+}
+
+class CapturingHandler extends Handler {
+
+    private final List<String> messages = new ArrayList<>();
+
+    @Override
+    public void publish(LogRecord record) {
+        if (record == null || record.getMessage() == null) {
+            return;
+        }
+        messages.add(record.getMessage());
+    }
+
+    @Override
+    public void flush() {
+        // no-op for in-memory capture
+    }
+
+    @Override
+    public void close() {
+        messages.clear();
+    }
+
+    String joinedMessages() {
+        return String.join("\n", messages);
     }
 }
 

@@ -2,21 +2,37 @@ package com.zhongbo.mindos.assistant.llm;
 
 import com.sun.net.httpserver.HttpServer;
 import com.zhongbo.mindos.assistant.common.ImDegradedReplyMarker;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.support.DefaultListableBeanFactory;
 
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.logging.Handler;
+import java.util.logging.Level;
+import java.util.logging.LogRecord;
+import java.util.logging.Logger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ApiKeyLlmClientTest {
+
+    @AfterEach
+    void cleanupLoggerHandlers() {
+        Logger logger = Logger.getLogger(ApiKeyLlmClient.class.getName());
+        for (Handler handler : logger.getHandlers()) {
+            if (handler instanceof CapturingHandler) {
+                logger.removeHandler(handler);
+            }
+        }
+    }
 
     @Test
     void shouldCallHttpAndReturnAssistantContentWhenHttpEnabled() throws Exception {
@@ -269,6 +285,26 @@ class ApiKeyLlmClientTest {
         assertTrue(output.contains("https://api.deepseek.com/v1/chat/completions"));
         assertTrue(output.startsWith("[LLM deepseek] fallback mode active."));
         assertFalse(output.contains("hello"));
+    }
+
+    @Test
+    void shouldPreferStableProviderFromLlmProfile() {
+        ApiKeyLlmClient client = newClientWithProfile(
+                "gpt",
+                "QWEN_STABLE",
+                "fixed",
+                "llm-dsl:gpt,llm-fallback:gpt",
+                "cost:gpt,quality:gpt",
+                "qwen:key-qwen,gpt:key-gpt",
+                false,
+                60,
+                false,
+                "gpt:https://openrouter.ai/api/v1/chat/completions,qwen:https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+        );
+
+        String output = client.generateResponse("hello", Map.of("userId", "u-profile"));
+
+        assertTrue(output.startsWith("[LLM qwen] fallback mode active."));
     }
 
     @Test
@@ -758,6 +794,76 @@ class ApiKeyLlmClientTest {
     }
 
     @Test
+    void shouldLogDoubaoProfileMisconfigurationAtStartup() {
+        Logger logger = Logger.getLogger(ApiKeyLlmClient.class.getName());
+        CapturingHandler handler = new CapturingHandler();
+        Level previousLevel = logger.getLevel();
+        logger.setLevel(Level.ALL);
+        logger.addHandler(handler);
+        try {
+            newClient(
+                    "gpt",
+                    "DOUBAO_STABLE",
+                    "fixed",
+                    "llm-dsl:gpt,llm-fallback:gpt",
+                    "cost:gpt,quality:gpt",
+                    "doubao:REPLACE_WITH_DOUBAO_ARK_KEY",
+                    "doubao:REPLACE_WITH_DOUBAO_ENDPOINT_ID",
+                    false,
+                    60,
+                    "fallback-global-key",
+                    true,
+                    "doubao:https://ark.cn-beijing.volces.com/api/v3/chat/completions",
+                    true,
+                    "",
+                    ""
+            );
+        } finally {
+            logger.removeHandler(handler);
+            logger.setLevel(previousLevel);
+        }
+
+        String logs = handler.joinedMessages();
+        assertTrue(logs.contains("\"event\":\"llm.routing.profile.misconfigured\""));
+        assertTrue(logs.contains("\"llmProfile\":\"DOUBAO_STABLE\""));
+        assertTrue(logs.contains("\"provider\":\"doubao\""));
+    }
+
+    @Test
+    void shouldLogPrecheckFailureWhenDoubaoModelMissing() {
+        Logger logger = Logger.getLogger(ApiKeyLlmClient.class.getName());
+        CapturingHandler handler = new CapturingHandler();
+        Level previousLevel = logger.getLevel();
+        logger.setLevel(Level.ALL);
+        logger.addHandler(handler);
+        try {
+            ApiKeyLlmClient client = newClient(
+                    "doubao",
+                    "fixed",
+                    "llm-dsl:doubao,llm-fallback:doubao",
+                    "cost:doubao,quality:doubao",
+                    "doubao:ark-key",
+                    false,
+                    60,
+                    true,
+                    "doubao:https://ark.cn-beijing.volces.com/api/v3/chat/completions"
+            );
+
+            String output = client.generateResponse("你好", Map.of("userId", "u-doubao-missing-log", "llmProvider", "doubao"));
+            assertTrue(output.contains("missing Model ID / Endpoint ID"));
+        } finally {
+            logger.removeHandler(handler);
+            logger.setLevel(previousLevel);
+        }
+
+        String logs = handler.joinedMessages();
+        assertTrue(logs.contains("\"event\":\"llm.call.precheck.failed\""));
+        assertTrue(logs.contains("\"reason\":\"missing_model\""));
+        assertTrue(logs.contains("\"provider\":\"doubao\""));
+        assertTrue(logs.contains("\"providerConfigState\""));
+    }
+
+    @Test
     void shouldRespectExplicitProviderOverrideInFixedMode() {
         ApiKeyLlmClient client = newClient(
                 "stub",
@@ -940,6 +1046,21 @@ class ApiKeyLlmClientTest {
         return List.copyOf((java.util.concurrent.ConcurrentLinkedDeque<Object>) callsField.get(metricsService));
     }
 
+    private ApiKeyLlmClient newClientWithProfile(String defaultProvider,
+                                                 String llmProfile,
+                                                 String routingMode,
+                                                 String stageMap,
+                                                 String presetMap,
+                                                 String providerKeys,
+                                                 boolean cacheEnabled,
+                                                 long cacheTtlSeconds,
+                                                 boolean httpEnabled,
+                                                 String providerEndpoints) {
+        return newClient(defaultProvider, llmProfile, routingMode, stageMap, presetMap, providerKeys, "", cacheEnabled,
+                cacheTtlSeconds, "fallback-global-key", httpEnabled, providerEndpoints,
+                true, "", "");
+    }
+
     private ApiKeyLlmClient newClient(String defaultProvider,
                                       String routingMode,
                                       String stageMap,
@@ -1027,6 +1148,7 @@ class ApiKeyLlmClientTest {
     }
 
     private ApiKeyLlmClient newClient(String defaultProvider,
+                                      String llmProfile,
                                       String routingMode,
                                       String stageMap,
                                       String presetMap,
@@ -1045,6 +1167,7 @@ class ApiKeyLlmClientTest {
         LlmMetricsService metricsService = new LlmMetricsService(true, 200);
         return new ApiKeyLlmClient(
                 defaultProvider,
+                llmProfile,
                 routingMode,
                 "https://api.example.com/v1/chat/completions",
                 globalApiKey,
@@ -1066,6 +1189,49 @@ class ApiKeyLlmClientTest {
                 userApiKeyService,
                 metricsService
         );
+    }
+
+    private ApiKeyLlmClient newClient(String defaultProvider,
+                                      String routingMode,
+                                      String stageMap,
+                                      String presetMap,
+                                      String providerKeys,
+                                      String providerModels,
+                                      boolean cacheEnabled,
+                                      long cacheTtlSeconds,
+                                      String globalApiKey,
+                                      boolean httpEnabled,
+                                      String providerEndpoints,
+                                      boolean arkWebSearchEnabled,
+                                      String arkWebSearchStages,
+                                      String arkWebSearchPlatforms) {
+        return newClient(defaultProvider, "", routingMode, stageMap, presetMap, providerKeys, providerModels,
+                cacheEnabled, cacheTtlSeconds, globalApiKey, httpEnabled, providerEndpoints,
+                arkWebSearchEnabled, arkWebSearchStages, arkWebSearchPlatforms);
+    }
+
+    private static final class CapturingHandler extends Handler {
+
+        private final List<String> messages = new ArrayList<>();
+
+        @Override
+        public void publish(LogRecord record) {
+            if (record != null && record.getMessage() != null) {
+                messages.add(record.getMessage());
+            }
+        }
+
+        @Override
+        public void flush() {
+        }
+
+        @Override
+        public void close() {
+        }
+
+        private String joinedMessages() {
+            return String.join("\n", messages);
+        }
     }
 }
 
