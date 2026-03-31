@@ -10,6 +10,7 @@ set "JAR_NAME=assistant-api-0.1.0-SNAPSHOT.jar"
 set "INSTALL_DIR=%USERPROFILE%\.mindos-server"
 set "STARTER=%INSTALL_DIR%\mindos-server.bat"
 set "SMOKE=%INSTALL_DIR%\mindos-server-smoke.bat"
+set "SECRETS_FILE=%INSTALL_DIR%\mindos-secrets.properties"
 
 where java >nul 2>nul
 if errorlevel 1 (
@@ -31,6 +32,22 @@ if not exist "%API_MODULE%\target\%JAR_NAME%" (
 
 if not exist "%INSTALL_DIR%" mkdir "%INSTALL_DIR%"
 if not exist "%INSTALL_DIR%\logs" mkdir "%INSTALL_DIR%\logs"
+if not exist "%SECRETS_FILE%" (
+  (
+    echo # 编辑右侧值，# 或 ; 开头为注释
+    echo MINDOS_OPENROUTER_KEY=REPLACE_WITH_OPENROUTER_KEY
+    echo MINDOS_QWEN_KEY=REPLACE_WITH_QWEN_KEY
+    echo MINDOS_QWEN_MODEL=qwen3.5-plus
+    echo MINDOS_DOUBAO_ARK_KEY=REPLACE_WITH_DOUBAO_ARK_KEY
+    echo MINDOS_DOUBAO_ENDPOINT_ID=REPLACE_WITH_DOUBAO_ENDPOINT_ID
+    echo.
+    echo # 可选 IM / webhook，留空即禁用
+    echo MINDOS_IM_DINGTALK_APP_KEY=
+    echo MINDOS_IM_DINGTALK_APP_SECRET=
+    echo MINDOS_IM_DINGTALK_APP_TOKEN=
+    echo MINDOS_IM_DINGTALK_APP_AES_KEY=
+  ) > "%SECRETS_FILE%"
+)
 
 copy "%API_MODULE%\target\%JAR_NAME%" "%INSTALL_DIR%\" /Y >nul
 if errorlevel 1 (
@@ -42,6 +59,11 @@ if errorlevel 1 (
 echo @echo off
 echo setlocal
 echo cd /d "%%~dp0"
+echo if exist "%SECRETS_FILE%" ^
+ for /f "usebackq tokens=1,* delims==" %%%%A in (^^^"%SECRETS_FILE%"^^^) do ^(
+ echo   ^^^^^(echo %%%%A^| findstr /R "^[#;]" ^>nul^) ^&^& ^^^^^(echo skipp^) ^| findstr /V "skipp" ^>nul
+ echo   if not "%%%%A"=="" set "%%%%A=%%%%B"
+ echo ^)
 echo if not exist logs mkdir logs
 echo echo [MindOS] Starting assistant-api with solo profile...
 echo java -jar "%INSTALL_DIR%\%JAR_NAME%" --spring.profiles.active=solo %%*
@@ -74,7 +96,6 @@ if "!PATH_CHECK!"=="!PATH!" (
 echo [MindOS] 服务端安装完成！
 echo   启动: %INSTALL_DIR%\mindos-server.bat
 echo   验活: %INSTALL_DIR%\mindos-server-smoke.bat
-echo   建议启动前设置：set MINDOS_LLM_PROVIDER_KEYS=deepseek:...,openai:...,gemini:...,grok:...
+echo   建议启动前编辑：%SECRETS_FILE% （填入 LLM/钉钉等密钥，留空则禁用对应通道）
 endlocal
-
 
