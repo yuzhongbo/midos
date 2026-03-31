@@ -115,6 +115,21 @@ class DispatcherServiceTest {
     }
 
     @Test
+    void shouldPreserveExplicitSemanticAnalyzeIntent() {
+        MemoryManager memoryManager = createMemoryManager();
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of("stub"));
+        DispatcherService service = createDispatcher(memoryManager, llmClient, List.of(
+                new SemanticTriggerSkill()
+        ), 2, true);
+
+        DispatchResult result = service.dispatch("semantic-user", "semantic 帮我修复 Spring 接口 bug");
+
+        assertEquals("semantic.analyze", result.channel());
+        assertEquals("detected-skill", result.executionTrace().routing().route());
+        assertEquals(0, llmClient.routingCallCount());
+    }
+
+    @Test
     void shouldStoreRememberCommandFromChinesePrefixIntoTaskBucket() {
         MemoryManager memoryManager = createMemoryManager();
         RecordingLlmClient llmClient = new RecordingLlmClient(List.of("已记住"));
@@ -272,6 +287,28 @@ class DispatcherServiceTest {
         @Override
         public SkillResult run(SkillContext context) {
             return SkillResult.success(name, output);
+        }
+    }
+
+    private static final class SemanticTriggerSkill implements Skill {
+        @Override
+        public String name() {
+            return "semantic.analyze";
+        }
+
+        @Override
+        public String description() {
+            return "Analyze semantics";
+        }
+
+        @Override
+        public boolean supports(String input) {
+            return input != null && input.toLowerCase().startsWith("semantic ");
+        }
+
+        @Override
+        public SkillResult run(SkillContext context) {
+            return SkillResult.success(name(), "语义分析结果");
         }
     }
 }

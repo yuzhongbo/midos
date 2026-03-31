@@ -73,6 +73,27 @@ class SemanticAnalysisServiceTest {
         assertTrue(result.confidence() > 0.9);
     }
 
+    @Test
+    void shouldUseLlmAnalysisWhenHeuristicsAreLowConfidence() {
+        SkillRegistry registry = new SkillRegistry(List.of(new FixedSkill("todo.create")));
+        LlmClient llmClient = (prompt, context) ->
+                "{\"intent\":\"创建待办\",\"rewrittenInput\":\"请创建待办：提交周报\",\"suggestedSkill\":\"todo.create\",\"payload\":{\"task\":\"提交周报\"},\"keywords\":[\"待办\",\"周报\"],\"confidence\":0.91}";
+        SemanticAnalysisService service = new SemanticAnalysisService(llmClient, registry, true, true, "");
+
+        SemanticAnalysisResult result = service.analyze(
+                "u1",
+                "帮我处理一下周报这件事",
+                "history",
+                Map.of(),
+                List.of("todo.create - Creates todo items")
+        );
+
+        assertEquals("llm", result.source());
+        assertEquals("todo.create", result.suggestedSkill());
+        assertEquals("提交周报", result.payload().get("task"));
+        assertTrue(result.confidence() >= 0.9);
+    }
+
     private record FixedSkill(String name) implements Skill {
         @Override
         public String description() {

@@ -47,6 +47,8 @@ public class DispatcherService implements ContextCompressionMetricsReader {
     private static final int CONTEXT_HISTORY_LIMIT = 6;
     private static final int CONTEXT_KNOWLEDGE_LIMIT = 3;
     private static final int HABIT_SKILL_STATS_LIMIT = 3;
+    private static final int SEMANTIC_SUMMARY_MIN_CHARS = 120;
+    private static final double SEMANTIC_CONTEXT_MIN_CONFIDENCE = 0.45;
     private static final String SKILL_HELP_CHANNEL = "skills.help";
     private static final List<String> HABIT_CONTINUATION_CUES = List.of(
             "继续",
@@ -362,7 +364,9 @@ public class DispatcherService implements ContextCompressionMetricsReader {
         }
         rejectedReasons.add("no explicit SkillDSL detected");
 
-        Optional<SkillDsl> semanticDsl = toSemanticSkillDsl(semanticAnalysis, originalUserInput);
+        Optional<SkillDsl> semanticDsl = isContinuationIntent(normalize(routingInput))
+                ? Optional.empty()
+                : toSemanticSkillDsl(semanticAnalysis, originalUserInput);
         if (semanticDsl.isPresent()) {
             Optional<SkillResult> blocked = maybeBlockByCapability(semanticDsl.get().skill());
             if (blocked.isPresent()) {
@@ -390,7 +394,9 @@ public class DispatcherService implements ContextCompressionMetricsReader {
                             ))))
                     .orElseGet(() -> CompletableFuture.completedFuture(new RoutingOutcome(Optional.empty(), fallbackRoutingDecision(rejectedReasons))));
         }
-        rejectedReasons.add("semantic analysis did not select a confident local skill");
+        rejectedReasons.add(isContinuationIntent(normalize(routingInput))
+                ? "semantic analysis deferred to continuation or habit routing"
+                : "semantic analysis did not select a confident local skill");
 
         Optional<SkillDsl> ruleDsl = detectSkillWithRules(routingInput);
         if (ruleDsl.isPresent()) {
@@ -1257,7 +1263,7 @@ public class DispatcherService implements ContextCompressionMetricsReader {
     }
 
     private String enrichMemoryContextWithSemanticAnalysis(String memoryContext, SemanticAnalysisResult semanticAnalysis) {
-        if (semanticAnalysis == null || semanticAnalysis.confidence() < 0.45) {
+        if (semanticAnalysis == null || semanticAnalysis.confidence() < SEMANTIC_CONTEXT_MIN_CONFIDENCE) {
             return memoryContext;
         }
         String summary = semanticAnalysis.toPromptSummary();
@@ -1265,7 +1271,7 @@ public class DispatcherService implements ContextCompressionMetricsReader {
             return memoryContext;
         }
         String semanticSection = "Semantic analysis:\n"
-                + capText(summary, Math.max(120, memoryContextMaxChars / 3));
+                + capText(summary, Math.max(SEMANTIC_SUMMARY_MIN_CHARS, memoryContextMaxChars / 3));
         String baseContext = memoryContext == null ? "" : memoryContext;
         return capText(semanticSection + "\n" + baseContext, memoryContextMaxChars);
     }
@@ -1771,6 +1777,7 @@ public class DispatcherService implements ContextCompressionMetricsReader {
             case "code.generate" -> payload.putIfAbsent("task", semanticAnalysis.routingInput(originalInput));
             case "todo.create" -> payload.putIfAbsent("task", semanticAnalysis.routingInput(originalInput));
             case "eq.coach" -> payload.putIfAbsent("query", semanticAnalysis.routingInput(originalInput));
+            case "teaching.plan" -> payload.putAll(extractTeachingPlanPayload(originalInput));
             case "file.search" -> {
                 payload.putIfAbsent("path", "./");
                 payload.putIfAbsent("keyword", semanticAnalysis.routingInput(originalInput));

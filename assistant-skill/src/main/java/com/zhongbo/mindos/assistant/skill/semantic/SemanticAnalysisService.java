@@ -7,6 +7,7 @@ import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.skill.Skill;
 import com.zhongbo.mindos.assistant.skill.SkillRegistry;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -39,7 +40,7 @@ public class SemanticAnalysisService {
     private final String delegateSkillName;
 
     public SemanticAnalysisService(LlmClient llmClient,
-                                   SkillRegistry skillRegistry,
+                                   @Lazy SkillRegistry skillRegistry,
                                    @Value("${mindos.dispatcher.semantic-analysis.enabled:true}") boolean enabled,
                                    @Value("${mindos.dispatcher.semantic-analysis.llm-enabled:false}") boolean llmEnabled,
                                    @Value("${mindos.dispatcher.semantic-analysis.delegate-skill:}") String delegateSkillName) {
@@ -164,9 +165,7 @@ public class SemanticAnalysisService {
         String suggestedSkill = normalizeSkillName(stringValue(raw.get("suggestedSkill")));
         double confidence = numberValue(raw.get("confidence"), 0.0);
         Map<String, Object> payload = raw.get("payload") instanceof Map<?, ?> nested
-                ? nested.entrySet().stream().collect(LinkedHashMap::new,
-                (map, entry) -> map.put(String.valueOf(entry.getKey()), entry.getValue()),
-                LinkedHashMap::putAll)
+                ? toStringObjectMap(nested)
                 : Map.of();
         List<String> keywords = toStringList(raw.get("keywords"));
         return new SemanticAnalysisResult(source, intent, rewrittenInput, suggestedSkill, payload, keywords, confidence);
@@ -176,6 +175,20 @@ public class SemanticAnalysisService {
         String normalized = normalize(userInput);
         if (normalized.isBlank()) {
             return SemanticAnalysisResult.empty();
+        }
+        if (normalized.startsWith("semantic ")
+                || normalized.startsWith("semantic.analyze")
+                || normalized.contains("语义分析")
+                || normalized.contains("分析我的语义")) {
+            return new SemanticAnalysisResult(
+                    "heuristic",
+                    "分析用户语义并给出结构化意图建议",
+                    userInput.trim(),
+                    "",
+                    Map.of(),
+                    extractKeywords(userInput, "语义分析", "semantic"),
+                    0.92
+            );
         }
         if (containsAny(normalized, "学习计划", "教学规划", "复习计划", "课程规划", "study plan", "teaching plan")) {
             return new SemanticAnalysisResult(
@@ -307,6 +320,15 @@ public class SemanticAnalysisService {
             }
         }
         return List.copyOf(results);
+    }
+
+    private Map<String, Object> toStringObjectMap(Map<?, ?> raw) {
+        if (raw == null || raw.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, Object> normalized = new LinkedHashMap<>();
+        raw.forEach((key, value) -> normalized.put(String.valueOf(key), value));
+        return normalized;
     }
 
     private String extractJsonBody(String raw) {

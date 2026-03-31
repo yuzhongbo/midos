@@ -11,6 +11,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 @Component
@@ -21,10 +22,6 @@ public class SemanticAnalyzeSkill implements Skill {
 
     public SemanticAnalyzeSkill(SemanticAnalysisService semanticAnalysisService) {
         this.semanticAnalysisService = semanticAnalysisService;
-    }
-
-    SemanticAnalyzeSkill() {
-        this.semanticAnalysisService = null;
     }
 
     @Override
@@ -53,7 +50,7 @@ public class SemanticAnalyzeSkill implements Skill {
     public SkillResult run(SkillContext context) {
         String targetInput = resolveTargetInput(context);
         SemanticAnalysisResult result = semanticAnalysisService == null
-                ? SemanticAnalysisResult.empty()
+                ? fallbackAnalysis(targetInput)
                 : semanticAnalysisService.analyze(
                 context.userId(),
                 targetInput,
@@ -61,6 +58,9 @@ public class SemanticAnalyzeSkill implements Skill {
                 extractProfile(context.attributes().get("profile")),
                 extractSkillSummaries(context.attributes().get("availableSkills"))
         );
+        if (result.confidence() <= 0.0) {
+            result = fallbackAnalysis(targetInput);
+        }
         if ("json".equalsIgnoreCase(asString(context.attributes().get("responseFormat")))) {
             return SkillResult.success(name(), renderJson(result, targetInput));
         }
@@ -114,7 +114,6 @@ public class SemanticAnalyzeSkill implements Skill {
         }
     }
 
-    @SuppressWarnings("unchecked")
     private Map<String, Object> extractProfile(Object raw) {
         if (raw instanceof Map<?, ?> map) {
             Map<String, Object> normalized = new LinkedHashMap<>();
@@ -136,6 +135,23 @@ public class SemanticAnalyzeSkill implements Skill {
 
     private String asString(Object value) {
         return value == null ? "" : String.valueOf(value).trim();
+    }
+
+    private SemanticAnalysisResult fallbackAnalysis(String input) {
+        String normalized = input == null ? "" : input.trim().toLowerCase(Locale.ROOT);
+        if (normalized.contains("学习计划") || normalized.contains("教学规划") || normalized.contains("study plan")) {
+            return new SemanticAnalysisResult("skill-fallback", "为用户生成学习/教学规划", input, "teaching.plan", Map.of(), List.of("学习计划"), 0.82);
+        }
+        if (normalized.contains("待办") || normalized.contains("todo") || normalized.contains("提醒") || normalized.contains("截止")) {
+            return new SemanticAnalysisResult("skill-fallback", "创建待办或提醒事项", input, "todo.create", Map.of("task", input), List.of("待办", "提醒"), 0.78);
+        }
+        if (normalized.contains("沟通") || normalized.contains("情商") || normalized.contains("冲突") || normalized.contains("心理分析")) {
+            return new SemanticAnalysisResult("skill-fallback", "分析沟通场景并生成情商沟通建议", input, "eq.coach", Map.of("query", input), List.of("沟通", "情商"), 0.78);
+        }
+        if (normalized.contains("代码") || normalized.contains("接口") || normalized.contains("bug") || normalized.contains("api") || normalized.contains("dto")) {
+            return new SemanticAnalysisResult("skill-fallback", "生成或整理代码实现方案", input, "code.generate", Map.of("task", input), List.of("代码", "接口"), 0.76);
+        }
+        return new SemanticAnalysisResult("skill-fallback", "整理用户原始诉求并建议后续处理方向", input, "", Map.of(), List.of(), 0.4);
     }
 
     private String blankAsDefault(String value, String defaultValue) {
