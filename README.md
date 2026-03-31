@@ -520,6 +520,8 @@ If you prefer cleaner secret handling for Gemini, use the same endpoint without 
   - `mindos.dispatcher.memory-context.max-chars` (default `1800`)
   - `mindos.dispatcher.memory-context.keep-recent-turns` (default `2`): keep the last N raw turns verbatim in prompt context.
   - `mindos.dispatcher.memory-context.history-summary-min-turns` (default `4`): once recent conversation reaches this threshold, older turns are compressed into a short review summary before entering the prompt.
+  - dispatcher also sends a provider-agnostic `chatHistory` snapshot (last few turns with timestamps) along with the prompt, so switching `llmProvider` keeps the same shared conversation context.
+  - `llm.orchestrate` skill共享上述 `memoryContext` + `chatHistory` 做多 provider 编排与降级；可调参数：`mindos.llm.orchestrate.providers`（默认 `openai,deepseek,qwen`），`mindos.llm.orchestrate.max-hops`（默认 `2`），`mindos.llm.orchestrate.prompt.max-chars`（默认 `1600`），`mindos.llm.orchestrate.history.max-items`（默认 `6`）。
   - `mindos.dispatcher.llm-reply.max-chars` (default `1200`)
   - `mindos.dispatcher.skill.guard.max-consecutive` (default `2`), blocks repeated same-skill loop routing and falls back to broader reasoning.
   - `mindos.dispatcher.skill.guard.recent-window-size` (default `6`), recent procedural entries scanned for loop fingerprints.
@@ -702,25 +704,4 @@ If you prefer cleaner secret handling for Gemini, use the same endpoint without 
 ./mvnw -q -pl assistant-sdk,mindos-cli -am test
 ./mvnw -q -pl assistant-api -am test -Dtest=MemorySyncControllerTest
 ./mvnw -q test
-```
-
-## DingTalk robot stream mode
-
-Use stream mode when webhook replies are too slow for the platform callback window and you still want users to see a waiting status before the final answer arrives.
-
-Recommended properties:
-
-```properties
-mindos.im.enabled=true
-mindos.im.dingtalk.enabled=true
-mindos.im.dingtalk.stream.enabled=true
-mindos.im.dingtalk.stream.client-id=ding-app-key
-mindos.im.dingtalk.stream.client-secret=ding-app-secret
-mindos.im.dingtalk.stream.topic=/v1.0/im/bot/messages/get
-mindos.im.dingtalk.stream.waiting-delay-ms=800
-mindos.im.dingtalk.stream.waiting-text=我正在处理这条消息，请稍等，我会继续回复你。
-mindos.im.dingtalk.stream.force-waiting=true
-mindos.im.dingtalk.stream.final-timeout-ms=30000
-mindos.im.dingtalk.stream.reconnect.enabled=true
-mindos.im.dingtalk.stream.reconnect.initial-delay-ms=1000
 ```

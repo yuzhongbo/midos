@@ -346,26 +346,11 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                 profileContext == null ? Map.of() : profileContext
         );
         String memoryContext = buildMemoryContext(userId, userInput);
-        PromptMemoryContextDto promptMemoryContext = memoryManager.buildPromptMemoryContext(
-                userId,
-                userInput,
-                memoryContextMaxChars,
-                resolvedProfileContext
-        );
-        boolean realtimeIntentInput = isRealtimeIntent(userInput);
-        SemanticAnalysisResult semanticAnalysis = semanticAnalysisService.analyze(
-                userId,
-                userInput,
-                memoryContext,
-                resolvedProfileContext,
-                skillEngine.listAvailableSkillSummaries()
-        );
-        String routingInput = semanticAnalysis.routingInput(userInput);
-        String effectiveMemoryContext = enrichMemoryContextWithSemanticAnalysis(memoryContext, semanticAnalysis);
-        Map<String, Object> contextAttributes = new LinkedHashMap<>(resolvedProfileContext);
-        contextAttributes.put("originalInput", userInput);
-        contextAttributes.putAll(semanticAnalysis.asAttributes());
-        SkillContext context = new SkillContext(userId, routingInput, contextAttributes);
+        List<Map<String, Object>> chatHistory = buildChatHistory(userId);
+        Map<String, Object> skillAttributes = new LinkedHashMap<>(resolvedProfileContext);
+        skillAttributes.put("memoryContext", memoryContext);
+        skillAttributes.put("chatHistory", chatHistory);
+        SkillContext context = new SkillContext(userId, userInput, skillAttributes);
         Map<String, Object> llmContext = new LinkedHashMap<>();
         llmContext.put("userId", userId);
         populateFallbackMemoryContext(llmContext, effectiveMemoryContext, promptMemoryContext, realtimeIntentInput);
@@ -374,9 +359,17 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         llmContext.put("semanticAnalysis", semanticAnalysis.asAttributes());
         llmContext.put("routeStage", "llm-fallback");
         llmContext.put("profile", resolvedProfileContext);
-        copyInteractionContext(resolvedProfileContext, llmContext);
-        applyStageLlmRoute("llm-fallback", resolvedProfileContext, llmContext);
-        intentModelRoutingPolicy.applyForFallback(userInput, promptMemoryContext, realtimeIntentInput, resolvedProfileContext, llmContext);
+        if (!chatHistory.isEmpty()) {
+            llmContext.put("chatHistory", chatHistory);
+        }
+        String llmProvider = asString(resolvedProfileContext.get("llmProvider"));
+        if (llmProvider != null) {
+            llmContext.put("llmProvider", llmProvider);
+        }
+        String llmPreset = asString(resolvedProfileContext.get("llmPreset"));
+        if (llmPreset != null) {
+            llmContext.put("llmPreset", llmPreset);
+        }
 
         return metaOrchestratorService.orchestrate(
                         () -> executeSinglePass(userId, userInput, context, effectiveMemoryContext, promptMemoryContext, llmContext, realtimeIntentInput, routingDecisionRef, semanticAnalysis, replayProbe),
@@ -1667,8 +1660,18 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         llmContext.put("memoryContext", memoryContext);
         llmContext.put("input", userInput);
         llmContext.put("routeStage", "llm-dsl");
-        copyInteractionContext(profileContext, llmContext);
-        applyStageLlmRoute("llm-dsl", profileContext == null ? Map.of() : profileContext, llmContext);
+        List<Map<String, Object>> chatHistory = buildChatHistory(userId);
+        if (!chatHistory.isEmpty()) {
+            llmContext.put("chatHistory", chatHistory);
+        }
+        String llmProvider = profileContext == null ? null : asString(profileContext.get("llmProvider"));
+        if (llmProvider != null) {
+            llmContext.put("llmProvider", llmProvider);
+        }
+        String llmPreset = profileContext == null ? null : asString(profileContext.get("llmPreset"));
+        if (llmPreset != null) {
+            llmContext.put("llmPreset", llmPreset);
+        }
         String llmReply = llmClient.generateResponse(prompt, Map.copyOf(llmContext));
         if (llmReply == null || llmReply.isBlank() || "NONE".equalsIgnoreCase(llmReply.trim())) {
             return Optional.empty();
@@ -1817,14 +1820,29 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         return finalContext;
     }
 
-    private String buildFallbackPrompt(String memoryContext,
-                                       PromptMemoryContextDto promptMemoryContext,
-                                       String userInput,
-                                       boolean realtimeIntentInput) {
-        if (shouldApplyRealtimeMemoryShrink(realtimeIntentInput)) {
-            return buildRealtimeFallbackPrompt(promptMemoryContext, userInput);
+    private List<Map<String, Object>> buildChatHistory(String userId) {
+        List<ConversationTurn> recentConversation = memoryManager.getRecentConversation(userId, CONTEXT_HISTORY_LIMIT);
+        if (recentConversation == null || recentConversation.isEmpty()) {
+            return List.of();
         }
-        String structuredContext = buildStructuredMemoryPromptContext(promptMemoryContext);
+        List<Map<String, Object>> history = new java.util.ArrayList<>();
+        for (ConversationTurn turn : recentConversation) {
+            if (turn == null || turn.content() == null || turn.content().isBlank()) {
+                continue;
+            }
+            String role = turn.role() == null || turn.role().isBlank() ? "assistant" : turn.role();
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("role", role);
+            item.put("content", turn.content());
+            if (turn.createdAt() != null) {
+                item.put("createdAt", turn.createdAt().toString());
+            }
+            history.add(item);
+        }
+        return List.copyOf(history);
+    }
+
+    private String buildFallbackPrompt(String memoryContext, String userInput) {
         String prompt = "Answer naturally using the context when helpful.\n"
                 + capText(memoryContext, memoryContextMaxChars) + "\n"
                 + (structuredContext.isBlank() ? "" : capText(structuredContext, memoryContextMaxChars) + "\n")
