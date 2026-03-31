@@ -224,6 +224,7 @@ public class DispatcherService implements ContextCompressionMetricsReader {
                 profileContext == null ? Map.of() : profileContext
         );
         String memoryContext = buildMemoryContext(userId, userInput);
+        List<Map<String, Object>> chatHistory = buildChatHistory(userId);
         SkillContext context = new SkillContext(userId, userInput, resolvedProfileContext);
         Map<String, Object> llmContext = new LinkedHashMap<>();
         llmContext.put("userId", userId);
@@ -231,6 +232,9 @@ public class DispatcherService implements ContextCompressionMetricsReader {
         llmContext.put("input", userInput);
         llmContext.put("routeStage", "llm-fallback");
         llmContext.put("profile", resolvedProfileContext);
+        if (!chatHistory.isEmpty()) {
+            llmContext.put("chatHistory", chatHistory);
+        }
         String llmProvider = asString(resolvedProfileContext.get("llmProvider"));
         if (llmProvider != null) {
             llmContext.put("llmProvider", llmProvider);
@@ -1049,6 +1053,10 @@ public class DispatcherService implements ContextCompressionMetricsReader {
         llmContext.put("memoryContext", memoryContext);
         llmContext.put("input", userInput);
         llmContext.put("routeStage", "llm-dsl");
+        List<Map<String, Object>> chatHistory = buildChatHistory(userId);
+        if (!chatHistory.isEmpty()) {
+            llmContext.put("chatHistory", chatHistory);
+        }
         String llmProvider = profileContext == null ? null : asString(profileContext.get("llmProvider"));
         if (llmProvider != null) {
             llmContext.put("llmProvider", llmProvider);
@@ -1192,6 +1200,28 @@ public class DispatcherService implements ContextCompressionMetricsReader {
                 Math.max(0, recentConversation.size() - memoryContextKeepRecentTurns)
         );
         return finalContext;
+    }
+
+    private List<Map<String, Object>> buildChatHistory(String userId) {
+        List<ConversationTurn> recentConversation = memoryManager.getRecentConversation(userId, CONTEXT_HISTORY_LIMIT);
+        if (recentConversation == null || recentConversation.isEmpty()) {
+            return List.of();
+        }
+        List<Map<String, Object>> history = new java.util.ArrayList<>();
+        for (ConversationTurn turn : recentConversation) {
+            if (turn == null || turn.content() == null || turn.content().isBlank()) {
+                continue;
+            }
+            String role = turn.role() == null || turn.role().isBlank() ? "assistant" : turn.role();
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("role", role);
+            item.put("content", turn.content());
+            if (turn.createdAt() != null) {
+                item.put("createdAt", turn.createdAt().toString());
+            }
+            history.add(item);
+        }
+        return List.copyOf(history);
     }
 
     private String buildFallbackPrompt(String memoryContext, String userInput) {
@@ -1722,4 +1752,3 @@ public class DispatcherService implements ContextCompressionMetricsReader {
         return value.length() <= max ? value : value.substring(0, max) + "...";
     }
 }
-

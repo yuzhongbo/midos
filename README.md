@@ -335,6 +335,7 @@ curl -X POST http://localhost:8080/api/skills/load-mcp \
   - `mindos.dispatcher.memory-context.max-chars` (default `1800`)
   - `mindos.dispatcher.memory-context.keep-recent-turns` (default `2`): keep the last N raw turns verbatim in prompt context.
   - `mindos.dispatcher.memory-context.history-summary-min-turns` (default `4`): once recent conversation reaches this threshold, older turns are compressed into a short review summary before entering the prompt.
+  - dispatcher also sends a provider-agnostic `chatHistory` snapshot (last few turns with timestamps) along with the prompt, so switching `llmProvider` keeps the same shared conversation context.
   - `mindos.dispatcher.llm-reply.max-chars` (default `1200`)
   - `mindos.dispatcher.skill.guard.max-consecutive` (default `2`), blocks repeated same-skill loop routing and falls back to broader reasoning.
   - `mindos.dispatcher.skill.guard.recent-window-size` (default `6`), recent procedural entries scanned for loop fingerprints.
@@ -508,4 +509,3 @@ curl -X POST http://localhost:8080/api/skills/load-mcp \
 ./mvnw -q -pl assistant-api -am test -Dtest=MemorySyncControllerTest
 ./mvnw -q test
 ```
-

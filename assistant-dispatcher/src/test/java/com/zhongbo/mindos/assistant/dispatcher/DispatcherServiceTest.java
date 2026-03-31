@@ -26,9 +26,11 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class DispatcherServiceTest {
@@ -129,8 +131,41 @@ class DispatcherServiceTest {
         assertTrue(metrics.summarizedTurns() >= 1);
     }
 
+    @Test
+    void shouldShareChatHistoryAcrossProviders() {
+        MemoryManager memoryManager = createMemoryManager();
+        memoryManager.storeUserConversation("shared-history-user", "上次的需求是完成报表");
+        memoryManager.storeAssistantConversation("shared-history-user", "已记录报表需求");
+
+        ContextRecordingLlmClient llmClient = new ContextRecordingLlmClient();
+        DispatcherService service = createDispatcher(memoryManager, llmClient, List.of(), 2);
+
+        service.dispatch("shared-history-user", "谢谢", Map.of("llmProvider", "provider-a"));
+        service.dispatch("shared-history-user", "好的", Map.of("llmProvider", "provider-b"));
+
+        assertEquals(2, llmClient.contexts().size());
+        Map<String, Object> firstContext = llmClient.contexts().get(0);
+        Map<String, Object> secondContext = llmClient.contexts().get(1);
+
+        String firstMemory = Objects.toString(firstContext.get("memoryContext"), "");
+        String secondMemory = Objects.toString(secondContext.get("memoryContext"), "");
+        assertTrue(firstMemory.contains("报表需求"));
+        assertTrue(secondMemory.contains("报表需求"));
+
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> firstHistory = (List<Map<String, Object>>) firstContext.get("chatHistory");
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> secondHistory = (List<Map<String, Object>>) secondContext.get("chatHistory");
+
+        assertNotNull(firstHistory);
+        assertNotNull(secondHistory);
+        assertFalse(firstHistory.isEmpty());
+        assertTrue(secondHistory.size() >= firstHistory.size());
+        assertEquals(firstHistory, secondHistory.subList(0, firstHistory.size()));
+    }
+
     private DispatcherService createDispatcher(MemoryManager memoryManager,
-                                               RecordingLlmClient llmClient,
+                                               LlmClient llmClient,
                                                List<Skill> skills,
                                                int llmShortlistMaxSkills) {
         SkillRegistry registry = new SkillRegistry(skills);
@@ -239,6 +274,20 @@ class DispatcherServiceTest {
         }
     }
 
+    private static final class ContextRecordingLlmClient implements LlmClient {
+        private final List<Map<String, Object>> contexts = new ArrayList<>();
+
+        @Override
+        public String generateResponse(String prompt, Map<String, Object> context) {
+            contexts.add(context);
+            return "stub";
+        }
+
+        private List<Map<String, Object>> contexts() {
+            return contexts;
+        }
+    }
+
     private record FixedSkill(String name, String description, String output) implements Skill {
         @Override
         public SkillResult run(SkillContext context) {
@@ -246,4 +295,3 @@ class DispatcherServiceTest {
         }
     }
 }
-
