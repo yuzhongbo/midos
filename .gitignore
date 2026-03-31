@@ -37,3 +37,4 @@ assistant-api/data/memory-sync/*.jsonl
 
 logs/
 /server.log
+env.bat
