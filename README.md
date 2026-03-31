@@ -449,6 +449,42 @@ mindos.llm.provider-keys=deepseek:sk-xxx,openai:sk-yyy,gemini:AIzaSy-zzz,qwen:sk
 ```
 
 If you prefer cleaner secret handling for Gemini, use the same endpoint without `?key=` and keep the Gemini secret only in `mindos.llm.provider-keys`.
+
+### OpenRouter intent routing + Qwen/Doubao kept for free testing
+
+Use OpenRouter for intent-based model selection while keeping Qwen/Doubao keys handy for cheap or free trials:
+
+```properties
+# Enable HTTP calls and intent-based routing
+mindos.llm.http.enabled=true
+mindos.llm.routing.mode=auto
+
+# Intent providers (all through OpenRouter), Qwen/Doubao stay available for overrides
+mindos.dispatcher.intent-routing.default-provider=gpt
+mindos.dispatcher.intent-routing.code-provider=gpt
+mindos.dispatcher.intent-routing.realtime-provider=grok
+mindos.dispatcher.intent-routing.emotional-provider=gemini
+
+# Intent + difficulty model picks (edit to your OpenRouter allowlist)
+mindos.dispatcher.intent-routing.model.general.easy=gpt-4o-mini
+mindos.dispatcher.intent-routing.model.general.hard=gpt-4o
+mindos.dispatcher.intent-routing.model.code.medium=gpt-4o
+mindos.dispatcher.intent-routing.model.realtime.medium=grok-beta
+mindos.dispatcher.intent-routing.model.emotional.medium=gemini-2.0-flash
+
+# Provider endpoints: OpenRouter for gpt/grok/gemini, native for qwen/doubao
+mindos.llm.provider-endpoints=gpt:https://openrouter.ai/api/v1/chat/completions,grok:https://openrouter.ai/api/v1/chat/completions,gemini:https://openrouter.ai/api/v1/chat/completions,qwen:https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions,doubao:https://ark.cn-beijing.volces.com/api/v3/chat/completions
+
+# Provider models (Doubao needs a real Model ID or Endpoint ID)
+mindos.llm.provider-models=qwen:qwen-plus,doubao:ep-xxxxxxxxxxxx
+
+# Keys: one OpenRouter key feeds gpt/grok/gemini; keep Qwen/Doubao keys for low-cost testing
+mindos.llm.provider-keys=gpt:${MINDOS_OPENROUTER_KEY},grok:${MINDOS_OPENROUTER_KEY},gemini:${MINDOS_OPENROUTER_KEY},qwen:${MINDOS_QWEN_KEY},doubao:${MINDOS_DOUBAO_ARK_KEY}
+```
+
+Tips:
+- If you prefer a single OpenRouter key mapping for all three providers, keep the `provider-keys` map as shown; otherwise split by provider names OpenRouter exposes.
+- Override `mindos.dispatcher.llm-fallback.provider` or `profile.llmProvider` to force Qwen/Doubao on-demand (e.g., for cost-sensitive sessions) without changing the intent-routing defaults.
 - LLM call metrics (token estimate + multi-provider stats):
   - endpoint: `GET /api/metrics/llm?windowMinutes=60&provider=openai&includeRecent=true&recentLimit=20`
   - routing replay endpoint: `GET /api/metrics/llm/routing-replay?limit=200` (offline compare of `rule / preAnalyze / finalChannel` from recent real inputs)

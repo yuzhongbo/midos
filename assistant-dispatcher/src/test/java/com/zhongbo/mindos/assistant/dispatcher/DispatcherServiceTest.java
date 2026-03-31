@@ -29,6 +29,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Locale;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -225,7 +226,7 @@ class DispatcherServiceTest {
     }
 
     private DispatcherService createDispatcher(MemoryManager memoryManager,
-                                               RecordingLlmClient llmClient,
+                                               LlmClient llmClient,
                                                List<Skill> skills,
                                                int llmShortlistMaxSkills,
                                                boolean semanticAnalysisEnabled) {
@@ -235,7 +236,7 @@ class DispatcherServiceTest {
     }
 
     private DispatcherService createDispatcher(MemoryManager memoryManager,
-                                               RecordingLlmClient llmClient,
+                                               LlmClient llmClient,
                                                List<Skill> skills,
                                                int llmShortlistMaxSkills,
                                                String preAnalyzeMode,
@@ -249,7 +250,7 @@ class DispatcherServiceTest {
     }
 
     private DispatcherService createDispatcher(MemoryManager memoryManager,
-                                               RecordingLlmClient llmClient,
+                                               LlmClient llmClient,
                                                List<Skill> skills,
                                                int llmShortlistMaxSkills,
                                                String preAnalyzeMode,
@@ -281,7 +282,7 @@ class DispatcherServiceTest {
     }
 
     private DispatcherService createDispatcher(MemoryManager memoryManager,
-                                               RecordingLlmClient llmClient,
+                                               LlmClient llmClient,
                                                List<Skill> skills,
                                                int llmShortlistMaxSkills,
                                                String preAnalyzeMode,
@@ -315,7 +316,7 @@ class DispatcherServiceTest {
     }
 
     private DispatcherService createDispatcher(MemoryManager memoryManager,
-                                               RecordingLlmClient llmClient,
+                                               LlmClient llmClient,
                                                List<Skill> skills,
                                                int llmShortlistMaxSkills,
                                                String preAnalyzeMode,
@@ -352,7 +353,7 @@ class DispatcherServiceTest {
     }
 
     private DispatcherService createDispatcher(MemoryManager memoryManager,
-                                               RecordingLlmClient llmClient,
+                                               LlmClient llmClient,
                                                List<Skill> skills,
                                                int llmShortlistMaxSkills,
                                                String preAnalyzeMode,
@@ -470,7 +471,7 @@ class DispatcherServiceTest {
     }
 
     private DispatcherService createDispatcher(MemoryManager memoryManager,
-                                               RecordingLlmClient llmClient,
+                                               LlmClient llmClient,
                                                List<Skill> skills,
                                                int llmShortlistMaxSkills,
                                                String preAnalyzeMode,
@@ -523,6 +524,32 @@ class DispatcherServiceTest {
                 preferenceProfileService,
                 longTaskService
         );
+    }
+
+    private static final class SemanticTriggerSkill implements Skill {
+        @Override
+        public String name() {
+            return "semantic.analyze";
+        }
+
+        @Override
+        public String description() {
+            return "Semantic analyzer trigger for tests";
+        }
+
+        @Override
+        public SkillResult run(SkillContext context) {
+            return SkillResult.success(name(), "semantic analysis executed");
+        }
+
+        @Override
+        public boolean supports(String input) {
+            if (input == null) {
+                return false;
+            }
+            String normalized = input.stripLeading().toLowerCase(Locale.ROOT);
+            return normalized.startsWith("semantic");
+        }
     }
 
     private static final class RecordingLlmClient implements LlmClient {
