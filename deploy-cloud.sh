@@ -22,7 +22,7 @@ Optional env:
   APP_PORT=8080
   BUILD=1
   SKIP_TESTS=1
-  JAVA_OPTS='-Xms256m -Xmx512m'
+  JAVA_OPTS='-Xms256m -Xmx512m -Dfile.encoding=UTF-8'
 
 Notes:
   - 默认使用 SSH key（推荐）；首次可先运行 ./init-authorized-keys.sh 初始化。
@@ -46,7 +46,16 @@ REMOTE_BASE_DIR="${REMOTE_BASE_DIR:-/home/${CLOUD_USER:-mindos}/mindos}"
 APP_PORT="${APP_PORT:-8080}"
 BUILD="${BUILD:-1}"
 SKIP_TESTS="${SKIP_TESTS:-1}"
-JAVA_OPTS="${JAVA_OPTS:--Xms256m -Xmx512m}"
+
+ensure_utf8_java_opts() {
+  local opts="$1"
+  if [[ "$opts" != *"-Dfile.encoding="* ]]; then
+    opts="${opts:+$opts }-Dfile.encoding=UTF-8"
+  fi
+  printf '%s' "$opts"
+}
+
+JAVA_OPTS="$(ensure_utf8_java_opts "${JAVA_OPTS:--Xms256m -Xmx512m}")"
 
 if [[ -z "$CLOUD_HOST" || -z "$CLOUD_USER" ]]; then
   echo "[ERROR] CLOUD_HOST 和 CLOUD_USER 必填"

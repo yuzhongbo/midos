@@ -25,5 +25,5 @@ REM set MINDOS_IM_WECHAT_ENABLED=true
 REM set MINDOS_IM_WECHAT_TOKEN=replace-with-wechat-token
 
 REM === Start assistant-api ===
-REM Pass through any extra JVM args after the script name, e.g. env.bat --spring.profiles.active=solo
-java -jar assistant-api/target/assistant-api-0.1.0-SNAPSHOT.jar %*
+REM Startup defaults to UTF-8 file encoding; pass through any extra app args after the script name, e.g. env.bat --spring.profiles.active=solo
+java -Dfile.encoding=UTF-8 -jar assistant-api/target/assistant-api-0.1.0-SNAPSHOT.jar %*

@@ -113,7 +113,7 @@ if [[ -z "${MINDOS_IM_DINGTALK_OUTBOUND_ENABLED:-}" ]]; then
   fi
 fi
 
-java -jar "$ROOT_DIR/$JAR_NAME" --spring.profiles.active="$MINDOS_SPRING_PROFILE" "$@"
+java -Dfile.encoding=UTF-8 -jar "$ROOT_DIR/$JAR_NAME" --spring.profiles.active="$MINDOS_SPRING_PROFILE" "$@"
 EOF
 chmod +x "$INSTALL_DIR/mindos-server"
 

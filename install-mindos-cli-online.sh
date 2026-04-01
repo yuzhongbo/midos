@@ -21,7 +21,7 @@ mkdir -p "$INSTALL_DIR"
 cp mindos-cli/target/mindos-cli-0.1.0-SNAPSHOT.jar "$INSTALL_DIR/"
 cat > "$INSTALL_DIR/mindos" <<EOF
 #!/bin/bash
-java -jar "$INSTALL_DIR/mindos-cli-0.1.0-SNAPSHOT.jar" "$@"
+java -Dfile.encoding=UTF-8 -jar "$INSTALL_DIR/mindos-cli-0.1.0-SNAPSHOT.jar" "$@"
 EOF
 chmod +x "$INSTALL_DIR/mindos"
 

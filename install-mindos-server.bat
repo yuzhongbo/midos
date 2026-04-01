@@ -105,7 +105,7 @@ echo ^)
 echo if not defined MINDOS_IM_DINGTALK_OUTBOUND_ENABLED set "MINDOS_IM_DINGTALK_OUTBOUND_ENABLED=false"
 echo if not exist logs mkdir logs
 echo echo [MindOS] Starting assistant-api with solo profile...
-echo java -jar "%INSTALL_DIR%\%JAR_NAME%" --spring.profiles.active=%%MINDOS_SPRING_PROFILE%% %%*
+echo java -Dfile.encoding=UTF-8 -jar "%INSTALL_DIR%\%JAR_NAME%" --spring.profiles.active=%%MINDOS_SPRING_PROFILE%% %%*
 echo exit /b %%ERRORLEVEL%%
 ) > "%STARTER%"
 

@@ -21,7 +21,7 @@ cp "$CLI_MODULE/target/$JAR_NAME" "$INSTALL_DIR/"
 # 创建启动脚本
 cat > "$INSTALL_DIR/mindos" <<EOF
 #!/bin/bash
-java -jar "$INSTALL_DIR/$JAR_NAME" "$@"
+java -Dfile.encoding=UTF-8 -jar "$INSTALL_DIR/$JAR_NAME" "$@"
 EOF
 chmod +x "$INSTALL_DIR/mindos"
 

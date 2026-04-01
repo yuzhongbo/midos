@@ -17,7 +17,7 @@ Optional env:
   SSH_KEY_PATH=~/.ssh/id_ed25519
   REMOTE_BASE_DIR=/home/<user>/mindos
   APP_PORT=8080
-  JAVA_OPTS='-Xms256m -Xmx512m'
+  JAVA_OPTS='-Xms256m -Xmx512m -Dfile.encoding=UTF-8'
 
 Notes:
   - 远端要求已存在 previous 软链（通常由 deploy-cloud.sh 自动维护）。
@@ -37,7 +37,16 @@ CLOUD_PORT="${CLOUD_PORT:-22}"
 SSH_KEY_PATH="${SSH_KEY_PATH:-$HOME/.ssh/id_ed25519}"
 REMOTE_BASE_DIR="${REMOTE_BASE_DIR:-/home/${CLOUD_USER:-mindos}/mindos}"
 APP_PORT="${APP_PORT:-8080}"
-JAVA_OPTS="${JAVA_OPTS:--Xms256m -Xmx512m}"
+
+ensure_utf8_java_opts() {
+  local opts="$1"
+  if [[ "$opts" != *"-Dfile.encoding="* ]]; then
+    opts="${opts:+$opts }-Dfile.encoding=UTF-8"
+  fi
+  printf '%s' "$opts"
+}
+
+JAVA_OPTS="$(ensure_utf8_java_opts "${JAVA_OPTS:--Xms256m -Xmx512m}")"
 
 if [[ -z "$CLOUD_HOST" || -z "$CLOUD_USER" ]]; then
   echo "[ERROR] CLOUD_HOST 和 CLOUD_USER 必填"

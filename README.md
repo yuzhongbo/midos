@@ -20,7 +20,7 @@ MindOS is a lightweight, single-user personal AI assistant backend built with Ja
 ## Quick try
 ```bash
 ./mvnw -q test
-./mvnw -pl assistant-api -am spring-boot:run
+./mvnw -pl assistant-api -am spring-boot:run -Dspring-boot.run.jvmArguments=-Dfile.encoding=UTF-8
 ```
 
 ## Minimal runtime env (Windows)
@@ -37,7 +37,7 @@ To avoid re-editing property files for every deployment, copy `env.example.bat` 
 Use the built-in `solo` Spring profile when you are the only user and want better day-to-day experience without changing CLI command behavior.
 
 ```bash
-./mvnw -pl assistant-api -am spring-boot:run -Dspring-boot.run.profiles=solo
+./mvnw -pl assistant-api -am spring-boot:run -Dspring-boot.run.profiles=solo -Dspring-boot.run.jvmArguments=-Dfile.encoding=UTF-8
 ```
 
 Or use the one-click launcher:
@@ -692,11 +692,12 @@ Tips:
   - dev example:
     ```bash
     ./mvnw -pl assistant-api -am spring-boot:run \
-      -Dspring-boot.run.jvmArguments="-Dmindos.memory.nlu.focus.review-terms=复盘,总结,retrospective -Dmindos.memory.nlu.style.action-terms=action,行动,行动派 -Dmindos.memory.nlu.tone.warm-terms=warm,温和,gentle -Dmindos.memory.nlu.format.bullet-terms=bullet,列表,markdown list"
+      -Dspring-boot.run.jvmArguments="-Dfile.encoding=UTF-8 -Dmindos.memory.nlu.focus.review-terms=复盘,总结,retrospective -Dmindos.memory.nlu.style.action-terms=action,行动,行动派 -Dmindos.memory.nlu.tone.warm-terms=warm,温和,gentle -Dmindos.memory.nlu.format.bullet-terms=bullet,列表,markdown list"
     ```
   - prod example:
     ```bash
     java \
+      -Dfile.encoding=UTF-8 \
       -Dmindos.memory.nlu.focus.review-terms="复盘,总结,retrospective" \
       -Dmindos.memory.nlu.style.action-terms="action,行动,行动派" \
       -Dmindos.memory.nlu.tone.warm-terms="warm,温和,gentle" \

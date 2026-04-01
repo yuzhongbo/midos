@@ -19,7 +19,7 @@ REM 创建启动脚本
 set STARTER=%INSTALL_DIR%\mindos.bat
 (
 echo @echo off
-echo java -jar "%INSTALL_DIR%\%JAR_NAME%" %%*
+echo java -Dfile.encoding=UTF-8 -jar "%INSTALL_DIR%\%JAR_NAME%" %%*
 ) > "%STARTER%"
 
 REM 添加到 PATH 提示

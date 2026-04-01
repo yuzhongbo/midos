@@ -92,7 +92,7 @@ set "MINDOS_ENV_STAGE=boot"
 
 if exist "%ROOT_DIR%mindos-secrets.properties" (
   set "MINDOS_ENV_STAGE=loading_secrets"
-  for /f "usebackq tokens=1,* delims==" %%A in (`powershell -NoProfile -Command "Get-Content -Path '%ROOT_DIR%mindos-secrets.properties' | Where-Object { $_ -and $_.Trim().Length -gt 0 -and -not $_.Trim().StartsWith('#') -and -not $_.Trim().StartsWith(';') }"`) do (
+  for /f "usebackq tokens=1,* delims==" %%A in (`findstr /R /V /C:"^[ ]*[#;]" "%ROOT_DIR%mindos-secrets.properties"`) do (
     if not "%%A"=="" set "%%A=%%B"
   )
 )
@@ -506,7 +506,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$ErrorActionPreference='Stop';" ^
   "$pidFile='%PID_FILE%';" ^
   "if (Test-Path $pidFile) { $existing = ((Get-Content $pidFile | Select-Object -First 1) -as [string]).Trim(); if ($existing -and (Get-Process -Id ([int]$existing) -ErrorAction SilentlyContinue)) { Write-Host ('[PASS] MindOS already running (PID=' + $existing + ')'); exit 0 } else { Remove-Item $pidFile -ErrorAction SilentlyContinue } };" ^
-  "$args = @('-jar', '%JAR_PATH%', '--spring.profiles.active=%SPRING_PROFILE%', '--server.port=%SERVER_PORT%');" ^
+  "$args = @('-Dfile.encoding=UTF-8', '-jar', '%JAR_PATH%', '--spring.profiles.active=%SPRING_PROFILE%', '--server.port=%SERVER_PORT%');" ^
   "$p = Start-Process -FilePath 'java' -ArgumentList $args -WorkingDirectory '%ROOT_DIR%' -RedirectStandardOutput '%LOG_OUT%' -RedirectStandardError '%LOG_ERR%' -PassThru -WindowStyle Hidden;" ^
   "Set-Content -Path $pidFile -Value $p.Id;" ^
   "Start-Sleep -Seconds 2;" ^
@@ -597,7 +597,7 @@ if not exist "%JAR_PATH%" (
 
 echo [INFO] Starting in foreground (debug mode). Press Ctrl+C to stop.
 echo [INFO] Profile=%SPRING_PROFILE% Port=%SERVER_PORT%
-java -jar "%JAR_PATH%" --spring.profiles.active=%SPRING_PROFILE% --server.port=%SERVER_PORT%
+java -Dfile.encoding=UTF-8 -jar "%JAR_PATH%" --spring.profiles.active=%SPRING_PROFILE% --server.port=%SERVER_PORT%
 set "EXIT_CODE=%ERRORLEVEL%"
 echo [INFO] Process exited with code %EXIT_CODE%
 exit /b %EXIT_CODE%
@@ -717,6 +717,7 @@ MindOS Windows server bundle
 
 Notes:
 - The service starts in background and writes logs to logs\assistant-api.out and logs\assistant-api.err.
+- The launcher starts Java with `-Dfile.encoding=UTF-8` by default.
 - PID file is stored in run\assistant-api.pid.
 - Default Spring profile is solo.
 - All launcher scripts auto-load mindos-server.env.bat (which itself loads mindos-secrets.properties if present).
@@ -727,6 +728,20 @@ Notes:
 - Doubao Ark Chat uses Authorization: Bearer <ARK_API_KEY> and requires a real Model ID or Endpoint ID.
 - Avoid unescaped special characters in values: & | < > % ^ !
 TXT
+
+python3 - <<'PY' "$OUTPUT_DIR"
+from pathlib import Path
+import sys
+
+output_dir = Path(sys.argv[1])
+for path in output_dir.iterdir():
+    if path.suffix.lower() not in {".bat", ".properties", ".txt"}:
+        continue
+    text = path.read_text(encoding="utf-8")
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        handle.write(text.replace("\n", "\r\n"))
+PY
 
 echo "[DONE] Windows bundle exported to: $OUTPUT_DIR"
 echo "       Copy this whole directory to your Windows machine, then run mindos-server.bat"

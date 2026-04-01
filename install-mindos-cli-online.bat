@@ -19,7 +19,7 @@ if not exist "%INSTALL_DIR%" mkdir "%INSTALL_DIR%"
 copy mindos-cli\target\mindos-cli-0.1.0-SNAPSHOT.jar "%INSTALL_DIR%\" /Y
 (
 echo @echo off
-echo java -jar "%INSTALL_DIR%\mindos-cli-0.1.0-SNAPSHOT.jar" %%*
+echo java -Dfile.encoding=UTF-8 -jar "%INSTALL_DIR%\mindos-cli-0.1.0-SNAPSHOT.jar" %%*
 ) > "%INSTALL_DIR%\mindos.bat"
 
 REM 清理
