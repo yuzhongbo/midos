@@ -48,7 +48,7 @@ public class PreferenceProfileService {
         this(overwriteConfirmTurns);
     }
 
-    PreferenceProfileService(int overwriteConfirmTurns) {
+    public PreferenceProfileService(int overwriteConfirmTurns) {
         this(overwriteConfirmTurns, new PreferenceProfile(
                 DEFAULT_ASSISTANT_NAME,
                 DEFAULT_ROLE,
