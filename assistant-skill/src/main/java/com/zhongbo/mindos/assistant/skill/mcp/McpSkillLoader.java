@@ -30,17 +30,23 @@ public class McpSkillLoader {
     private final SkillRegistry skillRegistry;
     private final McpJsonRpcClient mcpClient;
     private final String configuredServers;
+    private final String configuredServerHeaders;
 
     @Autowired
     public McpSkillLoader(SkillRegistry skillRegistry,
-                          @Value("${mindos.skills.mcp-servers:}") String configuredServers) {
-        this(skillRegistry, new McpJsonRpcClient(), configuredServers);
+                          @Value("${mindos.skills.mcp-servers:}") String configuredServers,
+                          @Value("${mindos.skills.mcp-server-headers:}") String configuredServerHeaders) {
+        this(skillRegistry, new McpJsonRpcClient(), configuredServers, configuredServerHeaders);
     }
 
-    McpSkillLoader(SkillRegistry skillRegistry, McpJsonRpcClient mcpClient, String configuredServers) {
+    McpSkillLoader(SkillRegistry skillRegistry,
+                   McpJsonRpcClient mcpClient,
+                   String configuredServers,
+                   String configuredServerHeaders) {
         this.skillRegistry = skillRegistry;
         this.mcpClient = mcpClient;
         this.configuredServers = configuredServers;
+        this.configuredServerHeaders = configuredServerHeaders;
     }
 
     @PostConstruct
@@ -59,9 +65,11 @@ public class McpSkillLoader {
 
     public int loadConfiguredServers() {
         Map<String, String> servers = parseServerConfig(configuredServers);
+        Map<String, Map<String, String>> headersByAlias = parseHeadersConfig(configuredServerHeaders);
         int total = 0;
         for (Map.Entry<String, String> entry : servers.entrySet()) {
-            total += loadServer(entry.getKey(), entry.getValue());
+            Map<String, String> headers = headersByAlias.getOrDefault(normalizeAlias(entry.getKey()), Map.of());
+            total += loadServer(entry.getKey(), entry.getValue(), headers);
         }
         return total;
     }
@@ -95,6 +103,10 @@ public class McpSkillLoader {
         return configuredServers;
     }
 
+    public String getConfiguredServerHeaders() {
+        return configuredServerHeaders;
+    }
+
     Map<String, String> parseServerConfig(String raw) {
         if (raw == null || raw.isBlank()) {
             return Map.of();
@@ -115,9 +127,40 @@ public class McpSkillLoader {
         return Map.copyOf(parsed);
     }
 
+    Map<String, Map<String, String>> parseHeadersConfig(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return Map.of();
+        }
+        Map<String, Map<String, String>> parsed = new LinkedHashMap<>();
+        String[] entries = raw.split(",");
+        for (String entry : entries) {
+            int separator = entry.indexOf(':');
+            if (separator <= 0 || separator >= entry.length() - 1) {
+                continue;
+            }
+            String alias = normalizeAlias(entry.substring(0, separator));
+            String headersPart = entry.substring(separator + 1);
+            Map<String, String> headerMap = new LinkedHashMap<>();
+            for (String headerEntry : headersPart.split(";")) {
+                int eq = headerEntry.indexOf('=');
+                if (eq <= 0 || eq >= headerEntry.length() - 1) {
+                    continue;
+                }
+                String key = headerEntry.substring(0, eq).trim();
+                String value = headerEntry.substring(eq + 1).trim();
+                if (!key.isEmpty() && !value.isEmpty()) {
+                    headerMap.put(key, value);
+                }
+            }
+            if (!alias.isBlank() && !headerMap.isEmpty()) {
+                parsed.put(alias, Map.copyOf(headerMap));
+            }
+        }
+        return Map.copyOf(parsed);
+    }
+
     private String normalizeAlias(String alias) {
         String normalized = alias == null ? "" : alias.trim().toLowerCase();
         return normalized.replaceAll("[^a-z0-9._-]", "-");
     }
 }
-

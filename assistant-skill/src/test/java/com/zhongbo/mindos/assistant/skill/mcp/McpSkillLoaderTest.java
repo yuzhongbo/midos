@@ -76,7 +76,7 @@ class McpSkillLoaderTest {
 
         String url = "http://127.0.0.1:" + server.getAddress().getPort() + "/mcp";
         SkillRegistry registry = new SkillRegistry(List.<Skill>of());
-        McpSkillLoader loader = new McpSkillLoader(registry, new McpJsonRpcClient(), "docs:" + url);
+        McpSkillLoader loader = new McpSkillLoader(registry, new McpJsonRpcClient(), "docs:" + url, "");
 
         int loaded = loader.loadServer("docs", url, Map.of("Authorization", "Bearer loader-token"));
         Skill loadedSkill = registry.getSkill("mcp.docs.searchDocs").orElseThrow();
@@ -92,8 +92,52 @@ class McpSkillLoaderTest {
         assertTrue(authHeaderSeen.get());
     }
 
+    @Test
+    void shouldApplyConfiguredHeadersWhenLoadingConfiguredServers() throws Exception {
+        AtomicBoolean authHeaderSeen = new AtomicBoolean(false);
+        server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/mcp", exchange -> {
+            if ("Bearer cfg-token".equals(exchange.getRequestHeaders().getFirst("Authorization"))) {
+                authHeaderSeen.set(true);
+            }
+            Map<String, Object> request = objectMapper.readValue(
+                    exchange.getRequestBody().readAllBytes(), new TypeReference<>() {});
+            String method = String.valueOf(request.get("method"));
+            byte[] response = switch (method) {
+                case "initialize" -> json(Map.of("jsonrpc", "2.0", "id", request.get("id"), "result", Map.of()));
+                case "tools/list" -> json(Map.of(
+                        "jsonrpc", "2.0",
+                        "id", request.get("id"),
+                        "result", Map.of("tools", List.of(
+                                Map.of("name", "searchDocs", "description", "Search docs")
+                        ))
+                ));
+                default -> json(Map.of("jsonrpc", "2.0", "id", request.get("id"), "result", Map.of()));
+            };
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+        server.start();
+
+        String url = "http://127.0.0.1:" + server.getAddress().getPort() + "/mcp";
+        SkillRegistry registry = new SkillRegistry(List.<Skill>of());
+        McpSkillLoader loader = new McpSkillLoader(
+                registry,
+                new McpJsonRpcClient(),
+                "docs:" + url,
+                "docs:Authorization=Bearer cfg-token"
+        );
+
+        int loaded = loader.loadConfiguredServers();
+
+        assertEquals(1, loaded);
+        assertTrue(registry.getSkill("mcp.docs.searchDocs").isPresent());
+        assertTrue(authHeaderSeen.get());
+    }
+
     private byte[] json(Map<String, Object> value) throws IOException {
         return objectMapper.writeValueAsString(value).getBytes(StandardCharsets.UTF_8);
     }
 }
-
