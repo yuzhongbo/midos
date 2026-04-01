@@ -637,6 +637,13 @@ Tips:
   - `mindos.dispatcher.persona-core.preferred-channel.min-consecutive-success` (default `2`)
   - `mindos.dispatcher.persona-core.ignored-profile-terms` (default `unknown,null,n/a,na,tbd,todo,随便,不知道,待定`)
   - `mindos.memory.preference.overwrite-confirm-turns` (default `2`): conflicting long-term profile values need repeated confirmation turns before replacement.
+  - Default persona fallback (used when no profile has been learned yet):
+    - `mindos.memory.preference.default.assistant-name` (default `MindOS`)
+    - `mindos.memory.preference.default.role` (default `personal-assistant`)
+    - `mindos.memory.preference.default.style` (default `warm`)
+    - `mindos.memory.preference.default.language` (default `zh-CN`)
+    - `mindos.memory.preference.default.timezone` (default `Asia/Shanghai`)
+    - `mindos.memory.preference.default.preferred-channel` (default empty)
 - Memory sync API supports incremental pull via cursor (`since`) for multi-terminal synchronization.
 - Learned persona profile can be inspected via `GET /api/memory/{userId}/persona` (CLI: `mindos profile persona show`).
 - Persona debug explain view is available at `GET /api/memory/{userId}/persona/explain` to inspect pending conflict overrides before confirmation.

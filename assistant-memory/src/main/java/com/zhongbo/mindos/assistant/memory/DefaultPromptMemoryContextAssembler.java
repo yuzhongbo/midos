@@ -174,25 +174,19 @@ public class DefaultPromptMemoryContextAssembler implements PromptMemoryContextA
     private Map<String, Object> buildPersonaSnapshot(String userId, Map<String, Object> profileContext) {
         PreferenceProfile profile = preferenceProfileService.getProfile(userId);
         Map<String, Object> snapshot = new LinkedHashMap<>();
-        snapshot.put("assistantName", nonBlankOrEmpty(profile.assistantName()));
-        snapshot.put("role", nonBlankOrEmpty(profile.role()));
-        snapshot.put("style", nonBlankOrEmpty(profile.style()));
-        snapshot.put("language", nonBlankOrEmpty(profile.language()));
-        snapshot.put("timezone", nonBlankOrEmpty(profile.timezone()));
-        snapshot.put("preferredChannel", nonBlankOrEmpty(profile.preferredChannel()));
+        putIfHasText(snapshot, "assistantName", profile.assistantName());
+        putIfHasText(snapshot, "role", profile.role());
+        putIfHasText(snapshot, "style", profile.style());
+        putIfHasText(snapshot, "language", profile.language());
+        putIfHasText(snapshot, "timezone", profile.timezone());
+        putIfHasText(snapshot, "preferredChannel", profile.preferredChannel());
         if (profileContext != null && !profileContext.isEmpty()) {
-            if (profileContext.containsKey("language")) {
-                snapshot.put("language", String.valueOf(profileContext.get("language")));
-            }
-            if (profileContext.containsKey("timezone")) {
-                snapshot.put("timezone", String.valueOf(profileContext.get("timezone")));
-            }
-            if (profileContext.containsKey("style")) {
-                snapshot.put("style", String.valueOf(profileContext.get("style")));
-            }
-            if (profileContext.containsKey("role")) {
-                snapshot.put("role", String.valueOf(profileContext.get("role")));
-            }
+            putIfHasText(snapshot, "assistantName", asText(profileContext.get("assistantName")));
+            putIfHasText(snapshot, "role", asText(profileContext.get("role")));
+            putIfHasText(snapshot, "style", asText(profileContext.get("style")));
+            putIfHasText(snapshot, "language", asText(profileContext.get("language")));
+            putIfHasText(snapshot, "timezone", asText(profileContext.get("timezone")));
+            putIfHasText(snapshot, "preferredChannel", asText(profileContext.get("preferredChannel")));
         }
         return snapshot;
     }
@@ -248,8 +242,18 @@ public class DefaultPromptMemoryContextAssembler implements PromptMemoryContextA
         return text.substring(0, maxChars - 1) + "...";
     }
 
-    private String nonBlankOrEmpty(String value) {
-        return value == null ? "" : value;
+    private String asText(Object value) {
+        return value == null ? null : String.valueOf(value);
+    }
+
+    private void putIfHasText(Map<String, Object> target, String key, String value) {
+        if (value == null) {
+            return;
+        }
+        String trimmed = value.trim();
+        if (trimmed.isEmpty()) {
+            return;
+        }
+        target.put(key, trimmed);
     }
 }
-
