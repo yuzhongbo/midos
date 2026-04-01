@@ -9,6 +9,7 @@ set "API_MODULE=assistant-api"
 set "JAR_NAME=assistant-api-0.1.0-SNAPSHOT.jar"
 set "INSTALL_DIR=%USERPROFILE%\.mindos-server"
 set "STARTER=%INSTALL_DIR%\mindos-server.bat"
+set "ENV_FILE=%INSTALL_DIR%\mindos-server.env.bat"
 set "SMOKE=%INSTALL_DIR%\mindos-server-smoke.bat"
 set "SECRETS_FILE=%INSTALL_DIR%\mindos-secrets.properties"
 
@@ -71,41 +72,28 @@ if errorlevel 1 (
   exit /b 1
 )
 
+if not exist "%ENV_FILE%" (
+  copy "%REPO_DIR%mindos-server.env.template.bat" "%ENV_FILE%" /Y >nul
+  if errorlevel 1 (
+    echo [MindOS] 复制环境模板失败：%REPO_DIR%mindos-server.env.template.bat
+    exit /b 1
+  )
+)
+
 (
 echo @echo off
-echo setlocal
+echo setlocal EnableExtensions DisableDelayedExpansion
 echo cd /d "%%~dp0"
-echo if exist "%SECRETS_FILE%" ^
- for /f "usebackq tokens=1,* delims==" %%%%A in (^^^"%SECRETS_FILE%"^^^) do ^(
- echo   ^^^^^(echo %%%%A^| findstr /R "^[#;]" ^>nul^) ^&^& ^^^^^(echo skipp^) ^| findstr /V "skipp" ^>nul
- echo   if not "%%%%A"=="" set "%%%%A=%%%%B"
- echo ^)
-echo if not defined MINDOS_SPRING_PROFILE set "MINDOS_SPRING_PROFILE=solo"
-echo if not defined MINDOS_IM_ENABLED set "MINDOS_IM_ENABLED=true"
-echo if not defined MINDOS_IM_DINGTALK_ENABLED set "MINDOS_IM_DINGTALK_ENABLED=true"
-echo if not defined MINDOS_IM_DINGTALK_VERIFY_SIGNATURE set "MINDOS_IM_DINGTALK_VERIFY_SIGNATURE=false"
-echo if not defined MINDOS_IM_DINGTALK_REPLY_TIMEOUT_MS set "MINDOS_IM_DINGTALK_REPLY_TIMEOUT_MS=2500"
-echo if not defined MINDOS_IM_DINGTALK_REPLY_MAX_CHARS set "MINDOS_IM_DINGTALK_REPLY_MAX_CHARS=1200"
-echo if not defined MINDOS_IM_DINGTALK_STREAM_TOPIC set "MINDOS_IM_DINGTALK_STREAM_TOPIC=/v1.0/im/bot/messages/get"
-echo if not defined MINDOS_IM_DINGTALK_OUTBOUND_APP_KEY set "MINDOS_IM_DINGTALK_OUTBOUND_APP_KEY="
-echo if not defined MINDOS_IM_DINGTALK_OUTBOUND_APP_SECRET set "MINDOS_IM_DINGTALK_OUTBOUND_APP_SECRET="
-echo if defined MINDOS_IM_DINGTALK_APP_KEY if not defined MINDOS_IM_DINGTALK_STREAM_CLIENT_ID set "MINDOS_IM_DINGTALK_STREAM_CLIENT_ID=%%MINDOS_IM_DINGTALK_APP_KEY%%"
-echo if defined MINDOS_IM_DINGTALK_APP_SECRET if not defined MINDOS_IM_DINGTALK_STREAM_CLIENT_SECRET set "MINDOS_IM_DINGTALK_STREAM_CLIENT_SECRET=%%MINDOS_IM_DINGTALK_APP_SECRET%%"
-echo if defined MINDOS_IM_DINGTALK_APP_KEY if not defined MINDOS_IM_DINGTALK_OUTBOUND_APP_KEY set "MINDOS_IM_DINGTALK_OUTBOUND_APP_KEY=%%MINDOS_IM_DINGTALK_APP_KEY%%"
-echo if defined MINDOS_IM_DINGTALK_APP_SECRET if not defined MINDOS_IM_DINGTALK_OUTBOUND_APP_SECRET set "MINDOS_IM_DINGTALK_OUTBOUND_APP_SECRET=%%MINDOS_IM_DINGTALK_APP_SECRET%%"
-echo if "%%MINDOS_IM_DINGTALK_OUTBOUND_APP_KEY%%"=="" set "MINDOS_IM_DINGTALK_OUTBOUND_APP_KEY=%%MINDOS_IM_DINGTALK_STREAM_CLIENT_ID%%"
-echo if "%%MINDOS_IM_DINGTALK_OUTBOUND_APP_SECRET%%"=="" set "MINDOS_IM_DINGTALK_OUTBOUND_APP_SECRET=%%MINDOS_IM_DINGTALK_STREAM_CLIENT_SECRET%%"
-echo if not defined MINDOS_IM_DINGTALK_STREAM_ENABLED ^(
-echo   if not "%%MINDOS_IM_DINGTALK_STREAM_CLIENT_ID%%"=="" if not "%%MINDOS_IM_DINGTALK_STREAM_CLIENT_SECRET%%"=="" set "MINDOS_IM_DINGTALK_STREAM_ENABLED=true"
+echo set "MINDOS_ENV_LOADED="
+echo if exist "%%~dp0mindos-server.env.bat" call "%%~dp0mindos-server.env.bat"
+echo if not "%%MINDOS_ENV_LOADED%%"=="1" ^(
+echo   echo [FAIL] mindos-server.env.bat did not finish loading. Check quotes/encoding in env and secrets files.
+echo   if defined MINDOS_ENV_STAGE echo [FAIL] Last env stage: %%MINDOS_ENV_STAGE%%
+echo   exit /b 1
 echo ^)
-echo if not defined MINDOS_IM_DINGTALK_STREAM_ENABLED set "MINDOS_IM_DINGTALK_STREAM_ENABLED=false"
-echo if not defined MINDOS_IM_DINGTALK_OUTBOUND_ENABLED ^(
-echo   if not "%%MINDOS_IM_DINGTALK_OUTBOUND_ROBOT_CODE%%"=="" if not "%%MINDOS_IM_DINGTALK_OUTBOUND_APP_KEY%%"=="" if not "%%MINDOS_IM_DINGTALK_OUTBOUND_APP_SECRET%%"=="" set "MINDOS_IM_DINGTALK_OUTBOUND_ENABLED=true"
-echo ^)
-echo if not defined MINDOS_IM_DINGTALK_OUTBOUND_ENABLED set "MINDOS_IM_DINGTALK_OUTBOUND_ENABLED=false"
 echo if not exist logs mkdir logs
 echo echo [MindOS] Starting assistant-api with solo profile...
-echo java -Dfile.encoding=UTF-8 -jar "%INSTALL_DIR%\%JAR_NAME%" --spring.profiles.active=%%MINDOS_SPRING_PROFILE%% %%*
+echo java -Dfile.encoding=UTF-8 -Dsun.jnu.encoding=UTF-8 -jar "%INSTALL_DIR%\%JAR_NAME%" --spring.profiles.active=%%MINDOS_SPRING_PROFILE%% %%*
 echo exit /b %%ERRORLEVEL%%
 ) > "%STARTER%"
 

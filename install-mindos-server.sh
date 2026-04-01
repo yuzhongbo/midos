@@ -8,6 +8,7 @@ REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
 API_MODULE="assistant-api"
 JAR_NAME="assistant-api-0.1.0-SNAPSHOT.jar"
 INSTALL_DIR="$HOME/.mindos-server"
+ENV_FILE="$INSTALL_DIR/mindos-server.env.sh"
 
 # 构建服务端（默认跑测试，临时加速可导出 SKIP_TESTS=1）
 cd "$REPO_DIR"
@@ -21,6 +22,11 @@ fi
 # 安装目录
 mkdir -p "$INSTALL_DIR"
 cp "$API_MODULE/target/$JAR_NAME" "$INSTALL_DIR/"
+
+if [[ ! -f "$ENV_FILE" ]]; then
+  cp "$REPO_DIR/mindos-server.env.template.sh" "$ENV_FILE"
+  chmod +x "$ENV_FILE"
+fi
 
 # 创建 secrets 模板（若已存在则保留用户内容）
 SECRETS_FILE="$INSTALL_DIR/mindos-secrets.properties"
@@ -55,65 +61,24 @@ cat > "$INSTALL_DIR/mindos-server" <<'EOF'
 #!/bin/bash
 set -e
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
-SECRETS_FILE="$ROOT_DIR/mindos-secrets.properties"
+ENV_FILE="$ROOT_DIR/mindos-server.env.sh"
+JAR_NAME="assistant-api-0.1.0-SNAPSHOT.jar"
 
-if [[ -f "$SECRETS_FILE" ]]; then
-  while IFS='=' read -r raw_key raw_val; do
-    # 跳过注释/空行
-    [[ -z "$raw_key" || "$raw_key" =~ ^[[:space:]]*# || "$raw_key" =~ ^[[:space:]]*; ]] && continue
-    key="${raw_key%% *}"       # 去除键中的空格（键名不应包含空格）
-    val="${raw_val}"
-    export "${key}"="${val}"
-  done < "$SECRETS_FILE"
+export MINDOS_ENV_LOADED=""
+if [[ -f "$ENV_FILE" ]]; then
+  # shellcheck source=/dev/null
+  source "$ENV_FILE"
 fi
 
-: "${MINDOS_SPRING_PROFILE:=solo}"
-: "${MINDOS_IM_ENABLED:=true}"
-: "${MINDOS_IM_DINGTALK_ENABLED:=true}"
-: "${MINDOS_IM_DINGTALK_VERIFY_SIGNATURE:=false}"
-: "${MINDOS_IM_DINGTALK_REPLY_TIMEOUT_MS:=2500}"
-: "${MINDOS_IM_DINGTALK_REPLY_MAX_CHARS:=1200}"
-: "${MINDOS_IM_DINGTALK_STREAM_TOPIC:=/v1.0/im/bot/messages/get}"
-: "${MINDOS_IM_DINGTALK_OUTBOUND_APP_KEY:=}"
-: "${MINDOS_IM_DINGTALK_OUTBOUND_APP_SECRET:=}"
-
-if [[ -n "${MINDOS_IM_DINGTALK_APP_KEY:-}" && -z "${MINDOS_IM_DINGTALK_STREAM_CLIENT_ID:-}" ]]; then
-  export MINDOS_IM_DINGTALK_STREAM_CLIENT_ID="$MINDOS_IM_DINGTALK_APP_KEY"
-fi
-if [[ -n "${MINDOS_IM_DINGTALK_APP_SECRET:-}" && -z "${MINDOS_IM_DINGTALK_STREAM_CLIENT_SECRET:-}" ]]; then
-  export MINDOS_IM_DINGTALK_STREAM_CLIENT_SECRET="$MINDOS_IM_DINGTALK_APP_SECRET"
-fi
-if [[ -n "${MINDOS_IM_DINGTALK_APP_KEY:-}" && -z "${MINDOS_IM_DINGTALK_OUTBOUND_APP_KEY:-}" ]]; then
-  export MINDOS_IM_DINGTALK_OUTBOUND_APP_KEY="$MINDOS_IM_DINGTALK_APP_KEY"
-fi
-if [[ -n "${MINDOS_IM_DINGTALK_APP_SECRET:-}" && -z "${MINDOS_IM_DINGTALK_OUTBOUND_APP_SECRET:-}" ]]; then
-  export MINDOS_IM_DINGTALK_OUTBOUND_APP_SECRET="$MINDOS_IM_DINGTALK_APP_SECRET"
-fi
-
-if [[ -z "${MINDOS_IM_DINGTALK_OUTBOUND_APP_KEY:-}" ]]; then
-  export MINDOS_IM_DINGTALK_OUTBOUND_APP_KEY="${MINDOS_IM_DINGTALK_STREAM_CLIENT_ID:-}"
-fi
-if [[ -z "${MINDOS_IM_DINGTALK_OUTBOUND_APP_SECRET:-}" ]]; then
-  export MINDOS_IM_DINGTALK_OUTBOUND_APP_SECRET="${MINDOS_IM_DINGTALK_STREAM_CLIENT_SECRET:-}"
-fi
-
-if [[ -z "${MINDOS_IM_DINGTALK_STREAM_ENABLED:-}" ]]; then
-  if [[ -n "${MINDOS_IM_DINGTALK_STREAM_CLIENT_ID:-}" && -n "${MINDOS_IM_DINGTALK_STREAM_CLIENT_SECRET:-}" ]]; then
-    export MINDOS_IM_DINGTALK_STREAM_ENABLED=true
-  else
-    export MINDOS_IM_DINGTALK_STREAM_ENABLED=false
+if [[ "${MINDOS_ENV_LOADED:-}" != "1" ]]; then
+  echo "[FAIL] mindos-server.env.sh did not finish loading. Check syntax/encoding in env and secrets files."
+  if [[ -n "${MINDOS_ENV_STAGE:-}" ]]; then
+    echo "[FAIL] Last env stage: ${MINDOS_ENV_STAGE}"
   fi
+  exit 1
 fi
 
-if [[ -z "${MINDOS_IM_DINGTALK_OUTBOUND_ENABLED:-}" ]]; then
-  if [[ -n "${MINDOS_IM_DINGTALK_OUTBOUND_ROBOT_CODE:-}" && -n "${MINDOS_IM_DINGTALK_OUTBOUND_APP_KEY:-}" && -n "${MINDOS_IM_DINGTALK_OUTBOUND_APP_SECRET:-}" ]]; then
-    export MINDOS_IM_DINGTALK_OUTBOUND_ENABLED=true
-  else
-    export MINDOS_IM_DINGTALK_OUTBOUND_ENABLED=false
-  fi
-fi
-
-java -Dfile.encoding=UTF-8 -jar "$ROOT_DIR/$JAR_NAME" --spring.profiles.active="$MINDOS_SPRING_PROFILE" "$@"
+java -Dfile.encoding=UTF-8 -Dsun.jnu.encoding=UTF-8 -jar "$ROOT_DIR/$JAR_NAME" --spring.profiles.active="$MINDOS_SPRING_PROFILE" "$@"
 EOF
 chmod +x "$INSTALL_DIR/mindos-server"
 
