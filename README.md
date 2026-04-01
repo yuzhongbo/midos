@@ -530,6 +530,8 @@ Tips:
   - enable via `mindos.news.enabled=true`, configure RSS/JSON feeds with `mindos.news.sources` (comma-separated), cap items with `mindos.news.max-items`
   - schedule with `mindos.news.push.cron` and `mindos.news.push.timezone`; manual trigger `POST /api/news/push`
   - configure DingTalk destination: `mindos.news.push.dingtalk.session-webhook` (preferred for robot webhook) or `mindos.news.push.dingtalk.open-conversation-id` + `mindos.news.push.dingtalk.sender-id` (uses OpenAPI client)
+  - summaries: after抓取最新源内容，服务会用 LLM 生成中文要点（3-6 条）并附上精选链接，LLM 不可用时自动降级为标题列表，长度受 `mindos.news.message.max-chars` 限制
+  - HTTP/超时：`mindos.news.http.connect-timeout-ms`、`mindos.news.http.request-timeout-ms` 可调，异常会跳过该源继续抓取
   - admin token guard toggle: `mindos.news.require-admin-token` (default `true`, uses `X-MindOS-Admin-Token`)
   - observe/update runtime config: `GET /api/news/status`, `POST /api/news/config`
 - Semantic memory can be stored explicitly with `remember ...`, `remember task: ...`, `记住：...`, or `记住任务：...`; explicit bucket prefixes such as `task/learning/eq/coding` override automatic bucket inference.
