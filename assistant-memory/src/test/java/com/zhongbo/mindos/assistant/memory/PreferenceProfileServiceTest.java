@@ -9,11 +9,15 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 class PreferenceProfileServiceTest {
 
     @Test
-    void shouldReturnEmptyProfileByDefault() {
-        PreferenceProfileService service = new PreferenceProfileService(2, true);
+    void shouldReturnDefaultProfileByDefault() {
+        PreferenceProfileService service = new PreferenceProfileService(2);
         PreferenceProfile profile = service.getProfile("u1");
 
-        assertEquals(PreferenceProfile.empty(), profile);
+        assertEquals("MindOS", profile.assistantName());
+        assertEquals("personal-assistant", profile.role());
+        assertEquals("warm", profile.style());
+        assertEquals("zh-CN", profile.language());
+        assertEquals("Asia/Shanghai", profile.timezone());
     }
 
     @Test
@@ -88,4 +92,3 @@ class PreferenceProfileServiceTest {
         assertEquals(0, explain.pendingOverrides().size());
     }
 }
-

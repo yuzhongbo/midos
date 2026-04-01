@@ -1863,7 +1863,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
             return buildRealtimeFallbackPrompt(promptMemoryContext, userInput);
         }
         String structuredContext = buildStructuredMemoryPromptContext(promptMemoryContext);
-        String prompt = "Answer naturally using the context when helpful.\n"
+        String prompt = "请使用中文回答，优先结合下方上下文。\n"
                 + capText(memoryContext, memoryContextMaxChars) + "\n"
                 + (structuredContext.isBlank() ? "" : capText(structuredContext, memoryContextMaxChars) + "\n")
                 + "User input: " + capText(userInput, 400);
@@ -1889,7 +1889,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
     }
 
     private String buildRealtimeFallbackPrompt(PromptMemoryContextDto promptMemoryContext, String userInput) {
-        StringBuilder prompt = new StringBuilder("Answer briefly with the freshest facts and avoid stale historical assumptions.\n");
+        StringBuilder prompt = new StringBuilder("请使用中文简要回答，优先使用最新事实并避免陈旧假设。\n");
         if (realtimeIntentMemoryShrinkIncludePersona && promptMemoryContext != null
                 && promptMemoryContext.personaSnapshot() != null
                 && !promptMemoryContext.personaSnapshot().isEmpty()) {

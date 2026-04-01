@@ -96,8 +96,7 @@ class PromptMemoryContextAssemblerTest {
 
         assertFalse(context.proceduralHints().isBlank());
         assertTrue(context.proceduralHints().contains("teaching.plan"));
-        assertEquals("", context.personaSnapshot().get("language"));
+        assertEquals("zh-CN", context.personaSnapshot().get("language"));
     }
 }
-
 

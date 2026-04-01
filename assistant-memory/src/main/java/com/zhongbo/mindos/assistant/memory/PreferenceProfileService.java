@@ -13,25 +13,64 @@ import java.util.concurrent.ConcurrentHashMap;
 @Service
 public class PreferenceProfileService {
 
+    private static final String DEFAULT_ASSISTANT_NAME = "MindOS";
+    private static final String DEFAULT_ROLE = "personal-assistant";
+    private static final String DEFAULT_STYLE = "warm";
+    private static final String DEFAULT_LANGUAGE = "zh-CN";
+    private static final String DEFAULT_TIMEZONE = "Asia/Shanghai";
+    private static final String DEFAULT_PREFERRED_CHANNEL = "";
+
     private final Map<String, PreferenceProfile> profilesByUser = new ConcurrentHashMap<>();
     private final Map<String, Map<String, PendingOverride>> pendingOverridesByUser = new ConcurrentHashMap<>();
     private final int overwriteConfirmTurns;
+    private final PreferenceProfile defaultProfile;
 
     @Autowired
-    public PreferenceProfileService(@Value("${mindos.memory.preference.overwrite-confirm-turns:2}") int overwriteConfirmTurns) {
-        this.overwriteConfirmTurns = Math.max(1, overwriteConfirmTurns);
+    public PreferenceProfileService(
+            @Value("${mindos.memory.preference.overwrite-confirm-turns:2}") int overwriteConfirmTurns,
+            @Value("${mindos.memory.preference.default.assistant-name:" + DEFAULT_ASSISTANT_NAME + "}") String defaultAssistantName,
+            @Value("${mindos.memory.preference.default.role:" + DEFAULT_ROLE + "}") String defaultRole,
+            @Value("${mindos.memory.preference.default.style:" + DEFAULT_STYLE + "}") String defaultStyle,
+            @Value("${mindos.memory.preference.default.language:" + DEFAULT_LANGUAGE + "}") String defaultLanguage,
+            @Value("${mindos.memory.preference.default.timezone:" + DEFAULT_TIMEZONE + "}") String defaultTimezone,
+            @Value("${mindos.memory.preference.default.preferred-channel:" + DEFAULT_PREFERRED_CHANNEL + "}") String defaultPreferredChannel) {
+        this(overwriteConfirmTurns, new PreferenceProfile(
+                normalizeDefault(defaultAssistantName, DEFAULT_ASSISTANT_NAME),
+                normalizeDefault(defaultRole, DEFAULT_ROLE),
+                normalizeDefault(defaultStyle, DEFAULT_STYLE),
+                normalizeDefault(defaultLanguage, DEFAULT_LANGUAGE),
+                normalizeDefault(defaultTimezone, DEFAULT_TIMEZONE),
+                normalizeDefault(defaultPreferredChannel, DEFAULT_PREFERRED_CHANNEL)
+        ));
     }
 
     PreferenceProfileService(int overwriteConfirmTurns, boolean ignoredForTests) {
+        this(overwriteConfirmTurns);
+    }
+
+    public PreferenceProfileService(int overwriteConfirmTurns) {
+        this(overwriteConfirmTurns, new PreferenceProfile(
+                DEFAULT_ASSISTANT_NAME,
+                DEFAULT_ROLE,
+                DEFAULT_STYLE,
+                DEFAULT_LANGUAGE,
+                DEFAULT_TIMEZONE,
+                DEFAULT_PREFERRED_CHANNEL
+        ));
+    }
+
+    PreferenceProfileService(int overwriteConfirmTurns, PreferenceProfile defaultProfile) {
         this.overwriteConfirmTurns = Math.max(1, overwriteConfirmTurns);
+        this.defaultProfile = sanitizeDefaultProfile(defaultProfile);
     }
 
     public PreferenceProfile getProfile(String userId) {
-        return profilesByUser.getOrDefault(userId, PreferenceProfile.empty());
+        PreferenceProfile stored = profilesByUser.getOrDefault(userId, PreferenceProfile.empty());
+        return mergeWithDefaults(stored);
     }
 
     public synchronized PreferenceProfileExplain getProfileExplain(String userId) {
-        PreferenceProfile confirmed = getProfile(userId);
+        PreferenceProfile confirmed = mergeWithDefaults(profilesByUser.getOrDefault(userId, PreferenceProfile.empty()));
         Map<String, PendingOverride> pendingByField = pendingOverridesByUser.getOrDefault(userId, Map.of());
         java.util.List<PendingPreferenceOverride> pending = pendingByField.entrySet().stream()
                 .map(entry -> toPendingOverride(entry.getKey(), entry.getValue()))
@@ -44,7 +83,7 @@ public class PreferenceProfileService {
         if (incoming == null) {
             return getProfile(userId);
         }
-        PreferenceProfile base = getProfile(userId);
+        PreferenceProfile base = profilesByUser.getOrDefault(userId, PreferenceProfile.empty());
         PreferenceProfile merged = new PreferenceProfile(
                 mergeField(userId, "assistantName", base.assistantName(), incoming.assistantName()),
                 mergeField(userId, "role", base.role(), incoming.role()),
@@ -54,7 +93,7 @@ public class PreferenceProfileService {
                 mergeField(userId, "preferredChannel", base.preferredChannel(), incoming.preferredChannel())
         );
         profilesByUser.put(userId, merged);
-        return merged;
+        return mergeWithDefaults(merged);
     }
 
     private String mergeField(String userId, String fieldName, String base, String incoming) {
@@ -99,7 +138,44 @@ public class PreferenceProfileService {
         );
     }
 
+    private PreferenceProfile mergeWithDefaults(PreferenceProfile profile) {
+        PreferenceProfile base = profile == null ? PreferenceProfile.empty() : profile;
+        return new PreferenceProfile(
+                pickNonBlank(base.assistantName(), defaultProfile.assistantName()),
+                pickNonBlank(base.role(), defaultProfile.role()),
+                pickNonBlank(base.style(), defaultProfile.style()),
+                pickNonBlank(base.language(), defaultProfile.language()),
+                pickNonBlank(base.timezone(), defaultProfile.timezone()),
+                pickNonBlank(base.preferredChannel(), defaultProfile.preferredChannel())
+        );
+    }
+
+    private PreferenceProfile sanitizeDefaultProfile(PreferenceProfile defaults) {
+        PreferenceProfile safe = defaults == null ? PreferenceProfile.empty() : defaults;
+        return new PreferenceProfile(
+                pickNonBlank(safe.assistantName(), DEFAULT_ASSISTANT_NAME),
+                pickNonBlank(safe.role(), DEFAULT_ROLE),
+                pickNonBlank(safe.style(), DEFAULT_STYLE),
+                pickNonBlank(safe.language(), DEFAULT_LANGUAGE),
+                pickNonBlank(safe.timezone(), DEFAULT_TIMEZONE),
+                pickNonBlank(safe.preferredChannel(), DEFAULT_PREFERRED_CHANNEL)
+        );
+    }
+
+    private String pickNonBlank(String value, String fallback) {
+        if (value == null || value.isBlank()) {
+            return fallback;
+        }
+        return value;
+    }
+
+    private static String normalizeDefault(String candidate, String fallback) {
+        if (candidate == null || candidate.isBlank()) {
+            return fallback;
+        }
+        return candidate.trim();
+    }
+
     private record PendingOverride(String value, int count) {
     }
 }
-
