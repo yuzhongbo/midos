@@ -759,6 +759,17 @@ Tips:
 - **MCP skills**: set `mindos.skills.mcp-servers=docs:http://localhost:8081/mcp,search:https://example.com/mcp`. Each remote MCP tool is exposed as a namespaced skill like `mcp.docs.searchDocs`. Dispatcher auto-detection can route natural requests such as `search docs for auth guide` to matching MCP tools, and explicit DSL can target the full skill name. Reload all configured MCP servers via `POST /api/skills/reload-mcp`, or attach one server at runtime via `POST /api/skills/load-mcp {"alias":"docs","url":"http://localhost:8081/mcp"}`.
   - 为无联网能力的模型补“上网”能力：准备带搜索工具的 MCP 服务器（如 `search` 别名），配置 `mindos.skills.mcp-servers=search:https://your-mcp-server/mcp` 后会自动注册 `mcp.search.<tool>`，即可在对话中调用搜索类技能。
   - MCP 服务器鉴权/私有 API：用 `mindos.skills.mcp-server-headers` 配置每个别名的请求头（逗号分隔多个别名，分号分隔头；示例：`docs:Authorization=Bearer%20token;X-API-KEY=abc123,search:Authorization=Bearer%20another`）。对应别名的所有 MCP 调用都会附带这些头，适合传递 API key。
+  - 对话/自然语言添加 MCP（含 API key）：可以在聊天里说“添加一个 search MCP，地址 https://your-mcp-server/mcp，Authorization=Bearer xxx”，由上层映射为 `POST /api/skills/load-mcp`：
+    ```json
+    {
+      "alias": "search",
+      "url": "https://your-mcp-server/mcp",
+      "headers": {
+        "Authorization": "Bearer xxx",
+        "X-API-KEY": "abc123"
+      }
+    }
+    ```
 - `code.generate` can be pinned to a provider and difficulty-tier models via:
   - `mindos.skill.code-generate.llm-provider`
   - `mindos.skill.code-generate.model.easy|medium|hard`
