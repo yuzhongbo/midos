@@ -528,6 +528,7 @@ Tips:
     - `mindos.tasks.auto-run.next-check-delay-seconds`
 - Scheduled news fetch + DingTalk push (disabled by default):
   - enable via `mindos.news.enabled=true`, configure RSS/JSON feeds with `mindos.news.sources` (comma-separated), cap items with `mindos.news.max-items`
+  - example `mindos.news.sources` (可混合 CSV)：`https://feeds.bbci.co.uk/news/world/rss.xml,https://feeds.reuters.com/reuters/worldNews,https://rss.nytimes.com/services/xml/rss/nyt/World.xml,https://hnrss.org/frontpage`（RSS）；`https://api.spaceflightnewsapi.net/v4/articles/?limit=10&ordering=-published_at`（JSON）
   - schedule with `mindos.news.push.cron` and `mindos.news.push.timezone`; manual trigger `POST /api/news/push`
   - configure DingTalk destination: `mindos.news.push.dingtalk.session-webhook` (preferred for robot webhook) or `mindos.news.push.dingtalk.open-conversation-id` + `mindos.news.push.dingtalk.sender-id` (uses OpenAPI client)
   - summaries: after抓取最新源内容，服务会用 LLM 生成中文要点（3-6 条）并附上精选链接，LLM 不可用时自动降级为标题列表，长度受 `mindos.news.message.max-chars` 限制
