@@ -45,6 +45,8 @@ public class Bm25LexicalSearchScorer implements LexicalSearchScorer {
                 continue;
             }
             int documentFrequency = corpus.documentFrequencyByToken().getOrDefault(token, 0);
+            // Use the smoothed Okapi BM25 IDF variant so very common terms stay positive
+            // but contribute less than rare terms in small in-memory corpora.
             double idf = Math.log1p((corpus.documentCount() - documentFrequency + 0.5d) / (documentFrequency + 0.5d + EPSILON));
             double denominator = frequency + k1 * (1.0d - b + b * (documentLength / avgLength));
             score += idf * ((frequency * (k1 + 1.0d)) / Math.max(EPSILON, denominator));

@@ -363,7 +363,7 @@ public class SemanticMemoryService implements MemoryWriteGateMetricsReader {
                         nowMillis);
                 Comparator<RankedSemanticMemory> comparator = Comparator
                         .comparingDouble(RankedSemanticMemory::finalScore)
-                        .thenComparingLong(item -> item.entry().createdAt() == null ? 0L : item.entry().createdAt().toEpochMilli())
+                        .thenComparingLong(RankedSemanticMemory::sequence)
                         .reversed();
 
                 List<RankedSemanticMemory> ranked = enforceCrossBucketCap
@@ -539,10 +539,7 @@ public class SemanticMemoryService implements MemoryWriteGateMetricsReader {
             if (candidates.isEmpty()) {
                 return List.of();
             }
-            boolean hybridEnabled = properties.getSearch().getHybrid().isEnabled()
-                    && !queryTokens.isEmpty()
-                    && normalizedQuery != null
-                    && !normalizedQuery.isBlank();
+            boolean hybridEnabled = isHybridSearchEnabled(queryTokens, normalizedQuery);
             List<Double> queryEmbedding = hybridEnabled ? localEmbeddingService.embed(normalizedQuery) : List.of();
             MemorySearchCorpus corpus = buildCorpus(candidates);
             Map<String, Double> rawLexicalScores = new HashMap<>();
@@ -584,7 +581,7 @@ public class SemanticMemoryService implements MemoryWriteGateMetricsReader {
             if (queryTokens.isEmpty()) {
                 double recency = recencyBoost(entry.entry(), nowMillis);
                 double finalScore = 1 + bucketBoost(entry.bucket(), preferredBucket) + recency + memoryLayerPolicy.boost(layer);
-                return new RankedSemanticMemory(entry.entry(), entry.bucket(), layer, 0.0d, 0.0d, recency, finalScore);
+                return new RankedSemanticMemory(entry.entry(), entry.bucket(), entry.sequence(), layer, 0.0d, 0.0d, recency, finalScore);
             }
             int overlap = 0;
             for (String token : queryTokens) {
@@ -595,6 +592,8 @@ public class SemanticMemoryService implements MemoryWriteGateMetricsReader {
             int containsBonus = normalizedQuery.isBlank() ? 0 : (entry.normalizedText().contains(normalizedQuery) ? 4 : 0);
             double recency = recencyBoost(entry.entry(), nowMillis);
             double lexicalOverlap = queryTokens.isEmpty() ? 0.0d : overlap / (double) queryTokens.size();
+            // Fall back to lexical overlap when BM25 produced no positive score for the current
+            // candidate set, so hybrid mode still has a deterministic sparse signal.
             double normalizedLexical = maxLexicalScore > 0.0d ? rawLexicalScore / maxLexicalScore : lexicalOverlap;
             double vectorScore = hybridEnabled && !queryEmbedding.isEmpty()
                     ? Math.max(0.0d, cosineSimilarity(queryEmbedding, entry.entry().embedding()))
@@ -615,6 +614,7 @@ public class SemanticMemoryService implements MemoryWriteGateMetricsReader {
                     + memoryLayerPolicy.boost(layer);
             return new RankedSemanticMemory(entry.entry(),
                     entry.bucket(),
+                    entry.sequence(),
                     layer,
                     Math.max(lexicalOverlap, normalizedLexical),
                     vectorScore,
@@ -628,6 +628,14 @@ public class SemanticMemoryService implements MemoryWriteGateMetricsReader {
                 return lexicalScore;
             }
             return lexicalWeight * lexicalScore + (1.0d - lexicalWeight) * vectorScore;
+        }
+
+        private boolean isHybridSearchEnabled(Set<String> queryTokens, String normalizedQuery) {
+            return properties.getSearch().getHybrid().isEnabled()
+                    && queryTokens != null
+                    && !queryTokens.isEmpty()
+                    && normalizedQuery != null
+                    && !normalizedQuery.isBlank();
         }
 
         private MemorySearchCorpus buildCorpus(List<StoredSemanticEntry> candidates) {

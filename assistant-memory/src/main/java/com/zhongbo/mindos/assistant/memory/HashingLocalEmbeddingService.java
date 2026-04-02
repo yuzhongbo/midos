@@ -17,6 +17,9 @@ import java.util.regex.Pattern;
 public class HashingLocalEmbeddingService implements LocalEmbeddingService {
 
     private static final Pattern TOKEN_SPLIT_PATTERN = Pattern.compile("[^\\p{L}\\p{N}]+");
+    private static final String BIGRAM_SEPARATOR = "␟";
+    private static final double BIGRAM_WEIGHT = 0.6d;
+    private static final double ROUNDING_SCALE = 10_000d;
 
     private final MemoryConsolidationService memoryConsolidationService;
     private final MemoryRuntimeProperties properties;
@@ -50,7 +53,7 @@ public class HashingLocalEmbeddingService implements LocalEmbeddingService {
         for (int i = 0; i < tokens.size(); i++) {
             accumulate(vector, tokens.get(i), 1.0d);
             if (i + 1 < tokens.size()) {
-                accumulate(vector, tokens.get(i) + "␟" + tokens.get(i + 1), 0.6d);
+                accumulate(vector, tokens.get(i) + BIGRAM_SEPARATOR + tokens.get(i + 1), BIGRAM_WEIGHT);
             }
         }
         return normalize(vector);
@@ -64,6 +67,8 @@ public class HashingLocalEmbeddingService implements LocalEmbeddingService {
                 continue;
             }
             tokens.add(part);
+            // Character bigrams keep Chinese retrieval fully local without bringing in a
+            // separate segmenter dependency; the dimension cap bounds the final vector size.
             if (containsHan(part) && part.length() > 2) {
                 for (int i = 0; i < part.length() - 1; i++) {
                     tokens.add(part.substring(i, i + 2));
@@ -99,6 +104,6 @@ public class HashingLocalEmbeddingService implements LocalEmbeddingService {
     }
 
     private double round(double value) {
-        return Math.round(value * 10_000d) / 10_000d;
+        return Math.round(value * ROUNDING_SCALE) / ROUNDING_SCALE;
     }
 }

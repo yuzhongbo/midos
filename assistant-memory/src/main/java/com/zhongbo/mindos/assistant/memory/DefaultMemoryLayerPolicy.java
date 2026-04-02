@@ -12,6 +12,8 @@ import org.springframework.stereotype.Service;
 @Service
 public class DefaultMemoryLayerPolicy implements MemoryLayerPolicy {
 
+    private static final String CONVERSATION_ROLLUP_BUCKET = "conversation-rollup";
+
     private final MemoryRuntimeProperties properties;
 
     @Autowired
@@ -29,7 +31,7 @@ public class DefaultMemoryLayerPolicy implements MemoryLayerPolicy {
             return MemoryLayer.SEMANTIC;
         }
         double ageHours = ageHours(entry, nowMillis);
-        if ("conversation-rollup".equals(bucket) && ageHours <= properties.getLayers().getBufferHours()) {
+        if (CONVERSATION_ROLLUP_BUCKET.equals(bucket) && ageHours <= properties.getLayers().getBufferHours()) {
             return MemoryLayer.BUFFER;
         }
         if (hasKeySignal && entry.text() != null && entry.text().length() <= properties.getLayers().getFactMaxChars()) {

@@ -128,10 +128,35 @@ class PromptMemoryContextAssemblerTest {
             PromptMemoryContextDto context = assembler.assemble("u4", "owner due", 800, Map.of());
 
             assertTrue(context.semanticContext().contains("[fact]"));
+            assertTrue(context.semanticContext().contains("owner Alice due 2026-04-05"));
         } finally {
             restoreProperty("mindos.memory.layers.enabled", oldLayersEnabled);
             restoreProperty("mindos.memory.layers.fact-max-chars", oldFactMaxChars);
         }
+    }
+
+    @Test
+    void shouldRetainLexicalRelevanceWhenHybridSearchIsDisabled() {
+        EpisodicMemoryService episodicMemoryService = new EpisodicMemoryService();
+        SemanticMemoryService semanticMemoryService = new SemanticMemoryService(new MemoryConsolidationService());
+        ProceduralMemoryService proceduralMemoryService = new ProceduralMemoryService();
+        PreferenceProfileService preferenceProfileService = new PreferenceProfileService(2, true);
+        DefaultPromptMemoryContextAssembler assembler = new DefaultPromptMemoryContextAssembler(
+                episodicMemoryService,
+                semanticMemoryService,
+                proceduralMemoryService,
+                preferenceProfileService
+        );
+
+        semanticMemoryService.addEntry("u5", SemanticMemoryEntry.of("project alpha api owner", List.of(0.1, 0.2)), "task");
+
+        PromptMemoryContextDto context = assembler.assemble("u5", "alpha owner", 800, Map.of());
+
+        RetrievedMemoryItemDto semanticItem = context.debugTopItems().stream()
+                .filter(item -> "semantic".equals(item.type()))
+                .findFirst()
+                .orElseThrow();
+        assertTrue(semanticItem.relevanceScore() > 0.0);
     }
 
     private void restoreProperty(String key, String value) {

@@ -24,6 +24,7 @@ public class DefaultPromptMemoryContextAssembler implements PromptMemoryContextA
     private static final int RECENT_TURNS_LIMIT = 6;
     private static final int SEMANTIC_LIMIT = 10;
     private static final int DEBUG_ITEMS_LIMIT = 12;
+    private static final int LAYER_PRIORITY_WINDOW = 6;
 
     private final EpisodicMemoryService episodicMemoryService;
     private final SemanticMemoryService semanticMemoryService;
@@ -148,7 +149,7 @@ public class DefaultPromptMemoryContextAssembler implements PromptMemoryContextA
     }
 
     private boolean shouldIncludeLayeredEntry(MemoryLayer layer, int appended) {
-        if (appended < 6) {
+        if (appended < LAYER_PRIORITY_WINDOW) {
             return true;
         }
         return layer == MemoryLayer.FACT || layer == MemoryLayer.WORKING;

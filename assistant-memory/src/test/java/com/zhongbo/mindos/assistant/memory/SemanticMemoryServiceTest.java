@@ -285,9 +285,15 @@ class SemanticMemoryServiceTest {
             List<RankedSemanticMemory> results = service.searchDetailed("hybrid-user", "alpha owner", 3, "task");
 
             assertEquals(1, results.size());
+            assertFalse(results.get(0).entry().text().isBlank());
             assertFalse(results.get(0).entry().embedding().isEmpty());
             assertTrue(results.get(0).lexicalScore() > 0.0);
             assertTrue(results.get(0).vectorScore() > 0.0);
+
+            List<Double> existingEmbedding = List.of(0.9, 0.8, 0.7);
+            service.addEntry("hybrid-user", SemanticMemoryEntry.of("project beta stable vector", existingEmbedding), "task");
+            List<SemanticMemoryEntry> preserved = service.search("hybrid-user", "beta stable", 5, "task");
+            assertTrue(preserved.stream().anyMatch(item -> item.embedding().equals(existingEmbedding)));
         } finally {
             restoreProperty("mindos.memory.search.hybrid.enabled", oldHybridEnabled);
             restoreProperty("mindos.memory.embedding.local.enabled", oldEmbeddingEnabled);
