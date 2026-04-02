@@ -76,7 +76,7 @@ public class HybridSearchService implements Closeable {
                                int candidateMultiplier) {
         this.embeddingService = Objects.requireNonNull(embeddingService, "embeddingService");
         if (alpha < 0.0d || beta < 0.0d || (alpha + beta) <= 0.0d) {
-            throw new IllegalArgumentException("alpha and beta must be non-negative and not both zero");
+            throw new IllegalArgumentException("alpha and beta must be non-negative and their sum must be positive");
         }
         this.alpha = alpha;
         this.beta = beta;

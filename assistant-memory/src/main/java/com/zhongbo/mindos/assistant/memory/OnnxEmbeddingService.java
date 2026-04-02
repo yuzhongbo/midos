@@ -188,8 +188,11 @@ public class OnnxEmbeddingService implements EmbeddingService, DisposableBean {
 
         OrtBatchInferenceRunner(MemoryRuntimeProperties properties) throws OrtException, IOException {
             MemoryRuntimeProperties.Embedding.Onnx onnx = properties.getEmbedding().getOnnx();
+            if (onnx.getModelPath() == null || onnx.getModelPath().isBlank()) {
+                throw new IllegalStateException("ONNX model path must be configured via mindos.memory.embedding.onnx.model-path when mindos.memory.embedding.onnx.enabled=true");
+            }
             if (onnx.getTokenizerPath() == null || onnx.getTokenizerPath().isBlank()) {
-                throw new IllegalStateException("ONNX tokenizer path must be configured when mindos.memory.embedding.onnx.enabled=true");
+                throw new IllegalStateException("ONNX tokenizer path must be configured via mindos.memory.embedding.onnx.tokenizer-path when mindos.memory.embedding.onnx.enabled=true");
             }
             this.environment = OrtEnvironment.getEnvironment();
             OrtSession.SessionOptions options = new OrtSession.SessionOptions();

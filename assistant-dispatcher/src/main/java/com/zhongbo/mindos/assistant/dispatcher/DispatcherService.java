@@ -30,26 +30,27 @@ import org.springframework.stereotype.Service;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.ArrayDeque;
-import java.util.concurrent.CompletableFuture;
 import java.util.Comparator;
+import java.util.Deque;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
-import java.util.Deque;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.TimeUnit;
 
 @Service
 public class DispatcherService implements ContextCompressionMetricsReader, DispatcherRoutingMetricsReader {
@@ -181,6 +182,8 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
     private final AtomicLong memoryContributionPersonaCount = new AtomicLong();
     private final AtomicLong memoryContributionRollupCount = new AtomicLong();
     private final AtomicLong routingReplayTotalCapturedCount = new AtomicLong();
+    private final PromptBuilder promptBuilder;
+    private final LLMDecisionEngine llmDecisionEngine;
 
     public DispatcherService(SkillEngine skillEngine,
                              SkillDslParser skillDslParser,
@@ -249,6 +252,8 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         this.memoryManager = memoryManager;
         this.llmClient = llmClient;
         this.semanticAnalysisService = semanticAnalysisService;
+        this.promptBuilder = new PromptBuilder();
+        this.llmDecisionEngine = new LLMDecisionEngine();
         this.preferenceReuseEnabled = preferenceReuseEnabled;
         this.habitRoutingEnabled = habitRoutingEnabled;
         this.habitRoutingMinTotalCount = Math.max(1, habitRoutingMinTotalCount);
@@ -389,7 +394,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
 
         return metaOrchestratorService.orchestrate(
                         () -> executeSinglePass(userId, userInput, context, effectiveMemoryContext, promptMemoryContext, llmContext, realtimeIntentInput, routingDecisionRef, semanticAnalysis, replayProbe),
-                        () -> CompletableFuture.completedFuture(buildLlmFallbackResult(effectiveMemoryContext, promptMemoryContext, routingInput, llmContext, realtimeIntentInput))
+                        () -> CompletableFuture.completedFuture(buildFallbackResult(effectiveMemoryContext, promptMemoryContext, routingInput, llmContext, realtimeIntentInput))
                 )
                 .thenApply(orchestration -> {
                     SkillResult result = orchestration.result();
@@ -541,15 +546,19 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                 .thenApply(routingOutcome -> {
                     routingDecisionRef.set(routingOutcome.routingDecision());
                     return routingOutcome.result().orElseGet(() ->
-                        buildLlmFallbackResult(memoryContext, promptMemoryContext, context.input(), llmContext, realtimeIntentInput));
+                        buildFallbackResult(memoryContext, promptMemoryContext, context.input(), llmContext, realtimeIntentInput));
                 });
     }
 
-    private SkillResult buildLlmFallbackResult(String memoryContext,
-                                               PromptMemoryContextDto promptMemoryContext,
-                                               String userInput,
-                                               Map<String, Object> llmContext,
-                                               boolean realtimeIntentInput) {
+    private SkillResult buildFallbackResult(String memoryContext,
+                                            PromptMemoryContextDto promptMemoryContext,
+                                            String userInput,
+                                            Map<String, Object> llmContext,
+                                            boolean realtimeIntentInput) {
+        QueryContext queryContext = buildQueryContext(llmContext, userInput, promptMemoryContext);
+        if (!llmDecisionEngine.shouldCallLLM(queryContext)) {
+            return buildMemoryDirectResult(promptMemoryContext, userInput);
+        }
         return SkillResult.success("llm", llmClient.generateResponse(
                 buildFallbackPrompt(memoryContext, promptMemoryContext, userInput, realtimeIntentInput),
                 llmContext
@@ -562,6 +571,14 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                                                      Map<String, Object> llmContext,
                                                      boolean realtimeIntentInput,
                                                      Consumer<String> deltaConsumer) {
+        QueryContext queryContext = buildQueryContext(llmContext, userInput, promptMemoryContext);
+        if (!llmDecisionEngine.shouldCallLLM(queryContext)) {
+            SkillResult result = buildMemoryDirectResult(promptMemoryContext, userInput);
+            if (deltaConsumer != null) {
+                deltaConsumer.accept(result.output());
+            }
+            return result;
+        }
         String prompt = buildFallbackPrompt(memoryContext, promptMemoryContext, userInput, realtimeIntentInput);
         StringBuilder aggregated = new StringBuilder();
         llmClient.streamResponse(prompt, llmContext, chunk -> {
@@ -2145,12 +2162,69 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         if (shouldApplyRealtimeMemoryShrink(realtimeIntentInput)) {
             return buildRealtimeFallbackPrompt(promptMemoryContext, userInput);
         }
-        String structuredContext = buildStructuredMemoryPromptContext(promptMemoryContext);
-        String prompt = "请使用中文回答，优先结合下方上下文。\n"
-                + capText(memoryContext, memoryContextMaxChars) + "\n"
-                + (structuredContext.isBlank() ? "" : capText(structuredContext, memoryContextMaxChars) + "\n")
-                + "User input: " + capText(userInput, 400);
-        return capText(prompt, promptMaxChars);
+        return capText(promptBuilder.build(promptMemoryContext, userInput), promptMaxChars);
+    }
+
+    private SkillResult buildMemoryDirectResult(PromptMemoryContextDto promptMemoryContext, String userInput) {
+        List<String> items = promptMemoryContext == null || promptMemoryContext.debugTopItems() == null
+                ? List.of()
+                : promptMemoryContext.debugTopItems().stream()
+                .filter(item -> item != null && item.type() != null && !"episodic".equalsIgnoreCase(item.type()))
+                .sorted(Comparator.comparingDouble(com.zhongbo.mindos.assistant.common.dto.RetrievedMemoryItemDto::finalScore).reversed())
+                .limit(3)
+                .map(item -> item.text() == null ? "" : item.text().replace('\n', ' ').trim())
+                .filter(text -> !text.isBlank())
+                .toList();
+        if (items.isEmpty()) {
+            items = List.of("未找到可直接复用的高相关记忆，请补充更多背景。");
+        }
+        StringBuilder reply = new StringBuilder("根据已有记忆，我先直接回答：");
+        for (int i = 0; i < items.size(); i++) {
+            reply.append("\n").append(i + 1).append(". ").append(capText(items.get(i), 160));
+        }
+        if (userInput != null && !userInput.isBlank()) {
+            reply.append("\n如需更深入分析，请明确说明你希望我详细推理的部分。");
+        }
+        return SkillResult.success("memory.direct", capText(reply.toString(), llmReplyMaxChars));
+    }
+
+    private QueryContext buildQueryContext(Map<String, Object> llmContext,
+                                           String userInput,
+                                           PromptMemoryContextDto promptMemoryContext) {
+        String userId = llmContext == null ? "" : Objects.toString(llmContext.get("userId"), "");
+        return new QueryContext(
+                userId,
+                userInput,
+                promptMemoryContext,
+                isExplicitLlmRequest(userInput),
+                requiresComplexReasoning(userInput)
+        );
+    }
+
+    private boolean isExplicitLlmRequest(String userInput) {
+        if (userInput == null || userInput.isBlank()) {
+            return false;
+        }
+        String normalized = userInput.toLowerCase(Locale.ROOT);
+        return normalized.contains("调用llm")
+                || normalized.contains("调用大模型")
+                || normalized.contains("step by step")
+                || normalized.contains("请详细分析")
+                || normalized.contains("请深入分析");
+    }
+
+    private boolean requiresComplexReasoning(String userInput) {
+        if (userInput == null || userInput.isBlank()) {
+            return false;
+        }
+        String normalized = userInput.toLowerCase(Locale.ROOT);
+        return normalized.contains("为什么")
+                || normalized.contains("比较")
+                || normalized.contains("权衡")
+                || normalized.contains("tradeoff")
+                || normalized.contains("设计方案")
+                || normalized.contains("根因")
+                || normalized.contains("如何设计");
     }
 
     private String enrichMemoryContextWithSemanticAnalysis(String memoryContext, SemanticAnalysisResult semanticAnalysis) {
