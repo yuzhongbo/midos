@@ -12,6 +12,7 @@ import org.apache.lucene.queryparser.classic.ParseException;
 import org.apache.lucene.queryparser.classic.QueryParser;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.KnnFloatVectorQuery;
+import org.apache.lucene.search.MatchNoDocsQuery;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.search.ScoreDoc;
 import org.apache.lucene.search.SearcherManager;
@@ -180,7 +181,10 @@ public class HybridSearchService implements Closeable {
         QueryParser parser = new QueryParser(FIELD_CONTENT, analyzer);
         try {
             String escaped = QueryParser.escape(queryText);
-            return parser.parse(escaped.isBlank() ? "\"\"" : escaped);
+            if (escaped.isBlank()) {
+                return new MatchNoDocsQuery("blank hybrid search query");
+            }
+            return parser.parse(escaped);
         } catch (ParseException ex) {
             throw new IllegalArgumentException("Invalid query: " + queryText, ex);
         }
