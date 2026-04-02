@@ -423,6 +423,11 @@ curl -X POST http://localhost:8080/api/skills/load-mcp \
 - DingTalk reply length guard `mindos.im.dingtalk.reply-max-chars` (default `1200`) trims oversized webhook replies; in stream mode, MindOS sends long final answers in ordered segments (`<= reply-max-chars` each) to reduce information loss.
 - DingTalk stream mode is optional and intended for slow replies: enable `mindos.im.dingtalk.stream.enabled=true`, provide `mindos.im.dingtalk.stream.client-id`, `mindos.im.dingtalk.stream.client-secret`, and outbound settings (`mindos.im.dingtalk.outbound.enabled=true`, `mindos.im.dingtalk.outbound.robot-code`). When a reply is slow, MindOS sends a waiting status after `mindos.im.dingtalk.stream.waiting-delay-ms` (default `800`) and then pushes the final answer when it is ready.
 - For single-host restart continuity, central memory uses file storage by default (`mindos.memory.file-repo.enabled=true`, `mindos.memory.file-repo.base-dir=data/memory-sync`) when no JDBC `DataSource` is configured.
+- Lightweight user-state persistence is also enabled by default (`mindos.memory.state.enabled=true`, `mindos.memory.state.base-dir=data/memory-state`) for learned preference profiles, long-task records, and memory style profiles.
+- Restart persistence coverage is intentionally layered:
+  - persisted: episodic / semantic / procedural central memory, preference profiles, long tasks, memory style profiles
+  - rebuilt on demand from persisted data: semantic in-memory search structures during normal hydration
+  - transient only: buffer / working / fact caches and other runtime-only state
 - Optional multi-provider routing:
   - default provider: `mindos.llm.provider=stub`
   - routing mode: `mindos.llm.routing.mode=fixed|auto` (default `fixed`)
@@ -657,8 +662,10 @@ Tips:
 - Memory sync API supports incremental pull via cursor (`since`) for multi-terminal synchronization.
 - Learned persona profile can be inspected via `GET /api/memory/{userId}/persona` (CLI: `mindos profile persona show`).
 - Persona debug explain view is available at `GET /api/memory/{userId}/persona/explain` to inspect pending conflict overrides before confirmation.
+- Preference profile state now survives restart together with pending overwrite confirmations through the file-backed memory state store.
 - Memory compression planning supports gradual stages (`RAW -> CONDENSED -> BRIEF -> STYLED`) with per-user style profile via `POST /api/memory/{userId}/style`, `GET /api/memory/{userId}/style`, and `POST /api/memory/{userId}/compress-plan`.
 - Compression plan supports optional `focus` (`learning`/`task`/`review`) and style update supports optional auto-tune (`POST /api/memory/{userId}/style?autoTune=true&sampleText=...`).
+- Long-task state created through `/api/tasks/{userId}` and per-user memory style profiles now survive restart through the same file-backed state store.
 - Memory key-signal detection is configurable via JVM properties (comma-separated):
   - `mindos.memory.key-signal.constraint-terms`
   - `mindos.memory.key-signal.deadline-terms`

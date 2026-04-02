@@ -1,9 +1,13 @@
 package com.zhongbo.mindos.assistant.memory;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zhongbo.mindos.assistant.memory.model.MemoryCompressionPlan;
 import com.zhongbo.mindos.assistant.memory.model.MemoryCompressionStep;
 import com.zhongbo.mindos.assistant.memory.model.MemoryStyleProfile;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -146,5 +150,22 @@ class MemoryCompressionPlanningServiceTest {
         assertTrue(brief.contains("截止时间是2026-04-01 20:00"));
         assertTrue(brief.contains("确认最终负责人") || brief.contains("发送最新周报"));
     }
-}
 
+    @Test
+    void shouldPersistStyleProfilesAcrossRestarts(@TempDir Path tempDir) {
+        MemoryConsolidationService consolidationService = new MemoryConsolidationService();
+        MemoryStateStore stateStore = new FileMemoryStateStore(true, tempDir, new ObjectMapper());
+        MemoryCompressionPlanningService first = new MemoryCompressionPlanningService(consolidationService, stateStore);
+        first.updateStyleProfile("u9", new MemoryStyleProfile("教学", "warm", "列表"));
+
+        MemoryCompressionPlanningService second = new MemoryCompressionPlanningService(
+                consolidationService,
+                new FileMemoryStateStore(true, tempDir, new ObjectMapper())
+        );
+
+        MemoryStyleProfile restored = second.getStyleProfile("u9");
+        assertEquals("coach", restored.styleName());
+        assertEquals("warm", restored.tone());
+        assertEquals("bullet", restored.outputFormat());
+    }
+}

@@ -1,5 +1,6 @@
 package com.zhongbo.mindos.assistant.memory;
 
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.zhongbo.mindos.assistant.memory.model.PreferenceProfile;
 import com.zhongbo.mindos.assistant.memory.model.PreferenceProfileExplain;
 import com.zhongbo.mindos.assistant.memory.model.PendingPreferenceOverride;
@@ -13,6 +14,7 @@ import java.util.concurrent.ConcurrentHashMap;
 @Service
 public class PreferenceProfileService {
 
+    private static final String STATE_FILE = "preference-profiles.json";
     private static final String DEFAULT_ASSISTANT_NAME = "MindOS";
     private static final String DEFAULT_ROLE = "personal-assistant";
     private static final String DEFAULT_STYLE = "warm";
@@ -24,6 +26,7 @@ public class PreferenceProfileService {
     private final Map<String, Map<String, PendingOverride>> pendingOverridesByUser = new ConcurrentHashMap<>();
     private final int overwriteConfirmTurns;
     private final PreferenceProfile defaultProfile;
+    private final MemoryStateStore memoryStateStore;
 
     @Autowired
     public PreferenceProfileService(
@@ -33,7 +36,8 @@ public class PreferenceProfileService {
             @Value("${mindos.memory.preference.default.style:" + DEFAULT_STYLE + "}") String defaultStyle,
             @Value("${mindos.memory.preference.default.language:" + DEFAULT_LANGUAGE + "}") String defaultLanguage,
             @Value("${mindos.memory.preference.default.timezone:" + DEFAULT_TIMEZONE + "}") String defaultTimezone,
-            @Value("${mindos.memory.preference.default.preferred-channel:" + DEFAULT_PREFERRED_CHANNEL + "}") String defaultPreferredChannel) {
+            @Value("${mindos.memory.preference.default.preferred-channel:" + DEFAULT_PREFERRED_CHANNEL + "}") String defaultPreferredChannel,
+            MemoryStateStore memoryStateStore) {
         this(overwriteConfirmTurns, new PreferenceProfile(
                 normalizeDefault(defaultAssistantName, DEFAULT_ASSISTANT_NAME),
                 normalizeDefault(defaultRole, DEFAULT_ROLE),
@@ -41,7 +45,7 @@ public class PreferenceProfileService {
                 normalizeDefault(defaultLanguage, DEFAULT_LANGUAGE),
                 normalizeDefault(defaultTimezone, DEFAULT_TIMEZONE),
                 normalizeDefault(defaultPreferredChannel, DEFAULT_PREFERRED_CHANNEL)
-        ));
+        ), memoryStateStore);
     }
 
     PreferenceProfileService(int overwriteConfirmTurns, boolean ignoredForTests) {
@@ -56,12 +60,18 @@ public class PreferenceProfileService {
                 DEFAULT_LANGUAGE,
                 DEFAULT_TIMEZONE,
                 DEFAULT_PREFERRED_CHANNEL
-        ));
+        ), MemoryStateStore.noOp());
     }
 
     PreferenceProfileService(int overwriteConfirmTurns, PreferenceProfile defaultProfile) {
+        this(overwriteConfirmTurns, defaultProfile, MemoryStateStore.noOp());
+    }
+
+    PreferenceProfileService(int overwriteConfirmTurns, PreferenceProfile defaultProfile, MemoryStateStore memoryStateStore) {
         this.overwriteConfirmTurns = Math.max(1, overwriteConfirmTurns);
         this.defaultProfile = sanitizeDefaultProfile(defaultProfile);
+        this.memoryStateStore = memoryStateStore == null ? MemoryStateStore.noOp() : memoryStateStore;
+        loadState();
     }
 
     public PreferenceProfile getProfile(String userId) {
@@ -93,7 +103,44 @@ public class PreferenceProfileService {
                 mergeField(userId, "preferredChannel", base.preferredChannel(), incoming.preferredChannel())
         );
         profilesByUser.put(userId, merged);
+        persistState();
         return mergeWithDefaults(merged);
+    }
+
+    private void loadState() {
+        PersistedPreferenceState state = memoryStateStore.readState(
+                STATE_FILE,
+                new TypeReference<>() {
+                },
+                PersistedPreferenceState::empty
+        );
+        state.profilesByUser().forEach((userId, profile) -> {
+            if (userId != null && profile != null) {
+                profilesByUser.put(userId, profile);
+            }
+        });
+        state.pendingOverridesByUser().forEach((userId, pendingByField) -> {
+            if (userId == null || pendingByField == null || pendingByField.isEmpty()) {
+                return;
+            }
+            Map<String, PendingOverride> normalized = new ConcurrentHashMap<>();
+            pendingByField.forEach((field, pending) -> {
+                if (field != null && pending != null && pending.value() != null && !pending.value().isBlank()) {
+                    normalized.put(field, pending);
+                }
+            });
+            if (!normalized.isEmpty()) {
+                pendingOverridesByUser.put(userId, normalized);
+            }
+        });
+    }
+
+    private void persistState() {
+        Map<String, PreferenceProfile> profilesSnapshot = new ConcurrentHashMap<>(profilesByUser);
+        Map<String, Map<String, PendingOverride>> pendingSnapshot = new ConcurrentHashMap<>();
+        pendingOverridesByUser.forEach((userId, pendingByField) ->
+                pendingSnapshot.put(userId, new ConcurrentHashMap<>(pendingByField)));
+        memoryStateStore.writeState(STATE_FILE, new PersistedPreferenceState(profilesSnapshot, pendingSnapshot));
     }
 
     private String mergeField(String userId, String fieldName, String base, String incoming) {
@@ -177,5 +224,14 @@ public class PreferenceProfileService {
     }
 
     private record PendingOverride(String value, int count) {
+    }
+
+    private record PersistedPreferenceState(
+            Map<String, PreferenceProfile> profilesByUser,
+            Map<String, Map<String, PendingOverride>> pendingOverridesByUser
+    ) {
+        private static PersistedPreferenceState empty() {
+            return new PersistedPreferenceState(Map.of(), Map.of());
+        }
     }
 }
