@@ -18,9 +18,9 @@ import java.util.Locale;
 import java.util.PriorityQueue;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
-import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Pattern;
 
 @Service
@@ -39,7 +39,7 @@ public class SemanticMemoryService implements MemoryWriteGateMetricsReader, Memo
     private final MemoryLayerPolicy memoryLayerPolicy;
     private final LocalEmbeddingService localEmbeddingService;
     private final Map<String, UserSemanticStore> entriesByUser = new ConcurrentHashMap<>();
-    private final Map<String, Map<String, MemoryRecord>> topicRecordsByUser = new ConcurrentHashMap<>();
+    private final Map<String, Map<String, MemoryRecord>> semanticTopicRecordsByUser = new ConcurrentHashMap<>();
     private final AtomicLong secondaryDuplicateCheckCount = new AtomicLong();
     private final AtomicLong secondaryDuplicateInterceptCount = new AtomicLong();
 
@@ -168,7 +168,7 @@ public class SemanticMemoryService implements MemoryWriteGateMetricsReader, Memo
         }
         MemoryRecord normalized = normalizeTopicRecord(record);
         String topic = resolveTopic(normalized.metadata(), normalized.content());
-        topicRecordsByUser.computeIfAbsent(normalized.userId(), ignored -> new ConcurrentHashMap<>()).put(topic, normalized);
+        semanticTopicRecordsByUser.computeIfAbsent(normalized.userId(), ignored -> new ConcurrentHashMap<>()).put(topic, normalized);
     }
 
     @Override
@@ -176,7 +176,7 @@ public class SemanticMemoryService implements MemoryWriteGateMetricsReader, Memo
         if (query == null || query.userId().isBlank()) {
             return List.of();
         }
-        return topicRecordsByUser.getOrDefault(query.userId(), Map.of()).values().stream()
+        return semanticTopicRecordsByUser.getOrDefault(query.userId(), Map.of()).values().stream()
                 .filter(record -> query.matchesContent(record.content()))
                 .filter(record -> query.topic().isBlank() || query.topic().equalsIgnoreCase(resolveTopic(record.metadata(), record.content())))
                 .sorted(Comparator.comparing(MemoryRecord::updateTime).reversed())
@@ -260,10 +260,10 @@ public class SemanticMemoryService implements MemoryWriteGateMetricsReader, Memo
             Lock writeLock = lock.writeLock();
             writeLock.lock();
             try {
-            String bucketedKey = bucket + "::" + key;
-            StoredSemanticEntry existing = entries.remove(bucketedKey);
+            String compositeKey = bucket + "::" + key;
+            StoredSemanticEntry existing = entries.remove(compositeKey);
             if (existing != null) {
-                removeTokens(bucketedKey, existing.tokens());
+                removeTokens(compositeKey, existing.tokens());
                 entry = merge(existing.entry(), entry);
             }
 
@@ -271,7 +271,7 @@ public class SemanticMemoryService implements MemoryWriteGateMetricsReader, Memo
             String normalizedText = normalizeLower(entry.text());
             StoredSemanticEntry stored = new StoredSemanticEntry(
                     entry,
-                    bucketedKey,
+                    compositeKey,
                     normalizedText,
                     tokens,
                     buildDocument(entry.text(), tokens),
@@ -279,9 +279,9 @@ public class SemanticMemoryService implements MemoryWriteGateMetricsReader, Memo
                     bucket,
                     memoryConsolidationService.containsKeySignal(normalizedText)
             );
-            entries.put(bucketedKey, stored);
+            entries.put(compositeKey, stored);
             for (String token : tokens) {
-                keysByToken.computeIfAbsent(token, ignored -> new LinkedHashSet<>()).add(bucketedKey);
+                keysByToken.computeIfAbsent(token, ignored -> new LinkedHashSet<>()).add(compositeKey);
             }
             } finally {
                 writeLock.unlock();
@@ -331,8 +331,8 @@ public class SemanticMemoryService implements MemoryWriteGateMetricsReader, Memo
             Lock readLock = lock.readLock();
             readLock.lock();
             try {
-            String bucketedKey = bucket + "::" + key;
-            if (entries.containsKey(bucketedKey)) {
+            String compositeKey = bucket + "::" + key;
+            if (entries.containsKey(compositeKey)) {
                 return true;
             }
 
@@ -560,10 +560,10 @@ public class SemanticMemoryService implements MemoryWriteGateMetricsReader, Memo
         }
 
         private void upsertUnsafe(String key, SemanticMemoryEntry entry, String bucket) {
-            String bucketedKey = bucket + "::" + key;
-            StoredSemanticEntry existing = entries.remove(bucketedKey);
+            String compositeKey = bucket + "::" + key;
+            StoredSemanticEntry existing = entries.remove(compositeKey);
             if (existing != null) {
-                removeTokens(bucketedKey, existing.tokens());
+                removeTokens(compositeKey, existing.tokens());
                 entry = merge(existing.entry(), entry);
             }
 
@@ -571,7 +571,7 @@ public class SemanticMemoryService implements MemoryWriteGateMetricsReader, Memo
             String normalizedText = normalizeLower(entry.text());
             StoredSemanticEntry stored = new StoredSemanticEntry(
                     entry,
-                    bucketedKey,
+                    compositeKey,
                     normalizedText,
                     tokens,
                     buildDocument(entry.text(), tokens),
@@ -579,9 +579,9 @@ public class SemanticMemoryService implements MemoryWriteGateMetricsReader, Memo
                     bucket,
                     memoryConsolidationService.containsKeySignal(normalizedText)
             );
-            entries.put(bucketedKey, stored);
+            entries.put(compositeKey, stored);
             for (String token : tokens) {
-                keysByToken.computeIfAbsent(token, ignored -> new LinkedHashSet<>()).add(bucketedKey);
+                keysByToken.computeIfAbsent(token, ignored -> new LinkedHashSet<>()).add(compositeKey);
             }
         }
 
@@ -602,7 +602,7 @@ public class SemanticMemoryService implements MemoryWriteGateMetricsReader, Memo
                 double lexical = hybridEnabled
                         ? lexicalSearchScorer.score(queryTokens, candidate.document(), corpus)
                         : 0.0d;
-                rawLexicalScores.put(candidate.bucketedKey(), lexical);
+                rawLexicalScores.put(candidate.compositeKey(), lexical);
                 if (lexical > maxLexical) {
                     maxLexical = lexical;
                 }
@@ -616,7 +616,7 @@ public class SemanticMemoryService implements MemoryWriteGateMetricsReader, Memo
                         nowMillis,
                         hybridEnabled,
                         queryEmbedding,
-                        rawLexicalScores.getOrDefault(candidate.bucketedKey(), 0.0d),
+                        rawLexicalScores.getOrDefault(candidate.compositeKey(), 0.0d),
                         maxLexical));
             }
             return ranked;
@@ -646,9 +646,7 @@ public class SemanticMemoryService implements MemoryWriteGateMetricsReader, Memo
             int containsBonus = normalizedQuery.isBlank() ? 0 : (entry.normalizedText().contains(normalizedQuery) ? 4 : 0);
             double recency = recencyBoost(entry.entry(), nowMillis);
             double lexicalOverlap = queryTokens.isEmpty() ? 0.0d : overlap / (double) queryTokens.size();
-            // Fall back to lexical overlap when BM25 produced no positive score for the current
-            // candidate set, so hybrid mode still has a deterministic sparse signal.
-            double normalizedLexical = maxLexicalScore > 0.0d ? rawLexicalScore / maxLexicalScore : lexicalOverlap;
+            double normalizedLexical = normalizeLexicalScore(rawLexicalScore, maxLexicalScore, lexicalOverlap);
             double vectorScore = hybridEnabled && !queryEmbedding.isEmpty()
                     ? Math.max(0.0d, cosineSimilarity(queryEmbedding, entry.entry().embedding()))
                     : 0.0d;
@@ -682,6 +680,12 @@ public class SemanticMemoryService implements MemoryWriteGateMetricsReader, Memo
                 return lexicalScore;
             }
             return lexicalWeight * lexicalScore + (1.0d - lexicalWeight) * vectorScore;
+        }
+
+        private double normalizeLexicalScore(double rawLexicalScore, double maxLexicalScore, double lexicalOverlap) {
+            // Fall back to lexical overlap when BM25 produced no positive score for the current
+            // candidate set, so hybrid mode still has a deterministic sparse signal.
+            return maxLexicalScore > 0.0d ? rawLexicalScore / maxLexicalScore : lexicalOverlap;
         }
 
         private boolean isHybridSearchEnabled(Set<String> queryTokens, String normalizedQuery) {
@@ -851,7 +855,7 @@ public class SemanticMemoryService implements MemoryWriteGateMetricsReader, Memo
     }
 
     private record StoredSemanticEntry(SemanticMemoryEntry entry,
-                                       String bucketedKey,
+                                       String compositeKey,
                                        String normalizedText,
                                        Set<String> tokens,
                                        MemorySearchDocument document,

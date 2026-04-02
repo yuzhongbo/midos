@@ -166,6 +166,9 @@ class MemoryRuntimePropertiesTest {
     }
 
     private Map<String, Object> linkedMapOf(Object... entries) {
+        if (entries.length % 2 != 0) {
+            throw new IllegalArgumentException("linkedMapOf requires an even number of arguments");
+        }
         Map<String, Object> values = new LinkedHashMap<>();
         for (int i = 0; i < entries.length; i += 2) {
             values.put(String.valueOf(entries[i]), entries[i + 1]);
