@@ -2,6 +2,8 @@ package com.zhongbo.mindos.assistant.api.testsupport;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.zhongbo.mindos.assistant.common.dto.ConversationTurnDto;
+import com.zhongbo.mindos.assistant.common.dto.MemorySyncRequestDto;
 import com.jayway.jsonpath.JsonPath;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import org.springframework.test.web.servlet.MvcResult;
@@ -9,6 +11,7 @@ import org.springframework.test.web.servlet.ResultMatcher;
 
 import java.util.Arrays;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -58,6 +61,20 @@ public final class ApiTestSupport {
 
     public static MockHttpServletRequestBuilder withAdminToken(MockHttpServletRequestBuilder builder) {
         return builder.header(ADMIN_TOKEN_HEADER, ADMIN_TOKEN);
+    }
+
+    public static String memorySyncRequestWithSingleTurn(String eventId, String role, String content) {
+        MemorySyncRequestDto request = new MemorySyncRequestDto(
+                eventId == null ? "" : eventId,
+                List.of(new ConversationTurnDto(role == null ? "user" : role, content == null ? "" : content, null)),
+                List.of(),
+                List.of()
+        );
+        try {
+            return OBJECT_MAPPER.writeValueAsString(request);
+        } catch (JsonProcessingException ex) {
+            throw new IllegalStateException("Failed to build memory sync request JSON", ex);
+        }
     }
 }
 

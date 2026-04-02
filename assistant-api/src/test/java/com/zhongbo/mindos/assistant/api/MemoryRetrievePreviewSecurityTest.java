@@ -38,7 +38,7 @@ class MemoryRetrievePreviewSecurityTest {
         String userId = ApiTestSupport.uniqueUserId("secure-user");
         mockMvc.perform(post("/api/memory/" + userId + "/sync")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"eventId\":\"evt-sec\",\"episodic\":[{\"role\":\"user\",\"content\":\"echo secure\"}],\"semantic\":[],\"procedural\":[]}"))
+                        .content(ApiTestSupport.memorySyncRequestWithSingleTurn("evt-sec", "user", "echo secure")))
                 .andExpect(status().isOk());
 
         mockMvc.perform(ApiTestSupport.withAdminToken(get("/api/memory/" + userId + "/retrieve-preview"))
