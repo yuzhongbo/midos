@@ -44,5 +44,14 @@ public class DingtalkMonitorController {
         response.put("openApiFallback", openApiMessageClient.tokenMonitorSnapshot());
         return Map.copyOf(response);
     }
+
+    @GetMapping("/outbound-debug")
+    public Map<String, Object> outboundDebug(HttpServletRequest request) {
+        adminTokenGuard.verify(request, "admin", "im.dingtalk.outbound-debug", "/api/im/dingtalk/outbound-debug");
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("timestamp", Instant.now().toString());
+        response.put("streamOutbound", conversationSender.outboundDebugSnapshot());
+        return Map.copyOf(response);
+    }
 }
 

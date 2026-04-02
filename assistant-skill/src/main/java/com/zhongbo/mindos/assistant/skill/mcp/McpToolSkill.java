@@ -157,6 +157,7 @@ public class McpToolSkill implements Skill {
             if (isMissingQueryError(ex)) {
                 return SkillResult.success(name(), buildMissingQueryReply(context));
             }
+            String failureMessage = rootCauseMessage(ex);
             LOGGER.warning(() -> "{\"event\":\"mcp.tool.failure\",\"skill\":\""
                     + escapeJson(name())
                     + "\",\"tool\":\""
@@ -164,9 +165,9 @@ public class McpToolSkill implements Skill {
                     + "\",\"serverAlias\":\""
                     + escapeJson(toolDefinition.serverAlias())
                     + "\",\"message\":\""
-                    + escapeJson(rootCauseMessage(ex))
+                    + escapeJson(failureMessage)
                     + "\"}");
-            return SkillResult.failure(name(), "MCP tool call failed: " + rootCauseMessage(ex));
+            return SkillResult.failure(name(), buildFriendlyFailureReply(failureMessage));
         }
     }
 
@@ -346,6 +347,18 @@ public class McpToolSkill implements Skill {
             return "抱歉，刚才我没有顺利查到你提到的“" + attemptedTopic + "”相关新闻。你可以直接说想关注的方向，我会继续按这个主题帮你查，比如科技、AI、股市、上海或本地热点。";
         }
         return "抱歉，刚才没接住你想看的新闻方向。你直接用自然的话告诉我关注的主题就行，比如“我想看看今天的科技新闻”“帮我查一下 AI 动态”或“想了解今天股市有什么消息”。";
+    }
+
+    private String buildFriendlyFailureReply(String failureMessage) {
+        String normalized = stringValue(failureMessage);
+        String lowerCaseMessage = normalized.toLowerCase(Locale.ROOT);
+        if (lowerCaseMessage.contains("brave search returned http 403")
+                && (lowerCaseMessage.contains("upstream challenge")
+                || lowerCaseMessage.contains("cloudflare")
+                || lowerCaseMessage.contains("just a moment"))) {
+            return "抱歉，Brave 搜索接口当前触发了访问拦截（HTTP 403）。我建议先重试一次；如果仍失败，请检查 Brave API Key、请求头 X-Subscription-Token，或切换到另一个搜索 MCP。";
+        }
+        return "MCP tool call failed: " + normalized;
     }
 }
 

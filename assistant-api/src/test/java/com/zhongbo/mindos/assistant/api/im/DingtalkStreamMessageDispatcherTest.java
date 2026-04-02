@@ -410,6 +410,7 @@ class DingtalkStreamMessageDispatcherTest {
         assertTrue(sender.messages.get(0).contains("已完成"));
         assertTrue(sender.messages.get(0).contains("第一段"));
         assertTrue(sender.updateCalls >= 1);
+        assertEquals("", sender.lastSessionWebhook);
     }
 
     private void setPrivateIntField(Object target, String fieldName, int value) throws Exception {

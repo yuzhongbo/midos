@@ -126,6 +126,21 @@ class McpToolSkillTest {
         }
     }
 
+    @Test
+    void shouldReturnFriendlyReplyWhenBraveSearchIsBlockedBy403Challenge() {
+        McpToolSkill skill = new McpToolSkill(
+                new McpToolDefinition("bravesearch", "http://unused.local/res/v1/web/search", "webSearch", "Search latest web news"),
+                new BraveChallengeMcpClient()
+        );
+
+        var result = skill.run(new SkillContext("u1", "国际实时新闻", Map.of("query", "国际实时新闻")));
+
+        assertTrue(!result.success());
+        assertTrue(result.output().contains("HTTP 403"));
+        assertTrue(result.output().contains("X-Subscription-Token"));
+        assertTrue(!result.output().contains("<!DOCTYPE html>"));
+    }
+
     private static final class CapturingMcpClient extends McpJsonRpcClient {
         private Map<String, Object> lastArguments = Map.of();
 
@@ -140,6 +155,13 @@ class McpToolSkillTest {
         @Override
         public String callTool(String serverUrl, String toolName, Map<String, Object> arguments, Map<String, String> headers) {
             throw new IllegalStateException("socket timeout");
+        }
+    }
+
+    private static final class BraveChallengeMcpClient extends McpJsonRpcClient {
+        @Override
+        public String callTool(String serverUrl, String toolName, Map<String, Object> arguments, Map<String, String> headers) {
+            throw new IllegalStateException("Brave search returned HTTP 403 (blocked by upstream challenge). Please verify Brave key/header and source IP allowlist, then retry.");
         }
     }
 

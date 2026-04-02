@@ -307,6 +307,34 @@ class BraveSearchRestClientTest {
     }
 
     @Test
+    void shouldSanitizeCloudflareHtmlWhenBraveReturns403() throws Exception {
+        server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/res/v1/web/search", exchange -> {
+            byte[] response = "<!DOCTYPE html><html lang=\"en-US\"><head><title>Just a moment...</title></head><body>Cloudflare</body></html>"
+                    .getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "text/html");
+            exchange.sendResponseHeaders(403, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+        server.start();
+
+        BraveSearchRestClient client = new BraveSearchRestClient(
+                HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build(),
+                objectMapper
+        );
+        String baseUrl = "http://127.0.0.1:" + server.getAddress().getPort() + "/res/v1/web/search";
+
+        try {
+            client.callTool(baseUrl, "webSearch", Map.of("query", "国际实时新闻"), Map.of("X-Subscription-Token", "token"));
+        } catch (IllegalStateException expected) {
+            assertTrue(expected.getMessage().contains("HTTP 403"));
+            assertTrue(expected.getMessage().contains("upstream challenge"));
+            assertTrue(!expected.getMessage().contains("<!DOCTYPE html>"));
+        }
+    }
+
+    @Test
     void shouldLogResponseSummaryWhenTransportFailsBeforeAnyHttpResponse() {
         Logger logger = Logger.getLogger(BraveSearchRestClient.class.getName());
         CapturingHandler handler = new CapturingHandler();

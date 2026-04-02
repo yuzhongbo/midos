@@ -287,7 +287,8 @@ class DingtalkStreamMessageDispatcher {
         }
         if (dingtalkCardEnabled) {
             String card = buildStatusCardMarkdown("处理中", waitingText);
-            DingtalkMessageHandle handle = conversationSender.sendMarkdownCardHandle(conversationId, "MindOS 处理中", card, sessionWebhook);
+            String preferredWebhook = dingtalkMessageUpdateEnabled ? "" : sessionWebhook;
+            DingtalkMessageHandle handle = conversationSender.sendMarkdownCardHandle(conversationId, "MindOS 处理中", card, preferredWebhook);
             if (handle != null && handle.sent()) {
                 rememberBotEcho(conversationId, card);
                 return handle;

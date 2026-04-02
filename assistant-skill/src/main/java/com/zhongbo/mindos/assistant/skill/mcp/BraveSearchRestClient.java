@@ -105,8 +105,9 @@ final class BraveSearchRestClient extends McpJsonRpcClient {
 
         String errorPreview = summarizeErrorBody(response.body());
         if (response.statusCode() < 200 || response.statusCode() >= 300) {
+            String errorMessage = buildHttpErrorMessage(response.statusCode(), errorPreview);
             logOutcome(toolName, requestUri, response.statusCode(), 0, "", "http_error", errorPreview);
-            throw new IllegalStateException("Brave search returned HTTP " + response.statusCode() + previewSuffix(errorPreview));
+            throw new IllegalStateException(errorMessage);
         }
 
         try {
@@ -381,6 +382,25 @@ final class BraveSearchRestClient extends McpJsonRpcClient {
     private String summarizeErrorBody(String body) {
         String normalized = stringValue(body).replaceAll("\\s+", " ").trim();
         return truncate(normalized, ERROR_PREVIEW_LOG_MAX_CHARS);
+    }
+
+    private String buildHttpErrorMessage(int statusCode, String errorPreview) {
+        if (statusCode == 403 && looksLikeCloudflareChallenge(errorPreview)) {
+            return "Brave search returned HTTP 403 (blocked by upstream challenge). "
+                    + "Please verify Brave key/header and source IP allowlist, then retry.";
+        }
+        return "Brave search returned HTTP " + statusCode + previewSuffix(errorPreview);
+    }
+
+    private boolean looksLikeCloudflareChallenge(String preview) {
+        String normalized = stringValue(preview).toLowerCase();
+        if (normalized.isBlank()) {
+            return false;
+        }
+        return normalized.contains("<!doctype html")
+                || normalized.contains("<html")
+                || normalized.contains("just a moment")
+                || normalized.contains("cloudflare");
     }
 
     private String previewSuffix(String preview) {

@@ -80,6 +80,80 @@ class DingtalkOpenApiConversationSenderTest {
         assertTrue(logs.contains("\"event\":\"dingtalk.stream.outbound.exception\""));
     }
 
+    @Test
+    void shouldLogIdentifierFlagsWhenUpdatingMessage() throws Exception {
+        DingtalkIntegrationSettings settings = new DingtalkIntegrationSettings(
+                true,
+                true,
+                true,
+                "stream-key",
+                "stream-secret",
+                "chatbot",
+                800L,
+                "我正在处理这条消息，请稍等，我会继续回复你。",
+                false,
+                30000L,
+                true,
+                1000L,
+                60000L,
+                2.0d,
+                0.2d,
+                0,
+                true,
+                "robot-code",
+                "",
+                ""
+        );
+        HttpClient httpClient = mock(HttpClient.class);
+        @SuppressWarnings("unchecked")
+        HttpResponse<String> tokenResponse = mock(HttpResponse.class);
+        when(tokenResponse.statusCode()).thenReturn(200);
+        when(tokenResponse.body()).thenReturn("{\"errcode\":0,\"access_token\":\"token-123\",\"expires_in\":7200}");
+        @SuppressWarnings("unchecked")
+        HttpResponse<String> updateResponse = mock(HttpResponse.class);
+        when(updateResponse.statusCode()).thenReturn(200);
+        when(updateResponse.body()).thenReturn("{\"success\":true,\"data\":{\"messageId\":\"msg-1\",\"processQueryKey\":\"pqk-2\",\"outTrackId\":\"ot-3\"}}");
+        when(httpClient.send(any(HttpRequest.class), org.mockito.ArgumentMatchers.<HttpResponse.BodyHandler<String>>any()))
+                .thenReturn(tokenResponse)
+                .thenReturn(updateResponse);
+
+        DingtalkOpenApiConversationSender sender = new DingtalkOpenApiConversationSender(
+                settings,
+                new ObjectMapper().findAndRegisterModules(),
+                httpClient
+        );
+
+        Logger logger = Logger.getLogger(DingtalkOpenApiConversationSender.class.getName());
+        CapturingHandler handler = new CapturingHandler();
+        Level previousLevel = logger.getLevel();
+        logger.setLevel(Level.ALL);
+        logger.addHandler(handler);
+
+        boolean updated;
+        try {
+            updated = sender.updateMessage(
+                    DingtalkMessageHandle.updatable("cid-200", "", "mid-raw"),
+                    "MindOS 处理中",
+                    "流式内容",
+                    ""
+            );
+        } finally {
+            logger.removeHandler(handler);
+            logger.setLevel(previousLevel);
+        }
+
+        assertTrue(updated);
+        String logs = handler.joinedMessages();
+        assertTrue(logs.contains("\"event\":\"dingtalk.stream.outbound.updated\""));
+        assertTrue(logs.contains("\"hasMessageId\":true"));
+        assertTrue(logs.contains("\"hasProcessQueryKey\":true"));
+        assertTrue(logs.contains("\"hasOutTrackId\":true"));
+        assertTrue(logs.contains("\"selectedIdSource\":\"messageId\""));
+
+        var debugSnapshot = sender.outboundDebugSnapshot();
+        assertTrue(debugSnapshot.containsKey("lastUpdate"));
+    }
+
     private static final class CapturingHandler extends Handler {
 
         private final List<String> messages = new ArrayList<>();

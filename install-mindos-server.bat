@@ -55,6 +55,13 @@ if not exist "%SECRETS_FILE%" (
     echo MINDOS_IM_DINGTALK_STREAM_CLIENT_ID=
     echo MINDOS_IM_DINGTALK_STREAM_CLIENT_SECRET=
     echo MINDOS_IM_DINGTALK_OUTBOUND_ROBOT_CODE=
+    echo MINDOS_IM_DINGTALK_STREAM_WAITING_TEXT=已收到，正在处理，稍后给你完整回复。
+    echo MINDOS_IM_DINGTALK_STREAM_FORCE_WAITING=true
+    echo MINDOS_IM_DINGTALK_MESSAGE_CARD_ENABLED=true
+    echo MINDOS_IM_DINGTALK_MESSAGE_UPDATE_ENABLED=true
+    echo MINDOS_IM_DINGTALK_AGENT_STATUS_ENABLED=true
+    echo MINDOS_IM_DINGTALK_TOKEN_MONITOR_ENABLED=true
+    echo MINDOS_IM_DINGTALK_OUTBOUND_UPDATE_URL=https://api.dingtalk.com/v1.0/im/chat/messages/update
     echo.
     echo # 可选 outbound 覆盖；留空则复用上面的 stream clientId/clientSecret
     echo MINDOS_IM_DINGTALK_OUTBOUND_APP_KEY=
@@ -125,4 +132,5 @@ echo   启动: %INSTALL_DIR%\mindos-server.bat
 echo   验活: %INSTALL_DIR%\mindos-server-smoke.bat
 echo   建议启动前编辑: %SECRETS_FILE% ^(钉钉 stream 模式填写 CLIENT_ID / CLIENT_SECRET / OUTBOUND_ROBOT_CODE^)
 echo   可选：在 %SECRETS_FILE% 设置 MINDOS_DISPATCHER_INTENT_ROUTING_ENABLED=true/false 覆盖 profile 默认值
+echo   可选：通过 MINDOS_IM_DINGTALK_MESSAGE_CARD_ENABLED / MINDOS_IM_DINGTALK_MESSAGE_UPDATE_ENABLED 控制单卡流式更新
 endlocal

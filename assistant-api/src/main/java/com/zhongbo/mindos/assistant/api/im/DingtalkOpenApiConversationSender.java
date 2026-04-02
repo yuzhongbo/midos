@@ -37,6 +37,8 @@ public class DingtalkOpenApiConversationSender implements DingtalkConversationSe
     private volatile long lastTokenMonitorLogAtMillis = 0L;
     private volatile Instant lastTokenRefreshAt = Instant.EPOCH;
     private volatile String lastTokenFailureReason = "";
+    private volatile Map<String, Object> lastOutboundSendDebug = Map.of();
+    private volatile Map<String, Object> lastOutboundUpdateDebug = Map.of();
     private final Object accessTokenLock = new Object();
 
     @org.springframework.beans.factory.annotation.Value("${mindos.im.dingtalk.outbound.update-url:https://api.dingtalk.com/v1.0/im/chat/messages/update}")
@@ -98,10 +100,11 @@ public class DingtalkOpenApiConversationSender implements DingtalkConversationSe
                         "channel", "session_webhook",
                         "msgType", "markdown"
                 ));
-                String platformMessageId = extractPlatformMessageId(response);
-                return platformMessageId.isBlank()
+                IdentifierBundle identifiers = extractIdentifiers(response);
+                recordOutboundDebug("lastSend", conversationId, "session_webhook", 200, identifiers, "");
+                return identifiers.selectedId().isBlank()
                         ? DingtalkMessageHandle.sentWithoutUpdate(conversationId, webhook)
-                        : DingtalkMessageHandle.updatable(conversationId, webhook, platformMessageId);
+                        : DingtalkMessageHandle.updatable(conversationId, webhook, identifiers.selectedId());
             } catch (Exception ex) {
                 logEvent(Level.WARNING, "dingtalk.stream.outbound.webhook-failed", Map.of(
                         "conversationHash", safeHash(conversationId),
@@ -164,6 +167,7 @@ public class DingtalkOpenApiConversationSender implements DingtalkConversationSe
                     .build();
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
             if (response.statusCode() / 100 != 2) {
+                recordOutboundDebug("lastUpdate", handle.conversationId(), "openapi_update", response.statusCode(), IdentifierBundle.empty(), clip(response.body()));
                 logEvent(Level.WARNING, "dingtalk.stream.outbound.update.failed", Map.of(
                         "conversationHash", safeHash(handle.conversationId()),
                         "status", response.statusCode(),
@@ -171,12 +175,16 @@ public class DingtalkOpenApiConversationSender implements DingtalkConversationSe
                 ));
                 return false;
             }
-            logEvent(Level.INFO, "dingtalk.stream.outbound.updated", Map.of(
-                    "conversationHash", safeHash(handle.conversationId()),
-                    "msgType", "markdown"
-            ));
+            IdentifierBundle identifiers = extractIdentifiers(response.body());
+            Map<String, Object> updateLogFields = new LinkedHashMap<>();
+            updateLogFields.put("conversationHash", safeHash(handle.conversationId()));
+            updateLogFields.put("msgType", "markdown");
+            applyIdentifierFields(updateLogFields, identifiers);
+            logEvent(Level.INFO, "dingtalk.stream.outbound.updated", Map.copyOf(updateLogFields));
+            recordOutboundDebug("lastUpdate", handle.conversationId(), "openapi_update", response.statusCode(), identifiers, "");
             return true;
         } catch (Exception ex) {
+            recordOutboundDebug("lastUpdate", handle.conversationId(), "openapi_update", 0, IdentifierBundle.empty(), clip(ex.getMessage()));
             logEvent(Level.WARNING, "dingtalk.stream.outbound.update.failed", Map.of(
                     "conversationHash", safeHash(handle.conversationId()),
                     "reason", ex.getMessage() == null ? ex.getClass().getSimpleName() : clip(ex.getMessage())
@@ -219,6 +227,7 @@ public class DingtalkOpenApiConversationSender implements DingtalkConversationSe
                     .build();
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
             if (response.statusCode() / 100 != 2) {
+                recordOutboundDebug("lastSend", conversationId, "openapi_send", response.statusCode(), IdentifierBundle.empty(), clip(response.body()));
                 logEvent(Level.WARNING, "dingtalk.stream.outbound.failed", Map.of(
                         "conversationHash", safeHash(conversationId),
                         "replyLength", Math.max(0, replyLength),
@@ -229,27 +238,32 @@ public class DingtalkOpenApiConversationSender implements DingtalkConversationSe
             }
             JsonNode body = parseJson(response.body());
             boolean success = body.path("success").asBoolean(true);
+            IdentifierBundle identifiers = extractIdentifiers(body);
             if (!success) {
+                recordOutboundDebug("lastSend", conversationId, "openapi_send", response.statusCode(), identifiers, clip(response.body()));
                 logEvent(Level.WARNING, "dingtalk.stream.outbound.rejected", Map.of(
                         "conversationHash", safeHash(conversationId),
                         "replyLength", Math.max(0, replyLength),
                         "body", clip(response.body())
                 ));
             } else {
-                logEvent(Level.INFO, "dingtalk.stream.outbound.sent", Map.of(
-                        "conversationHash", safeHash(conversationId),
-                        "replyLength", Math.max(0, replyLength),
-                        "msgType", msgType
-                ));
+                Map<String, Object> sentLogFields = new LinkedHashMap<>();
+                sentLogFields.put("conversationHash", safeHash(conversationId));
+                sentLogFields.put("replyLength", Math.max(0, replyLength));
+                sentLogFields.put("msgType", msgType);
+                applyIdentifierFields(sentLogFields, identifiers);
+                logEvent(Level.INFO, "dingtalk.stream.outbound.sent", Map.copyOf(sentLogFields));
+                recordOutboundDebug("lastSend", conversationId, "openapi_send", response.statusCode(), identifiers, "");
             }
             if (!success) {
                 return DingtalkMessageHandle.notSent(conversationId, sessionWebhook);
             }
-            String platformMessageId = extractPlatformMessageId(body);
+            String platformMessageId = identifiers.selectedId();
             return platformMessageId.isBlank()
                     ? DingtalkMessageHandle.sentWithoutUpdate(conversationId, sessionWebhook)
                     : DingtalkMessageHandle.updatable(conversationId, sessionWebhook, platformMessageId);
         } catch (Exception ex) {
+            recordOutboundDebug("lastSend", conversationId, "openapi_send", 0, IdentifierBundle.empty(), clip(ex.getMessage()));
             logEvent(Level.WARNING, "dingtalk.stream.outbound.exception", Map.of(
                     "conversationHash", safeHash(conversationId),
                     "replyLength", Math.max(0, replyLength),
@@ -348,34 +362,92 @@ public class DingtalkOpenApiConversationSender implements DingtalkConversationSe
         return Map.copyOf(snapshot);
     }
 
+    Map<String, Object> outboundDebugSnapshot() {
+        Map<String, Object> snapshot = new LinkedHashMap<>();
+        snapshot.put("senderReady", isReady());
+        snapshot.put("lastSend", lastOutboundSendDebug);
+        snapshot.put("lastUpdate", lastOutboundUpdateDebug);
+        return Map.copyOf(snapshot);
+    }
+
     private String extractPlatformMessageId(String responseBody) {
         try {
-            return extractPlatformMessageId(parseJson(responseBody));
+            return extractIdentifiers(parseJson(responseBody)).selectedId();
         } catch (Exception ex) {
             return "";
         }
     }
 
     private String extractPlatformMessageId(JsonNode body) {
+        return extractIdentifiers(body).selectedId();
+    }
+
+    private IdentifierBundle extractIdentifiers(String responseBody) {
+        try {
+            return extractIdentifiers(parseJson(responseBody));
+        } catch (Exception ex) {
+            return IdentifierBundle.empty();
+        }
+    }
+
+    private IdentifierBundle extractIdentifiers(JsonNode body) {
         if (body == null || body.isMissingNode()) {
-            return "";
+            return IdentifierBundle.empty();
         }
-        for (String field : List.of("messageId", "msgId", "processQueryKey", "outTrackId")) {
-            String value = body.path(field).asText("").trim();
-            if (!value.isBlank()) {
-                return value;
-            }
-        }
+        String messageId = body.path("messageId").asText("").trim();
+        String msgId = body.path("msgId").asText("").trim();
+        String processQueryKey = body.path("processQueryKey").asText("").trim();
+        String outTrackId = body.path("outTrackId").asText("").trim();
         JsonNode data = body.path("data");
         if (!data.isMissingNode()) {
-            for (String field : List.of("messageId", "msgId", "processQueryKey", "outTrackId")) {
-                String value = data.path(field).asText("").trim();
-                if (!value.isBlank()) {
-                    return value;
-                }
+            if (messageId.isBlank()) {
+                messageId = data.path("messageId").asText("").trim();
+            }
+            if (msgId.isBlank()) {
+                msgId = data.path("msgId").asText("").trim();
+            }
+            if (processQueryKey.isBlank()) {
+                processQueryKey = data.path("processQueryKey").asText("").trim();
+            }
+            if (outTrackId.isBlank()) {
+                outTrackId = data.path("outTrackId").asText("").trim();
             }
         }
-        return "";
+        String selectedId = firstNonBlank(messageId, msgId, processQueryKey, outTrackId);
+        String selectedIdSource = messageId.isBlank() && msgId.isBlank() && processQueryKey.isBlank() && outTrackId.isBlank()
+                ? ""
+                : (!messageId.isBlank() ? "messageId" : (!msgId.isBlank() ? "msgId" : (!processQueryKey.isBlank() ? "processQueryKey" : "outTrackId")));
+        return new IdentifierBundle(messageId, msgId, processQueryKey, outTrackId, selectedId, selectedIdSource);
+    }
+
+    private void applyIdentifierFields(Map<String, Object> target, IdentifierBundle identifiers) {
+        IdentifierBundle safeIdentifiers = identifiers == null ? IdentifierBundle.empty() : identifiers;
+        target.put("hasMessageId", !safeIdentifiers.messageId().isBlank());
+        target.put("hasProcessQueryKey", !safeIdentifiers.processQueryKey().isBlank());
+        target.put("hasOutTrackId", !safeIdentifiers.outTrackId().isBlank());
+        target.put("selectedIdSource", safeIdentifiers.selectedIdSource());
+        target.put("selectedIdPreview", clipIdentifier(safeIdentifiers.selectedId()));
+    }
+
+    private void recordOutboundDebug(String kind,
+                                     String conversationId,
+                                     String channel,
+                                     int status,
+                                     IdentifierBundle identifiers,
+                                     String error) {
+        Map<String, Object> snapshot = new LinkedHashMap<>();
+        snapshot.put("timestamp", Instant.now().toString());
+        snapshot.put("conversationHash", safeHash(conversationId));
+        snapshot.put("channel", safe(channel));
+        snapshot.put("status", status);
+        applyIdentifierFields(snapshot, identifiers);
+        snapshot.put("error", safe(error));
+        Map<String, Object> immutableSnapshot = Map.copyOf(snapshot);
+        if ("lastUpdate".equals(kind)) {
+            lastOutboundUpdateDebug = immutableSnapshot;
+        } else {
+            lastOutboundSendDebug = immutableSnapshot;
+        }
     }
 
     private boolean isAllowedUpdateEndpoint(String url) {
@@ -437,6 +509,43 @@ public class DingtalkOpenApiConversationSender implements DingtalkConversationSe
         }
         String normalized = value.trim().replaceAll("\\s+", " ");
         return normalized.length() <= 240 ? normalized : normalized.substring(0, 240) + "...";
+    }
+
+    private String clipIdentifier(String value) {
+        String normalized = safe(value);
+        if (normalized.isBlank()) {
+            return "";
+        }
+        if (normalized.length() <= 12) {
+            return normalized;
+        }
+        return normalized.substring(0, 6) + "..." + normalized.substring(normalized.length() - 4);
+    }
+
+    private String firstNonBlank(String... candidates) {
+        if (candidates == null) {
+            return "";
+        }
+        for (String candidate : candidates) {
+            String normalized = safe(candidate);
+            if (!normalized.isBlank()) {
+                return normalized;
+            }
+        }
+        return "";
+    }
+
+    private record IdentifierBundle(
+            String messageId,
+            String msgId,
+            String processQueryKey,
+            String outTrackId,
+            String selectedId,
+            String selectedIdSource
+    ) {
+        private static IdentifierBundle empty() {
+            return new IdentifierBundle("", "", "", "", "", "");
+        }
     }
 
     private void logEvent(Level level, String eventName, Map<String, Object> fields) {
