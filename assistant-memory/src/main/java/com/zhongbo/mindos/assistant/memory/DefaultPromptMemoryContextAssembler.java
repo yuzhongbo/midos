@@ -24,6 +24,7 @@ public class DefaultPromptMemoryContextAssembler implements PromptMemoryContextA
     private static final int RECENT_TURNS_LIMIT = 6;
     private static final int SEMANTIC_LIMIT = 10;
     private static final int DEBUG_ITEMS_LIMIT = 12;
+    private static final int LAYER_PRIORITY_WINDOW = 6;
 
     private final EpisodicMemoryService episodicMemoryService;
     private final SemanticMemoryService semanticMemoryService;
@@ -50,7 +51,7 @@ public class DefaultPromptMemoryContextAssembler implements PromptMemoryContextA
         List<ConversationTurn> recentTurns = episodicMemoryService.getRecentConversation(userId, RECENT_TURNS_LIMIT);
         String recentConversation = buildRecentConversation(recentTurns, safeMaxChars * 35 / 100, normalizedQuery, candidates);
 
-        List<SemanticMemoryEntry> semanticEntries = semanticMemoryService.search(userId, query, SEMANTIC_LIMIT);
+        List<RankedSemanticMemory> semanticEntries = semanticMemoryService.searchDetailed(userId, query, SEMANTIC_LIMIT, null);
         String semanticContext = buildSemanticContext(semanticEntries, safeMaxChars * 45 / 100, normalizedQuery, candidates);
 
         List<ProceduralMemoryEntry> proceduralHistory = proceduralMemoryService.getHistory(userId);
@@ -101,19 +102,37 @@ public class DefaultPromptMemoryContextAssembler implements PromptMemoryContextA
         return clip(builder.toString().trim(), maxChars);
     }
 
-    private String buildSemanticContext(List<SemanticMemoryEntry> entries,
-                                        int maxChars,
-                                        String normalizedQuery,
-                                        List<RetrievedMemoryItemDto> candidates) {
+    private String buildSemanticContext(List<RankedSemanticMemory> entries,
+                                         int maxChars,
+                                         String normalizedQuery,
+                                         List<RetrievedMemoryItemDto> candidates) {
         if (entries.isEmpty()) {
             return "";
         }
         StringBuilder builder = new StringBuilder();
-        for (SemanticMemoryEntry entry : entries) {
-            builder.append("- ").append(entry.text()).append('\n');
-            double rel = lexicalOverlap(normalizedQuery, entry.text());
-            double rec = recencyDecayHours(ageHours(entry.createdAt()), 168.0);
-            double relia = 0.75;
+        int appended = 0;
+        for (RankedSemanticMemory ranked : entries) {
+            if (!shouldIncludeLayeredEntry(ranked.layer(), appended)) {
+                continue;
+            }
+            SemanticMemoryEntry entry = ranked.entry();
+            builder.append("- ");
+            if (ranked.layer() == MemoryLayer.FACT) {
+                builder.append("[fact] ");
+            } else if (ranked.layer() == MemoryLayer.WORKING) {
+                builder.append("[working] ");
+            } else if (ranked.layer() == MemoryLayer.BUFFER) {
+                builder.append("[buffer] ");
+            }
+            builder.append(entry.text()).append('\n');
+            double rel = Math.max(lexicalOverlap(normalizedQuery, entry.text()), ranked.lexicalScore());
+            double rec = ranked.recencyScore();
+            double relia = switch (ranked.layer()) {
+                case FACT -> 0.9;
+                case WORKING -> 0.82;
+                case BUFFER -> 0.78;
+                case SEMANTIC -> 0.75;
+            };
             double score = score(rel, rec, relia, 0.6);
             candidates.add(new RetrievedMemoryItemDto(
                     "semantic",
@@ -124,8 +143,16 @@ public class DefaultPromptMemoryContextAssembler implements PromptMemoryContextA
                     score,
                     entry.createdAt() == null ? 0L : entry.createdAt().toEpochMilli()
             ));
+            appended++;
         }
         return clip(builder.toString().trim(), maxChars);
+    }
+
+    private boolean shouldIncludeLayeredEntry(MemoryLayer layer, int appended) {
+        if (appended < LAYER_PRIORITY_WINDOW) {
+            return true;
+        }
+        return layer == MemoryLayer.FACT || layer == MemoryLayer.WORKING;
     }
 
     private String buildProceduralHints(List<ProceduralMemoryEntry> history,

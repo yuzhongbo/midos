@@ -519,6 +519,20 @@ class DispatcherServiceTest {
     }
 
     @Test
+    void shouldUseMemoryDirectReplyWithoutCallingLlmWhenRelevantMemoryExists() {
+        MemoryManager memoryManager = createMemoryManager();
+        memoryManager.storeKnowledge("memory-user", "周五前提交周报并同步项目风险", List.of(0.2, 0.3), "task");
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of("不应调用 llm"));
+        DispatcherService service = createDispatcher(memoryManager, llmClient, List.of(), 2);
+
+        DispatchResult result = service.dispatch("memory-user", "周报什么时候提交");
+
+        assertEquals("memory.direct", result.channel());
+        assertTrue(result.reply().contains("周五前提交周报"));
+        assertEquals(0, llmClient.fallbackCallCount());
+    }
+
+    @Test
     void shouldExposeContextCompressionMetricsAfterLongConversation() {
         MemoryManager memoryManager = createMemoryManager();
         RecordingLlmClient llmClient = new RecordingLlmClient(List.of("已完成总结"));

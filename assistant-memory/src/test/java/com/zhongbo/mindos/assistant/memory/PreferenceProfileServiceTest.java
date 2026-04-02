@@ -1,8 +1,12 @@
 package com.zhongbo.mindos.assistant.memory;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zhongbo.mindos.assistant.memory.model.PreferenceProfile;
 import com.zhongbo.mindos.assistant.memory.model.PreferenceProfileExplain;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
@@ -90,5 +94,27 @@ class PreferenceProfileServiceTest {
 
         assertEquals("programmer", explain.confirmedProfile().role());
         assertEquals(0, explain.pendingOverrides().size());
+    }
+
+    @Test
+    void shouldPersistProfilesAndPendingOverridesAcrossRestarts(@TempDir Path tempDir) {
+        MemoryStateStore stateStore = new FileMemoryStateStore(true, tempDir, new ObjectMapper());
+        PreferenceProfileService first = new PreferenceProfileService(2,
+                new PreferenceProfile("MindOS", "personal-assistant", "warm", "zh-CN", "Asia/Shanghai", ""),
+                stateStore);
+        first.updateProfile("u1", new PreferenceProfile("小助理", null, null, null, null, null));
+        first.updateProfile("u1", new PreferenceProfile(null, "teacher", null, null, null, null));
+        first.updateProfile("u1", new PreferenceProfile(null, "programmer", null, null, null, null));
+
+        PreferenceProfileService second = new PreferenceProfileService(2,
+                new PreferenceProfile("MindOS", "personal-assistant", "warm", "zh-CN", "Asia/Shanghai", ""),
+                new FileMemoryStateStore(true, tempDir, new ObjectMapper()));
+
+        PreferenceProfile profile = second.getProfile("u1");
+        PreferenceProfileExplain explain = second.getProfileExplain("u1");
+        assertEquals("小助理", profile.assistantName());
+        assertEquals("teacher", profile.role());
+        assertEquals(1, explain.pendingOverrides().size());
+        assertEquals("programmer", explain.pendingOverrides().get(0).pendingValue());
     }
 }

@@ -1,8 +1,10 @@
 package com.zhongbo.mindos.assistant.memory;
 
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.zhongbo.mindos.assistant.memory.model.MemoryCompressionPlan;
 import com.zhongbo.mindos.assistant.memory.model.MemoryCompressionStep;
 import com.zhongbo.mindos.assistant.memory.model.MemoryStyleProfile;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
@@ -16,6 +18,7 @@ import java.util.concurrent.ConcurrentHashMap;
 @Service
 public class MemoryCompressionPlanningService {
 
+    private static final String STATE_FILE = "memory-style-profiles.json";
     private static final int MAX_CONDENSED_LINES = 6;
     private static final int MAX_BRIEF_LINES = 3;
     private static final int MAX_KEY_LINES_PREFERRED = 3;
@@ -23,9 +26,18 @@ public class MemoryCompressionPlanningService {
 
     private final MemoryConsolidationService memoryConsolidationService;
     private final Map<String, MemoryStyleProfile> styleProfiles = new ConcurrentHashMap<>();
+    private final MemoryStateStore memoryStateStore;
 
     public MemoryCompressionPlanningService(MemoryConsolidationService memoryConsolidationService) {
+        this(memoryConsolidationService, MemoryStateStore.noOp());
+    }
+
+    @Autowired
+    public MemoryCompressionPlanningService(MemoryConsolidationService memoryConsolidationService,
+                                            MemoryStateStore memoryStateStore) {
         this.memoryConsolidationService = memoryConsolidationService;
+        this.memoryStateStore = memoryStateStore == null ? MemoryStateStore.noOp() : memoryStateStore;
+        loadState();
     }
 
     public MemoryStyleProfile updateStyleProfile(String userId, MemoryStyleProfile preferredStyle) {
@@ -41,6 +53,7 @@ public class MemoryCompressionPlanningService {
         MemoryStyleProfile tuned = autoTune ? mergeStyle(current, inferStyleFromSample(sampleText)) : current;
         MemoryStyleProfile normalized = mergeStyle(tuned, preferredStyle);
         styleProfiles.put(key, normalized);
+        persistState();
         return normalized;
     }
 
@@ -297,5 +310,22 @@ public class MemoryCompressionPlanningService {
     private boolean isBlank(String value) {
         return value == null || value.isBlank();
     }
-}
 
+    private void loadState() {
+        Map<String, MemoryStyleProfile> persisted = memoryStateStore.readState(
+                STATE_FILE,
+                new TypeReference<>() {
+                },
+                Map::of
+        );
+        persisted.forEach((userId, profile) -> {
+            if (userId != null && profile != null) {
+                styleProfiles.put(userId, normalizeStyle(profile));
+            }
+        });
+    }
+
+    private void persistState() {
+        memoryStateStore.writeState(STATE_FILE, Map.copyOf(styleProfiles));
+    }
+}

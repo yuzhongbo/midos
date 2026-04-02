@@ -1,7 +1,9 @@
 package com.zhongbo.mindos.assistant.memory;
 
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.zhongbo.mindos.assistant.memory.model.LongTask;
 import com.zhongbo.mindos.assistant.memory.model.LongTaskStatus;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
@@ -16,11 +18,23 @@ import java.util.concurrent.ConcurrentHashMap;
 @Service
 public class LongTaskService {
 
+    private static final String STATE_FILE = "long-tasks.json";
     private static final int MAX_NOTES = 20;
 
     private final Map<String, Map<String, LongTask>> tasksByUser = new ConcurrentHashMap<>();
+    private final MemoryStateStore memoryStateStore;
 
     public record AutoAdvanceResult(int claimedCount, int advancedCount, int completedCount) {
+    }
+
+    public LongTaskService() {
+        this(MemoryStateStore.noOp());
+    }
+
+    @Autowired
+    public LongTaskService(MemoryStateStore memoryStateStore) {
+        this.memoryStateStore = memoryStateStore == null ? MemoryStateStore.noOp() : memoryStateStore;
+        loadState();
     }
 
     public LongTask createTask(String userId,
@@ -55,8 +69,11 @@ public class LongTaskService {
                 null
         );
 
-        tasksByUser.computeIfAbsent(normalizedUserId, key -> new ConcurrentHashMap<>())
-                .put(task.taskId(), task);
+        Map<String, LongTask> userTasks = tasksByUser.computeIfAbsent(normalizedUserId, key -> new ConcurrentHashMap<>());
+        synchronized (userTasks) {
+            userTasks.put(task.taskId(), task);
+            persistState();
+        }
         return task;
     }
 
@@ -125,6 +142,9 @@ public class LongTaskService {
                 );
                 userTasks.put(task.taskId(), updated);
                 claimed.add(updated);
+            }
+            if (!claimed.isEmpty()) {
+                persistState();
             }
             return List.copyOf(claimed);
         }
@@ -200,6 +220,7 @@ public class LongTaskService {
                     leaseUntil
             );
             userTasks.put(taskId, updated);
+            persistState();
             return updated;
         }
     }
@@ -243,8 +264,30 @@ public class LongTaskService {
                     leaseUntil
             );
             userTasks.put(taskId, updated);
+            persistState();
             return updated;
         }
+    }
+
+    private void loadState() {
+        Map<String, Map<String, LongTask>> persisted = memoryStateStore.readState(
+                STATE_FILE,
+                new TypeReference<>() {
+                },
+                Map::of
+        );
+        persisted.forEach((userId, tasks) -> {
+            if (userId == null || tasks == null || tasks.isEmpty()) {
+                return;
+            }
+            tasksByUser.put(userId, new ConcurrentHashMap<>(tasks));
+        });
+    }
+
+    private void persistState() {
+        Map<String, Map<String, LongTask>> snapshot = new ConcurrentHashMap<>();
+        tasksByUser.forEach((userId, tasks) -> snapshot.put(userId, new ConcurrentHashMap<>(tasks)));
+        memoryStateStore.writeState(STATE_FILE, snapshot);
     }
 
     public AutoAdvanceResult autoAdvanceReadyTasks(String userId,
@@ -346,5 +389,3 @@ public class LongTaskService {
         }
     }
 }
-
-

@@ -6,6 +6,7 @@ import com.zhongbo.mindos.assistant.memory.model.SemanticMemoryEntry;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -17,13 +18,13 @@ import java.util.Locale;
 import java.util.PriorityQueue;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.regex.Pattern;
-import java.util.concurrent.atomic.AtomicLong;
 
 @Service
-public class SemanticMemoryService implements MemoryWriteGateMetricsReader {
+public class SemanticMemoryService implements MemoryWriteGateMetricsReader, MemoryStore {
 
     private static final int MAX_APPROX_CANDIDATES = 64;
     private static final double APPROX_JACCARD_THRESHOLD = 0.82;
@@ -34,19 +35,33 @@ public class SemanticMemoryService implements MemoryWriteGateMetricsReader {
 
     private final MemoryConsolidationService memoryConsolidationService;
     private final MemoryRuntimeProperties properties;
+    private final LexicalSearchScorer lexicalSearchScorer;
+    private final MemoryLayerPolicy memoryLayerPolicy;
+    private final LocalEmbeddingService localEmbeddingService;
     private final Map<String, UserSemanticStore> entriesByUser = new ConcurrentHashMap<>();
+    private final Map<String, Map<String, MemoryRecord>> semanticTopicRecordsByUser = new ConcurrentHashMap<>();
     private final AtomicLong secondaryDuplicateCheckCount = new AtomicLong();
     private final AtomicLong secondaryDuplicateInterceptCount = new AtomicLong();
 
     @Autowired
     public SemanticMemoryService(MemoryConsolidationService memoryConsolidationService,
-                                 MemoryRuntimeProperties properties) {
+                                 MemoryRuntimeProperties properties,
+                                 LexicalSearchScorer lexicalSearchScorer,
+                                 MemoryLayerPolicy memoryLayerPolicy,
+                                 LocalEmbeddingService localEmbeddingService) {
         this.memoryConsolidationService = memoryConsolidationService;
         this.properties = properties;
+        this.lexicalSearchScorer = lexicalSearchScorer;
+        this.memoryLayerPolicy = memoryLayerPolicy;
+        this.localEmbeddingService = localEmbeddingService;
     }
 
     public SemanticMemoryService(MemoryConsolidationService memoryConsolidationService) {
-        this(memoryConsolidationService, MemoryRuntimeProperties.fromSystemProperties());
+        this(memoryConsolidationService,
+                MemoryRuntimeProperties.fromSystemProperties(),
+                new Bm25LexicalSearchScorer(),
+                new DefaultMemoryLayerPolicy(),
+                new HashingLocalEmbeddingService(memoryConsolidationService));
     }
 
     public void remember(String userId, String text, List<Double> embedding) {
@@ -58,7 +73,7 @@ public class SemanticMemoryService implements MemoryWriteGateMetricsReader {
     }
 
     public boolean storeAcceptedEntry(String userId, SemanticMemoryEntry entry, String bucket) {
-        SemanticMemoryEntry consolidated = memoryConsolidationService.consolidateSemanticEntry(entry);
+        SemanticMemoryEntry consolidated = prepareEntry(entry);
         if (consolidated == null || consolidated.text().isBlank()) {
             return false;
         }
@@ -79,7 +94,7 @@ public class SemanticMemoryService implements MemoryWriteGateMetricsReader {
     }
 
     public void addEntry(String userId, SemanticMemoryEntry entry, String bucket) {
-        SemanticMemoryEntry consolidated = memoryConsolidationService.consolidateSemanticEntry(entry);
+        SemanticMemoryEntry consolidated = prepareEntry(entry);
         if (consolidated == null || consolidated.text().isBlank()) {
             return;
         }
@@ -108,6 +123,12 @@ public class SemanticMemoryService implements MemoryWriteGateMetricsReader {
     }
 
     public List<SemanticMemoryEntry> search(String userId, String query, int limit, String preferredBucket) {
+        return searchDetailed(userId, query, limit, preferredBucket).stream()
+                .map(RankedSemanticMemory::entry)
+                .toList();
+    }
+
+    List<RankedSemanticMemory> searchDetailed(String userId, String query, int limit, String preferredBucket) {
         if (limit <= 0) {
             return List.of();
         }
@@ -117,7 +138,7 @@ public class SemanticMemoryService implements MemoryWriteGateMetricsReader {
         }
         boolean explicitPreferredBucket = preferredBucket != null && !preferredBucket.isBlank();
         String normalizedPreferredBucket = explicitPreferredBucket ? normalizeBucket(preferredBucket) : null;
-        return store.search(query, limit, normalizedPreferredBucket, explicitPreferredBucket);
+        return store.searchDetailed(query, limit, normalizedPreferredBucket, explicitPreferredBucket);
     }
 
     public boolean containsEquivalentEntry(String userId, SemanticMemoryEntry entry) {
@@ -129,7 +150,7 @@ public class SemanticMemoryService implements MemoryWriteGateMetricsReader {
         if (store == null) {
             return false;
         }
-        SemanticMemoryEntry consolidated = memoryConsolidationService.consolidateSemanticEntry(entry);
+        SemanticMemoryEntry consolidated = prepareEntry(entry);
         if (consolidated == null || consolidated.text().isBlank()) {
             return false;
         }
@@ -138,6 +159,29 @@ public class SemanticMemoryService implements MemoryWriteGateMetricsReader {
                 consolidated,
                 normalizeBucket(bucket)
         );
+    }
+
+    @Override
+    public void save(MemoryRecord record) {
+        if (record == null || record.userId().isBlank()) {
+            return;
+        }
+        MemoryRecord normalized = normalizeTopicRecord(record);
+        String topic = resolveTopic(normalized.metadata(), normalized.content());
+        semanticTopicRecordsByUser.computeIfAbsent(normalized.userId(), ignored -> new ConcurrentHashMap<>()).put(topic, normalized);
+    }
+
+    @Override
+    public List<MemoryRecord> query(MemoryQuery query) {
+        if (query == null || query.userId().isBlank()) {
+            return List.of();
+        }
+        return semanticTopicRecordsByUser.getOrDefault(query.userId(), Map.of()).values().stream()
+                .filter(record -> query.matchesContent(record.content()))
+                .filter(record -> query.topic().isBlank() || query.topic().equalsIgnoreCase(resolveTopic(record.metadata(), record.content())))
+                .sorted(Comparator.comparing(MemoryRecord::updateTime).reversed())
+                .limit(query.limit())
+                .toList();
     }
 
     @Override
@@ -160,6 +204,52 @@ public class SemanticMemoryService implements MemoryWriteGateMetricsReader {
         return bucket.trim().toLowerCase(Locale.ROOT);
     }
 
+    private MemoryRecord normalizeTopicRecord(MemoryRecord record) {
+        Map<String, Object> metadata = new LinkedHashMap<>(record.metadata());
+        String topic = resolveTopic(metadata, record.content());
+        metadata.put("topic", topic);
+        return new MemoryRecord(
+                record.id(),
+                record.userId(),
+                record.content(),
+                MemoryLayer.SEMANTIC,
+                record.embedding(),
+                metadata,
+                record.confidence(),
+                record.createTime(),
+                Instant.now()
+        );
+    }
+
+    private String resolveTopic(Map<String, Object> metadata, String content) {
+        Object topic = metadata == null ? null : metadata.get("topic");
+        if (topic != null && !String.valueOf(topic).isBlank()) {
+            return String.valueOf(topic).trim().toLowerCase(Locale.ROOT);
+        }
+        if (content == null || content.isBlank()) {
+            return DEFAULT_BUCKET;
+        }
+        String normalized = memoryConsolidationService.semanticKey(content);
+        return normalized.length() <= 64 ? normalized : normalized.substring(0, 64);
+    }
+
+    private SemanticMemoryEntry prepareEntry(SemanticMemoryEntry entry) {
+        if (entry == null) {
+            return null;
+        }
+        SemanticMemoryEntry consolidated = memoryConsolidationService.consolidateSemanticEntry(entry);
+        if (entry.embedding() != null && !entry.embedding().isEmpty()) {
+            return consolidated;
+        }
+        List<Double> generated = localEmbeddingService.embed(consolidated.text());
+        if (generated == null || generated.isEmpty()) {
+            return consolidated;
+        }
+        return memoryConsolidationService.consolidateSemanticEntry(
+                new SemanticMemoryEntry(consolidated.text(), generated, consolidated.createdAt())
+        );
+    }
+
     private final class UserSemanticStore {
         private final LinkedHashMap<String, StoredSemanticEntry> entries = new LinkedHashMap<>();
         private final Map<String, Set<String>> keysByToken = new HashMap<>();
@@ -170,10 +260,10 @@ public class SemanticMemoryService implements MemoryWriteGateMetricsReader {
             Lock writeLock = lock.writeLock();
             writeLock.lock();
             try {
-            String bucketedKey = bucket + "::" + key;
-            StoredSemanticEntry existing = entries.remove(bucketedKey);
+            String compositeKey = bucket + "::" + key;
+            StoredSemanticEntry existing = entries.remove(compositeKey);
             if (existing != null) {
-                removeTokens(bucketedKey, existing.tokens());
+                removeTokens(compositeKey, existing.tokens());
                 entry = merge(existing.entry(), entry);
             }
 
@@ -181,15 +271,17 @@ public class SemanticMemoryService implements MemoryWriteGateMetricsReader {
             String normalizedText = normalizeLower(entry.text());
             StoredSemanticEntry stored = new StoredSemanticEntry(
                     entry,
+                    compositeKey,
                     normalizedText,
                     tokens,
+                    buildDocument(entry.text(), tokens),
                     ++sequence,
                     bucket,
                     memoryConsolidationService.containsKeySignal(normalizedText)
             );
-            entries.put(bucketedKey, stored);
+            entries.put(compositeKey, stored);
             for (String token : tokens) {
-                keysByToken.computeIfAbsent(token, ignored -> new LinkedHashSet<>()).add(bucketedKey);
+                keysByToken.computeIfAbsent(token, ignored -> new LinkedHashSet<>()).add(compositeKey);
             }
             } finally {
                 writeLock.unlock();
@@ -239,8 +331,8 @@ public class SemanticMemoryService implements MemoryWriteGateMetricsReader {
             Lock readLock = lock.readLock();
             readLock.lock();
             try {
-            String bucketedKey = bucket + "::" + key;
-            if (entries.containsKey(bucketedKey)) {
+            String compositeKey = bucket + "::" + key;
+            if (entries.containsKey(compositeKey)) {
                 return true;
             }
 
@@ -291,49 +383,52 @@ public class SemanticMemoryService implements MemoryWriteGateMetricsReader {
             }
         }
 
-        List<SemanticMemoryEntry> search(String query,
-                                                      int limit,
-                                                      String preferredBucket,
-                                                      boolean enforceCrossBucketCap) {
+        List<RankedSemanticMemory> searchDetailed(String query,
+                                                  int limit,
+                                                  String preferredBucket,
+                                                  boolean enforceCrossBucketCap) {
             Lock readLock = lock.readLock();
             readLock.lock();
             try {
-            List<StoredSemanticEntry> candidates = new ArrayList<>();
-            LinkedHashSet<String> queryTokens = tokenize(query);
-            if (queryTokens.isEmpty()) {
-                candidates.addAll(entries.values());
-            } else {
-                LinkedHashSet<String> candidateKeys = collectCoarseCandidateKeys(queryTokens, limit);
-                if (candidateKeys.isEmpty()) {
+                List<StoredSemanticEntry> candidates = new ArrayList<>();
+                LinkedHashSet<String> queryTokens = tokenize(query);
+                if (queryTokens.isEmpty()) {
                     candidates.addAll(entries.values());
                 } else {
-                    for (String candidateKey : candidateKeys) {
-                        StoredSemanticEntry entry = entries.get(candidateKey);
-                        if (entry != null) {
-                            candidates.add(entry);
+                    LinkedHashSet<String> candidateKeys = collectCoarseCandidateKeys(queryTokens, limit);
+                    if (candidateKeys.isEmpty()) {
+                        candidates.addAll(entries.values());
+                    } else {
+                        for (String candidateKey : candidateKeys) {
+                            StoredSemanticEntry entry = entries.get(candidateKey);
+                            if (entry != null) {
+                                candidates.add(entry);
+                            }
                         }
                     }
                 }
-            }
 
-            String normalizedQuery = normalizeLower(query);
-            long nowMillis = System.currentTimeMillis();
-            Comparator<StoredSemanticEntry> comparator = Comparator
-                    .comparingDouble((StoredSemanticEntry entry) -> score(entry, queryTokens, normalizedQuery, preferredBucket, nowMillis))
-                    .thenComparingLong(StoredSemanticEntry::sequence)
-                    .reversed();
+                String normalizedQuery = normalizeLower(query);
+                long nowMillis = System.currentTimeMillis();
+                List<RankedSemanticMemory> rankedCandidates = rankCandidates(candidates,
+                        queryTokens,
+                        normalizedQuery,
+                        preferredBucket,
+                        nowMillis);
+                Comparator<RankedSemanticMemory> comparator = Comparator
+                        .comparingDouble(RankedSemanticMemory::finalScore)
+                        .thenComparingLong(RankedSemanticMemory::sequence)
+                        .reversed();
 
-            List<StoredSemanticEntry> ranked = enforceCrossBucketCap
-                    ? candidates.stream().sorted(comparator).toList()
-                    : rankTopK(candidates, limit, comparator);
+                List<RankedSemanticMemory> ranked = enforceCrossBucketCap
+                        ? rankedCandidates.stream().sorted(comparator).toList()
+                        : rankTopK(rankedCandidates, limit, comparator);
 
-            List<StoredSemanticEntry> mixed = enforceCrossBucketCap
-                    ? applyPreferredBucketMix(ranked, limit, preferredBucket)
-                    : ranked.stream().limit(limit).toList();
+                List<RankedSemanticMemory> mixed = enforceCrossBucketCap
+                        ? applyPreferredBucketMix(ranked, limit, preferredBucket)
+                        : ranked.stream().limit(limit).toList();
 
-            return mixed.stream()
-                    .map(StoredSemanticEntry::entry)
-                    .toList();
+                return mixed;
             } finally {
                 readLock.unlock();
             }
@@ -367,39 +462,39 @@ public class SemanticMemoryService implements MemoryWriteGateMetricsReader {
             return Math.max(minCandidates, byLimit);
         }
 
-        private List<StoredSemanticEntry> rankTopK(List<StoredSemanticEntry> candidates,
+        private List<RankedSemanticMemory> rankTopK(List<RankedSemanticMemory> candidates,
                                                     int limit,
-                                                    Comparator<StoredSemanticEntry> comparator) {
+                                                    Comparator<RankedSemanticMemory> comparator) {
             if (limit <= 0 || candidates.isEmpty()) {
                 return List.of();
             }
-            PriorityQueue<StoredSemanticEntry> top = new PriorityQueue<>(limit, comparator.reversed());
-            for (StoredSemanticEntry candidate : candidates) {
+            PriorityQueue<RankedSemanticMemory> top = new PriorityQueue<>(limit, comparator.reversed());
+            for (RankedSemanticMemory candidate : candidates) {
                 if (top.size() < limit) {
                     top.offer(candidate);
                     continue;
                 }
-                StoredSemanticEntry weakest = top.peek();
+                RankedSemanticMemory weakest = top.peek();
                 if (weakest != null && comparator.compare(candidate, weakest) > 0) {
                     top.poll();
                     top.offer(candidate);
                 }
             }
-            List<StoredSemanticEntry> ranked = new ArrayList<>(top);
+            List<RankedSemanticMemory> ranked = new ArrayList<>(top);
             ranked.sort(comparator);
             return ranked;
         }
 
-        private List<StoredSemanticEntry> applyPreferredBucketMix(List<StoredSemanticEntry> ranked,
+        private List<RankedSemanticMemory> applyPreferredBucketMix(List<RankedSemanticMemory> ranked,
                                                                    int limit,
                                                                    String preferredBucket) {
             if (preferredBucket == null || preferredBucket.isBlank()) {
                 return ranked.stream().limit(limit).toList();
             }
             int crossBucketCap = resolveCrossBucketCap(limit);
-            List<StoredSemanticEntry> sameBucket = new ArrayList<>();
-            List<StoredSemanticEntry> crossBucket = new ArrayList<>();
-            for (StoredSemanticEntry entry : ranked) {
+            List<RankedSemanticMemory> sameBucket = new ArrayList<>();
+            List<RankedSemanticMemory> crossBucket = new ArrayList<>();
+            for (RankedSemanticMemory entry : ranked) {
                 if (preferredBucket.equals(entry.bucket())) {
                     sameBucket.add(entry);
                 } else if (crossBucket.size() < crossBucketCap) {
@@ -407,14 +502,14 @@ public class SemanticMemoryService implements MemoryWriteGateMetricsReader {
                 }
             }
 
-            List<StoredSemanticEntry> mixed = new ArrayList<>(limit);
-            for (StoredSemanticEntry entry : sameBucket) {
+            List<RankedSemanticMemory> mixed = new ArrayList<>(limit);
+            for (RankedSemanticMemory entry : sameBucket) {
                 if (mixed.size() >= limit) {
                     break;
                 }
                 mixed.add(entry);
             }
-            for (StoredSemanticEntry entry : crossBucket) {
+            for (RankedSemanticMemory entry : crossBucket) {
                 if (mixed.size() >= limit) {
                     break;
                 }
@@ -465,10 +560,10 @@ public class SemanticMemoryService implements MemoryWriteGateMetricsReader {
         }
 
         private void upsertUnsafe(String key, SemanticMemoryEntry entry, String bucket) {
-            String bucketedKey = bucket + "::" + key;
-            StoredSemanticEntry existing = entries.remove(bucketedKey);
+            String compositeKey = bucket + "::" + key;
+            StoredSemanticEntry existing = entries.remove(compositeKey);
             if (existing != null) {
-                removeTokens(bucketedKey, existing.tokens());
+                removeTokens(compositeKey, existing.tokens());
                 entry = merge(existing.entry(), entry);
             }
 
@@ -476,25 +571,71 @@ public class SemanticMemoryService implements MemoryWriteGateMetricsReader {
             String normalizedText = normalizeLower(entry.text());
             StoredSemanticEntry stored = new StoredSemanticEntry(
                     entry,
+                    compositeKey,
                     normalizedText,
                     tokens,
+                    buildDocument(entry.text(), tokens),
                     ++sequence,
                     bucket,
                     memoryConsolidationService.containsKeySignal(normalizedText)
             );
-            entries.put(bucketedKey, stored);
+            entries.put(compositeKey, stored);
             for (String token : tokens) {
-                keysByToken.computeIfAbsent(token, ignored -> new LinkedHashSet<>()).add(bucketedKey);
+                keysByToken.computeIfAbsent(token, ignored -> new LinkedHashSet<>()).add(compositeKey);
             }
         }
 
-        private double score(StoredSemanticEntry entry,
-                             Set<String> queryTokens,
-                             String normalizedQuery,
-                             String preferredBucket,
-                             long nowMillis) {
+        private List<RankedSemanticMemory> rankCandidates(List<StoredSemanticEntry> candidates,
+                                                          Set<String> queryTokens,
+                                                          String normalizedQuery,
+                                                          String preferredBucket,
+                                                          long nowMillis) {
+            if (candidates.isEmpty()) {
+                return List.of();
+            }
+            boolean hybridEnabled = isHybridSearchEnabled(queryTokens, normalizedQuery);
+            List<Double> queryEmbedding = hybridEnabled ? localEmbeddingService.embed(normalizedQuery) : List.of();
+            MemorySearchCorpus corpus = buildCorpus(candidates);
+            Map<String, Double> rawLexicalScores = new HashMap<>();
+            double maxLexical = 0.0d;
+            for (StoredSemanticEntry candidate : candidates) {
+                double lexical = hybridEnabled
+                        ? lexicalSearchScorer.score(queryTokens, candidate.document(), corpus)
+                        : 0.0d;
+                rawLexicalScores.put(candidate.compositeKey(), lexical);
+                if (lexical > maxLexical) {
+                    maxLexical = lexical;
+                }
+            }
+            List<RankedSemanticMemory> ranked = new ArrayList<>(candidates.size());
+            for (StoredSemanticEntry candidate : candidates) {
+                ranked.add(scoreCandidate(candidate,
+                        queryTokens,
+                        normalizedQuery,
+                        preferredBucket,
+                        nowMillis,
+                        hybridEnabled,
+                        queryEmbedding,
+                        rawLexicalScores.getOrDefault(candidate.compositeKey(), 0.0d),
+                        maxLexical));
+            }
+            return ranked;
+        }
+
+        private RankedSemanticMemory scoreCandidate(StoredSemanticEntry entry,
+                                                    Set<String> queryTokens,
+                                                    String normalizedQuery,
+                                                    String preferredBucket,
+                                                    long nowMillis,
+                                                    boolean hybridEnabled,
+                                                    List<Double> queryEmbedding,
+                                                    double rawLexicalScore,
+                                                    double maxLexicalScore) {
+            MemoryLayer layer = memoryLayerPolicy.classify(entry.entry(), entry.bucket(), entry.hasKeySignal(), nowMillis);
             if (queryTokens.isEmpty()) {
-                return 1 + bucketBoost(entry.bucket(), preferredBucket) + recencyBoost(entry.entry(), nowMillis);
+                double recency = recencyBoost(entry.entry(), nowMillis);
+                double finalScore = 1 + bucketBoost(entry.bucket(), preferredBucket) + recency + memoryLayerPolicy.boost(layer);
+                return new RankedSemanticMemory(entry.entry(), entry.bucket(), entry.sequence(), layer, 0.0d, 0.0d, recency, finalScore);
             }
             int overlap = 0;
             for (String token : queryTokens) {
@@ -503,10 +644,71 @@ public class SemanticMemoryService implements MemoryWriteGateMetricsReader {
                 }
             }
             int containsBonus = normalizedQuery.isBlank() ? 0 : (entry.normalizedText().contains(normalizedQuery) ? 4 : 0);
-            return overlap * 10
+            double recency = recencyBoost(entry.entry(), nowMillis);
+            double lexicalOverlap = queryTokens.isEmpty() ? 0.0d : overlap / (double) queryTokens.size();
+            double normalizedLexical = normalizeLexicalScore(rawLexicalScore, maxLexicalScore, lexicalOverlap);
+            double vectorScore = hybridEnabled && !queryEmbedding.isEmpty()
+                    ? Math.max(0.0d, cosineSimilarity(queryEmbedding, entry.entry().embedding()))
+                    : 0.0d;
+            double hybridCore = hybridEnabled
+                    ? blendScores(Math.max(lexicalOverlap, normalizedLexical), vectorScore)
+                    : overlap * 10.0d;
+            double finalScore = hybridEnabled
+                    ? hybridCore * 12.0d
                     + containsBonus
                     + bucketBoost(entry.bucket(), preferredBucket)
-                    + recencyBoost(entry.entry(), nowMillis);
+                    + recency
+                    + memoryLayerPolicy.boost(layer)
+                    : hybridCore
+                    + containsBonus
+                    + bucketBoost(entry.bucket(), preferredBucket)
+                    + recency
+                    + memoryLayerPolicy.boost(layer);
+            return new RankedSemanticMemory(entry.entry(),
+                    entry.bucket(),
+                    entry.sequence(),
+                    layer,
+                    Math.max(lexicalOverlap, normalizedLexical),
+                    vectorScore,
+                    recency,
+                    finalScore);
+        }
+
+        private double blendScores(double lexicalScore, double vectorScore) {
+            double lexicalWeight = properties.getSearch().getHybrid().getLexicalWeight();
+            if (vectorScore <= 0.0d) {
+                return lexicalScore;
+            }
+            return lexicalWeight * lexicalScore + (1.0d - lexicalWeight) * vectorScore;
+        }
+
+        private double normalizeLexicalScore(double rawLexicalScore, double maxLexicalScore, double lexicalOverlap) {
+            // Fall back to lexical overlap when BM25 produced no positive score for the current
+            // candidate set, so hybrid mode still has a deterministic sparse signal.
+            return maxLexicalScore > 0.0d ? rawLexicalScore / maxLexicalScore : lexicalOverlap;
+        }
+
+        private boolean isHybridSearchEnabled(Set<String> queryTokens, String normalizedQuery) {
+            return properties.getSearch().getHybrid().isEnabled()
+                    && queryTokens != null
+                    && !queryTokens.isEmpty()
+                    && normalizedQuery != null
+                    && !normalizedQuery.isBlank();
+        }
+
+        private MemorySearchCorpus buildCorpus(List<StoredSemanticEntry> candidates) {
+            Map<String, Integer> documentFrequency = new HashMap<>();
+            int documentCount = 0;
+            int totalLength = 0;
+            for (StoredSemanticEntry candidate : candidates) {
+                documentCount++;
+                totalLength += candidate.document().length();
+                for (String token : candidate.tokens()) {
+                    documentFrequency.merge(token, 1, Integer::sum);
+                }
+            }
+            double averageLength = documentCount <= 0 ? 1.0d : totalLength / (double) documentCount;
+            return new MemorySearchCorpus(documentCount, Math.max(1.0d, averageLength), Map.copyOf(documentFrequency));
         }
 
         private double bucketBoost(String bucket, String preferredBucket) {
@@ -610,6 +812,14 @@ public class SemanticMemoryService implements MemoryWriteGateMetricsReader {
             }
             return dot / (Math.sqrt(leftNorm) * Math.sqrt(rightNorm));
         }
+
+        private MemorySearchDocument buildDocument(String text, Set<String> tokens) {
+            Map<String, Integer> termFrequency = new HashMap<>();
+            for (String token : tokens) {
+                termFrequency.merge(token, 1, Integer::sum);
+            }
+            return new MemorySearchDocument(text, Set.copyOf(tokens), Map.copyOf(termFrequency));
+        }
     }
 
     private LinkedHashSet<String> tokenize(String text) {
@@ -645,13 +855,12 @@ public class SemanticMemoryService implements MemoryWriteGateMetricsReader {
     }
 
     private record StoredSemanticEntry(SemanticMemoryEntry entry,
+                                       String compositeKey,
                                        String normalizedText,
                                        Set<String> tokens,
+                                       MemorySearchDocument document,
                                        long sequence,
                                        String bucket,
                                        boolean hasKeySignal) {
     }
 }
-
-
-

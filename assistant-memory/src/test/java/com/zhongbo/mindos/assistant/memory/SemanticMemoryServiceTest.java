@@ -270,6 +270,64 @@ class SemanticMemoryServiceTest {
         }
     }
 
+    @Test
+    void shouldGenerateLocalEmbeddingAndHybridScoresWhenConfigured() {
+        String oldHybridEnabled = System.getProperty("mindos.memory.search.hybrid.enabled");
+        String oldEmbeddingEnabled = System.getProperty("mindos.memory.embedding.local.enabled");
+        try {
+            System.setProperty("mindos.memory.search.hybrid.enabled", "true");
+            System.setProperty("mindos.memory.embedding.local.enabled", "true");
+
+            MemoryConsolidationService consolidationService = new MemoryConsolidationService();
+            SemanticMemoryService service = new SemanticMemoryService(consolidationService);
+            service.addEntry("hybrid-user", SemanticMemoryEntry.of("project alpha owner alice due friday", List.of()), "task");
+
+            List<RankedSemanticMemory> results = service.searchDetailed("hybrid-user", "alpha owner", 3, "task");
+
+            assertEquals(1, results.size());
+            assertFalse(results.get(0).entry().text().isBlank());
+            assertFalse(results.get(0).entry().embedding().isEmpty());
+            assertTrue(results.get(0).lexicalScore() > 0.0);
+            assertTrue(results.get(0).vectorScore() > 0.0);
+
+            List<Double> existingEmbedding = List.of(0.9, 0.8, 0.7);
+            service.addEntry("hybrid-user", SemanticMemoryEntry.of("project beta stable vector", existingEmbedding), "task");
+            List<SemanticMemoryEntry> preserved = service.search("hybrid-user", "beta stable", 5, "task");
+            assertTrue(preserved.stream().anyMatch(item -> item.embedding().equals(existingEmbedding)));
+        } finally {
+            restoreProperty("mindos.memory.search.hybrid.enabled", oldHybridEnabled);
+            restoreProperty("mindos.memory.embedding.local.enabled", oldEmbeddingEnabled);
+        }
+    }
+
+    @Test
+    void shouldClassifyFactLayerForDenseKeySignalEntries() {
+        String oldLayersEnabled = System.getProperty("mindos.memory.layers.enabled");
+        String oldFactMaxChars = System.getProperty("mindos.memory.layers.fact-max-chars");
+        try {
+            System.setProperty("mindos.memory.layers.enabled", "true");
+            System.setProperty("mindos.memory.layers.fact-max-chars", "120");
+
+            MemoryConsolidationService consolidationService = new MemoryConsolidationService();
+            SemanticMemoryService service = new SemanticMemoryService(consolidationService);
+            service.addEntry("layer-user",
+                    new SemanticMemoryEntry("API owner Alice due 2026-04-05", List.of(0.1, 0.2), java.time.Instant.now()),
+                    "task");
+            service.addEntry("layer-user",
+                    new SemanticMemoryEntry("A long project retrospective about collaboration rituals and meeting cadence",
+                            List.of(0.2, 0.3),
+                            java.time.Instant.now().minusSeconds(3600L * 24 * 10)),
+                    "learning");
+
+            List<RankedSemanticMemory> results = service.searchDetailed("layer-user", "owner due", 5, null);
+
+            assertTrue(results.stream().anyMatch(item -> item.layer() == MemoryLayer.FACT));
+        } finally {
+            restoreProperty("mindos.memory.layers.enabled", oldLayersEnabled);
+            restoreProperty("mindos.memory.layers.fact-max-chars", oldFactMaxChars);
+        }
+    }
+
     private void restoreProperty(String key, String value) {
         if (value == null) {
             System.clearProperty(key);
@@ -278,4 +336,3 @@ class SemanticMemoryServiceTest {
         }
     }
 }
-
