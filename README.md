@@ -675,6 +675,9 @@ Tips:
   - two-stage retrieval coarse candidate multiplier: `mindos.memory.search.coarse.multiplier` (default `8`, final coarse cap = `max(min-candidates, limit*multiplier)`)
   - explicit preferred-bucket search cross-bucket fallback cap: `mindos.memory.search.cross-bucket.max` (default `2`)
   - explicit preferred-bucket search cross-bucket fallback ratio: `mindos.memory.search.cross-bucket.ratio` (default `0.5`, range `0..1`)
+  - optional hybrid sparse+dense retrieval: `mindos.memory.search.hybrid.enabled` (default `false`), `mindos.memory.search.hybrid.lexical-weight` (default `0.55`), `mindos.memory.search.hybrid.k1` (default `1.2`), `mindos.memory.search.hybrid.b` (default `0.75`)
+  - optional local embedding generation for memory writes/query vectors: `mindos.memory.embedding.local.enabled` (default `false`), `mindos.memory.embedding.local.dimensions` (default `16`)
+  - optional layered semantic ranking: `mindos.memory.layers.enabled` (default `false`), `mindos.memory.layers.buffer-hours` (default `6`), `mindos.memory.layers.working-hours` (default `72`), `mindos.memory.layers.fact-max-chars` (default `160`)
   - conversation rollup: `mindos.memory.conversation-rollup.enabled` (default `true`), `mindos.memory.conversation-rollup.threshold-turns` (default `24`), `mindos.memory.conversation-rollup.keep-recent-turns` (default `8`), `mindos.memory.conversation-rollup.min-turns` (default `6`)
   - precedence for `mindos.memory.*`: system properties (`-D`) > `application.properties` > built-in defaults.
   - when enabled, low-signal short semantic entries are skipped; retrieval prefers same inferred topic bucket and keeps bounded cross-bucket fallback when preferred bucket is explicit.

@@ -29,6 +29,18 @@ class MemoryRuntimePropertiesTest {
         assertEquals(8, properties.getSearch().getCoarseMultiplier());
         assertEquals(2, properties.getSearch().getCrossBucketMax());
         assertEquals(0.5, properties.getSearch().getCrossBucketRatio());
+        assertFalse(properties.getSearch().getHybrid().isEnabled());
+        assertEquals(0.55, properties.getSearch().getHybrid().getLexicalWeight());
+        assertEquals(1.2, properties.getSearch().getHybrid().getK1());
+        assertEquals(0.75, properties.getSearch().getHybrid().getB());
+
+        assertFalse(properties.getEmbedding().getLocal().isEnabled());
+        assertEquals(16, properties.getEmbedding().getLocal().getDimensions());
+
+        assertFalse(properties.getLayers().isEnabled());
+        assertEquals(6, properties.getLayers().getBufferHours());
+        assertEquals(72, properties.getLayers().getWorkingHours());
+        assertEquals(160, properties.getLayers().getFactMaxChars());
     }
 
     @Test
@@ -43,7 +55,17 @@ class MemoryRuntimePropertiesTest {
                         "mindos.memory.search.coarse.min-candidates", "256",
                         "mindos.memory.search.coarse.multiplier", "12",
                         "mindos.memory.search.cross-bucket.max", "5",
-                        "mindos.memory.search.cross-bucket.ratio", "0.25"
+                        "mindos.memory.search.cross-bucket.ratio", "0.25",
+                        "mindos.memory.search.hybrid.enabled", "true",
+                        "mindos.memory.search.hybrid.lexical-weight", "0.6",
+                        "mindos.memory.search.hybrid.k1", "1.5",
+                        "mindos.memory.search.hybrid.b", "0.7",
+                        "mindos.memory.embedding.local.enabled", "true",
+                        "mindos.memory.embedding.local.dimensions", "24",
+                        "mindos.memory.layers.enabled", "true",
+                        "mindos.memory.layers.buffer-hours", "4",
+                        "mindos.memory.layers.working-hours", "48",
+                        "mindos.memory.layers.fact-max-chars", "96"
                 ),
                 Map.of()
         );
@@ -58,6 +80,18 @@ class MemoryRuntimePropertiesTest {
         assertEquals(12, properties.getSearch().getCoarseMultiplier());
         assertEquals(5, properties.getSearch().getCrossBucketMax());
         assertEquals(0.25, properties.getSearch().getCrossBucketRatio());
+        assertTrue(properties.getSearch().getHybrid().isEnabled());
+        assertEquals(0.6, properties.getSearch().getHybrid().getLexicalWeight());
+        assertEquals(1.5, properties.getSearch().getHybrid().getK1());
+        assertEquals(0.7, properties.getSearch().getHybrid().getB());
+
+        assertTrue(properties.getEmbedding().getLocal().isEnabled());
+        assertEquals(24, properties.getEmbedding().getLocal().getDimensions());
+
+        assertTrue(properties.getLayers().isEnabled());
+        assertEquals(4, properties.getLayers().getBufferHours());
+        assertEquals(48, properties.getLayers().getWorkingHours());
+        assertEquals(96, properties.getLayers().getFactMaxChars());
     }
 
     @Test
@@ -72,7 +106,13 @@ class MemoryRuntimePropertiesTest {
                         "mindos.memory.search.coarse.min-candidates", "96",
                         "mindos.memory.search.coarse.multiplier", "6",
                         "mindos.memory.search.cross-bucket.max", "3",
-                        "mindos.memory.search.cross-bucket.ratio", "0.2"
+                        "mindos.memory.search.cross-bucket.ratio", "0.2",
+                        "mindos.memory.search.hybrid.enabled", "false",
+                        "mindos.memory.search.hybrid.lexical-weight", "0.2",
+                        "mindos.memory.embedding.local.enabled", "false",
+                        "mindos.memory.embedding.local.dimensions", "12",
+                        "mindos.memory.layers.enabled", "false",
+                        "mindos.memory.layers.working-hours", "24"
                 ),
                 Map.of(
                         "mindos.memory.write-gate.enabled", "true",
@@ -83,7 +123,13 @@ class MemoryRuntimePropertiesTest {
                         "mindos.memory.search.coarse.min-candidates", "320",
                         "mindos.memory.search.coarse.multiplier", "16",
                         "mindos.memory.search.cross-bucket.max", "7",
-                        "mindos.memory.search.cross-bucket.ratio", "0.75"
+                        "mindos.memory.search.cross-bucket.ratio", "0.75",
+                        "mindos.memory.search.hybrid.enabled", "true",
+                        "mindos.memory.search.hybrid.lexical-weight", "0.9",
+                        "mindos.memory.embedding.local.enabled", "true",
+                        "mindos.memory.embedding.local.dimensions", "40",
+                        "mindos.memory.layers.enabled", "true",
+                        "mindos.memory.layers.working-hours", "120"
                 )
         );
 
@@ -97,6 +143,12 @@ class MemoryRuntimePropertiesTest {
         assertEquals(16, properties.getSearch().getCoarseMultiplier());
         assertEquals(7, properties.getSearch().getCrossBucketMax());
         assertEquals(0.75, properties.getSearch().getCrossBucketRatio());
+        assertTrue(properties.getSearch().getHybrid().isEnabled());
+        assertEquals(0.9, properties.getSearch().getHybrid().getLexicalWeight());
+        assertTrue(properties.getEmbedding().getLocal().isEnabled());
+        assertEquals(40, properties.getEmbedding().getLocal().getDimensions());
+        assertTrue(properties.getLayers().isEnabled());
+        assertEquals(120, properties.getLayers().getWorkingHours());
     }
 
     private MemoryRuntimeProperties bind(Map<String, Object> applicationProperties,
@@ -112,4 +164,3 @@ class MemoryRuntimePropertiesTest {
                 .orElseGet(MemoryRuntimeProperties::new);
     }
 }
-
