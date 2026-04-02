@@ -6,6 +6,7 @@ import org.springframework.core.env.MapPropertySource;
 import org.springframework.core.env.MutablePropertySources;
 import org.springframework.core.env.StandardEnvironment;
 
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -46,7 +47,7 @@ class MemoryRuntimePropertiesTest {
     @Test
     void shouldBindFromApplicationProperties() {
         MemoryRuntimeProperties properties = bind(
-                Map.of(
+                linkedMapOf(
                         "mindos.memory.write-gate.enabled", "true",
                         "mindos.memory.write-gate.min-length", "16",
                         "mindos.memory.write-gate.semantic-duplicate.enabled", "true",
@@ -97,7 +98,7 @@ class MemoryRuntimePropertiesTest {
     @Test
     void shouldPreferSystemPropertiesOverApplicationProperties() {
         MemoryRuntimeProperties properties = bind(
-                Map.of(
+                linkedMapOf(
                         "mindos.memory.write-gate.enabled", "false",
                         "mindos.memory.write-gate.min-length", "12",
                         "mindos.memory.write-gate.semantic-duplicate.enabled", "false",
@@ -114,7 +115,7 @@ class MemoryRuntimePropertiesTest {
                         "mindos.memory.layers.enabled", "false",
                         "mindos.memory.layers.working-hours", "24"
                 ),
-                Map.of(
+                linkedMapOf(
                         "mindos.memory.write-gate.enabled", "true",
                         "mindos.memory.write-gate.min-length", "20",
                         "mindos.memory.write-gate.semantic-duplicate.enabled", "true",
@@ -162,5 +163,13 @@ class MemoryRuntimePropertiesTest {
         Binder binder = Binder.get(environment);
         return binder.bind("mindos.memory", MemoryRuntimeProperties.class)
                 .orElseGet(MemoryRuntimeProperties::new);
+    }
+
+    private Map<String, Object> linkedMapOf(Object... entries) {
+        Map<String, Object> values = new LinkedHashMap<>();
+        for (int i = 0; i < entries.length; i += 2) {
+            values.put(String.valueOf(entries[i]), entries[i + 1]);
+        }
+        return values;
     }
 }
