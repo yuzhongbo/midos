@@ -35,6 +35,7 @@ public class MemoryManager {
     private final MemoryCompressionPlanningService memoryCompressionPlanningService;
     private final PreferenceProfileService preferenceProfileService;
     private final LongTaskService longTaskService;
+    private final MemoryRouter memoryRouter;
     private final PromptMemoryContextAssembler promptMemoryContextAssembler;
     private final boolean conversationRollupEnabled;
     private final int conversationRollupThresholdTurns;
@@ -63,6 +64,12 @@ public class MemoryManager {
                 memoryCompressionPlanningService,
                 preferenceProfileService,
                 longTaskService,
+                new MemoryRouter(
+                        new BufferMemoryService(Integer.getInteger("mindos.memory.multilayer.buffer.max-messages", 20)),
+                        new WorkingMemoryService(),
+                        semanticMemoryService,
+                        new FactMemoryService()
+                ),
                 new DefaultPromptMemoryContextAssembler(
                         episodicMemoryService,
                         semanticMemoryService,
@@ -87,6 +94,7 @@ public class MemoryManager {
                          MemoryCompressionPlanningService memoryCompressionPlanningService,
                          PreferenceProfileService preferenceProfileService,
                          LongTaskService longTaskService,
+                         MemoryRouter memoryRouter,
                          PromptMemoryContextAssembler promptMemoryContextAssembler,
                          @Value("${mindos.memory.conversation-rollup.enabled:true}") boolean conversationRollupEnabled,
                          @Value("${mindos.memory.conversation-rollup.threshold-turns:24}") int conversationRollupThresholdTurns,
@@ -102,6 +110,7 @@ public class MemoryManager {
         this.memoryCompressionPlanningService = memoryCompressionPlanningService;
         this.preferenceProfileService = preferenceProfileService;
         this.longTaskService = longTaskService;
+        this.memoryRouter = memoryRouter;
         this.promptMemoryContextAssembler = promptMemoryContextAssembler;
         this.conversationRollupEnabled = conversationRollupEnabled;
         this.conversationRollupThresholdTurns = Math.max(4, conversationRollupThresholdTurns);
@@ -201,6 +210,22 @@ public class MemoryManager {
                                                            Map<String, Object> profileContext) {
         ensureHydrated(userId);
         return promptMemoryContextAssembler.assemble(userId, query, maxChars, profileContext);
+    }
+
+    public void saveMemoryRecord(MemoryRecord record) {
+        if (record == null || record.userId().isBlank()) {
+            return;
+        }
+        ensureHydrated(record.userId());
+        memoryRouter.save(record);
+    }
+
+    public List<MemoryRecord> queryMemory(MemoryQuery query) {
+        if (query == null || query.userId().isBlank()) {
+            return List.of();
+        }
+        ensureHydrated(query.userId());
+        return memoryRouter.query(query);
     }
 
     private void ensureHydrated(String userId) {

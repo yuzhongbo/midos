@@ -6,6 +6,7 @@ import com.zhongbo.mindos.assistant.memory.model.SemanticMemoryEntry;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -19,11 +20,11 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
-import java.util.regex.Pattern;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.regex.Pattern;
 
 @Service
-public class SemanticMemoryService implements MemoryWriteGateMetricsReader {
+public class SemanticMemoryService implements MemoryWriteGateMetricsReader, MemoryStore {
 
     private static final int MAX_APPROX_CANDIDATES = 64;
     private static final double APPROX_JACCARD_THRESHOLD = 0.82;
@@ -38,6 +39,7 @@ public class SemanticMemoryService implements MemoryWriteGateMetricsReader {
     private final MemoryLayerPolicy memoryLayerPolicy;
     private final LocalEmbeddingService localEmbeddingService;
     private final Map<String, UserSemanticStore> entriesByUser = new ConcurrentHashMap<>();
+    private final Map<String, Map<String, MemoryRecord>> topicRecordsByUser = new ConcurrentHashMap<>();
     private final AtomicLong secondaryDuplicateCheckCount = new AtomicLong();
     private final AtomicLong secondaryDuplicateInterceptCount = new AtomicLong();
 
@@ -160,6 +162,29 @@ public class SemanticMemoryService implements MemoryWriteGateMetricsReader {
     }
 
     @Override
+    public void save(MemoryRecord record) {
+        if (record == null || record.userId().isBlank()) {
+            return;
+        }
+        MemoryRecord normalized = normalizeTopicRecord(record);
+        String topic = resolveTopic(normalized.metadata(), normalized.content());
+        topicRecordsByUser.computeIfAbsent(normalized.userId(), ignored -> new ConcurrentHashMap<>()).put(topic, normalized);
+    }
+
+    @Override
+    public List<MemoryRecord> query(MemoryQuery query) {
+        if (query == null || query.userId().isBlank()) {
+            return List.of();
+        }
+        return topicRecordsByUser.getOrDefault(query.userId(), Map.of()).values().stream()
+                .filter(record -> query.matchesContent(record.content()))
+                .filter(record -> query.topic().isBlank() || query.topic().equalsIgnoreCase(resolveTopic(record.metadata(), record.content())))
+                .sorted(Comparator.comparing(MemoryRecord::updateTime).reversed())
+                .limit(query.limit())
+                .toList();
+    }
+
+    @Override
     public MemoryWriteGateMetricsDto snapshotWriteGateMetrics() {
         long checks = secondaryDuplicateCheckCount.get();
         long intercepted = secondaryDuplicateInterceptCount.get();
@@ -177,6 +202,35 @@ public class SemanticMemoryService implements MemoryWriteGateMetricsReader {
             return DEFAULT_BUCKET;
         }
         return bucket.trim().toLowerCase(Locale.ROOT);
+    }
+
+    private MemoryRecord normalizeTopicRecord(MemoryRecord record) {
+        Map<String, Object> metadata = new LinkedHashMap<>(record.metadata());
+        String topic = resolveTopic(metadata, record.content());
+        metadata.put("topic", topic);
+        return new MemoryRecord(
+                record.id(),
+                record.userId(),
+                record.content(),
+                MemoryLayer.SEMANTIC,
+                record.embedding(),
+                metadata,
+                record.confidence(),
+                record.createTime(),
+                Instant.now()
+        );
+    }
+
+    private String resolveTopic(Map<String, Object> metadata, String content) {
+        Object topic = metadata == null ? null : metadata.get("topic");
+        if (topic != null && !String.valueOf(topic).isBlank()) {
+            return String.valueOf(topic).trim().toLowerCase(Locale.ROOT);
+        }
+        if (content == null || content.isBlank()) {
+            return DEFAULT_BUCKET;
+        }
+        String normalized = memoryConsolidationService.semanticKey(content);
+        return normalized.length() <= 64 ? normalized : normalized.substring(0, 64);
     }
 
     private SemanticMemoryEntry prepareEntry(SemanticMemoryEntry entry) {
