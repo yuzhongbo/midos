@@ -62,6 +62,11 @@ public class LlmOrchestrateSkill implements Skill {
     }
 
     @Override
+    public List<String> routingKeywords() {
+        return List.of("llm.orchestrate", "多模型", "换个模型", "模型不稳定", "换个回答", "重试一下");
+    }
+
+    @Override
     public boolean supports(String input) {
         if (input == null || input.isBlank()) {
             return false;

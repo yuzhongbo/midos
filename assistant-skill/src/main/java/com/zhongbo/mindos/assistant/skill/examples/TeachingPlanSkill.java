@@ -44,6 +44,11 @@ public class TeachingPlanSkill implements Skill {
     }
 
     @Override
+    public List<String> routingKeywords() {
+        return List.of("教学规划", "学习计划", "复习计划", "课程规划", "study plan", "teaching plan", "学习路线");
+    }
+
+    @Override
     public boolean supports(String input) {
         if (input == null || input.isBlank()) {
             return false;

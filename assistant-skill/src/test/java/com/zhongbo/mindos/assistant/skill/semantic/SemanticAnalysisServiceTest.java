@@ -5,6 +5,7 @@ import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.skill.Skill;
 import com.zhongbo.mindos.assistant.skill.SkillRegistry;
+import com.zhongbo.mindos.assistant.skill.SkillRoutingProperties;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -92,6 +93,26 @@ class SemanticAnalysisServiceTest {
         assertEquals("todo.create", result.suggestedSkill());
         assertEquals("提交周报", result.payload().get("task"));
         assertTrue(result.confidence() >= 0.9);
+    }
+
+    @Test
+    void shouldUseConfiguredRoutingKeywordsDuringHeuristicAnalysis() {
+        SkillRoutingProperties properties = new SkillRoutingProperties();
+        properties.getKeywords().put("teaching.plan", "冲刺路线,路线规划");
+        SkillRegistry registry = new SkillRegistry(List.of(new FixedSkill("teaching.plan")), properties);
+        SemanticAnalysisService service = new SemanticAnalysisService((prompt, context) -> "stub", registry, true, false, "");
+
+        SemanticAnalysisResult result = service.analyze(
+                "u1",
+                "帮我做一个 Java 冲刺路线",
+                "",
+                Map.of(),
+                List.of("teaching.plan - plan study path")
+        );
+
+        assertEquals("teaching.plan", result.suggestedSkill());
+        assertTrue(result.confidence() >= 0.8);
+        assertTrue(result.keywords().stream().anyMatch(keyword -> keyword.contains("冲刺路线")));
     }
 
     private record FixedSkill(String name) implements Skill {

@@ -6,6 +6,7 @@ import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.skill.Skill;
 import org.springframework.stereotype.Component;
 
+import java.util.List;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.logging.Level;
@@ -32,6 +33,11 @@ public class TodoCreateSkill implements Skill {
     @Override
     public String description() {
         return "根据任务描述和截止时间生成待办事项，适合快速记任务。";
+    }
+
+    @Override
+    public List<String> routingKeywords() {
+        return List.of("待办", "todo", "提醒", "安排任务", "创建任务", "截止", "deadline");
     }
 
     @Override

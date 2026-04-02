@@ -6,6 +6,7 @@ import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.skill.Skill;
 import org.springframework.stereotype.Component;
 
+import java.util.List;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.logging.Level;
@@ -32,6 +33,11 @@ public class FileSearchSkill implements Skill {
     @Override
     public String description() {
         return "按路径和关键词整理候选文件，适合快速缩小排查范围。";
+    }
+
+    @Override
+    public List<String> routingKeywords() {
+        return List.of("找文件", "查文件", "搜索文件", "search file", "grep", "目录", "路径");
     }
 
     @Override

@@ -292,6 +292,7 @@ Chat 与记忆操作：
 - 可选配置：
   - `mindos.dispatcher.semantic-analysis.enabled=true`：启用语义整理
   - `mindos.dispatcher.semantic-analysis.llm-enabled=true`：允许额外调用 LLM 做语义分析
+    - `solo` / Windows 分发默认可通过 `MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_LLM_ENABLED=true` 开启，适合低置信度自然语言请求（如新闻、搜索、模糊意图）的二次理解
   - `mindos.dispatcher.semantic-analysis.delegate-skill=mcp.<alias>.<tool>`：把语义分析委托给已接入的 MCP skill
   - `mindos.dispatcher.semantic-analysis.route-min-confidence=0.72`：语义分析直接路由到本地 skill 的最小置信度
 
@@ -568,7 +569,7 @@ Tips:
   - `mindos.dispatcher.llm-dsl.provider` / `mindos.dispatcher.llm-dsl.preset` (default empty): stage-specific provider/preset defaults for `llm-dsl` routing calls when profile override is absent.
   - `mindos.dispatcher.llm-fallback.provider` / `mindos.dispatcher.llm-fallback.preset` (default empty): stage-specific provider/preset defaults for normal chat fallback when profile override is absent.
   - `mindos.dispatcher.skill.finalize-with-llm.enabled` (default `false` in base profile, `true` in `solo`): runs an LLM postprocess stage to convert structured skill output into a concise user-facing conclusion.
-  - `mindos.dispatcher.skill.finalize-with-llm.skills` (default `teaching.plan,todo.create,eq.coach,code.generate,file.search`): comma-separated skill allowlist for postprocess finalization.
+  - `mindos.dispatcher.skill.finalize-with-llm.skills` (default `teaching.plan,todo.create,eq.coach,code.generate,file.search,mcp.*`): comma-separated skill allowlist for postprocess finalization; supports wildcard prefixes such as `mcp.*`.
   - `mindos.dispatcher.skill.finalize-with-llm.max-output-chars` (default `900`): hard cap for the final postprocessed skill reply.
   - `mindos.dispatcher.skill.finalize-with-llm.provider` (default empty): optional dedicated provider override for `skill-postprocess` stage.
   - `mindos.dispatcher.skill.finalize-with-llm.preset` (default empty in base profile, `cost` in `solo`): optional dedicated preset override for `skill-postprocess` stage.
@@ -726,7 +727,7 @@ Tips:
 - IM webhook integration (disabled by default) supports Feishu/DingTalk/WeChat text chat via `/api/im/feishu/events`, `/api/im/dingtalk/events`, `/api/im/wechat/events`; all platforms can enable signature verification independently in `application.properties`.
 - DingTalk now supports an async reply path when the event payload includes `sessionWebhook`: webhook first returns a processing receipt with task ID, then the server finishes dispatch in background and pushes the final text result back to the same DingTalk session. Related properties: `mindos.im.dingtalk.async-reply.*`; `allow-insecure-localhost-http` is intended only for local tests/debugging.
 - When a DingTalk async callback cannot be delivered (for example `sessionWebhook` expired or callback failed), the server can optionally try DingTalk OpenAPI proactive delivery first (`mindos.im.dingtalk.openapi-fallback.*`, requires the robot/app to have the corresponding DingTalk send-message permission plus `appKey/appSecret/robotCode`). In this repo the DingTalk integration is conversation-oriented (webhook payloads revolve around `conversationId` / `openConversationId` + chat replies), so the default fallback preference is `conversation-first`; if a tenant instead behaves more like direct user notification, `mindos.im.dingtalk.openapi-fallback.preferred-send-mode=user-first` can switch the primary attempt to batch user send. If OpenAPI fallback is unavailable or still fails, the final result is retained in the long-task record and can be recovered in chat with natural-language commands like `查进度` / `查看结果`, and the next ordinary DingTalk message will also carry a compensation notice with the missed result.
-- DingTalk can also run in robot stream mode. In that setup, DingTalk pushes messages over the long-lived stream connection instead of the `/api/im/dingtalk/events` webhook, and MindOS proactively sends a short “请稍等”状态 before the final reply when processing is slow.
+- DingTalk can also run in robot stream mode. In that setup, DingTalk pushes messages over the long-lived stream connection instead of the `/api/im/dingtalk/events` webhook, and MindOS proactively sends a short “请稍等”状态 before the final reply when processing is slow。
 - IM 文本可直接触发 memory 能力：`查看记忆风格`、`按任务聚焦压缩这段记忆：...`、`根据这段话微调记忆风格：...`。
 - 若压缩结果提示“关键约束可能被弱化”，可直接回复“要/好的/ok”继续获取原文关键点清单并逐条复核（IM 与 CLI 交互窗口均支持）；复核后回复“生成待办”可一键转成按 `today / this week / later` 分组的执行清单。
 - 生成待办时会同步显示“当前待办策略”预览（阈值与建议时段），方便在对话里确认当前生效配置。
@@ -765,6 +766,7 @@ Tips:
 - **External skill JARs**: set `mindos.skills.external-jars=https://host/skill.jar` (comma-separated). JARs must implement `Skill` and declare it in `META-INF/services/com.zhongbo.mindos.assistant.skill.Skill`. Load a JAR at runtime via `POST /api/skills/load-jar {"url":"..."}`.
 - **MCP skills**: set `mindos.skills.mcp-servers=docs:http://localhost:8081/mcp,search:https://example.com/mcp`. Each remote MCP tool is exposed as a namespaced skill like `mcp.docs.searchDocs`. Dispatcher auto-detection can route natural requests such as `search docs for auth guide` to matching MCP tools, and explicit DSL can target the full skill name. Reload all configured MCP servers via `POST /api/skills/reload-mcp`, or attach one server at runtime via `POST /api/skills/load-mcp {"alias":"docs","url":"http://localhost:8081/mcp"}`.
   - 为无联网能力的模型补“上网”能力：准备带搜索工具的 MCP 服务器（如 `search` 别名），配置 `mindos.skills.mcp-servers=search:https://your-mcp-server/mcp` 后会自动注册 `mcp.search.<tool>`，即可在对话中调用搜索类技能。
+  - Brave Search 可用专用配置快速启用（会自动并入 `mcp-servers`）：`mindos.skills.mcp.brave.enabled=true`、`mindos.skills.mcp.brave.url=...`、`mindos.skills.mcp.brave.api-key=...`，默认请求头为 `X-Subscription-Token`（可通过 `mindos.skills.mcp.brave.api-key-header` 覆盖），默认别名为 `brave`（可通过 `mindos.skills.mcp.brave.alias` 覆盖）。当 URL 指向 Brave 官方 REST 搜索接口（如 `/res/v1/web/search`）时，会自动注册为 `mcp.<alias>.webSearch` 并复用现有自然语言路由/LLM 总结链路。
   - MCP 服务器鉴权/私有 API：用 `mindos.skills.mcp-server-headers` 配置每个别名的请求头（逗号分隔多个别名，分号分隔头；示例：`docs:Authorization=Bearer%20token;X-API-KEY=abc123,search:Authorization=Bearer%20another`）。对应别名的所有 MCP 调用都会附带这些头，适合传递 API key。
   - 对话/自然语言添加 MCP（含 API key）：可以在聊天里说“添加一个 search MCP，地址 https://your-mcp-server/mcp，Authorization=Bearer xxx”，由上层映射为 `POST /api/skills/load-mcp`：
     ```json

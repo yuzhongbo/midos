@@ -6,6 +6,7 @@ import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.skill.Skill;
 import org.springframework.stereotype.Component;
 
+import java.util.List;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.logging.Level;
@@ -33,6 +34,11 @@ public class EchoSkill implements Skill {
     @Override
     public String description() {
         return "复述你提供的文本，适合快速确认输入或做简短回显。";
+    }
+
+    @Override
+    public List<String> routingKeywords() {
+        return List.of("echo");
     }
 
     @Override

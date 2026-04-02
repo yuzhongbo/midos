@@ -5,6 +5,7 @@ import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.skill.Skill;
 
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -32,6 +33,11 @@ public class ScriptSkill implements Skill {
     @Override
     public String description() {
         return definition.description();
+    }
+
+    @Override
+    public List<String> routingKeywords() {
+        return definition.triggers();
     }
 
     @Override

@@ -7,6 +7,7 @@ import com.zhongbo.mindos.assistant.skill.Skill;
 import org.springframework.stereotype.Component;
 import org.springframework.beans.factory.annotation.Value;
 
+import java.util.List;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.logging.Level;
@@ -49,6 +50,11 @@ public class CodeGenerateSkill implements Skill {
     @Override
     public String description() {
         return "根据任务描述生成代码草稿，可附带语言或风格偏好。";
+    }
+
+    @Override
+    public List<String> routingKeywords() {
+        return List.of("generate code", "代码", "生成代码", "写代码", "接口", "api", "dto", "controller", "bug", "修复", "sql");
     }
 
     @Override

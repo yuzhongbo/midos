@@ -176,43 +176,40 @@ public class SemanticAnalysisService {
         if (normalized.isBlank()) {
             return SemanticAnalysisResult.empty();
         }
-        if (normalized.startsWith("semantic ")
-                || normalized.startsWith("semantic.analyze")
-                || normalized.contains("语义分析")
-                || normalized.contains("分析我的语义")) {
+        if (matchesSkill(userInput, normalized, "semantic.analyze", "semantic", "semantic.analyze", "语义分析", "分析我的语义")) {
             return new SemanticAnalysisResult(
                     "heuristic",
                     "分析用户语义并给出结构化意图建议",
                     userInput.trim(),
                     "",
                     Map.of(),
-                    extractKeywords(userInput, "语义分析", "semantic"),
+                    routingKeywordHints(userInput, "semantic.analyze", "语义分析", "semantic"),
                     0.92
             );
         }
-        if (containsAny(normalized, "学习计划", "教学规划", "复习计划", "课程规划", "study plan", "teaching plan")) {
+        if (matchesSkill(userInput, normalized, "teaching.plan", "学习计划", "教学规划", "复习计划", "课程规划", "study plan", "teaching plan")) {
             return new SemanticAnalysisResult(
                     "heuristic",
                     "为用户生成学习/教学规划",
                     userInput.trim(),
                     "teaching.plan",
                     Map.of(),
-                    extractKeywords(userInput, "学习计划", "教学规划", "复习计划"),
+                    routingKeywordHints(userInput, "teaching.plan", "学习计划", "教学规划", "复习计划"),
                     0.88
             );
         }
-        if (containsAny(normalized, "情商", "沟通", "高情商", "心理分析", "怎么说", "安慰", "道歉", "冲突")) {
+        if (matchesSkill(userInput, normalized, "eq.coach", "情商", "沟通", "高情商", "心理分析", "怎么说", "安慰", "道歉", "冲突")) {
             return new SemanticAnalysisResult(
                     "heuristic",
                     "分析沟通场景并生成情商沟通建议",
                     userInput.trim(),
                     "eq.coach",
                     Map.of("query", userInput.trim()),
-                    extractKeywords(userInput, "沟通", "情商", "心理分析", "冲突"),
+                    routingKeywordHints(userInput, "eq.coach", "沟通", "情商", "心理分析", "冲突"),
                     0.84
             );
         }
-        if (containsAny(normalized, "待办", "todo", "提醒", "记得", "安排任务", "创建任务", "截止")) {
+        if (matchesSkill(userInput, normalized, "todo.create", "待办", "todo", "提醒", "记得", "安排任务", "创建任务", "截止")) {
             Map<String, Object> payload = new LinkedHashMap<>();
             payload.put("task", userInput.trim());
             String dueDate = extractByPattern(userInput, DUE_DATE_PATTERN);
@@ -225,29 +222,29 @@ public class SemanticAnalysisService {
                     userInput.trim(),
                     "todo.create",
                     payload,
-                    extractKeywords(userInput, "待办", "提醒", "截止"),
+                    routingKeywordHints(userInput, "todo.create", "待办", "提醒", "截止"),
                     0.80
             );
         }
-        if (containsAny(normalized, "代码", "接口", "api", "dto", "controller", "bug", "修复", "生成代码", "sql")) {
+        if (matchesSkill(userInput, normalized, "code.generate", "代码", "接口", "api", "dto", "controller", "bug", "修复", "生成代码", "sql")) {
             return new SemanticAnalysisResult(
                     "heuristic",
                     "生成或整理代码实现方案",
                     userInput.trim(),
                     "code.generate",
                     Map.of("task", userInput.trim()),
-                    extractKeywords(userInput, "代码", "接口", "API", "DTO", "Controller"),
+                    routingKeywordHints(userInput, "code.generate", "代码", "接口", "API", "DTO", "Controller"),
                     0.78
             );
         }
-        if (containsAny(normalized, "找文件", "查文件", "搜索文件", "search file", "grep", "目录", "路径")) {
+        if (matchesSkill(userInput, normalized, "file.search", "找文件", "查文件", "搜索文件", "search file", "grep", "目录", "路径")) {
             return new SemanticAnalysisResult(
                     "heuristic",
                     "搜索文件或目录中的目标内容",
                     userInput.trim(),
                     "file.search",
                     Map.of("path", "./", "keyword", userInput.trim()),
-                    extractKeywords(userInput, "文件", "目录", "路径", "搜索"),
+                    routingKeywordHints(userInput, "file.search", "文件", "目录", "路径", "搜索"),
                     0.74
             );
         }
@@ -350,6 +347,28 @@ public class SemanticAnalysisService {
             }
         }
         return false;
+    }
+
+    private boolean matchesSkill(String originalInput, String normalizedInput, String skillName, String... fallbackTerms) {
+        if (skillRegistry.routingScore(skillName, originalInput) > 0) {
+            return true;
+        }
+        return containsAny(normalizedInput, fallbackTerms);
+    }
+
+    private List<String> routingKeywordHints(String userInput, String skillName, String... fallbackTerms) {
+        List<String> matched = new ArrayList<>();
+        String normalized = normalize(userInput);
+        for (String keyword : skillRegistry.resolvedRoutingKeywords(skillName)) {
+            String candidate = normalize(keyword);
+            if (!candidate.isBlank() && normalized.contains(candidate)) {
+                matched.add(keyword);
+            }
+            if (matched.size() >= 6) {
+                break;
+            }
+        }
+        return matched.isEmpty() ? extractKeywords(userInput, fallbackTerms) : List.copyOf(new LinkedHashSet<>(matched));
     }
 
     private List<String> extractKeywords(String userInput, String... priorityTerms) {

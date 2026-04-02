@@ -30,6 +30,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.ArrayDeque;
 import java.util.concurrent.CompletableFuture;
@@ -231,7 +232,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                               @Value("${mindos.memory.post-skill-summary.skills:teaching.plan,todo.create,eq.coach,code.generate,file.search}") String postSkillSummarySkills,
                               @Value("${mindos.memory.post-skill-summary.max-reply-chars:280}") int postSkillSummaryMaxReplyChars,
                               @Value("${mindos.dispatcher.skill.finalize-with-llm.enabled:false}") boolean skillFinalizeWithLlmEnabled,
-                              @Value("${mindos.dispatcher.skill.finalize-with-llm.skills:teaching.plan,todo.create,eq.coach,code.generate,file.search}") String skillFinalizeWithLlmSkills,
+                              @Value("${mindos.dispatcher.skill.finalize-with-llm.skills:teaching.plan,todo.create,eq.coach,code.generate,file.search,mcp.*}") String skillFinalizeWithLlmSkills,
                               @Value("${mindos.dispatcher.skill.finalize-with-llm.max-output-chars:900}") int skillFinalizeWithLlmMaxOutputChars,
                               @Value("${mindos.dispatcher.skill.finalize-with-llm.provider:}") String skillFinalizeWithLlmProvider,
                                @Value("${mindos.dispatcher.skill.finalize-with-llm.preset:}") String skillFinalizeWithLlmPreset,
@@ -319,6 +320,8 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         Instant startTime = Instant.now();
         LOGGER.info("Dispatcher input: userId=" + userId + ", input=" + clip(userInput));
         java.util.concurrent.atomic.AtomicReference<RoutingDecisionDto> routingDecisionRef = new java.util.concurrent.atomic.AtomicReference<>();
+        java.util.concurrent.atomic.AtomicBoolean skillPostprocessSentRef = new java.util.concurrent.atomic.AtomicBoolean(false);
+        java.util.concurrent.atomic.AtomicBoolean finalResultSuccessRef = new java.util.concurrent.atomic.AtomicBoolean(false);
         RoutingReplayProbe replayProbe = new RoutingReplayProbe();
 
         memoryManager.storeUserConversation(userId, userInput);
@@ -390,11 +393,14 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                 )
                 .thenApply(orchestration -> {
                     SkillResult result = orchestration.result();
-                    result = maybeFinalizeSkillResultWithLlm(userInput, result, llmContext);
+                    SkillFinalizeOutcome finalizeOutcome = maybeFinalizeSkillResultWithLlm(userInput, result, llmContext);
+                    result = finalizeOutcome.result();
+                    skillPostprocessSentRef.set(finalizeOutcome.applied());
                     if ("llm".equals(result.skillName())) {
                         result = SkillResult.success("llm", capText(result.output(), llmReplyMaxChars));
                     }
                     ExecutionTraceDto trace = enrichTraceWithRouting(orchestration.trace(), routingDecisionRef.get());
+                    finalResultSuccessRef.set(result.success());
                     memoryManager.storeAssistantConversation(userId, result.output());
                     maybeStorePostSkillSummary(userId, userInput, result);
                     personaCoreService.learnFromTurn(userId, resolvedProfileContext, result);
@@ -414,6 +420,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                             + ", channel=" + result.channel()
                             + ", output=" + clip(result.reply())
                             + ", durationMs=" + durationMs);
+                    logFinalAggregateTrace(userId, result.channel(), result.executionTrace(), skillPostprocessSentRef.get(), finalResultSuccessRef.get());
                 });
     }
 
@@ -424,6 +431,8 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         Instant startTime = Instant.now();
         LOGGER.info("Dispatcher(stream) input: userId=" + userId + ", input=" + clip(userInput));
         java.util.concurrent.atomic.AtomicReference<RoutingDecisionDto> routingDecisionRef = new java.util.concurrent.atomic.AtomicReference<>();
+        java.util.concurrent.atomic.AtomicBoolean skillPostprocessSentRef = new java.util.concurrent.atomic.AtomicBoolean(false);
+        java.util.concurrent.atomic.AtomicBoolean finalResultSuccessRef = new java.util.concurrent.atomic.AtomicBoolean(false);
         RoutingReplayProbe replayProbe = new RoutingReplayProbe();
 
         memoryManager.storeUserConversation(userId, userInput);
@@ -488,11 +497,14 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                 })
                 .thenApply(result -> {
                     SkillResult normalized = result;
-                    normalized = maybeFinalizeSkillResultWithLlm(userInput, normalized, llmContext);
+                    SkillFinalizeOutcome finalizeOutcome = maybeFinalizeSkillResultWithLlm(userInput, normalized, llmContext);
+                    normalized = finalizeOutcome.result();
+                    skillPostprocessSentRef.set(finalizeOutcome.applied());
                     if ("llm".equals(normalized.skillName())) {
                         normalized = SkillResult.success("llm", capText(normalized.output(), llmReplyMaxChars));
                     }
                     ExecutionTraceDto trace = new ExecutionTraceDto("stream-single-pass", 0, null, List.of(), routingDecisionRef.get());
+                    finalResultSuccessRef.set(normalized.success());
                     memoryManager.storeAssistantConversation(userId, normalized.output());
                     maybeStorePostSkillSummary(userId, userInput, normalized);
                     personaCoreService.learnFromTurn(userId, resolvedProfileContext, normalized);
@@ -511,6 +523,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                             + ", channel=" + result.channel()
                             + ", output=" + clip(result.reply())
                             + ", durationMs=" + durationMs);
+                    logFinalAggregateTrace(userId, result.channel(), result.executionTrace(), skillPostprocessSentRef.get(), finalResultSuccessRef.get());
                 });
     }
 
@@ -589,7 +602,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         if (channel == null || channel.isBlank() || "llm".equals(channel) || "security.guard".equals(channel)) {
             return;
         }
-        if (!postSkillSummarySkills.isEmpty() && !postSkillSummarySkills.contains(channel)) {
+        if (!matchesConfiguredSkill(channel, postSkillSummarySkills)) {
             return;
         }
         String output = capText(result.output() == null ? "" : result.output(), postSkillSummaryMaxReplyChars);
@@ -606,28 +619,29 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         memoryManager.storeKnowledge(userId, summary, embedding, inferMemoryBucket(userInput));
     }
 
-    private SkillResult maybeFinalizeSkillResultWithLlm(String userInput,
-                                                        SkillResult result,
-                                                        Map<String, Object> llmContext) {
+    private SkillFinalizeOutcome maybeFinalizeSkillResultWithLlm(String userInput,
+                                                                 SkillResult result,
+                                                                 Map<String, Object> llmContext) {
         if (!skillFinalizeWithLlmEnabled || result == null || !result.success()) {
-            return result;
+            return SkillFinalizeOutcome.notApplied(result);
         }
         String channel = result.skillName();
         if (channel == null || channel.isBlank() || "llm".equals(channel) || "security.guard".equals(channel)) {
-            return result;
+            return SkillFinalizeOutcome.notApplied(result);
         }
-        if (!skillFinalizeWithLlmSkills.isEmpty() && !skillFinalizeWithLlmSkills.contains(channel)) {
-            return result;
+        if (!matchesConfiguredSkill(channel, skillFinalizeWithLlmSkills)) {
+            return SkillFinalizeOutcome.notApplied(result);
         }
         String rawOutput = result.output() == null ? "" : result.output();
         if (rawOutput.isBlank()) {
-            return result;
+            return SkillFinalizeOutcome.notApplied(result);
         }
 
         String prompt = buildSkillFinalizePrompt(userInput, channel, rawOutput);
         Map<String, Object> finalizeContext = new LinkedHashMap<>(llmContext == null ? Map.of() : llmContext);
         finalizeContext.put("routeStage", "skill-postprocess");
         finalizeContext.put("skillChannel", channel);
+        logMcpPostprocessTrace(channel, rawOutput);
         if (skillFinalizeWithLlmProvider != null) {
             finalizeContext.put("llmProvider", skillFinalizeWithLlmProvider);
         }
@@ -636,12 +650,16 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         }
         String optimized = llmClient.generateResponse(prompt, finalizeContext);
         if (optimized == null || optimized.isBlank()) {
-            return result;
+            return SkillFinalizeOutcome.notApplied(result);
         }
         if (optimized.startsWith("[LLM ")) {
-            return result;
+            return SkillFinalizeOutcome.notApplied(result);
         }
-        return SkillResult.success(channel, capText(optimized.trim(), skillFinalizeWithLlmMaxOutputChars));
+        String finalizedOutput = optimized.trim();
+        if (isNewsSearchFinalizeChannel(channel)) {
+            finalizedOutput = ensureNewsBriefShape(finalizedOutput, rawOutput);
+        }
+        return SkillFinalizeOutcome.applied(SkillResult.success(channel, capText(finalizedOutput, skillFinalizeWithLlmMaxOutputChars)));
     }
 
     private String buildSkillFinalizePrompt(String userInput, String channel, String rawOutput) {
@@ -650,10 +668,264 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         summary.append("input=").append(capText(userInput == null ? "" : userInput, 220)).append('\n');
         summary.append("raw_output=\n").append(capText(rawOutput, 1200));
 
+        if (isNewsSearchFinalizeChannel(channel)) {
+            String prompt = "你是新闻整理助手。给你一份搜索得到的新闻/资讯结果，请整理成适合直接发给用户的新闻简报。"
+                    + "要求：\n"
+                    + "1. 保持新闻特点，严格按下面结构输出，不要改标题名：\n"
+                    + "今日新闻标题：\n"
+                    + "1. ...\n"
+                    + "2. ...\n"
+                    + "3. ...\n"
+                    + "总结：...\n"
+                    + "2. ‘今日新闻标题：’下面列出 3-6 条新闻标题或核心要点，每条单独一行，优先保留原始标题信息；\n"
+                    + "3. 标题要尽量贴近原始结果，不要凭空编造；\n"
+                    + "4. 最后必须单独输出“总结：”，概括今天的整体动态、趋势或值得关注点；\n"
+                    + "5. 如果原始结果不足，就按实际数量输出，不要凑数；\n"
+                    + "6. 语言自然、信息清晰，不要泄露内部字段名；控制在 8-12 行中文。\n"
+                    + summary;
+            return capText(prompt, promptMaxChars);
+        }
+
         String prompt = "你是回复优化助手。给你一个技能结构化执行结果，请输出面向用户的最终答复。"
                 + "要求：自然、简洁、可执行，避免模板化列表；不要泄露内部字段名；控制在 6-10 行中文。\n"
                 + summary;
         return capText(prompt, promptMaxChars);
+    }
+
+    private boolean isNewsSearchFinalizeChannel(String channel) {
+        String normalized = normalize(channel);
+        return "mcp.qwensearch.websearch".equals(normalized)
+                || "mcp.bravesearch.websearch".equals(normalized)
+                || "mcp.brave.websearch".equals(normalized);
+    }
+
+    private String ensureNewsBriefShape(String optimizedOutput, String rawOutput) {
+        String normalizedOutput = normalizeMultilineText(optimizedOutput);
+        if (normalizedOutput.isBlank()) {
+            return optimizedOutput == null ? "" : optimizedOutput.trim();
+        }
+        if (normalizedOutput.contains("今日新闻标题：") && normalizedOutput.contains("总结：")) {
+            return normalizedOutput;
+        }
+
+        List<String> headlines = extractNewsHeadlines(normalizedOutput);
+        if (headlines.size() < 2) {
+            headlines = mergeHeadlines(headlines, extractNewsHeadlines(rawOutput));
+        }
+        String summary = extractNewsSummary(normalizedOutput);
+        if (summary.isBlank()) {
+            summary = synthesizeNewsSummary(headlines, normalizedOutput);
+        }
+
+        if (headlines.isEmpty()) {
+            return normalizedOutput.contains("总结：") ? normalizedOutput : normalizedOutput + "\n总结：" + summary;
+        }
+
+        StringBuilder builder = new StringBuilder("今日新闻标题：\n");
+        int index = 1;
+        for (String headline : headlines) {
+            builder.append(index).append(". ").append(headline).append('\n');
+            index++;
+            if (index > 6) {
+                break;
+            }
+        }
+        builder.append("总结：").append(summary);
+        return builder.toString().trim();
+    }
+
+    private String normalizeMultilineText(String value) {
+        if (value == null || value.isBlank()) {
+            return "";
+        }
+        return value.replace("\r\n", "\n")
+                .replace('\r', '\n')
+                .trim();
+    }
+
+    private List<String> extractNewsHeadlines(String text) {
+        String normalized = normalizeMultilineText(text);
+        if (normalized.isBlank()) {
+            return List.of();
+        }
+        List<String> headlines = new ArrayList<>();
+        for (String line : normalized.split("\n+")) {
+            String originalLine = normalizeMultilineText(line);
+            String candidate = sanitizeNewsLine(line);
+            if (candidate.isBlank()) {
+                continue;
+            }
+            boolean structuredLine = originalLine.matches("^(?:[-*•]+|[0-9]+[.)、]).*");
+            if (candidate.startsWith("今日新闻标题")) {
+                continue;
+            }
+            if (candidate.startsWith("总结：") || candidate.startsWith("总结:")) {
+                continue;
+            }
+            if (candidate.startsWith("http://") || candidate.startsWith("https://")) {
+                continue;
+            }
+            if (candidate.startsWith("Brave 搜索（") || candidate.startsWith("Qwen MCP") || candidate.startsWith("搜索结果")) {
+                continue;
+            }
+            if (candidate.length() < 4) {
+                continue;
+            }
+            if (!structuredLine && candidate.length() > 24 && (candidate.contains("，") || candidate.contains("。"))) {
+                continue;
+            }
+            int separatorIndex = candidate.indexOf(" - ");
+            if (separatorIndex > 0) {
+                candidate = candidate.substring(0, separatorIndex).trim();
+            }
+            if (!candidate.isBlank() && headlines.stream().noneMatch(candidate::equals)) {
+                headlines.add(candidate);
+            }
+            if (headlines.size() >= 6) {
+                break;
+            }
+        }
+        return List.copyOf(headlines);
+    }
+
+    private List<String> mergeHeadlines(List<String> first, List<String> second) {
+        LinkedHashSet<String> merged = new LinkedHashSet<>();
+        if (first != null) {
+            merged.addAll(first);
+        }
+        if (second != null) {
+            merged.addAll(second);
+        }
+        return merged.isEmpty() ? List.of() : List.copyOf(merged);
+    }
+
+    private String sanitizeNewsLine(String line) {
+        String candidate = normalizeMultilineText(line);
+        candidate = candidate.replaceFirst("^(?:[-*•]+|[0-9]+[.)、])\\s*", "");
+        candidate = candidate.replaceFirst("^(?:标题|要点)[:：]\\s*", "");
+        return candidate.trim();
+    }
+
+    private String extractNewsSummary(String text) {
+        String normalized = normalizeMultilineText(text);
+        if (normalized.isBlank()) {
+            return "";
+        }
+        for (String line : normalized.split("\n+")) {
+            String candidate = normalizeMultilineText(line);
+            if (candidate.startsWith("总结：") || candidate.startsWith("总结:")) {
+                return candidate.substring(candidate.indexOf('：') >= 0 ? candidate.indexOf('：') + 1 : candidate.indexOf(':') + 1).trim();
+            }
+        }
+        String collapsed = normalized.replace('\n', ' ').trim();
+        if (collapsed.length() <= 90) {
+            return collapsed;
+        }
+        return collapsed.substring(0, 90).trim() + "…";
+    }
+
+    private String synthesizeNewsSummary(List<String> headlines, String fallbackText) {
+        if (headlines != null && !headlines.isEmpty()) {
+            if (headlines.size() == 1) {
+                return "今天的重点主要围绕“" + headlines.get(0) + "”展开，值得继续关注后续进展。";
+            }
+            return "今天的新闻重点主要集中在“" + headlines.get(0) + "”以及“" + headlines.get(1) + "”等方向，整体仍以持续推进和阶段性进展为主。";
+        }
+        String normalized = normalizeMultilineText(fallbackText);
+        if (normalized.isBlank()) {
+            return "今天的新闻动态以阶段性进展为主，建议结合后续更新持续关注。";
+        }
+        return normalized.length() <= 90 ? normalized : normalized.substring(0, 90).trim() + "…";
+    }
+
+    private void logMcpPostprocessTrace(String channel, String rawOutput) {
+        String source = classifyMcpSearchSource(channel);
+        if (source.isBlank()) {
+            return;
+        }
+        LOGGER.info(() -> "{\"event\":\"dispatcher.skill-postprocess.trace\",\"source\":\""
+                + source
+                + "\",\"channel\":\""
+                + (channel == null ? "" : channel)
+                + "\",\"sent\":true,\"outputChars\":"
+                + (rawOutput == null ? 0 : rawOutput.length())
+                + "}");
+    }
+
+    private void logFinalAggregateTrace(String userId,
+                                        String finalChannel,
+                                        ExecutionTraceDto trace,
+                                        boolean skillPostprocessSent,
+                                        boolean finalResultSuccess) {
+        RoutingDecisionDto routing = trace == null ? null : trace.routing();
+        String selectedSkill = routing == null ? "" : normalizeOptional(routing.selectedSkill());
+        String searchSource = classifyMcpSearchSource(!selectedSkill.isBlank() ? selectedSkill : finalChannel);
+        boolean searchAttempted = !searchSource.isBlank();
+        String searchStatus = resolveSearchStatus(searchAttempted, selectedSkill, finalChannel, trace, finalResultSuccess);
+        boolean fallbackUsed = trace != null && trace.replanCount() > 0;
+        LOGGER.info(() -> "{\"event\":\"dispatcher.final.trace\",\"userId\":\""
+                + (userId == null ? "" : userId)
+                + "\",\"searchSource\":\""
+                + searchSource
+                + "\",\"searchAttempted\":"
+                + searchAttempted
+                + ",\"searchStatus\":\""
+                + searchStatus
+                + "\",\"selectedSkill\":\""
+                + selectedSkill
+                + "\",\"postprocessSent\":"
+                + skillPostprocessSent
+                + ",\"fallbackUsed\":"
+                + fallbackUsed
+                + ",\"finalChannel\":\""
+                + normalizeOptional(finalChannel)
+                + "\"}");
+    }
+
+    private String resolveSearchStatus(boolean searchAttempted,
+                                       String selectedSkill,
+                                       String finalChannel,
+                                       ExecutionTraceDto trace,
+                                       boolean finalResultSuccess) {
+        if (!searchAttempted) {
+            return "not-applicable";
+        }
+        if (!finalResultSuccess) {
+            return "failed";
+        }
+        if (trace != null && trace.steps() != null && !trace.steps().isEmpty()) {
+            var primary = trace.steps().get(0);
+            if (primary != null && "primary".equalsIgnoreCase(normalizeOptional(primary.stepName()))) {
+                if ("success".equalsIgnoreCase(normalizeOptional(primary.status()))) {
+                    return "success";
+                }
+                if ("failed".equalsIgnoreCase(normalizeOptional(primary.status()))) {
+                    return "failed";
+                }
+            }
+        }
+        if (!selectedSkill.isBlank() && selectedSkill.equalsIgnoreCase(normalizeOptional(finalChannel))) {
+            return "success";
+        }
+        if ("llm".equalsIgnoreCase(normalizeOptional(finalChannel))) {
+            return "failed";
+        }
+        return "unknown";
+    }
+
+    private String normalizeOptional(String value) {
+        return value == null ? "" : value.trim();
+    }
+
+    private String classifyMcpSearchSource(String channel) {
+        String normalized = normalize(channel);
+        if (normalized.startsWith("mcp.qwensearch.")) {
+            return "qwen";
+        }
+        if (normalized.startsWith("mcp.bravesearch.") || normalized.startsWith("mcp.brave.")) {
+            return "brave";
+        }
+        return "";
     }
 
     private CompletableFuture<RoutingOutcome> routeToSkillAsync(String userId,
@@ -861,7 +1133,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                     if (isRealtimeIntent(userInput)) {
                         replayProbe.preAnalyzeCandidate = "SKIPPED_REALTIME";
                         skillPreAnalyzeSkippedByGateCount.incrementAndGet();
-                        rejectedReasons.add("realtime intent bypassed skill pre-analyze and went directly to llm fallback");
+                        rejectedReasons.add("realtime intent bypassed skill pre-analyze after no registered skill matched");
                         LOGGER.info("Dispatcher route=llm-fallback, userId=" + userId + ", reason=realtime-intent-bypass");
                         return CompletableFuture.completedFuture(new RoutingOutcome(Optional.empty(), fallbackRoutingDecision(rejectedReasons)));
                     }
@@ -987,11 +1259,21 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
     }
 
     private boolean isPreExecuteHeavySkill(String skillName) {
-        if (skillName == null || skillName.isBlank() || preExecuteHeavySkillLoopGuardSkills.isEmpty()) {
+        if (preExecuteHeavySkillLoopGuardSkills.isEmpty()) {
             return false;
         }
+        return matchesConfiguredSkill(skillName, preExecuteHeavySkillLoopGuardSkills);
+    }
+
+    private boolean matchesConfiguredSkill(String skillName, Set<String> configuredSkills) {
+        if (skillName == null || skillName.isBlank()) {
+            return false;
+        }
+        if (configuredSkills == null || configuredSkills.isEmpty()) {
+            return true;
+        }
         String normalized = skillName.trim().toLowerCase(Locale.ROOT);
-        for (String configured : preExecuteHeavySkillLoopGuardSkills) {
+        for (String configured : configuredSkills) {
             if (configured == null || configured.isBlank()) {
                 continue;
             }
@@ -1778,6 +2060,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
     private String normalize(String value) {
         return value == null ? "" : value.trim().toLowerCase().replaceAll("\\s+", " ");
     }
+
 
     private String buildMemoryContext(String userId, String userInput) {
         memoryHitRequestCount.incrementAndGet();
@@ -2690,6 +2973,16 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
     }
 
     private record RoutingOutcome(Optional<SkillResult> result, RoutingDecisionDto routingDecision) {
+    }
+
+    private record SkillFinalizeOutcome(SkillResult result, boolean applied) {
+        private static SkillFinalizeOutcome notApplied(SkillResult result) {
+            return new SkillFinalizeOutcome(result, false);
+        }
+
+        private static SkillFinalizeOutcome applied(SkillResult result) {
+            return new SkillFinalizeOutcome(result, true);
+        }
     }
 
     private Optional<SkillDsl> toSemanticSkillDsl(SemanticAnalysisResult semanticAnalysis, String originalInput) {

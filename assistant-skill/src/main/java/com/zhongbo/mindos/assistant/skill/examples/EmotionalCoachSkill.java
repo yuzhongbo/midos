@@ -7,6 +7,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.Arrays;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
@@ -34,6 +35,11 @@ public class EmotionalCoachSkill implements Skill {
     @Override
     public String description() {
         return "针对沟通、冲突、道歉或安慰场景，给出高情商分析与话术建议。";
+    }
+
+    @Override
+    public List<String> routingKeywords() {
+        return List.of("情商", "沟通", "怎么说", "高情商", "心理分析", "事情分析", "分析这件事", "道歉", "安慰", "冲突", "拒绝");
     }
 
     @Override

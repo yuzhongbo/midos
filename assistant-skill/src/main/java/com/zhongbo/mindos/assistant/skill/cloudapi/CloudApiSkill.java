@@ -14,6 +14,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.List;
 import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
@@ -67,6 +68,11 @@ public class CloudApiSkill implements Skill {
     @Override
     public String description() {
         return definition.description();
+    }
+
+    @Override
+    public List<String> routingKeywords() {
+        return definition.keywords();
     }
 
     /**

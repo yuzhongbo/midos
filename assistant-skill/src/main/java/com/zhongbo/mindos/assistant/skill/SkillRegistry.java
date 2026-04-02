@@ -1,27 +1,38 @@
 package com.zhongbo.mindos.assistant.skill;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.Collection;
+import java.util.LinkedHashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Locale;
 import java.util.Optional;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.Set;
 
 @Component
 public class SkillRegistry {
 
-    private final Map<String, Skill> skills = new ConcurrentHashMap<>();
+    private final Map<String, Skill> skills = new LinkedHashMap<>();
+    private final SkillRoutingProperties routingProperties;
 
     public SkillRegistry(List<Skill> discoveredSkills) {
+        this(discoveredSkills, new SkillRoutingProperties());
+    }
+
+    @Autowired
+    public SkillRegistry(List<Skill> discoveredSkills, SkillRoutingProperties routingProperties) {
+        this.routingProperties = routingProperties == null ? new SkillRoutingProperties() : routingProperties;
         discoveredSkills.forEach(this::register);
     }
 
-    public void register(Skill skill) {
+    public synchronized void register(Skill skill) {
         skills.put(skill.name(), skill);
     }
 
-    public int unregisterByPrefix(String prefix) {
+    public synchronized int unregisterByPrefix(String prefix) {
         if (prefix == null || prefix.isBlank()) {
             return 0;
         }
@@ -36,15 +47,41 @@ public class SkillRegistry {
         return removed;
     }
 
-    public Optional<Skill> getSkill(String skillName) {
+    public synchronized Optional<Skill> getSkill(String skillName) {
         return Optional.ofNullable(skills.get(skillName));
     }
 
-    public Collection<Skill> getAllSkills() {
+    public synchronized Collection<Skill> getAllSkills() {
         return List.copyOf(skills.values());
     }
 
-    public Optional<Skill> detect(String input) {
+    public synchronized List<String> resolvedRoutingKeywords(String skillName) {
+        Skill skill = skills.get(skillName);
+        if (skill == null) {
+            return List.of();
+        }
+        LinkedHashSet<String> merged = new LinkedHashSet<>();
+        merged.add(skill.name());
+        merged.add(splitSkillName(skill.name()));
+        merged.addAll(skill.routingKeywords());
+        merged.addAll(configuredKeywords(skill.name()));
+        return merged.stream()
+                .map(this::normalize)
+                .filter(keyword -> !keyword.isBlank())
+                .toList();
+    }
+
+    public synchronized int routingScore(String skillName, String input) {
+        Skill skill = skills.get(skillName);
+        if (skill == null) {
+            return Integer.MIN_VALUE;
+        }
+        int customScore = skill.routingScore(input);
+        int keywordScore = keywordRoutingScore(skill.name(), input);
+        return Math.max(customScore, keywordScore);
+    }
+
+    public synchronized Optional<Skill> detect(String input) {
         if (input == null || input.isBlank()) {
             return Optional.empty();
         }
@@ -56,6 +93,92 @@ public class SkillRegistry {
             return Optional.of(directMatch);
         }
 
-        return skills.values().stream().filter(skill -> skill.supports(normalized)).findFirst();
+        Skill bestMatch = null;
+        int bestScore = Integer.MIN_VALUE;
+        for (Skill skill : skills.values()) {
+            int score = routingScore(skill.name(), normalized);
+            if (score > bestScore) {
+                bestMatch = skill;
+                bestScore = score;
+            }
+        }
+        return bestScore > 0 && bestMatch != null ? Optional.of(bestMatch) : Optional.empty();
+    }
+
+    private List<String> configuredKeywords(String skillName) {
+        if (routingProperties.getKeywords().isEmpty()) {
+            return List.of();
+        }
+        String raw = routingProperties.getKeywords().get(skillName);
+        if (raw == null || raw.isBlank()) {
+            return List.of();
+        }
+        Set<String> values = new LinkedHashSet<>();
+        for (String token : raw.split(",")) {
+            String normalized = token == null ? "" : token.trim();
+            if (!normalized.isBlank()) {
+                values.add(normalized);
+            }
+        }
+        return List.copyOf(values);
+    }
+
+    private int keywordRoutingScore(String skillName, String input) {
+        String normalizedInput = normalize(input);
+        if (normalizedInput.isBlank()) {
+            return Integer.MIN_VALUE;
+        }
+        int bestScore = Integer.MIN_VALUE;
+        for (String keyword : resolvedRoutingKeywords(skillName)) {
+            if (keyword.isBlank()) {
+                continue;
+            }
+            if (normalizedInput.equals(keyword)) {
+                bestScore = Math.max(bestScore, 900 + keyword.length());
+                continue;
+            }
+            if (normalizedInput.contains(keyword)) {
+                bestScore = Math.max(bestScore, 600 + keyword.length());
+                continue;
+            }
+            int overlap = countMatchedWords(normalizedInput, keyword);
+            if (overlap > 0) {
+                bestScore = Math.max(bestScore, 300 + overlap * 40);
+            }
+        }
+        return bestScore;
+    }
+
+    private int countMatchedWords(String input, String keyword) {
+        int matches = 0;
+        for (String part : keyword.split(" ")) {
+            if (!isSignificant(part)) {
+                continue;
+            }
+            if (input.contains(part)) {
+                matches++;
+            }
+        }
+        return matches;
+    }
+
+    private boolean isSignificant(String value) {
+        if (value == null || value.isBlank()) {
+            return false;
+        }
+        long count = value.codePoints().filter(Character::isLetterOrDigit).count();
+        return count >= 2;
+    }
+
+    private String splitSkillName(String skillName) {
+        return skillName == null ? "" : skillName.replaceAll("[._-]+", " ");
+    }
+
+    private String normalize(String value) {
+        return value == null ? "" : value.trim()
+                .toLowerCase(Locale.ROOT)
+                .replaceAll("[^\\p{L}\\p{N}]+", " ")
+                .trim()
+                .replaceAll("\\s+", " ");
     }
 }

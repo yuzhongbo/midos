@@ -103,6 +103,26 @@ class ChatControllerTest {
     }
 
     @Test
+    void shouldAutoRouteChineseRealtimeNewsToPreferredMcpSearchSkill() throws Exception {
+        mockMvc.perform(post("/chat")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"userId\":\"news-user\",\"message\":\"今天新闻\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.channel").value("mcp.qwensearch.webSearch"))
+                .andExpect(jsonPath("$.reply").value(org.hamcrest.Matchers.containsString("Qwen MCP news result")));
+    }
+
+    @Test
+    void shouldExtractNewsTopicFromNaturalLanguageBeforeCallingMcp() throws Exception {
+        mockMvc.perform(post("/chat")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"userId\":\"news-topic-user\",\"message\":\"查看今天新闻 股市\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.channel").value("mcp.qwensearch.webSearch"))
+                .andExpect(jsonPath("$.reply").value(org.hamcrest.Matchers.containsString("股市")));
+    }
+
+    @Test
     void shouldAnswerAvailableSkillsInNaturalLanguage() throws Exception {
         mockMvc.perform(post("/chat")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -392,6 +412,50 @@ class ChatControllerTest {
                                                java.util.Map<String, Object> arguments,
                                                java.util.Map<String, String> headers) {
                             return "MCP docs result for " + arguments.getOrDefault("input", "");
+                        }
+                    }
+            );
+        }
+
+        @Bean
+        Skill mcpQwenSearchSkill() {
+            return new McpToolSkill(
+                    new McpToolDefinition("qwensearch", "http://unused.local/mcp", "webSearch", "Search latest web news"),
+                    new McpJsonRpcClient() {
+                        @Override
+                        public String callTool(String serverUrl, String toolName, java.util.Map<String, Object> arguments) {
+                            return "Qwen MCP news result for " + arguments.getOrDefault("input", "");
+                        }
+
+                        @Override
+                        public String callTool(String serverUrl,
+                                               String toolName,
+                                               java.util.Map<String, Object> arguments,
+                                               java.util.Map<String, String> headers) {
+                            Object query = arguments.get("query");
+                            return "Qwen MCP news result for " + (query == null ? arguments.getOrDefault("input", "") : query);
+                        }
+                    }
+            );
+        }
+
+        @Bean
+        Skill mcpBraveSearchSkill() {
+            return new McpToolSkill(
+                    new McpToolDefinition("bravesearch", "http://unused.local/mcp", "webSearch", "Brave latest news search"),
+                    new McpJsonRpcClient() {
+                        @Override
+                        public String callTool(String serverUrl, String toolName, java.util.Map<String, Object> arguments) {
+                            return "Brave MCP news result for " + arguments.getOrDefault("input", "");
+                        }
+
+                        @Override
+                        public String callTool(String serverUrl,
+                                               String toolName,
+                                               java.util.Map<String, Object> arguments,
+                                               java.util.Map<String, String> headers) {
+                            Object query = arguments.get("query");
+                            return "Brave MCP news result for " + (query == null ? arguments.getOrDefault("input", "") : query);
                         }
                     }
             );

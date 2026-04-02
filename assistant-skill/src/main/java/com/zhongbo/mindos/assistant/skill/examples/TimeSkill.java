@@ -11,6 +11,7 @@ import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeFormatterBuilder;
 import java.time.format.FormatStyle;
+import java.util.List;
 import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
@@ -38,6 +39,11 @@ public class TimeSkill implements Skill {
     @Override
     public String description() {
         return "返回当前服务器时间，可直接问“现在几点了”。";
+    }
+
+    @Override
+    public List<String> routingKeywords() {
+        return List.of("time", "clock", "what time", "几点", "时间", "现在几点了");
     }
 
     @Override

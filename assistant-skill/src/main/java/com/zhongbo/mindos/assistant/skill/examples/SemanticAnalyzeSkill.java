@@ -35,6 +35,11 @@ public class SemanticAnalyzeSkill implements Skill {
     }
 
     @Override
+    public List<String> routingKeywords() {
+        return List.of("semantic", "semantic.analyze", "语义分析", "分析我的语义");
+    }
+
+    @Override
     public boolean supports(String input) {
         if (input == null || input.isBlank()) {
             return false;

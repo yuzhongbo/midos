@@ -15,12 +15,14 @@ import com.zhongbo.mindos.assistant.memory.PreferenceProfileService;
 import com.zhongbo.mindos.assistant.memory.ProceduralMemoryService;
 import com.zhongbo.mindos.assistant.memory.SemanticMemoryService;
 import com.zhongbo.mindos.assistant.memory.SemanticWriteGatePolicy;
-import com.zhongbo.mindos.assistant.common.dto.RoutingReplayDatasetDto;
 import com.zhongbo.mindos.assistant.memory.model.SemanticMemoryEntry;
 import com.zhongbo.mindos.assistant.skill.Skill;
 import com.zhongbo.mindos.assistant.skill.SkillDslExecutor;
 import com.zhongbo.mindos.assistant.skill.SkillEngine;
 import com.zhongbo.mindos.assistant.skill.SkillRegistry;
+import com.zhongbo.mindos.assistant.skill.mcp.McpJsonRpcClient;
+import com.zhongbo.mindos.assistant.skill.mcp.McpToolDefinition;
+import com.zhongbo.mindos.assistant.skill.mcp.McpToolSkill;
 import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalysisService;
 import org.junit.jupiter.api.Test;
 
@@ -30,6 +32,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Locale;
+import java.util.logging.Handler;
+import java.util.logging.Level;
+import java.util.logging.LogRecord;
+import java.util.logging.Logger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -37,6 +43,353 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class DispatcherServiceTest {
+
+    @Test
+    void shouldRouteRealtimeNewsToPreferredQwenMcpSearchSkill() {
+        MemoryManager memoryManager = createMemoryManager();
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of("不应走到 llm"));
+        DispatcherService service = createDispatcher(memoryManager, llmClient, List.of(
+                newMcpSkill("mcp.qwensearch.webSearch", "Search latest web news", "qwen result"),
+                newMcpSkill("mcp.bravesearch.webSearch", "Brave latest web news search", "brave result")
+        ), 2);
+
+        DispatchResult result = service.dispatch("news-user", "今天新闻");
+
+        assertEquals("mcp.qwensearch.webSearch", result.channel());
+        assertEquals("qwen result", result.reply());
+        assertEquals("detected-skill", result.executionTrace().routing().route());
+        assertEquals("mcp.qwensearch.webSearch", result.executionTrace().routing().selectedSkill());
+        assertEquals(0, llmClient.routingCallCount());
+        assertEquals(0, llmClient.fallbackCallCount());
+    }
+
+    @Test
+    void shouldFallbackToBraveMcpSearchSkillWhenQwenIsUnavailable() {
+        MemoryManager memoryManager = createMemoryManager();
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of("不应走到 llm"));
+        DispatcherService service = createDispatcher(memoryManager, llmClient, List.of(
+                newMcpSkill("mcp.bravesearch.webSearch", "Brave latest web news search", "brave result")
+        ), 2);
+
+        DispatchResult result = service.dispatch("news-user", "今天新闻");
+
+        assertEquals("mcp.bravesearch.webSearch", result.channel());
+        assertEquals("brave result", result.reply());
+        assertEquals("detected-skill", result.executionTrace().routing().route());
+        assertEquals("mcp.bravesearch.webSearch", result.executionTrace().routing().selectedSkill());
+        assertEquals(0, llmClient.routingCallCount());
+        assertEquals(0, llmClient.fallbackCallCount());
+    }
+
+    @Test
+    void shouldFinalizeMcpSearchOutputWithWildcardAllowlist() {
+        MemoryManager memoryManager = createMemoryManager();
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of("这是整理后的新闻摘要"));
+        DispatcherService service = createDispatcher(
+                memoryManager,
+                llmClient,
+                List.of(newMcpSkill("mcp.qwensearch.webSearch", "Search latest web news", "raw search result: AI 芯片与机器人动态")),
+                2,
+                "auto",
+                0,
+                "time",
+                "",
+                "",
+                "",
+                "",
+                false,
+                "",
+                true,
+                "mcp.*",
+                "",
+                ""
+        );
+
+        DispatchResult result = service.dispatch("news-user", "查看今天新闻 科技");
+
+        assertEquals("mcp.qwensearch.webSearch", result.channel());
+        assertTrue(result.reply().startsWith("今日新闻标题："));
+        assertTrue(result.reply().contains("1. 这是整理后的新闻摘要"));
+        assertTrue(result.reply().contains("2. raw search result: AI 芯片与机器人动态"));
+        assertTrue(result.reply().contains("总结：这是整理后的新闻摘要"));
+        assertEquals(1, llmClient.finalizeContexts().size());
+        assertEquals("skill-postprocess", llmClient.finalizeContexts().get(0).get("routeStage"));
+    }
+
+    @Test
+    void shouldLogWhichMcpSourceWasSentToLlmPostprocess() {
+        Logger logger = Logger.getLogger(DispatcherService.class.getName());
+        CapturingHandler handler = new CapturingHandler();
+        Level previousLevel = logger.getLevel();
+        boolean previousUseParentHandlers = logger.getUseParentHandlers();
+        logger.setLevel(Level.INFO);
+        logger.addHandler(handler);
+        logger.setUseParentHandlers(false);
+        try {
+            MemoryManager qwenMemoryManager = createMemoryManager();
+            RecordingLlmClient qwenLlmClient = new RecordingLlmClient(List.of("qwen summary"));
+            DispatcherService qwenService = createDispatcher(
+                    qwenMemoryManager,
+                    qwenLlmClient,
+                    List.of(newMcpSkill("mcp.qwensearch.webSearch", "Search latest web news", "raw qwen result")),
+                    2,
+                    "auto",
+                    0,
+                    "time",
+                    "",
+                    "",
+                    "",
+                    "",
+                    false,
+                    "",
+                    true,
+                    "mcp.*",
+                    "",
+                    ""
+            );
+            qwenService.dispatch("news-user", "查看今天新闻 科技");
+
+            MemoryManager braveMemoryManager = createMemoryManager();
+            RecordingLlmClient braveLlmClient = new RecordingLlmClient(List.of("brave summary"));
+            DispatcherService braveService = createDispatcher(
+                    braveMemoryManager,
+                    braveLlmClient,
+                    List.of(newMcpSkill("mcp.bravesearch.webSearch", "Brave latest web news search", "raw brave result")),
+                    2,
+                    "auto",
+                    0,
+                    "time",
+                    "",
+                    "",
+                    "",
+                    "",
+                    false,
+                    "",
+                    true,
+                    "mcp.*",
+                    "",
+                    ""
+            );
+            braveService.dispatch("news-user", "查看今天新闻 科技");
+
+            String logs = String.join("\n", handler.messages());
+            assertTrue(logs.contains("dispatcher.skill-postprocess.trace"));
+            assertTrue(logs.contains("\"source\":\"qwen\""));
+            assertTrue(logs.contains("\"channel\":\"mcp.qwensearch.webSearch\""));
+            assertTrue(logs.contains("\"source\":\"brave\""));
+            assertTrue(logs.contains("\"channel\":\"mcp.bravesearch.webSearch\""));
+        } finally {
+            logger.removeHandler(handler);
+            logger.setLevel(previousLevel);
+            logger.setUseParentHandlers(previousUseParentHandlers);
+        }
+    }
+
+    @Test
+    void shouldEmitFinalAggregateTraceForQwenSuccessAndBraveFallback() {
+        Logger logger = Logger.getLogger(DispatcherService.class.getName());
+        CapturingHandler handler = new CapturingHandler();
+        Level previousLevel = logger.getLevel();
+        boolean previousUseParentHandlers = logger.getUseParentHandlers();
+        logger.setLevel(Level.INFO);
+        logger.addHandler(handler);
+        logger.setUseParentHandlers(false);
+        try {
+            MemoryManager qwenMemoryManager = createMemoryManager();
+            RecordingLlmClient qwenLlmClient = new RecordingLlmClient(List.of("整理后的 qwen 摘要"));
+            DispatcherService qwenService = createDispatcher(
+                    qwenMemoryManager,
+                    qwenLlmClient,
+                    List.of(newMcpSkill("mcp.qwensearch.webSearch", "Search latest web news", "raw qwen result")),
+                    2,
+                    "auto",
+                    0,
+                    "time",
+                    "",
+                    "",
+                    "",
+                    "",
+                    false,
+                    "",
+                    true,
+                    "mcp.*",
+                    "",
+                    ""
+            );
+            qwenService.dispatch("news-user", "查看今天新闻 科技");
+
+            MemoryManager braveMemoryManager = createMemoryManager();
+            RecordingLlmClient braveLlmClient = new RecordingLlmClient(List.of("fallback llm reply"));
+            DispatcherService braveService = createDispatcher(
+                    braveMemoryManager,
+                    braveLlmClient,
+                    List.of(new Skill() {
+                        @Override
+                        public String name() {
+                            return "mcp.bravesearch.webSearch";
+                        }
+
+                        @Override
+                        public String description() {
+                            return "Brave latest web news search";
+                        }
+
+                        @Override
+                        public SkillResult run(SkillContext context) {
+                            return SkillResult.failure(name(), "Brave timeout");
+                        }
+
+                        @Override
+                        public boolean supports(String input) {
+                            return input != null && input.contains("新闻");
+                        }
+
+                        @Override
+                        public int routingScore(String input) {
+                            return supports(input) ? 900 : Integer.MIN_VALUE;
+                        }
+                    }),
+                    2,
+                    "auto",
+                    0,
+                    "time",
+                    "",
+                    "",
+                    "",
+                    "",
+                    false,
+                    "",
+                    true,
+                    "mcp.*",
+                    "",
+                    ""
+            );
+            braveService.dispatch("news-user", "查看今天新闻 科技");
+
+            String logs = String.join("\n", handler.messages());
+            assertTrue(logs.contains("dispatcher.final.trace"), logs);
+            assertTrue(logs.contains("\"searchSource\":\"qwen\""), logs);
+            assertTrue(logs.contains("\"searchStatus\":\"success\""), logs);
+            assertTrue(logs.contains("\"selectedSkill\":\"mcp.qwensearch.webSearch\""), logs);
+            assertTrue(logs.contains("\"postprocessSent\":true"), logs);
+            assertTrue(logs.contains("\"finalChannel\":\"mcp.qwensearch.webSearch\""), logs);
+            assertTrue(logs.contains("\"searchSource\":\"brave\""), logs);
+            assertTrue(logs.contains("\"searchStatus\":\"failed\""), logs);
+            assertTrue(logs.contains("\"selectedSkill\":\"mcp.bravesearch.webSearch\""), logs);
+            assertTrue(logs.contains("\"fallbackUsed\":false"), logs);
+            assertTrue(logs.contains("\"finalChannel\":\"mcp.bravesearch.webSearch\""), logs);
+        } finally {
+            logger.removeHandler(handler);
+            logger.setLevel(previousLevel);
+            logger.setUseParentHandlers(previousUseParentHandlers);
+        }
+    }
+
+    @Test
+    void shouldUseNewsSpecificFinalizePromptForRealtimeMcpSearch() {
+        MemoryManager memoryManager = createMemoryManager();
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of("整理后的新闻简报"));
+        DispatcherService service = createDispatcher(
+                memoryManager,
+                llmClient,
+                List.of(newMcpSkill("mcp.qwensearch.webSearch", "Search latest web news", "1. AI 芯片\n2. 机器人\n3. 云计算")),
+                2,
+                "auto",
+                0,
+                "time",
+                "",
+                "",
+                "",
+                "",
+                false,
+                "",
+                true,
+                "mcp.*",
+                "",
+                ""
+        );
+
+        service.dispatch("news-user", "查看今天新闻 科技");
+
+        String finalizePrompt = llmClient.fallbackPrompts().stream()
+                .filter(prompt -> prompt.startsWith("你是新闻整理助手。"))
+                .findFirst()
+                .orElseThrow();
+        assertTrue(finalizePrompt.contains("今日新闻标题："));
+        assertTrue(finalizePrompt.contains("1. ..."));
+        assertTrue(finalizePrompt.contains("总结：..."));
+        assertTrue(finalizePrompt.contains("严格按下面结构输出"));
+    }
+
+    @Test
+    void shouldNormalizeDriftedNewsFinalizeOutputIntoStableBriefShape() {
+        MemoryManager memoryManager = createMemoryManager();
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of(
+                "今天科技方向主要聚焦 AI 芯片、机器人和云计算，整体看行业还在持续推进，没有特别突兀的单点变化。"
+        ));
+        DispatcherService service = createDispatcher(
+                memoryManager,
+                llmClient,
+                List.of(newMcpSkill("mcp.qwensearch.webSearch", "Search latest web news", "1. AI 芯片进展\n2. 机器人新品\n3. 云计算平台升级\nhttps://example.com/news-1")),
+                2,
+                "auto",
+                0,
+                "time",
+                "",
+                "",
+                "",
+                "",
+                false,
+                "",
+                true,
+                "mcp.*",
+                "",
+                ""
+        );
+
+        DispatchResult result = service.dispatch("news-user", "查看今天新闻 科技");
+
+        assertEquals("mcp.qwensearch.webSearch", result.channel());
+        assertTrue(result.reply().startsWith("今日新闻标题："));
+        assertTrue(result.reply().contains("1. AI 芯片进展"));
+        assertTrue(result.reply().contains("2. 机器人新品"));
+        assertTrue(result.reply().contains("3. 云计算平台升级"));
+        assertTrue(result.reply().contains("总结："));
+    }
+
+    @Test
+    void shouldKeepGenericFinalizePromptForNonNewsMcpSkill() {
+        MemoryManager memoryManager = createMemoryManager();
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of("整理后的文档答复"));
+        DispatcherService service = createDispatcher(
+                memoryManager,
+                llmClient,
+                List.of(newMcpSkill("mcp.docs.searchDocs", "Search product documentation", "Auth guide result")),
+                2,
+                "auto",
+                0,
+                "time",
+                "",
+                "",
+                "",
+                "",
+                false,
+                "",
+                true,
+                "mcp.*",
+                "",
+                ""
+        );
+
+        service.dispatch("docs-user", "search docs for auth guide");
+
+        String finalizePrompt = llmClient.fallbackPrompts().stream()
+                .filter(prompt -> prompt.startsWith("你是回复优化助手。"))
+                .findFirst()
+                .orElseThrow();
+        assertTrue(finalizePrompt.contains("自然、简洁、可执行"));
+        assertFalse(finalizePrompt.contains("你是新闻整理助手。"));
+    }
 
     @Test
     void shouldBypassLlmSkillSelectionForSmallTalk() {
@@ -526,6 +879,29 @@ class DispatcherServiceTest {
         );
     }
 
+    private Skill newMcpSkill(String skillName, String description, String output) {
+        String[] parts = skillName.split("\\.", 3);
+        String serverAlias = parts.length > 1 ? parts[1] : "docs";
+        String toolName = parts.length > 2 ? parts[2] : skillName;
+        return new McpToolSkill(
+                new McpToolDefinition(serverAlias, "http://unused.local/mcp", toolName, description),
+                new McpJsonRpcClient() {
+                    @Override
+                    public String callTool(String serverUrl, String toolName, Map<String, Object> arguments) {
+                        return output;
+                    }
+
+                    @Override
+                    public String callTool(String serverUrl,
+                                           String toolName,
+                                           Map<String, Object> arguments,
+                                           Map<String, String> headers) {
+                        return output;
+                    }
+                }
+        );
+    }
+
     private static final class SemanticTriggerSkill implements Skill {
         @Override
         public String name() {
@@ -577,7 +953,7 @@ class DispatcherServiceTest {
                 Map<String, Object> captured = context == null ? Map.of() : Map.copyOf(context);
                 fallbackContexts.add(captured);
                 fallbackPrompts.add(prompt == null ? "" : prompt);
-                if (prompt != null && prompt.startsWith("你是回复优化助手。")) {
+                if (prompt != null && (prompt.startsWith("你是回复优化助手。") || prompt.startsWith("你是新闻整理助手。"))) {
                     finalizeContexts.add(captured);
                 }
             }
@@ -624,6 +1000,29 @@ class DispatcherServiceTest {
 
         private List<Map<String, Object>> contexts() {
             return contexts;
+        }
+    }
+
+    private static final class CapturingHandler extends Handler {
+        private final List<String> messages = new ArrayList<>();
+
+        @Override
+        public void publish(LogRecord record) {
+            if (record != null && record.getMessage() != null) {
+                messages.add(record.getMessage());
+            }
+        }
+
+        @Override
+        public void flush() {
+        }
+
+        @Override
+        public void close() {
+        }
+
+        private List<String> messages() {
+            return messages;
         }
     }
 

@@ -12,6 +12,7 @@ import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
@@ -135,6 +136,142 @@ class McpSkillLoaderTest {
         assertEquals(1, loaded);
         assertTrue(registry.getSkill("mcp.docs.searchDocs").isPresent());
         assertTrue(authHeaderSeen.get());
+    }
+
+    @Test
+    void shouldLoadBraveMcpFromDedicatedProperties() throws Exception {
+        AtomicBoolean braveTokenSeen = new AtomicBoolean(false);
+        server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/mcp", exchange -> {
+            if ("brave-test-token".equals(exchange.getRequestHeaders().getFirst("X-Subscription-Token"))) {
+                braveTokenSeen.set(true);
+            }
+            Map<String, Object> request = objectMapper.readValue(
+                    exchange.getRequestBody().readAllBytes(), new TypeReference<>() {});
+            String method = String.valueOf(request.get("method"));
+            byte[] response = switch (method) {
+                case "initialize" -> json(Map.of("jsonrpc", "2.0", "id", request.get("id"), "result", Map.of()));
+                case "tools/list" -> json(Map.of(
+                        "jsonrpc", "2.0",
+                        "id", request.get("id"),
+                        "result", Map.of("tools", List.of(
+                                Map.of("name", "webSearch", "description", "Search web")
+                        ))
+                ));
+                default -> json(Map.of("jsonrpc", "2.0", "id", request.get("id"), "result", Map.of()));
+            };
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+        server.start();
+
+        String url = "http://127.0.0.1:" + server.getAddress().getPort() + "/mcp";
+        SkillRegistry registry = new SkillRegistry(List.<Skill>of());
+        McpSkillLoader loader = new McpSkillLoader(
+                registry,
+                new McpJsonRpcClient(),
+                "",
+                "",
+                true,
+                "brave",
+                url,
+                "brave-test-token",
+                "X-Subscription-Token"
+        );
+
+        int loaded = loader.loadConfiguredServers();
+
+        assertEquals(1, loaded);
+        assertTrue(registry.getSkill("mcp.brave.webSearch").isPresent());
+        assertTrue(braveTokenSeen.get());
+    }
+
+    @Test
+    void shouldRegisterAndExecuteBraveRestSearchFromConfiguredServers() throws Exception {
+        AtomicBoolean braveTokenSeen = new AtomicBoolean(false);
+        AtomicBoolean querySeen = new AtomicBoolean(false);
+        server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/res/v1/web/search", exchange -> {
+            if ("brave-rest-token".equals(exchange.getRequestHeaders().getFirst("X-Subscription-Token"))) {
+                braveTokenSeen.set(true);
+            }
+            String rawQuery = exchange.getRequestURI().getRawQuery();
+            if (rawQuery != null && rawQuery.contains("q=")) {
+                String q = URLDecoder.decode(rawQuery.substring(rawQuery.indexOf("q=") + 2), StandardCharsets.UTF_8);
+                if ("artificial intelligence".equals(q)) {
+                    querySeen.set(true);
+                }
+            }
+            byte[] response = json(Map.of(
+                    "web", Map.of("results", List.of(
+                            Map.of(
+                                    "title", "AI news headline",
+                                    "description", "Latest artificial intelligence update",
+                                    "url", "https://example.com/ai"
+                            )
+                    ))
+            ));
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+        server.start();
+
+        String url = "http://127.0.0.1:" + server.getAddress().getPort() + "/res/v1/web/search";
+        SkillRegistry registry = new SkillRegistry(List.<Skill>of());
+        McpSkillLoader loader = new McpSkillLoader(
+                registry,
+                new McpJsonRpcClient(),
+                "bravesearch:" + url,
+                "bravesearch:X-Subscription-Token=brave-rest-token"
+        );
+
+        int loaded = loader.loadConfiguredServers();
+        SkillResult result = registry.getSkill("mcp.bravesearch.webSearch")
+                .orElseThrow()
+                .run(new SkillContext("u1", "查看新闻 artificial intelligence", Map.of("query", "artificial intelligence")));
+
+        assertEquals(1, loaded);
+        assertTrue(registry.getSkill("mcp.bravesearch.webSearch").isPresent());
+        assertTrue(braveTokenSeen.get());
+        assertTrue(querySeen.get());
+        assertTrue(result.success());
+        assertTrue(result.output().contains("AI news headline"));
+    }
+
+    @Test
+    void shouldIgnorePlaceholderServerUrlEntries() {
+        SkillRegistry registry = new SkillRegistry(List.<Skill>of());
+        McpSkillLoader loader = new McpSkillLoader(
+                registry,
+                new McpJsonRpcClient(),
+                "qwensearch:https://dashscope.aliyuncs.com/api/v1/mcps/WebSearch/mcp,bravesearch:REPLACE_WITH_BRAVE_MCP_URL",
+                ""
+        );
+
+        Map<String, String> parsed = loader.parseServerConfig(loader.getConfiguredServers());
+
+        assertEquals(1, parsed.size());
+        assertEquals("https://dashscope.aliyuncs.com/api/v1/mcps/WebSearch/mcp", parsed.get("qwensearch"));
+        assertTrue(!parsed.containsKey("bravesearch"));
+    }
+
+    @Test
+    void shouldIgnorePlaceholderHeaderValues() {
+        SkillRegistry registry = new SkillRegistry(List.<Skill>of());
+        McpSkillLoader loader = new McpSkillLoader(
+                registry,
+                new McpJsonRpcClient(),
+                "",
+                "qwensearch:Authorization=Bearer REPLACE_WITH_QWEN_KEY,bravesearch:X-Subscription-Token=REPLACE_WITH_BRAVE_KEY"
+        );
+
+        Map<String, Map<String, String>> parsed = loader.parseHeadersConfig(loader.getConfiguredServerHeaders());
+
+        assertTrue(parsed.isEmpty());
     }
 
     private byte[] json(Map<String, Object> value) throws IOException {
