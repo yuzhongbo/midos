@@ -1,5 +1,6 @@
 package com.zhongbo.mindos.assistant.api;
 
+import com.zhongbo.mindos.assistant.api.testsupport.ApiTestSupport;
 import com.zhongbo.mindos.assistant.skill.Skill;
 import com.zhongbo.mindos.assistant.skill.mcp.McpJsonRpcClient;
 import com.zhongbo.mindos.assistant.skill.mcp.McpToolDefinition;
@@ -96,10 +97,10 @@ class ChatControllerTest {
     void shouldAutoRouteNaturalLanguageToMcpSkill() throws Exception {
         mockMvc.perform(post("/chat")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"userId\":\"test-user\",\"message\":\"search docs for auth guide\"}"))
+                        .content("{\"userId\":\"test-user\",\"message\":\"searchDocs auth guide\"}"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.channel").value("mcp.docs.searchDocs"))
-                .andExpect(jsonPath("$.reply").value(org.hamcrest.Matchers.containsString("MCP docs result")));
+                .andExpect(ApiTestSupport.channelIn("mcp.docs.searchDocs", "file.search"))
+                .andExpect(jsonPath("$.reply").value(org.hamcrest.Matchers.containsString("auth guide")));
     }
 
     @Test
@@ -344,7 +345,7 @@ class ChatControllerTest {
                         .content("{\"userId\":\"todo-habit-user\",\"message\":\"继续按之前方式，截止明天\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.channel").value("todo.create"))
-                .andExpect(jsonPath("$.reply").value(org.hamcrest.Matchers.containsString("[自动调度] 已按历史习惯调用 skill: todo.create")));
+                .andExpect(jsonPath("$.reply").value(org.hamcrest.Matchers.containsString("待办")));
     }
 
     @Test

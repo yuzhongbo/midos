@@ -1,5 +1,6 @@
 package com.zhongbo.mindos.assistant.api;
 
+import com.zhongbo.mindos.assistant.api.testsupport.ApiTestSupport;
 import com.zhongbo.mindos.assistant.common.LlmClient;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -36,11 +37,12 @@ class DispatcherBudgetGuardTest {
 
     @Test
     void shouldCapLlmReplyLength() throws Exception {
+        String userId = ApiTestSupport.uniqueUserId("budget-user");
         String longInput = "请你详细说明这段很长很长的输入并尽量展开：" + "x".repeat(400);
 
         mockMvc.perform(post("/chat")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"userId\":\"budget-user\",\"message\":\"" + longInput + "\"}"))
+                        .content(ApiTestSupport.chatRequest(userId, longInput)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.channel").value("llm"))
                 .andExpect(jsonPath("$.reply").value(org.hamcrest.Matchers.containsString("...[truncated]")));
@@ -48,7 +50,8 @@ class DispatcherBudgetGuardTest {
 
     @Test
     void shouldFallbackWhenRepeatedLlmDslAutoRouteHitsLoopGuard() throws Exception {
-        String request = "{\"userId\":\"llm-dsl-guard-user\",\"message\":\"请帮我自动处理这个请求\"}";
+        String userId = ApiTestSupport.uniqueUserId("llm-dsl-guard-user");
+        String request = ApiTestSupport.chatRequest(userId, "请详细分析并帮我自动处理这个请求");
 
         mockMvc.perform(post("/chat")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -72,9 +75,10 @@ class DispatcherBudgetGuardTest {
 
     @Test
     void shouldNotBlockDifferentInputsForSameAutoRoutedSkill() throws Exception {
-        String first = "{\"userId\":\"llm-dsl-guard-user-2\",\"message\":\"请帮我自动处理这个请求A\"}";
-        String second = "{\"userId\":\"llm-dsl-guard-user-2\",\"message\":\"请帮我自动处理这个请求B\"}";
-        String third = "{\"userId\":\"llm-dsl-guard-user-2\",\"message\":\"请帮我自动处理这个请求A\"}";
+        String userId = ApiTestSupport.uniqueUserId("llm-dsl-guard-user-2");
+        String first = ApiTestSupport.chatRequest(userId, "请帮我自动处理这个请求A");
+        String second = ApiTestSupport.chatRequest(userId, "请帮我自动处理这个请求B");
+        String third = ApiTestSupport.chatRequest(userId, "请帮我自动处理这个请求A");
 
         mockMvc.perform(post("/chat")
                         .contentType(MediaType.APPLICATION_JSON)

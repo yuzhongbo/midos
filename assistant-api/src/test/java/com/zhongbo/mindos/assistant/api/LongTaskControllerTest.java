@@ -1,6 +1,6 @@
 package com.zhongbo.mindos.assistant.api;
 
-import com.jayway.jsonpath.JsonPath;
+import com.zhongbo.mindos.assistant.api.testsupport.ApiTestSupport;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -24,13 +24,14 @@ class LongTaskControllerTest {
 
     @Test
     void shouldCreateClaimAndProgressLongTask() throws Exception {
+        String userId = ApiTestSupport.uniqueUserId("u-long-1");
         String createPayload = "{" +
                 "\"title\":\"发布新版本\"," +
                 "\"objective\":\"三天内完成发布\"," +
                 "\"steps\":[\"准备 changelog\",\"灰度发布\",\"全量发布\"]" +
                 "}";
 
-        MvcResult created = mockMvc.perform(post("/api/tasks/u-long-1")
+        MvcResult created = mockMvc.perform(post("/api/tasks/" + userId)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(createPayload))
                 .andExpect(status().isOk())
@@ -39,9 +40,9 @@ class LongTaskControllerTest {
                 .andExpect(jsonPath("$.pendingSteps.length()").value(3))
                 .andReturn();
 
-        String taskId = JsonPath.read(created.getResponse().getContentAsString(), "$.taskId");
+        String taskId = ApiTestSupport.readString(created, "$.taskId");
 
-        mockMvc.perform(post("/api/tasks/u-long-1/claim")
+        mockMvc.perform(post("/api/tasks/" + userId + "/claim")
                         .param("workerId", "worker-a")
                         .param("limit", "1")
                         .param("leaseSeconds", "600"))
@@ -56,7 +57,7 @@ class LongTaskControllerTest {
                 "\"note\":\"day1 完成准备\"" +
                 "}";
 
-        mockMvc.perform(post("/api/tasks/u-long-1/" + taskId + "/progress")
+        mockMvc.perform(post("/api/tasks/" + userId + "/" + taskId + "/progress")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(progressPayload))
                 .andExpect(status().isOk())
@@ -67,19 +68,20 @@ class LongTaskControllerTest {
 
     @Test
     void shouldRejectProgressFromDifferentWorkerLeaseOwner() throws Exception {
+        String userId = ApiTestSupport.uniqueUserId("u-long-2");
         String createPayload = "{" +
                 "\"title\":\"跨天任务\"," +
                 "\"steps\":[\"step-1\",\"step-2\"]" +
                 "}";
 
-        MvcResult created = mockMvc.perform(post("/api/tasks/u-long-2")
+        MvcResult created = mockMvc.perform(post("/api/tasks/" + userId)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(createPayload))
                 .andExpect(status().isOk())
                 .andReturn();
-        String taskId = JsonPath.read(created.getResponse().getContentAsString(), "$.taskId");
+        String taskId = ApiTestSupport.readString(created, "$.taskId");
 
-        mockMvc.perform(post("/api/tasks/u-long-2/claim")
+        mockMvc.perform(post("/api/tasks/" + userId + "/claim")
                         .param("workerId", "worker-a")
                         .param("limit", "1"))
                 .andExpect(status().isOk())
@@ -90,38 +92,39 @@ class LongTaskControllerTest {
                 "\"completedStep\":\"step-1\"" +
                 "}";
 
-        mockMvc.perform(post("/api/tasks/u-long-2/" + taskId + "/progress")
+        mockMvc.perform(post("/api/tasks/" + userId + "/" + taskId + "/progress")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(invalidUpdatePayload))
                 .andExpect(status().isConflict());
 
-        mockMvc.perform(get("/api/tasks/u-long-2/" + taskId))
+        mockMvc.perform(get("/api/tasks/" + userId + "/" + taskId))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.completedSteps.length()").value(0));
     }
 
     @Test
     void shouldAutoRunReadyLongTask() throws Exception {
+        String userId = ApiTestSupport.uniqueUserId("u-long-auto");
         String createPayload = "{" +
                 "\"title\":\"自动推进任务\"," +
                 "\"steps\":[\"step-1\",\"step-2\"]" +
                 "}";
 
-        MvcResult created = mockMvc.perform(post("/api/tasks/u-long-auto")
+        MvcResult created = mockMvc.perform(post("/api/tasks/" + userId)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(createPayload))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("PENDING"))
                 .andReturn();
-        String taskId = JsonPath.read(created.getResponse().getContentAsString(), "$.taskId");
+        String taskId = ApiTestSupport.readString(created, "$.taskId");
 
-        mockMvc.perform(post("/api/tasks/u-long-auto/auto-run"))
+        mockMvc.perform(post("/api/tasks/" + userId + "/auto-run"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.userId").value("u-long-auto"))
+                .andExpect(jsonPath("$.userId").value(userId))
                 .andExpect(jsonPath("$.claimedCount").value(1))
                 .andExpect(jsonPath("$.advancedCount").value(1));
 
-        mockMvc.perform(get("/api/tasks/u-long-auto/" + taskId))
+        mockMvc.perform(get("/api/tasks/" + userId + "/" + taskId))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.completedSteps.length()").value(1))
                 .andExpect(jsonPath("$.progressPercent", greaterThan(0)));

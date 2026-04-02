@@ -1,5 +1,6 @@
 package com.zhongbo.mindos.assistant.api;
 
+import com.zhongbo.mindos.assistant.api.testsupport.ApiTestSupport;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -26,20 +27,21 @@ class MemoryRetrievePreviewSecurityTest {
 
     @Test
     void shouldRejectRetrievePreviewWithoutAdminToken() throws Exception {
-        mockMvc.perform(get("/api/memory/secure-user/retrieve-preview")
+        String userId = ApiTestSupport.uniqueUserId("secure-user");
+        mockMvc.perform(get("/api/memory/" + userId + "/retrieve-preview")
                         .param("query", "echo"))
                 .andExpect(status().isForbidden());
     }
 
     @Test
     void shouldAllowRetrievePreviewWithAdminToken() throws Exception {
-        mockMvc.perform(post("/api/memory/secure-user/sync")
+        String userId = ApiTestSupport.uniqueUserId("secure-user");
+        mockMvc.perform(post("/api/memory/" + userId + "/sync")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"eventId\":\"evt-sec\",\"episodic\":[{\"role\":\"user\",\"content\":\"echo secure\"}],\"semantic\":[],\"procedural\":[]}"))
                 .andExpect(status().isOk());
 
-        mockMvc.perform(get("/api/memory/secure-user/retrieve-preview")
-                        .header("X-MindOS-Admin-Token", "test-admin-token")
+        mockMvc.perform(ApiTestSupport.withAdminToken(get("/api/memory/" + userId + "/retrieve-preview"))
                         .param("query", "echo"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.recentConversation").isString());

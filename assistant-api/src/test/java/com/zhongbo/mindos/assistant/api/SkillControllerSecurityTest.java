@@ -1,12 +1,13 @@
 package com.zhongbo.mindos.assistant.api;
 
-import com.jayway.jsonpath.JsonPath;
+import com.zhongbo.mindos.assistant.api.testsupport.ApiTestSupport;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -36,15 +37,12 @@ class SkillControllerSecurityTest {
 
     @Test
     void shouldRejectLoadMcpWhenHostIsNotAllowlisted() throws Exception {
-        String challengeResponse = mockMvc.perform(post("/api/security/challenge")
-                        .header("X-MindOS-Admin-Token", "test-admin-token")
+        MvcResult challengeResult = mockMvc.perform(ApiTestSupport.withAdminToken(post("/api/security/challenge"))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"operation\":\"skills.load-mcp\",\"resource\":\"docs@https://example.com/mcp\",\"actor\":\"system\"}"))
                 .andExpect(status().isOk())
-                .andReturn()
-                .getResponse()
-                .getContentAsString();
-        String token = JsonPath.read(challengeResponse, "$.token");
+                .andReturn();
+        String token = ApiTestSupport.readString(challengeResult, "$.token");
 
         mockMvc.perform(post("/api/skills/load-mcp")
                         .header("X-MindOS-Challenge-Token", token)

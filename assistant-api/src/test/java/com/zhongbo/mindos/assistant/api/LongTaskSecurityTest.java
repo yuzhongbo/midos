@@ -1,11 +1,13 @@
 package com.zhongbo.mindos.assistant.api;
 
-import com.jayway.jsonpath.JsonPath;
+import com.zhongbo.mindos.assistant.api.testsupport.ApiTestSupport;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -25,48 +27,45 @@ class LongTaskSecurityTest {
 
     @Test
     void shouldRejectTaskAutoRunWithoutApprovalHeaders() throws Exception {
-        mockMvc.perform(post("/api/tasks/security-user/auto-run"))
+        String userId = ApiTestSupport.uniqueUserId("security-user");
+        mockMvc.perform(post("/api/tasks/" + userId + "/auto-run"))
                 .andExpect(status().isForbidden());
     }
 
     @Test
     void shouldAllowTaskAutoRunWithApprovalHeaders() throws Exception {
-        String challengeResponse = mockMvc.perform(post("/api/security/challenge")
-                        .header("X-MindOS-Admin-Token", "test-admin-token")
-                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
-                        .content("{\"operation\":\"tasks.auto-run\",\"resource\":\"security-user\",\"actor\":\"security-user\"}"))
+        String userId = ApiTestSupport.uniqueUserId("security-user");
+        MvcResult challengeResult = mockMvc.perform(ApiTestSupport.withAdminToken(post("/api/security/challenge"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"operation\":\"tasks.auto-run\",\"resource\":\"" + userId + "\",\"actor\":\"" + userId + "\"}"))
                 .andExpect(status().isOk())
-                .andReturn()
-                .getResponse()
-                .getContentAsString();
-        String token = JsonPath.read(challengeResponse, "$.token");
+                .andReturn();
+        String token = ApiTestSupport.readString(challengeResult, "$.token");
 
-        mockMvc.perform(post("/api/tasks/security-user/auto-run")
+        mockMvc.perform(post("/api/tasks/" + userId + "/auto-run")
                         .header("X-MindOS-Challenge-Token", token))
                 .andExpect(status().isOk());
 
-        mockMvc.perform(post("/api/tasks/security-user/auto-run")
+        mockMvc.perform(post("/api/tasks/" + userId + "/auto-run")
                         .header("X-MindOS-Challenge-Token", token))
                 .andExpect(status().isForbidden());
     }
 
     @Test
     void shouldRejectChallengeTokenWhenIpDoesNotMatch() throws Exception {
-        String challengeResponse = mockMvc.perform(post("/api/security/challenge")
+        String userId = ApiTestSupport.uniqueUserId("security-user");
+        MvcResult challengeResult = mockMvc.perform(ApiTestSupport.withAdminToken(post("/api/security/challenge"))
                         .with(request -> {
                             request.setRemoteAddr("10.0.0.10");
                             return request;
                         })
-                        .header("X-MindOS-Admin-Token", "test-admin-token")
-                        .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
-                        .content("{\"operation\":\"tasks.auto-run\",\"resource\":\"security-user\",\"actor\":\"security-user\"}"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"operation\":\"tasks.auto-run\",\"resource\":\"" + userId + "\",\"actor\":\"" + userId + "\"}"))
                 .andExpect(status().isOk())
-                .andReturn()
-                .getResponse()
-                .getContentAsString();
-        String token = JsonPath.read(challengeResponse, "$.token");
+                .andReturn();
+        String token = ApiTestSupport.readString(challengeResult, "$.token");
 
-        mockMvc.perform(post("/api/tasks/security-user/auto-run")
+        mockMvc.perform(post("/api/tasks/" + userId + "/auto-run")
                         .with(request -> {
                             request.setRemoteAddr("10.0.0.11");
                             return request;

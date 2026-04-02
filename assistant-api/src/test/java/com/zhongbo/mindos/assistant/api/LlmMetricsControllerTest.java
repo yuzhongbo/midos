@@ -1,14 +1,16 @@
 package com.zhongbo.mindos.assistant.api;
 
+import com.zhongbo.mindos.assistant.api.testsupport.ApiTestSupport;
+import com.zhongbo.mindos.assistant.common.LlmClient;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
+import java.util.Map;
+
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -23,16 +25,18 @@ class LlmMetricsControllerTest {
     @Autowired
     private MockMvc mockMvc;
 
+    @Autowired
+    private LlmClient llmClient;
+
     @Test
     void shouldReturnLlmMetricsSummaryAndRecentCalls() throws Exception {
-        mockMvc.perform(post("/chat")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"userId\":\"metrics-user\",\"message\":\"hello\"}"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.channel").value("llm"));
+        String userId = ApiTestSupport.uniqueUserId("metrics-user");
+        llmClient.generateResponse("请详细分析 hello", Map.of(
+                "userId", userId,
+                "routeStage", "llm-fallback"
+        ));
 
-        mockMvc.perform(get("/api/metrics/llm")
-                        .header("X-MindOS-Admin-Token", "test-admin-token")
+        mockMvc.perform(ApiTestSupport.withAdminToken(get("/api/metrics/llm"))
                         .param("windowMinutes", "120")
                         .param("includeRecent", "true")
                         .param("recentLimit", "5"))
@@ -81,13 +85,13 @@ class LlmMetricsControllerTest {
 
     @Test
     void shouldReturnRoutingReplayDatasetWhenAuthorized() throws Exception {
-        mockMvc.perform(post("/chat")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"userId\":\"metrics-replay-user\",\"message\":\"谢谢\"}"))
-                .andExpect(status().isOk());
+        String userId = ApiTestSupport.uniqueUserId("metrics-replay-user");
+        llmClient.generateResponse("谢谢", Map.of(
+                "userId", userId,
+                "routeStage", "llm-fallback"
+        ));
 
-        mockMvc.perform(get("/api/metrics/llm/routing-replay")
-                        .header("X-MindOS-Admin-Token", "test-admin-token")
+        mockMvc.perform(ApiTestSupport.withAdminToken(get("/api/metrics/llm/routing-replay"))
                         .param("limit", "200"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.limit").value(200))
