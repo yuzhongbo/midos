@@ -1,5 +1,7 @@
 # MindOS
 
+[中文文档](README.zh-CN.md) | English
+
 MindOS is a lightweight, single-user personal AI assistant backend built with Java 17 and Spring Boot 3.2.x.
 
 ## Modules
