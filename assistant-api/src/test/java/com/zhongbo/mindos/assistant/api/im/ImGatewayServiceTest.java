@@ -156,7 +156,7 @@ class ImGatewayServiceTest {
                         "llm"
                 ));
 
-        String reply = service.chatAsync(ImPlatform.DINGTALK, "u5", "c5", "继续生成").get(1, TimeUnit.SECONDS);
+        String reply = service.chatAsync("u5", "c5", "继续生成").get(1, TimeUnit.SECONDS);
 
         assertEquals(ImReplySanitizer.TIMEOUT_IM_FALLBACK_REPLY, reply);
         service.shutdownAsyncExecutor();
@@ -176,7 +176,7 @@ class ImGatewayServiceTest {
                 });
 
         long startedAt = System.nanoTime();
-        CompletableFuture<String> replyFuture = service.chatAsync(ImPlatform.DINGTALK, "u6", "c6", "继续");
+        CompletableFuture<String> replyFuture = service.chatAsync("u6", "c6", "继续");
         long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt);
 
         assertFalse(replyFuture.isDone());

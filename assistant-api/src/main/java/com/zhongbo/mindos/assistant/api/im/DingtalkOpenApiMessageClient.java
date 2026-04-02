@@ -42,6 +42,8 @@ public class DingtalkOpenApiMessageClient {
     private final boolean allowInsecureLocalhostHttp;
 
     private volatile CachedAccessToken cachedAccessToken;
+    private volatile Instant lastTokenRefreshAt = Instant.EPOCH;
+    private volatile String lastTokenFailureReason = "";
 
     @Autowired
     public DingtalkOpenApiMessageClient(
@@ -136,6 +138,7 @@ public class DingtalkOpenApiMessageClient {
             return cached.accessToken();
         }
         if (!isAllowedEndpoint(accessTokenUrl)) {
+            lastTokenFailureReason = "access_token_url_not_allowed";
             LOGGER.warning("DingTalk OpenAPI access token URL is not allowed: " + accessTokenUrl);
             return null;
         }
@@ -151,15 +154,33 @@ public class DingtalkOpenApiMessageClient {
             String token = readText(response, "accessToken", "access_token");
             long expiresIn = readLong(response, DEFAULT_ACCESS_TOKEN_EXPIRY_SECONDS, "expireIn", "expiresIn", "expires_in");
             if (token.isBlank()) {
+                lastTokenFailureReason = "missing_token_field";
                 LOGGER.warning("DingTalk OpenAPI access token response missing token field");
                 return null;
             }
             cachedAccessToken = new CachedAccessToken(token, Instant.now().plusSeconds(Math.max(300L, expiresIn)));
+            lastTokenRefreshAt = Instant.now();
+            lastTokenFailureReason = "";
             return token;
         } catch (Exception ex) {
+            lastTokenFailureReason = ex.getClass().getSimpleName();
             LOGGER.log(Level.WARNING, "Failed to obtain DingTalk OpenAPI access token", ex);
             return null;
         }
+    }
+
+    Map<String, Object> tokenMonitorSnapshot() {
+        Instant now = Instant.now();
+        CachedAccessToken cached = cachedAccessToken;
+        long remainingSeconds = cached == null ? 0L : Math.max(0L, Duration.between(now, cached.expiresAt()).toSeconds());
+        Map<String, Object> snapshot = new LinkedHashMap<>();
+        snapshot.put("clientEnabled", isEnabled());
+        snapshot.put("hasCachedToken", cached != null && cached.accessToken() != null && !cached.accessToken().isBlank());
+        snapshot.put("remainingSeconds", remainingSeconds);
+        snapshot.put("expiresAt", cached == null ? "" : cached.expiresAt().toString());
+        snapshot.put("lastRefreshAt", lastTokenRefreshAt.equals(Instant.EPOCH) ? "" : lastTokenRefreshAt.toString());
+        snapshot.put("lastFailureReason", normalize(lastTokenFailureReason));
+        return Map.copyOf(snapshot);
     }
 
     private boolean sendToConversation(String accessToken, String openConversationId, String text) {

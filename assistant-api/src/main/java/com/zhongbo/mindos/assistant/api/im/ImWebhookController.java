@@ -234,7 +234,7 @@ public class ImWebhookController {
 
     private String resolveDingtalkReply(String senderId, String chatId, String text) {
         long timeoutMs = Math.max(300L, dingtalkReplyTimeoutMs);
-        CompletableFuture<String> replyFuture = imGatewayService.chatAsync(ImPlatform.DINGTALK, senderId, chatId, text);
+        CompletableFuture<String> replyFuture = imGatewayService.chatAsync(senderId, chatId, text);
         try {
             return capForDingtalk(ImReplySanitizer.sanitize(replyFuture.get(timeoutMs, TimeUnit.MILLISECONDS)));
         } catch (TimeoutException ex) {

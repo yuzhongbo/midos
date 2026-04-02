@@ -134,6 +134,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
     private final int llmRoutingShortlistMaxSkills;
     private final boolean llmRoutingConversationalBypassEnabled;
     private final boolean realtimeIntentBypassEnabled;
+    private final boolean braveFirstSearchRoutingEnabled;
     private final Set<String> realtimeIntentTerms;
     private final boolean realtimeIntentMemoryShrinkEnabled;
     private final int realtimeIntentMemoryShrinkMaxChars;
@@ -220,6 +221,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                               @Value("${mindos.dispatcher.skill-routing.llm-shortlist-max-skills:8}") int llmRoutingShortlistMaxSkills,
                               @Value("${mindos.dispatcher.skill-routing.conversational-bypass.enabled:true}") boolean llmRoutingConversationalBypassEnabled,
                               @Value("${mindos.dispatcher.realtime-intent.bypass.enabled:true}") boolean realtimeIntentBypassEnabled,
+                               @Value("${mindos.dispatcher.search-routing.brave-first.enabled:false}") boolean braveFirstSearchRoutingEnabled,
                               @Value("${mindos.dispatcher.realtime-intent.terms:天气,气温,下雨,降雨,天气预报,新闻,热点,热搜,头条,汇率,股价,行情,油价,路况,航班,列车,比赛,比分,实时,最新,今日新闻}") String realtimeIntentTerms,
                               @Value("${mindos.dispatcher.realtime-intent.memory-shrink.enabled:true}") boolean realtimeIntentMemoryShrinkEnabled,
                               @Value("${mindos.dispatcher.realtime-intent.memory-shrink.max-chars:280}") int realtimeIntentMemoryShrinkMaxChars,
@@ -284,6 +286,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         this.llmRoutingShortlistMaxSkills = Math.max(1, llmRoutingShortlistMaxSkills);
         this.llmRoutingConversationalBypassEnabled = llmRoutingConversationalBypassEnabled;
         this.realtimeIntentBypassEnabled = realtimeIntentBypassEnabled;
+        this.braveFirstSearchRoutingEnabled = braveFirstSearchRoutingEnabled;
         this.realtimeIntentTerms = parseCsvSet(realtimeIntentTerms);
         this.realtimeIntentMemoryShrinkEnabled = realtimeIntentMemoryShrinkEnabled;
         this.realtimeIntentMemoryShrinkMaxChars = Math.max(120, realtimeIntentMemoryShrinkMaxChars);
@@ -1067,6 +1070,11 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
             )));
         }
         rejectedReasons.add("input is not a meta help question");
+
+        Optional<CompletableFuture<RoutingOutcome>> braveFirstRouting = routeToBraveSearchFirst(userId, userInput, context, rejectedReasons);
+        if (braveFirstRouting.isPresent()) {
+            return braveFirstRouting.get();
+        }
 
         Optional<String> detectedSkillName = skillEngine.detectSkillName(context.input());
         if (detectedSkillName.isPresent()) {
@@ -2967,6 +2975,49 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                 "最新新闻",
                 "热点新闻",
                 "实时新闻");
+    }
+
+    private Optional<CompletableFuture<RoutingOutcome>> routeToBraveSearchFirst(String userId,
+                                                                                String userInput,
+                                                                                SkillContext context,
+                                                                                List<String> rejectedReasons) {
+        if (!braveFirstSearchRoutingEnabled) {
+            return Optional.empty();
+        }
+        if (!isRealtimeIntent(userInput)) {
+            rejectedReasons.add("brave-first routing skipped because input is not realtime intent");
+            return Optional.empty();
+        }
+        for (String candidate : List.of("mcp.bravesearch.webSearch", "mcp.brave.webSearch")) {
+            if (!isKnownSkillName(candidate)) {
+                continue;
+            }
+            if (isSkillLoopGuardBlocked(userId, candidate, userInput)) {
+                rejectedReasons.add("brave-first routing candidate blocked by loop guard: " + candidate);
+                return Optional.of(CompletableFuture.completedFuture(new RoutingOutcome(Optional.empty(), fallbackRoutingDecision(rejectedReasons))));
+            }
+            Optional<SkillResult> blocked = maybeBlockByCapability(candidate);
+            if (blocked.isPresent()) {
+                return Optional.of(CompletableFuture.completedFuture(new RoutingOutcome(blocked, new RoutingDecisionDto(
+                        "security.guard",
+                        candidate,
+                        0.99,
+                        List.of("brave-first realtime routing selected a search skill but capability guard blocked execution"),
+                        List.copyOf(rejectedReasons)
+                ))));
+            }
+            LOGGER.info("Dispatcher route=brave-first-search, userId=" + userId + ", skill=" + candidate);
+            return Optional.of(applySkillTimeoutForOptionalResult(candidate, context, skillEngine.executeSkillByNameAsync(candidate, context))
+                    .thenApply(result -> new RoutingOutcome(result, new RoutingDecisionDto(
+                            "brave-first-search",
+                            candidate,
+                            0.96,
+                            List.of("realtime intent matched and brave-first search routing is enabled"),
+                            List.copyOf(rejectedReasons)
+                    ))));
+        }
+        rejectedReasons.add("brave-first routing enabled but no brave MCP webSearch skill was loaded");
+        return Optional.empty();
     }
 
     private String extractRememberedKnowledge(String input) {

@@ -9,6 +9,7 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 import java.util.logging.Handler;
 import java.util.logging.Level;
 import java.util.logging.LogRecord;
@@ -16,6 +17,8 @@ import java.util.logging.Logger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -57,7 +60,7 @@ class DingtalkStreamMessageDispatcherTest {
                 ""
         );
         CompletableFuture<String> replyFuture = new CompletableFuture<>();
-        when(gatewayService.chatAsync(ImPlatform.DINGTALK, "staff-1", "cid-1", "帮我总结今天安排"))
+        when(gatewayService.chatAsync("staff-1", "cid-1", "帮我总结今天安排"))
                 .thenReturn(replyFuture);
         dispatcher = new DingtalkStreamMessageDispatcher(gatewayService, sender, settings);
         Logger logger = Logger.getLogger(DingtalkStreamMessageDispatcher.class.getName());
@@ -115,7 +118,7 @@ class DingtalkStreamMessageDispatcherTest {
                 "",
                 ""
         );
-        when(gatewayService.chatAsync(ImPlatform.DINGTALK, "staff-2", "cid-2", "你好"))
+        when(gatewayService.chatAsync("staff-2", "cid-2", "你好"))
                 .thenReturn(CompletableFuture.completedFuture("你好，我在。"));
         dispatcher = new DingtalkStreamMessageDispatcher(gatewayService, sender, settings);
 
@@ -158,7 +161,7 @@ class DingtalkStreamMessageDispatcherTest {
                 "",
                 ""
         );
-        when(gatewayService.chatAsync(ImPlatform.DINGTALK, "staff-3", "cid-3", "第一次问题"))
+        when(gatewayService.chatAsync("staff-3", "cid-3", "第一次问题"))
                 .thenReturn(CompletableFuture.completedFuture("最终回复"));
         dispatcher = new DingtalkStreamMessageDispatcher(gatewayService, sender, settings);
 
@@ -206,7 +209,7 @@ class DingtalkStreamMessageDispatcherTest {
                 "",
                 ""
         );
-        when(gatewayService.chatAsync(ImPlatform.DINGTALK, "staff-4", "cid-4", "帮我列待办"))
+        when(gatewayService.chatAsync("staff-4", "cid-4", "帮我列待办"))
                 .thenReturn(CompletableFuture.completedFuture("好的，给你三条待办"));
         dispatcher = new DingtalkStreamMessageDispatcher(gatewayService, sender, settings);
 
@@ -253,7 +256,7 @@ class DingtalkStreamMessageDispatcherTest {
                 "",
                 ""
         );
-        when(gatewayService.chatAsync(ImPlatform.DINGTALK, "staff-cap", "cid-cap", "请总结"))
+        when(gatewayService.chatAsync("staff-cap", "cid-cap", "请总结"))
                 .thenReturn(CompletableFuture.completedFuture(longReply));
         dispatcher = new DingtalkStreamMessageDispatcher(gatewayService, sender, settings);
         setPrivateIntField(dispatcher, "dingtalkReplyMaxChars", 200);
@@ -295,7 +298,7 @@ class DingtalkStreamMessageDispatcherTest {
                 "",
                 ""
         );
-        when(gatewayService.chatAsync(ImPlatform.DINGTALK, "staff-force", "cid-force", "你好"))
+        when(gatewayService.chatAsync("staff-force", "cid-force", "你好"))
                 .thenReturn(CompletableFuture.completedFuture("最终回复"));
         dispatcher = new DingtalkStreamMessageDispatcher(gatewayService, sender, settings);
 
@@ -337,7 +340,7 @@ class DingtalkStreamMessageDispatcherTest {
                 "",
                 ""
         );
-        when(gatewayService.chatAsync(ImPlatform.DINGTALK, "staff-timeout", "cid-timeout", "慢一点"))
+        when(gatewayService.chatAsync("staff-timeout", "cid-timeout", "慢一点"))
                 .thenReturn(slowReply);
         dispatcher = new DingtalkStreamMessageDispatcher(gatewayService, sender, settings);
 
@@ -356,10 +359,69 @@ class DingtalkStreamMessageDispatcherTest {
         assertEquals("感谢等待，以下是完整回复：\n最终结果已生成", sender.messages.get(1));
     }
 
+    @Test
+    void shouldUpdateSameCardInPlaceWhenStreamingCardUpdateIsEnabled() throws Exception {
+        ImGatewayService gatewayService = mock(ImGatewayService.class);
+        RecordingConversationSender sender = new RecordingConversationSender(true);
+        DingtalkIntegrationSettings settings = new DingtalkIntegrationSettings(
+                true,
+                true,
+                true,
+                "client-id",
+                "client-secret",
+                DingtalkIntegrationSettings.BOT_MESSAGE_TOPIC,
+                500L,
+                "处理中",
+                true,
+                30000L,
+                true,
+                1000L,
+                60000L,
+                2.0d,
+                0.2d,
+                0,
+                true,
+                "robot-code",
+                "",
+                ""
+        );
+        when(gatewayService.chatStream(eq(ImPlatform.DINGTALK), eq("staff-card"), eq("cid-card"), eq("给我看进展"), any()))
+                .thenAnswer(invocation -> {
+                    @SuppressWarnings("unchecked")
+                    Consumer<String> deltaConsumer = invocation.getArgument(4);
+                    deltaConsumer.accept("第一段");
+                    deltaConsumer.accept("，第二段");
+                    return CompletableFuture.completedFuture("第一段，第二段");
+                });
+        dispatcher = new DingtalkStreamMessageDispatcher(gatewayService, sender, settings);
+        setPrivateBooleanField(dispatcher, "dingtalkCardEnabled", true);
+        setPrivateBooleanField(dispatcher, "dingtalkMessageUpdateEnabled", true);
+        setPrivateBooleanField(dispatcher, "dingtalkAgentStatusEnabled", true);
+
+        dispatcher.handleIncomingPayload(Map.of(
+                "conversationId", "cid-card",
+                "senderStaffId", "staff-card",
+                "text", Map.of("content", "给我看进展")
+        ));
+
+        waitUntil(() -> sender.messages.size() == 1 && sender.updateCalls > 0, 1000);
+
+        assertEquals(1, sender.messages.size());
+        assertTrue(sender.messages.get(0).contains("已完成"));
+        assertTrue(sender.messages.get(0).contains("第一段"));
+        assertTrue(sender.updateCalls >= 1);
+    }
+
     private void setPrivateIntField(Object target, String fieldName, int value) throws Exception {
         Field field = target.getClass().getDeclaredField(fieldName);
         field.setAccessible(true);
         field.setInt(target, value);
+    }
+
+    private void setPrivateBooleanField(Object target, String fieldName, boolean value) throws Exception {
+        Field field = target.getClass().getDeclaredField(fieldName);
+        field.setAccessible(true);
+        field.setBoolean(target, value);
     }
 
     private void waitUntil(CheckedCondition condition, long timeoutMs) throws Exception {
@@ -383,6 +445,7 @@ class DingtalkStreamMessageDispatcherTest {
         private final boolean ready;
         private final CopyOnWriteArrayList<String> messages = new CopyOnWriteArrayList<>();
         private volatile String lastSessionWebhook;
+        private volatile int updateCalls;
 
         private RecordingConversationSender(boolean ready) {
             this.ready = ready;
@@ -403,6 +466,33 @@ class DingtalkStreamMessageDispatcherTest {
         public boolean sendText(String openConversationId, String text, String sessionWebhook) {
             lastSessionWebhook = sessionWebhook;
             return sendText(openConversationId, text);
+        }
+
+        @Override
+        public boolean sendMarkdownCard(String openConversationId, String title, String markdown, String sessionWebhook) {
+            return sendMarkdownCardHandle(openConversationId, title, markdown, sessionWebhook).sent();
+        }
+
+        @Override
+        public DingtalkMessageHandle sendMarkdownCardHandle(String openConversationId,
+                                                            String title,
+                                                            String markdown,
+                                                            String sessionWebhook) {
+            lastSessionWebhook = sessionWebhook;
+            messages.add(markdown);
+            return DingtalkMessageHandle.updatable(openConversationId, sessionWebhook, String.valueOf(messages.size() - 1));
+        }
+
+        @Override
+        public boolean updateMessage(DingtalkMessageHandle handle,
+                                     String title,
+                                     String markdown,
+                                     String sessionWebhook) {
+            lastSessionWebhook = sessionWebhook;
+            int index = Integer.parseInt(handle.platformMessageId());
+            messages.set(index, markdown);
+            updateCalls++;
+            return true;
         }
     }
 

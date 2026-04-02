@@ -31,6 +31,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Consumer;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.regex.Matcher;
@@ -182,15 +183,63 @@ public class ImGatewayService {
         return buildReply(platform, senderId, chatId, normalizedText);
     }
 
-    CompletableFuture<String> chatAsync(ImPlatform platform, String senderId, String chatId, String text) {
+    CompletableFuture<String> chatAsync(String senderId, String chatId, String text) {
         String normalizedText = text == null ? "" : text.trim();
         if (normalizedText.isBlank()) {
             return CompletableFuture.completedFuture("请发送文本消息，我会继续协助你。");
         }
         return CompletableFuture.supplyAsync(
-                () -> buildReply(platform, senderId, chatId, normalizedText),
+                () -> buildReply(ImPlatform.DINGTALK, senderId, chatId, normalizedText),
                 dingtalkAsyncExecutor
         );
+    }
+
+    CompletableFuture<String> chatStream(ImPlatform platform,
+                                         String senderId,
+                                         String chatId,
+                                         String text,
+                                         Consumer<String> deltaConsumer) {
+        String normalizedText = text == null ? "" : text.trim();
+        if (normalizedText.isBlank()) {
+            String reply = "请发送文本消息，我会继续协助你。";
+            if (deltaConsumer != null) {
+                deltaConsumer.accept(reply);
+            }
+            return CompletableFuture.completedFuture(reply);
+        }
+
+        String userId = buildUserId(platform, senderId);
+        String asyncTaskReply = tryHandleDingtalkAsyncTaskIntent(platform, userId, normalizedText);
+        if (asyncTaskReply != null) {
+            String reply = sanitizeAndObserve(platform, senderId, chatId, userId, "async-task", asyncTaskReply);
+            if (deltaConsumer != null) {
+                deltaConsumer.accept(reply);
+            }
+            return CompletableFuture.completedFuture(reply);
+        }
+
+        String memoryReply = tryHandleMemoryPlanningIntent(userId, normalizedText);
+        if (memoryReply != null) {
+            String reply = sanitizeAndObserve(platform, senderId, chatId, userId, "memory-intent", memoryReply);
+            if (deltaConsumer != null) {
+                deltaConsumer.accept(reply);
+            }
+            return CompletableFuture.completedFuture(reply);
+        }
+
+        Map<String, Object> profileContext = buildProfileContext(platform, senderId, chatId);
+        return dispatcherService.dispatchStream(userId, normalizedText, profileContext, deltaConsumer)
+                .thenApply(result -> {
+                    String replySource = result.channel() == null || result.channel().isBlank()
+                            ? "dispatcher"
+                            : "dispatcher:" + result.channel().trim();
+                    String reply = sanitizeAndObserve(platform, senderId, chatId, userId, replySource, result.reply());
+                    String compensationNotice = buildPendingCompensationNotice(platform, userId);
+                    if (compensationNotice == null || compensationNotice.isBlank()) {
+                        return reply;
+                    }
+                    return compensationNotice + "\n\n" + reply;
+                });
     }
 
     AsyncReplyAck startDingtalkAsyncReply(String senderId,

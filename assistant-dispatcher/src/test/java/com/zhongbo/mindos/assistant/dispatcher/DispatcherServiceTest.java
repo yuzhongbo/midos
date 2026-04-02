@@ -82,6 +82,25 @@ class DispatcherServiceTest {
     }
 
     @Test
+    void shouldPreferBraveSearchWhenBraveFirstRoutingIsEnabled() {
+        MemoryManager memoryManager = createMemoryManager();
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of("不应走到 llm"));
+        DispatcherService service = createDispatcher(memoryManager, llmClient, List.of(
+                newMcpSkill("mcp.qwensearch.webSearch", "Search latest web news", "qwen result"),
+                newMcpSkill("mcp.bravesearch.webSearch", "Brave latest web news search", "brave result")
+        ), 2, true, true);
+
+        DispatchResult result = service.dispatch("news-user", "今天新闻");
+
+        assertEquals("mcp.bravesearch.webSearch", result.channel());
+        assertEquals("brave result", result.reply());
+        assertEquals("brave-first-search", result.executionTrace().routing().route());
+        assertEquals("mcp.bravesearch.webSearch", result.executionTrace().routing().selectedSkill());
+        assertEquals(0, llmClient.routingCallCount());
+        assertEquals(0, llmClient.fallbackCallCount());
+    }
+
+    @Test
     void shouldFinalizeMcpSearchOutputWithWildcardAllowlist() {
         MemoryManager memoryManager = createMemoryManager();
         RecordingLlmClient llmClient = new RecordingLlmClient(List.of("这是整理后的新闻摘要"));
@@ -597,9 +616,18 @@ class DispatcherServiceTest {
                                                List<Skill> skills,
                                                int llmShortlistMaxSkills,
                                                boolean semanticAnalysisEnabled) {
+        return createDispatcher(memoryManager, llmClient, skills, llmShortlistMaxSkills, semanticAnalysisEnabled, false);
+    }
+
+    private DispatcherService createDispatcher(MemoryManager memoryManager,
+                                               LlmClient llmClient,
+                                               List<Skill> skills,
+                                               int llmShortlistMaxSkills,
+                                               boolean semanticAnalysisEnabled,
+                                               boolean braveFirstSearchRoutingEnabled) {
         return createDispatcher(memoryManager, llmClient, skills, llmShortlistMaxSkills,
                 "auto", 0, "time", "", "", "", "", false, "", false, "", "", "",
-                true, "天气,新闻,热点,实时", true, 280, true, semanticAnalysisEnabled);
+                true, "天气,新闻,热点,实时", true, 280, true, semanticAnalysisEnabled, braveFirstSearchRoutingEnabled);
     }
 
     private DispatcherService createDispatcher(MemoryManager memoryManager,
@@ -678,8 +706,42 @@ class DispatcherServiceTest {
                 skillFinalizeEnabled, skillFinalizeSkills, skillFinalizeProvider, skillFinalizePreset,
                 realtimeIntentBypassEnabled, realtimeIntentTerms,
                 realtimeIntentMemoryShrinkEnabled, realtimeIntentMemoryShrinkMaxChars, realtimeIntentMemoryShrinkIncludePersona,
+                semanticAnalysisEnabled, false);
+    }
+
+    private DispatcherService createDispatcher(MemoryManager memoryManager,
+                                               LlmClient llmClient,
+                                               List<Skill> skills,
+                                               int llmShortlistMaxSkills,
+                                               String preAnalyzeMode,
+                                               int preAnalyzeThreshold,
+                                               String preAnalyzeSkipSkills,
+                                               String llmDslProvider,
+                                               String llmDslPreset,
+                                               String llmFallbackProvider,
+                                               String llmFallbackPreset,
+                                               boolean postSkillSummaryEnabled,
+                                               String postSkillSummarySkills,
+                                               boolean skillFinalizeEnabled,
+                                               String skillFinalizeSkills,
+                                               String skillFinalizeProvider,
+                                               String skillFinalizePreset,
+                                               boolean realtimeIntentBypassEnabled,
+                                               String realtimeIntentTerms,
+                                               boolean realtimeIntentMemoryShrinkEnabled,
+                                               int realtimeIntentMemoryShrinkMaxChars,
+                                               boolean realtimeIntentMemoryShrinkIncludePersona,
+                                               boolean semanticAnalysisEnabled,
+                                               boolean braveFirstSearchRoutingEnabled) {
+        return createDispatcher(memoryManager, llmClient, skills, llmShortlistMaxSkills,
+                preAnalyzeMode, preAnalyzeThreshold, preAnalyzeSkipSkills,
+                llmDslProvider, llmDslPreset, llmFallbackProvider, llmFallbackPreset,
+                postSkillSummaryEnabled, postSkillSummarySkills,
+                skillFinalizeEnabled, skillFinalizeSkills, skillFinalizeProvider, skillFinalizePreset,
+                realtimeIntentBypassEnabled, realtimeIntentTerms,
+                realtimeIntentMemoryShrinkEnabled, realtimeIntentMemoryShrinkMaxChars, realtimeIntentMemoryShrinkIncludePersona,
                 true, "eq.coach,teaching.plan,todo.create,code.generate,file.search,mcp.*", 12000, "eq.coach timeout",
-                semanticAnalysisEnabled);
+                semanticAnalysisEnabled, braveFirstSearchRoutingEnabled);
     }
 
     private DispatcherService createDispatcher(MemoryManager memoryManager,
@@ -746,6 +808,45 @@ class DispatcherServiceTest {
                                                long eqCoachTimeoutMs,
                                                String eqCoachTimeoutReply,
                                                boolean semanticAnalysisEnabled) {
+        return createDispatcher(memoryManager, llmClient, skills, llmShortlistMaxSkills,
+                preAnalyzeMode, preAnalyzeThreshold, preAnalyzeSkipSkills,
+                llmDslProvider, llmDslPreset, llmFallbackProvider, llmFallbackPreset,
+                postSkillSummaryEnabled, postSkillSummarySkills,
+                skillFinalizeEnabled, skillFinalizeSkills, skillFinalizeProvider, skillFinalizePreset,
+                realtimeIntentBypassEnabled, realtimeIntentTerms,
+                realtimeIntentMemoryShrinkEnabled, realtimeIntentMemoryShrinkMaxChars, realtimeIntentMemoryShrinkIncludePersona,
+                preExecuteHeavySkillGuardEnabled, preExecuteHeavySkillGuardSkills, eqCoachTimeoutMs, eqCoachTimeoutReply,
+                semanticAnalysisEnabled, false);
+    }
+
+    private DispatcherService createDispatcher(MemoryManager memoryManager,
+                                               LlmClient llmClient,
+                                               List<Skill> skills,
+                                               int llmShortlistMaxSkills,
+                                               String preAnalyzeMode,
+                                               int preAnalyzeThreshold,
+                                               String preAnalyzeSkipSkills,
+                                               String llmDslProvider,
+                                               String llmDslPreset,
+                                               String llmFallbackProvider,
+                                               String llmFallbackPreset,
+                                               boolean postSkillSummaryEnabled,
+                                               String postSkillSummarySkills,
+                                               boolean skillFinalizeEnabled,
+                                               String skillFinalizeSkills,
+                                               String skillFinalizeProvider,
+                                               String skillFinalizePreset,
+                                               boolean realtimeIntentBypassEnabled,
+                                               String realtimeIntentTerms,
+                                               boolean realtimeIntentMemoryShrinkEnabled,
+                                               int realtimeIntentMemoryShrinkMaxChars,
+                                               boolean realtimeIntentMemoryShrinkIncludePersona,
+                                               boolean preExecuteHeavySkillGuardEnabled,
+                                               String preExecuteHeavySkillGuardSkills,
+                                               long eqCoachTimeoutMs,
+                                               String eqCoachTimeoutReply,
+                                               boolean semanticAnalysisEnabled,
+                                               boolean braveFirstSearchRoutingEnabled) {
         SkillRegistry registry = new SkillRegistry(skills);
         SkillDslExecutor dslExecutor = new SkillDslExecutor(registry);
         SkillEngine skillEngine = new SkillEngine(registry, dslExecutor, memoryManager);
@@ -811,6 +912,7 @@ class DispatcherServiceTest {
                 llmShortlistMaxSkills,
                 true,
                 realtimeIntentBypassEnabled,
+                braveFirstSearchRoutingEnabled,
                 realtimeIntentTerms,
                 realtimeIntentMemoryShrinkEnabled,
                 realtimeIntentMemoryShrinkMaxChars,

@@ -50,7 +50,7 @@ class ImWebhookControllerSanitizationTest {
 
     @Test
     void shouldHideInternalLlmErrorDetailsForDingtalk() throws Exception {
-        when(imGatewayService.chatAsync(ImPlatform.DINGTALK, "ding-safe-user", "conv-safe", "帮我总结今天安排"))
+        when(imGatewayService.chatAsync("ding-safe-user", "conv-safe", "帮我总结今天安排"))
                 .thenReturn(CompletableFuture.completedFuture("[LLM error] Failed after 2 attempts. http_call_failed: timeout while calling provider"));
 
         String payload = "{"
@@ -97,7 +97,7 @@ class ImWebhookControllerSanitizationTest {
 
     @Test
     void shouldHideNestedSkeletonPromptLeakForDingtalk() throws Exception {
-        when(imGatewayService.chatAsync(ImPlatform.DINGTALK, "$:LWCP_v1:$BH2F4jdf+SOZIDe3ZmsHqA==", "conv-leak", "优化记忆"))
+        when(imGatewayService.chatAsync("$:LWCP_v1:$BH2F4jdf+SOZIDe3ZmsHqA==", "conv-leak", "优化记忆"))
                 .thenReturn(CompletableFuture.completedFuture("[LLM gemini] skeleton response for user im:dingtalk:$:LWCP_v1:$BH2F4jdf+SOZIDe3ZmsHqA==: "
                         + "Answer naturally using the context when helpful.\n"
                         + "Recent conversation:\n"
@@ -126,7 +126,7 @@ class ImWebhookControllerSanitizationTest {
 
     @Test
     void shouldMapTimeoutMarkerToTimeoutFriendlyReplyForDingtalk() throws Exception {
-        when(imGatewayService.chatAsync(ImPlatform.DINGTALK, "ding-timeout-user", "conv-timeout", "继续生成"))
+        when(imGatewayService.chatAsync("ding-timeout-user", "conv-timeout", "继续生成"))
                 .thenReturn(CompletableFuture.completedFuture(ImDegradedReplyMarker.encode("gemini", "timeout")));
 
         String payload = "{"
@@ -145,7 +145,7 @@ class ImWebhookControllerSanitizationTest {
     @Test
     void shouldReturnTimeoutFallbackWhenDingtalkReplyExceedsWebhookBudget() throws Exception {
         CompletableFuture<String> slowReply = new CompletableFuture<>();
-        when(imGatewayService.chatAsync(ImPlatform.DINGTALK, "ding-slow-user", "conv-slow", "你咋没有返回我信息"))
+        when(imGatewayService.chatAsync("ding-slow-user", "conv-slow", "你咋没有返回我信息"))
                 .thenReturn(slowReply);
 
         String payload = "{"
@@ -215,7 +215,7 @@ class ImWebhookControllerSanitizationTest {
 
     @Test
     void shouldReturnBlankFallbackWhenGatewayReplyIsEmpty() throws Exception {
-        when(imGatewayService.chatAsync(ImPlatform.DINGTALK, "ding-empty-user", "conv-empty", "你好"))
+        when(imGatewayService.chatAsync("ding-empty-user", "conv-empty", "你好"))
                 .thenReturn(CompletableFuture.completedFuture("   "));
 
         String payload = "{"

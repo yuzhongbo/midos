@@ -15,6 +15,9 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -25,6 +28,8 @@ class DingtalkStreamMessageDispatcher {
     private static final long ECHO_SUPPRESSION_TTL_MILLIS = 180_000L;
     private static final int ECHO_SUPPRESSION_MAX_ENTRIES = 256;
     private static final String TIMEOUT_BRIDGE_PREFIX = "感谢等待，以下是完整回复：\n";
+    private static final long CARD_UPDATE_MIN_INTERVAL_MILLIS = 250L;
+    private static final int CARD_UPDATE_MIN_DELTA_CHARS = 24;
 
     private final ImGatewayService imGatewayService;
     private final DingtalkConversationSender conversationSender;
@@ -35,6 +40,15 @@ class DingtalkStreamMessageDispatcher {
 
     @Value("${mindos.im.dingtalk.reply-max-chars:1200}")
     private int dingtalkReplyMaxChars = 1200;
+
+    @Value("${mindos.im.dingtalk.message.card.enabled:false}")
+    private boolean dingtalkCardEnabled;
+
+    @Value("${mindos.im.dingtalk.message.update.enabled:false}")
+    private boolean dingtalkMessageUpdateEnabled;
+
+    @Value("${mindos.im.dingtalk.agent-status.enabled:false}")
+    private boolean dingtalkAgentStatusEnabled;
 
     DingtalkStreamMessageDispatcher(ImGatewayService imGatewayService,
                                     DingtalkConversationSender conversationSender,
@@ -118,15 +132,38 @@ class DingtalkStreamMessageDispatcher {
             return;
         }
 
-        CompletableFuture<String> replyFuture = imGatewayService.chatAsync(ImPlatform.DINGTALK, senderId, conversationId, text);
+        boolean streamCardUpdateEnabled = dingtalkCardEnabled && dingtalkMessageUpdateEnabled;
+        AtomicReference<DingtalkMessageHandle> messageHandleRef = new AtomicReference<>();
+        AtomicLong lastCardUpdateAtMillis = new AtomicLong(0L);
+        AtomicInteger lastCardUpdateChars = new AtomicInteger(0);
+        StringBuilder streamedReplyBuilder = new StringBuilder();
+        CompletableFuture<String> replyFuture = streamCardUpdateEnabled
+                ? imGatewayService.chatStream(ImPlatform.DINGTALK, senderId, conversationId, text, chunk -> {
+                    if (chunk == null || chunk.isBlank()) {
+                        return;
+                    }
+                    synchronized (streamedReplyBuilder) {
+                        streamedReplyBuilder.append(chunk);
+                    }
+                    maybeUpdateStreamingCard(
+                            conversationId,
+                            sessionWebhook,
+                            messageHandleRef.get(),
+                            streamedReplyBuilder,
+                            lastCardUpdateAtMillis,
+                            lastCardUpdateChars
+                    );
+                })
+                : imGatewayService.chatAsync(senderId, conversationId, text);
         AtomicBoolean waitingSent = new AtomicBoolean(false);
         AtomicBoolean timeoutObserved = new AtomicBoolean(false);
         ScheduledFuture<?> waitingTask = null;
         if (settings.streamForceWaiting()) {
-            boolean sent = sendText(conversationId, settings.streamWaitingText(), sessionWebhook);
-            waitingSent.set(sent);
-            logEvent(sent ? Level.INFO : Level.WARNING,
-                    sent ? "dingtalk.stream.waiting.sent" : "dingtalk.stream.waiting.failed",
+            DingtalkMessageHandle handle = sendWaitingStatus(conversationId, sessionWebhook, settings.streamWaitingText());
+            messageHandleRef.set(handle);
+            waitingSent.set(handle != null && handle.sent());
+            logEvent(waitingSent.get() ? Level.INFO : Level.WARNING,
+                    waitingSent.get() ? "dingtalk.stream.waiting.sent" : "dingtalk.stream.waiting.failed",
                     Map.of(
                             "conversationHash", safeHash(conversationId),
                             "senderHash", safeHash(senderId),
@@ -138,10 +175,11 @@ class DingtalkStreamMessageDispatcher {
                 if (replyFuture.isDone()) {
                     return;
                 }
-                boolean sent = sendText(conversationId, settings.streamWaitingText(), sessionWebhook);
-                waitingSent.set(sent);
-                logEvent(sent ? Level.INFO : Level.WARNING,
-                        sent ? "dingtalk.stream.waiting.sent" : "dingtalk.stream.waiting.failed",
+                DingtalkMessageHandle handle = sendWaitingStatus(conversationId, sessionWebhook, settings.streamWaitingText());
+                messageHandleRef.set(handle);
+                waitingSent.set(handle != null && handle.sent());
+                logEvent(waitingSent.get() ? Level.INFO : Level.WARNING,
+                        waitingSent.get() ? "dingtalk.stream.waiting.sent" : "dingtalk.stream.waiting.failed",
                         Map.of(
                                 "conversationHash", safeHash(conversationId),
                                 "senderHash", safeHash(senderId),
@@ -166,12 +204,13 @@ class DingtalkStreamMessageDispatcher {
                 ));
                 return;
             }
-            boolean sent = sendText(conversationId, settings.streamWaitingText(), sessionWebhook);
-            if (sent) {
+            DingtalkMessageHandle handle = sendWaitingStatus(conversationId, sessionWebhook, settings.streamWaitingText());
+            messageHandleRef.set(handle);
+            if (handle != null && handle.sent()) {
                 waitingSent.set(true);
             }
-            logEvent(sent ? Level.INFO : Level.WARNING,
-                    sent ? "dingtalk.stream.timeout.notice.sent" : "dingtalk.stream.timeout.notice.failed",
+            logEvent(waitingSent.get() ? Level.INFO : Level.WARNING,
+                    waitingSent.get() ? "dingtalk.stream.timeout.notice.sent" : "dingtalk.stream.timeout.notice.failed",
                     Map.of(
                             "conversationHash", safeHash(conversationId),
                             "senderHash", safeHash(senderId),
@@ -201,7 +240,7 @@ class DingtalkStreamMessageDispatcher {
                         "DingTalk stream async reply failed, conversationHash=" + safeHash(conversationId),
                         error);
             }
-            boolean sent = sendText(conversationId, finalReply, sessionWebhook);
+            boolean sent = sendFinalStatus(conversationId, sessionWebhook, finalReply, waitingSent.get(), messageHandleRef.get());
             logEvent(sent ? Level.INFO : Level.WARNING,
                     sent ? "dingtalk.stream.final.sent" : "dingtalk.stream.final.failed",
                     Map.of(
@@ -237,6 +276,98 @@ class DingtalkStreamMessageDispatcher {
             break;
         }
         return sentAll;
+    }
+
+    private DingtalkMessageHandle sendWaitingStatus(String conversationId, String sessionWebhook, String waitingText) {
+        if (dingtalkAgentStatusEnabled) {
+            logEvent(Level.INFO, "dingtalk.stream.agent.status", Map.of(
+                    "conversationHash", safeHash(conversationId),
+                    "status", "processing"
+            ));
+        }
+        if (dingtalkCardEnabled) {
+            String card = buildStatusCardMarkdown("处理中", waitingText);
+            DingtalkMessageHandle handle = conversationSender.sendMarkdownCardHandle(conversationId, "MindOS 处理中", card, sessionWebhook);
+            if (handle != null && handle.sent()) {
+                rememberBotEcho(conversationId, card);
+                return handle;
+            }
+        }
+        boolean sent = sendText(conversationId, waitingText, sessionWebhook);
+        return sent
+                ? DingtalkMessageHandle.sentWithoutUpdate(conversationId, sessionWebhook)
+                : DingtalkMessageHandle.notSent(conversationId, sessionWebhook);
+    }
+
+    private boolean sendFinalStatus(String conversationId,
+                                    String sessionWebhook,
+                                    String finalReply,
+                                    boolean hadWaitingStatus,
+                                    DingtalkMessageHandle handle) {
+        if (dingtalkAgentStatusEnabled) {
+            logEvent(Level.INFO, "dingtalk.stream.agent.status", Map.of(
+                    "conversationHash", safeHash(conversationId),
+                    "status", "completed"
+            ));
+        }
+        if (dingtalkCardEnabled) {
+            String card = buildStatusCardMarkdown("已完成", finalReply);
+            boolean sent = hadWaitingStatus && dingtalkMessageUpdateEnabled && handle != null
+                    ? conversationSender.updateMessage(handle, "MindOS 完整回复", card, sessionWebhook)
+                    : conversationSender.sendMarkdownCard(conversationId, "MindOS 完整回复", card, sessionWebhook);
+            if (sent) {
+                rememberBotEcho(conversationId, card);
+                return true;
+            }
+        }
+        if (hadWaitingStatus && dingtalkMessageUpdateEnabled) {
+            return sendText(conversationId, "【更新】\n" + (finalReply == null ? "" : finalReply), sessionWebhook);
+        }
+        return sendText(conversationId, finalReply, sessionWebhook);
+    }
+
+    private void maybeUpdateStreamingCard(String conversationId,
+                                          String sessionWebhook,
+                                          DingtalkMessageHandle handle,
+                                          StringBuilder streamedReplyBuilder,
+                                          AtomicLong lastCardUpdateAtMillis,
+                                          AtomicInteger lastCardUpdateChars) {
+        if (!dingtalkCardEnabled || !dingtalkMessageUpdateEnabled || handle == null || !handle.canUpdate()) {
+            return;
+        }
+        String snapshot;
+        synchronized (streamedReplyBuilder) {
+            snapshot = streamedReplyBuilder.toString().trim();
+        }
+        if (snapshot.isBlank()) {
+            return;
+        }
+        long now = System.currentTimeMillis();
+        int currentLength = snapshot.length();
+        if (now - lastCardUpdateAtMillis.get() < CARD_UPDATE_MIN_INTERVAL_MILLIS
+                && currentLength - lastCardUpdateChars.get() < CARD_UPDATE_MIN_DELTA_CHARS) {
+            return;
+        }
+        String card = buildStatusCardMarkdown("处理中", snapshot + "\n\n_持续生成中…_");
+        if (conversationSender.updateMessage(handle, "MindOS 处理中", card, sessionWebhook)) {
+            rememberBotEcho(conversationId, card);
+            lastCardUpdateAtMillis.set(now);
+            lastCardUpdateChars.set(currentLength);
+            logEvent(Level.INFO, "dingtalk.stream.card.updated", Map.of(
+                    "conversationHash", safeHash(conversationId),
+                    "replyLength", currentLength
+            ));
+        }
+    }
+
+    private String buildStatusCardMarkdown(String status, String body) {
+        String normalizedBody = body == null ? "" : body.trim();
+        StringBuilder markdown = new StringBuilder();
+        markdown.append("### MindOS Agent\n\n");
+        markdown.append("- 状态：**").append(status).append("**\n");
+        markdown.append("- 渠道：DingTalk Stream\n\n");
+        markdown.append(normalizedBody.isBlank() ? "(暂无文本内容)" : normalizedBody);
+        return markdown.toString();
     }
 
     private java.util.List<String> splitForDingtalk(String reply) {
