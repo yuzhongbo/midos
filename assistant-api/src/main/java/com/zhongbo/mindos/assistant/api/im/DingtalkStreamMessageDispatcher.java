@@ -10,6 +10,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
@@ -35,6 +36,7 @@ class DingtalkStreamMessageDispatcher {
     private final DingtalkConversationSender conversationSender;
     private final DingtalkIntegrationSettings settings;
     private final ScheduledExecutorService waitingScheduler;
+    private final ExecutorService cardUpdateExecutor;
     private final ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
     private final Map<String, Long> recentBotEchoes = new ConcurrentHashMap<>();
 
@@ -58,6 +60,11 @@ class DingtalkStreamMessageDispatcher {
         this.settings = settings;
         this.waitingScheduler = Executors.newSingleThreadScheduledExecutor(runnable -> {
             Thread thread = new Thread(runnable, "mindos-dingtalk-stream-waiting");
+            thread.setDaemon(true);
+            return thread;
+        });
+        this.cardUpdateExecutor = Executors.newSingleThreadExecutor(runnable -> {
+            Thread thread = new Thread(runnable, "mindos-dingtalk-card-update");
             thread.setDaemon(true);
             return thread;
         });
@@ -136,43 +143,71 @@ class DingtalkStreamMessageDispatcher {
         AtomicReference<DingtalkMessageHandle> messageHandleRef = new AtomicReference<>();
         AtomicLong lastCardUpdateAtMillis = new AtomicLong(0L);
         AtomicInteger lastCardUpdateChars = new AtomicInteger(0);
+        AtomicReference<String> pendingCardSnapshot = new AtomicReference<>("");
+        AtomicBoolean cardUpdateInFlight = new AtomicBoolean(false);
+        AtomicBoolean waitingSent = new AtomicBoolean(false);
+        AtomicBoolean waitingAttempted = new AtomicBoolean(false);
+        AtomicBoolean timeoutObserved = new AtomicBoolean(false);
+        AtomicReference<ScheduledFuture<?>> waitingTaskRef = new AtomicReference<>();
         StringBuilder streamedReplyBuilder = new StringBuilder();
         CompletableFuture<String> replyFuture = streamCardUpdateEnabled
                 ? imGatewayService.chatStream(ImPlatform.DINGTALK, senderId, conversationId, text, chunk -> {
                     if (chunk == null || chunk.isBlank()) {
                         return;
                     }
+                    if (waitingAttempted.compareAndSet(false, true)) {
+                        ScheduledFuture<?> waitingTask = waitingTaskRef.get();
+                        if (waitingTask != null) {
+                            waitingTask.cancel(false);
+                        }
+                        DingtalkMessageHandle handle = sendWaitingStatus(conversationId, sessionWebhook, settings.streamWaitingText());
+                        messageHandleRef.set(handle);
+                        waitingSent.set(handle != null && handle.sent());
+                        logEvent(waitingSent.get() ? Level.INFO : Level.WARNING,
+                                waitingSent.get() ? "dingtalk.stream.waiting.fast-track.sent" : "dingtalk.stream.waiting.fast-track.failed",
+                                Map.of(
+                                        "conversationHash", safeHash(conversationId),
+                                        "senderHash", safeHash(senderId),
+                                        "replyLength", settings.streamWaitingText().length(),
+                                        "waitingDelayMs", 0
+                                ));
+                    }
                     synchronized (streamedReplyBuilder) {
                         streamedReplyBuilder.append(chunk);
                     }
-                    maybeUpdateStreamingCard(
+                    maybeQueueStreamingCardUpdate(
                             conversationId,
                             sessionWebhook,
-                            messageHandleRef.get(),
+                            messageHandleRef,
                             streamedReplyBuilder,
                             lastCardUpdateAtMillis,
-                            lastCardUpdateChars
+                            lastCardUpdateChars,
+                            pendingCardSnapshot,
+                            cardUpdateInFlight
                     );
                 })
                 : imGatewayService.chatAsync(senderId, conversationId, text);
-        AtomicBoolean waitingSent = new AtomicBoolean(false);
-        AtomicBoolean timeoutObserved = new AtomicBoolean(false);
         ScheduledFuture<?> waitingTask = null;
         if (settings.streamForceWaiting()) {
-            DingtalkMessageHandle handle = sendWaitingStatus(conversationId, sessionWebhook, settings.streamWaitingText());
-            messageHandleRef.set(handle);
-            waitingSent.set(handle != null && handle.sent());
-            logEvent(waitingSent.get() ? Level.INFO : Level.WARNING,
-                    waitingSent.get() ? "dingtalk.stream.waiting.sent" : "dingtalk.stream.waiting.failed",
-                    Map.of(
-                            "conversationHash", safeHash(conversationId),
-                            "senderHash", safeHash(senderId),
-                            "replyLength", settings.streamWaitingText().length(),
-                            "waitingDelayMs", 0
-                    ));
+            if (waitingAttempted.compareAndSet(false, true)) {
+                DingtalkMessageHandle handle = sendWaitingStatus(conversationId, sessionWebhook, settings.streamWaitingText());
+                messageHandleRef.set(handle);
+                waitingSent.set(handle != null && handle.sent());
+                logEvent(waitingSent.get() ? Level.INFO : Level.WARNING,
+                        waitingSent.get() ? "dingtalk.stream.waiting.sent" : "dingtalk.stream.waiting.failed",
+                        Map.of(
+                                "conversationHash", safeHash(conversationId),
+                                "senderHash", safeHash(senderId),
+                                "replyLength", settings.streamWaitingText().length(),
+                                "waitingDelayMs", 0
+                        ));
+            }
         } else {
             waitingTask = waitingScheduler.schedule(() -> {
                 if (replyFuture.isDone()) {
+                    return;
+                }
+                if (!waitingAttempted.compareAndSet(false, true)) {
                     return;
                 }
                 DingtalkMessageHandle handle = sendWaitingStatus(conversationId, sessionWebhook, settings.streamWaitingText());
@@ -188,6 +223,7 @@ class DingtalkStreamMessageDispatcher {
                         ));
             }, settings.streamWaitingDelayMs(), TimeUnit.MILLISECONDS);
         }
+        waitingTaskRef.set(waitingTask);
 
         ScheduledFuture<?> timeoutTask = waitingScheduler.schedule(() -> {
             if (replyFuture.isDone()) {
@@ -204,6 +240,7 @@ class DingtalkStreamMessageDispatcher {
                 ));
                 return;
             }
+            waitingAttempted.set(true);
             DingtalkMessageHandle handle = sendWaitingStatus(conversationId, sessionWebhook, settings.streamWaitingText());
             messageHandleRef.set(handle);
             if (handle != null && handle.sent()) {
@@ -226,6 +263,7 @@ class DingtalkStreamMessageDispatcher {
                 finalWaitingTask.cancel(false);
             }
             timeoutTask.cancel(false);
+            waitingTaskRef.set(null);
             String finalReply = error == null
                     ? reply
                     : ImReplySanitizer.FRIENDLY_IM_FALLBACK_REPLY;
@@ -261,6 +299,7 @@ class DingtalkStreamMessageDispatcher {
     @PreDestroy
     void shutdown() {
         waitingScheduler.shutdownNow();
+        cardUpdateExecutor.shutdownNow();
     }
 
     private boolean sendText(String conversationId, String reply, String sessionWebhook) {
@@ -327,13 +366,19 @@ class DingtalkStreamMessageDispatcher {
         return sendText(conversationId, finalReply, sessionWebhook);
     }
 
-    private void maybeUpdateStreamingCard(String conversationId,
-                                          String sessionWebhook,
-                                          DingtalkMessageHandle handle,
-                                          StringBuilder streamedReplyBuilder,
-                                          AtomicLong lastCardUpdateAtMillis,
-                                          AtomicInteger lastCardUpdateChars) {
-        if (!dingtalkCardEnabled || !dingtalkMessageUpdateEnabled || handle == null || !handle.canUpdate()) {
+    private void maybeQueueStreamingCardUpdate(String conversationId,
+                                               String sessionWebhook,
+                                               AtomicReference<DingtalkMessageHandle> handleRef,
+                                               StringBuilder streamedReplyBuilder,
+                                               AtomicLong lastCardUpdateAtMillis,
+                                               AtomicInteger lastCardUpdateChars,
+                                               AtomicReference<String> pendingCardSnapshot,
+                                               AtomicBoolean cardUpdateInFlight) {
+        if (!dingtalkCardEnabled || !dingtalkMessageUpdateEnabled) {
+            return;
+        }
+        DingtalkMessageHandle currentHandle = handleRef.get();
+        if (currentHandle == null || !currentHandle.canUpdate()) {
             return;
         }
         String snapshot;
@@ -349,15 +394,63 @@ class DingtalkStreamMessageDispatcher {
                 && currentLength - lastCardUpdateChars.get() < CARD_UPDATE_MIN_DELTA_CHARS) {
             return;
         }
-        String card = buildStatusCardMarkdown("处理中", snapshot + "\n\n_持续生成中…_");
-        if (conversationSender.updateMessage(handle, "MindOS 处理中", card, sessionWebhook)) {
-            rememberBotEcho(conversationId, card);
-            lastCardUpdateAtMillis.set(now);
-            lastCardUpdateChars.set(currentLength);
-            logEvent(Level.INFO, "dingtalk.stream.card.updated", Map.of(
-                    "conversationHash", safeHash(conversationId),
-                    "replyLength", currentLength
-            ));
+        pendingCardSnapshot.set(snapshot);
+        if (!cardUpdateInFlight.compareAndSet(false, true)) {
+            return;
+        }
+        cardUpdateExecutor.execute(() -> flushPendingCardUpdates(
+                conversationId,
+                sessionWebhook,
+                handleRef,
+                pendingCardSnapshot,
+                cardUpdateInFlight,
+                lastCardUpdateAtMillis,
+                lastCardUpdateChars
+        ));
+    }
+
+    private void flushPendingCardUpdates(String conversationId,
+                                         String sessionWebhook,
+                                         AtomicReference<DingtalkMessageHandle> handleRef,
+                                         AtomicReference<String> pendingCardSnapshot,
+                                         AtomicBoolean cardUpdateInFlight,
+                                         AtomicLong lastCardUpdateAtMillis,
+                                         AtomicInteger lastCardUpdateChars) {
+        try {
+            while (true) {
+                String snapshot = pendingCardSnapshot.getAndSet("").trim();
+                if (snapshot.isBlank()) {
+                    return;
+                }
+                DingtalkMessageHandle handle = handleRef.get();
+                if (handle == null || !handle.canUpdate()) {
+                    continue;
+                }
+                String card = buildStatusCardMarkdown("处理中", snapshot + "\n\n_持续生成中…_");
+                if (conversationSender.updateMessage(handle, "MindOS 处理中", card, sessionWebhook)) {
+                    rememberBotEcho(conversationId, card);
+                    long now = System.currentTimeMillis();
+                    lastCardUpdateAtMillis.set(now);
+                    lastCardUpdateChars.set(snapshot.length());
+                    logEvent(Level.INFO, "dingtalk.stream.card.updated", Map.of(
+                            "conversationHash", safeHash(conversationId),
+                            "replyLength", snapshot.length()
+                    ));
+                }
+            }
+        } finally {
+            cardUpdateInFlight.set(false);
+            if (!pendingCardSnapshot.get().isBlank() && cardUpdateInFlight.compareAndSet(false, true)) {
+                cardUpdateExecutor.execute(() -> flushPendingCardUpdates(
+                        conversationId,
+                        sessionWebhook,
+                        handleRef,
+                        pendingCardSnapshot,
+                        cardUpdateInFlight,
+                        lastCardUpdateAtMillis,
+                        lastCardUpdateChars
+                ));
+            }
         }
     }
 
