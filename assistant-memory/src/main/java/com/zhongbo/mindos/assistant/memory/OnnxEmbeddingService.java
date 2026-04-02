@@ -29,6 +29,14 @@ import java.util.Map;
 @ConditionalOnProperty(prefix = "mindos.memory.embedding.onnx", name = "enabled", havingValue = "true")
 public class OnnxEmbeddingService implements EmbeddingService, DisposableBean {
 
+    private static final ThreadLocal<MessageDigest> SHA_256 = ThreadLocal.withInitial(() -> {
+        try {
+            return MessageDigest.getInstance("SHA-256");
+        } catch (NoSuchAlgorithmException ex) {
+            throw new IllegalStateException("SHA-256 not available", ex);
+        }
+    });
+
     private final MemoryConsolidationService memoryConsolidationService;
     private final MemoryRuntimeProperties properties;
     private final Cache<String, float[]> cache;
@@ -136,12 +144,11 @@ public class OnnxEmbeddingService implements EmbeddingService, DisposableBean {
     }
 
     private String cacheKey(String normalizedText) {
-        try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            return Base64.getUrlEncoder().withoutPadding().encodeToString(digest.digest(normalizedText.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
-        } catch (NoSuchAlgorithmException ex) {
-            throw new IllegalStateException("SHA-256 not available", ex);
-        }
+        MessageDigest digest = SHA_256.get();
+        digest.reset();
+        byte[] bytes = normalizedText.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        byte[] hash = digest.digest(bytes);
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(hash);
     }
 
     private static Cache<String, float[]> createCache(MemoryRuntimeProperties properties) {
