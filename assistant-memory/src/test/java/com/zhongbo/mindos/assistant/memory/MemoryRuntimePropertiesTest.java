@@ -37,6 +37,16 @@ class MemoryRuntimePropertiesTest {
 
         assertFalse(properties.getEmbedding().getLocal().isEnabled());
         assertEquals(16, properties.getEmbedding().getLocal().getDimensions());
+        assertFalse(properties.getEmbedding().getOnnx().isEnabled());
+        assertEquals("sentence_embedding", properties.getEmbedding().getOnnx().getOutputName());
+        assertEquals(384, properties.getEmbedding().getOnnx().getDimensions());
+        assertEquals(16, properties.getEmbedding().getOnnx().getBatchSize());
+        assertEquals(512, properties.getEmbedding().getOnnx().getMaxLength());
+        assertEquals(1, properties.getEmbedding().getOnnx().getIntraOpThreads());
+        assertEquals(1, properties.getEmbedding().getOnnx().getInterOpThreads());
+        assertTrue(properties.getEmbedding().getOnnx().getCache().isEnabled());
+        assertEquals(10_000, properties.getEmbedding().getOnnx().getCache().getMaximumSize());
+        assertEquals(3600, properties.getEmbedding().getOnnx().getCache().getExpireAfterAccessSeconds());
 
         assertFalse(properties.getLayers().isEnabled());
         assertEquals(6, properties.getLayers().getBufferHours());
@@ -63,6 +73,18 @@ class MemoryRuntimePropertiesTest {
                         "mindos.memory.search.hybrid.b", "0.7",
                         "mindos.memory.embedding.local.enabled", "true",
                         "mindos.memory.embedding.local.dimensions", "24",
+                        "mindos.memory.embedding.onnx.enabled", "true",
+                        "mindos.memory.embedding.onnx.model-path", "/models/bge-small.onnx",
+                        "mindos.memory.embedding.onnx.tokenizer-path", "/models/tokenizer.json",
+                        "mindos.memory.embedding.onnx.output-name", "last_hidden_state",
+                        "mindos.memory.embedding.onnx.dimensions", "384",
+                        "mindos.memory.embedding.onnx.batch-size", "32",
+                        "mindos.memory.embedding.onnx.max-length", "256",
+                        "mindos.memory.embedding.onnx.intra-op-threads", "2",
+                        "mindos.memory.embedding.onnx.inter-op-threads", "3",
+                        "mindos.memory.embedding.onnx.cache.enabled", "false",
+                        "mindos.memory.embedding.onnx.cache.maximum-size", "2048",
+                        "mindos.memory.embedding.onnx.cache.expire-after-access-seconds", "120",
                         "mindos.memory.layers.enabled", "true",
                         "mindos.memory.layers.buffer-hours", "4",
                         "mindos.memory.layers.working-hours", "48",
@@ -88,6 +110,18 @@ class MemoryRuntimePropertiesTest {
 
         assertTrue(properties.getEmbedding().getLocal().isEnabled());
         assertEquals(24, properties.getEmbedding().getLocal().getDimensions());
+        assertTrue(properties.getEmbedding().getOnnx().isEnabled());
+        assertEquals("/models/bge-small.onnx", properties.getEmbedding().getOnnx().getModelPath());
+        assertEquals("/models/tokenizer.json", properties.getEmbedding().getOnnx().getTokenizerPath());
+        assertEquals("last_hidden_state", properties.getEmbedding().getOnnx().getOutputName());
+        assertEquals(384, properties.getEmbedding().getOnnx().getDimensions());
+        assertEquals(32, properties.getEmbedding().getOnnx().getBatchSize());
+        assertEquals(256, properties.getEmbedding().getOnnx().getMaxLength());
+        assertEquals(2, properties.getEmbedding().getOnnx().getIntraOpThreads());
+        assertEquals(3, properties.getEmbedding().getOnnx().getInterOpThreads());
+        assertFalse(properties.getEmbedding().getOnnx().getCache().isEnabled());
+        assertEquals(2048, properties.getEmbedding().getOnnx().getCache().getMaximumSize());
+        assertEquals(120, properties.getEmbedding().getOnnx().getCache().getExpireAfterAccessSeconds());
 
         assertTrue(properties.getLayers().isEnabled());
         assertEquals(4, properties.getLayers().getBufferHours());
@@ -112,6 +146,8 @@ class MemoryRuntimePropertiesTest {
                         "mindos.memory.search.hybrid.lexical-weight", "0.2",
                         "mindos.memory.embedding.local.enabled", "false",
                         "mindos.memory.embedding.local.dimensions", "12",
+                        "mindos.memory.embedding.onnx.enabled", "false",
+                        "mindos.memory.embedding.onnx.batch-size", "8",
                         "mindos.memory.layers.enabled", "false",
                         "mindos.memory.layers.working-hours", "24"
                 ),
@@ -129,6 +165,8 @@ class MemoryRuntimePropertiesTest {
                         "mindos.memory.search.hybrid.lexical-weight", "0.9",
                         "mindos.memory.embedding.local.enabled", "true",
                         "mindos.memory.embedding.local.dimensions", "40",
+                        "mindos.memory.embedding.onnx.enabled", "true",
+                        "mindos.memory.embedding.onnx.batch-size", "64",
                         "mindos.memory.layers.enabled", "true",
                         "mindos.memory.layers.working-hours", "120"
                 )
@@ -148,6 +186,8 @@ class MemoryRuntimePropertiesTest {
         assertEquals(0.9, properties.getSearch().getHybrid().getLexicalWeight());
         assertTrue(properties.getEmbedding().getLocal().isEnabled());
         assertEquals(40, properties.getEmbedding().getLocal().getDimensions());
+        assertTrue(properties.getEmbedding().getOnnx().isEnabled());
+        assertEquals(64, properties.getEmbedding().getOnnx().getBatchSize());
         assertTrue(properties.getLayers().isEnabled());
         assertEquals(120, properties.getLayers().getWorkingHours());
     }

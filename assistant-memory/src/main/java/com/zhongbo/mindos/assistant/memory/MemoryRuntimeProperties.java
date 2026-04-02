@@ -73,6 +73,30 @@ public class MemoryRuntimeProperties {
                 System.getProperty("mindos.memory.embedding.local.enabled", "false")));
         properties.getEmbedding().getLocal().setDimensions(parsePositiveInt(
                 System.getProperty("mindos.memory.embedding.local.dimensions"), 16));
+        properties.getEmbedding().getOnnx().setEnabled(Boolean.parseBoolean(
+                System.getProperty("mindos.memory.embedding.onnx.enabled", "false")));
+        properties.getEmbedding().getOnnx().setModelPath(System.getProperty(
+                "mindos.memory.embedding.onnx.model-path", ""));
+        properties.getEmbedding().getOnnx().setTokenizerPath(System.getProperty(
+                "mindos.memory.embedding.onnx.tokenizer-path", ""));
+        properties.getEmbedding().getOnnx().setOutputName(System.getProperty(
+                "mindos.memory.embedding.onnx.output-name", "sentence_embedding"));
+        properties.getEmbedding().getOnnx().setDimensions(parsePositiveInt(
+                System.getProperty("mindos.memory.embedding.onnx.dimensions"), 384));
+        properties.getEmbedding().getOnnx().setBatchSize(parsePositiveInt(
+                System.getProperty("mindos.memory.embedding.onnx.batch-size"), 16));
+        properties.getEmbedding().getOnnx().setMaxLength(parsePositiveInt(
+                System.getProperty("mindos.memory.embedding.onnx.max-length"), 512));
+        properties.getEmbedding().getOnnx().setIntraOpThreads(parsePositiveInt(
+                System.getProperty("mindos.memory.embedding.onnx.intra-op-threads"), 1));
+        properties.getEmbedding().getOnnx().setInterOpThreads(parsePositiveInt(
+                System.getProperty("mindos.memory.embedding.onnx.inter-op-threads"), 1));
+        properties.getEmbedding().getOnnx().getCache().setEnabled(Boolean.parseBoolean(
+                System.getProperty("mindos.memory.embedding.onnx.cache.enabled", "true")));
+        properties.getEmbedding().getOnnx().getCache().setMaximumSize(parsePositiveInt(
+                System.getProperty("mindos.memory.embedding.onnx.cache.maximum-size"), 10_000));
+        properties.getEmbedding().getOnnx().getCache().setExpireAfterAccessSeconds(parsePositiveInt(
+                System.getProperty("mindos.memory.embedding.onnx.cache.expire-after-access-seconds"), 3600));
         properties.getLayers().setEnabled(Boolean.parseBoolean(
                 System.getProperty("mindos.memory.layers.enabled", "false")));
         properties.getLayers().setBufferHours(parsePositiveInt(
@@ -356,9 +380,14 @@ public class MemoryRuntimeProperties {
 
     public static class Embedding {
         private final Local local = new Local();
+        private final Onnx onnx = new Onnx();
 
         public Local getLocal() {
             return local;
+        }
+
+        public Onnx getOnnx() {
+            return onnx;
         }
 
         public static class Local {
@@ -379,6 +408,125 @@ public class MemoryRuntimeProperties {
 
             public void setDimensions(int dimensions) {
                 this.dimensions = dimensions > 0 ? dimensions : 16;
+            }
+        }
+
+        public static class Onnx {
+            private boolean enabled = false;
+            private String modelPath = "";
+            private String tokenizerPath = "";
+            private String outputName = "sentence_embedding";
+            private int dimensions = 384;
+            private int batchSize = 16;
+            private int maxLength = 512;
+            private int intraOpThreads = 1;
+            private int interOpThreads = 1;
+            private final Cache cache = new Cache();
+
+            public boolean isEnabled() {
+                return enabled;
+            }
+
+            public void setEnabled(boolean enabled) {
+                this.enabled = enabled;
+            }
+
+            public String getModelPath() {
+                return modelPath;
+            }
+
+            public void setModelPath(String modelPath) {
+                this.modelPath = modelPath == null ? "" : modelPath.trim();
+            }
+
+            public String getTokenizerPath() {
+                return tokenizerPath;
+            }
+
+            public void setTokenizerPath(String tokenizerPath) {
+                this.tokenizerPath = tokenizerPath == null ? "" : tokenizerPath.trim();
+            }
+
+            public String getOutputName() {
+                return outputName;
+            }
+
+            public void setOutputName(String outputName) {
+                this.outputName = outputName == null || outputName.isBlank() ? "sentence_embedding" : outputName.trim();
+            }
+
+            public int getDimensions() {
+                return dimensions;
+            }
+
+            public void setDimensions(int dimensions) {
+                this.dimensions = dimensions > 0 ? dimensions : 384;
+            }
+
+            public int getBatchSize() {
+                return batchSize;
+            }
+
+            public void setBatchSize(int batchSize) {
+                this.batchSize = batchSize > 0 ? batchSize : 16;
+            }
+
+            public int getMaxLength() {
+                return maxLength;
+            }
+
+            public void setMaxLength(int maxLength) {
+                this.maxLength = maxLength > 0 ? maxLength : 512;
+            }
+
+            public int getIntraOpThreads() {
+                return intraOpThreads;
+            }
+
+            public void setIntraOpThreads(int intraOpThreads) {
+                this.intraOpThreads = intraOpThreads > 0 ? intraOpThreads : 1;
+            }
+
+            public int getInterOpThreads() {
+                return interOpThreads;
+            }
+
+            public void setInterOpThreads(int interOpThreads) {
+                this.interOpThreads = interOpThreads > 0 ? interOpThreads : 1;
+            }
+
+            public Cache getCache() {
+                return cache;
+            }
+
+            public static class Cache {
+                private boolean enabled = true;
+                private int maximumSize = 10_000;
+                private int expireAfterAccessSeconds = 3600;
+
+                public boolean isEnabled() {
+                    return enabled;
+                }
+
+                public void setEnabled(boolean enabled) {
+                    this.enabled = enabled;
+                }
+
+                public int getMaximumSize() {
+                    return maximumSize;
+                }
+
+                public void setMaximumSize(int maximumSize) {
+                    this.maximumSize = maximumSize > 0 ? maximumSize : 10_000;
+                }
+
+                public int getExpireAfterAccessSeconds() {
+                    return expireAfterAccessSeconds;
+                }
+
+                public void setExpireAfterAccessSeconds(int expireAfterAccessSeconds) {
+                    this.expireAfterAccessSeconds = expireAfterAccessSeconds > 0 ? expireAfterAccessSeconds : 3600;
+                }
             }
         }
     }
