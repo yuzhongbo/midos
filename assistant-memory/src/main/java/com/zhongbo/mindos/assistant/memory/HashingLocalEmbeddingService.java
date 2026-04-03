@@ -40,7 +40,9 @@ public class HashingLocalEmbeddingService implements LocalEmbeddingService {
         if (!properties.getEmbedding().getLocal().isEnabled()) {
             return List.of();
         }
-        String normalized = memoryConsolidationService.normalizeText(text).toLowerCase(Locale.ROOT);
+        String normalized = memoryConsolidationService
+                .normalizeForEmbedding(text, properties.getEmbedding())
+                .toLowerCase(Locale.ROOT);
         if (normalized.isBlank()) {
             return List.of();
         }

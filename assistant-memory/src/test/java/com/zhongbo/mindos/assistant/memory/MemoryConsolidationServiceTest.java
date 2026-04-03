@@ -67,5 +67,21 @@ class MemoryConsolidationServiceTest {
         assertTrue(consolidated.text().contains("计划"));
         assertEquals(8, consolidated.embedding().size());
     }
-}
 
+    @Test
+    void shouldTrimEmbeddingTextBySentenceAndCharBudget() {
+        MemoryConsolidationService service = new MemoryConsolidationService();
+        MemoryRuntimeProperties properties = new MemoryRuntimeProperties();
+        properties.getEmbedding().getPreprocess().setEnabled(true);
+        properties.getEmbedding().getPreprocess().setMaxSentences(2);
+        properties.getEmbedding().getPreprocess().setMaxChars(32);
+
+        String raw = "第一句包含很多信息！！！第二句也需要保留。第三句应该被截断，不再进入向量。";
+        String processed = service.normalizeForEmbedding(raw, properties.getEmbedding());
+
+        assertTrue(processed.contains("第一句"));
+        assertTrue(processed.contains("第二句"));
+        assertFalse(processed.contains("第三句"));
+        assertTrue(processed.length() <= 32);
+    }
+}

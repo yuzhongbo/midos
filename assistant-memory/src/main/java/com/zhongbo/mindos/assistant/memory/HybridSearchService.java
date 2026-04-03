@@ -56,6 +56,7 @@ public class HybridSearchService implements Closeable {
     private final double alpha;
     private final double beta;
     private final int candidateMultiplier;
+    private final RerankerService rerankerService;
     private final ReadWriteLock lock = new ReentrantReadWriteLock();
     private final StandardAnalyzer analyzer;
     private final Directory directory;
@@ -63,17 +64,25 @@ public class HybridSearchService implements Closeable {
     private final SearcherManager searcherManager;
 
     public HybridSearchService(EmbeddingService embeddingService) {
-        this(embeddingService, DEFAULT_ALPHA, DEFAULT_BETA, DEFAULT_CANDIDATE_MULTIPLIER);
+        this(embeddingService, DEFAULT_ALPHA, DEFAULT_BETA, DEFAULT_CANDIDATE_MULTIPLIER, new NoopRerankerService());
     }
 
     public HybridSearchService(EmbeddingService embeddingService, double alpha, double beta) {
-        this(embeddingService, alpha, beta, DEFAULT_CANDIDATE_MULTIPLIER);
+        this(embeddingService, alpha, beta, DEFAULT_CANDIDATE_MULTIPLIER, new NoopRerankerService());
     }
 
     public HybridSearchService(EmbeddingService embeddingService,
                                double alpha,
                                double beta,
                                int candidateMultiplier) {
+        this(embeddingService, alpha, beta, candidateMultiplier, new NoopRerankerService());
+    }
+
+    public HybridSearchService(EmbeddingService embeddingService,
+                               double alpha,
+                               double beta,
+                               int candidateMultiplier,
+                               RerankerService rerankerService) {
         this.embeddingService = Objects.requireNonNull(embeddingService, "embeddingService");
         if (alpha < 0.0d || beta < 0.0d || (alpha + beta) <= 0.0d) {
             throw new IllegalArgumentException("alpha and beta must be non-negative and their sum must be positive");
@@ -81,6 +90,7 @@ public class HybridSearchService implements Closeable {
         this.alpha = alpha;
         this.beta = beta;
         this.candidateMultiplier = Math.max(1, candidateMultiplier);
+        this.rerankerService = rerankerService == null ? new NoopRerankerService() : rerankerService;
         this.analyzer = new StandardAnalyzer();
         this.directory = new ByteBuffersDirectory();
         try {
@@ -153,7 +163,7 @@ public class HybridSearchService implements Closeable {
                 TopDocs vectorTopDocs = hasVector(queryEmbedding)
                         ? searcher.search(new KnnFloatVectorQuery(FIELD_VECTOR, queryEmbedding, candidateLimit), candidateLimit)
                         : TopDocsCollector.empty();
-                return mergeAndRank(searcher, bm25TopDocs, vectorTopDocs, topK);
+                return mergeAndRank(query, searcher, bm25TopDocs, vectorTopDocs, topK);
             } finally {
                 searcherManager.release(searcher);
             }
@@ -190,7 +200,8 @@ public class HybridSearchService implements Closeable {
         }
     }
 
-    private List<HybridSearchResult> mergeAndRank(IndexSearcher searcher,
+    private List<HybridSearchResult> mergeAndRank(String query,
+                                                  IndexSearcher searcher,
                                                   TopDocs bm25TopDocs,
                                                   TopDocs vectorTopDocs,
                                                   int topK) throws IOException {
@@ -226,7 +237,7 @@ public class HybridSearchService implements Closeable {
         List<HybridSearchResult> ranked = new ArrayList<>(heap);
         ranked.sort(Comparator.comparingDouble(HybridSearchResult::finalScore).reversed()
                 .thenComparing(HybridSearchResult::documentId));
-        return ranked;
+        return rerankerService.rerank(query, ranked, topK);
     }
 
     private void merge(IndexSearcher searcher,
