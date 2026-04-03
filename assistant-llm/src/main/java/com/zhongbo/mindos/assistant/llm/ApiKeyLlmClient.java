@@ -47,6 +47,8 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
     private static final Logger LOGGER = Logger.getLogger(ApiKeyLlmClient.class.getName());
 
     private static final Map<String, String> PROVIDER_ALIASES = Map.ofEntries(
+            Map.entry("ollama", "local"),
+            Map.entry("gemma", "local"),
             Map.entry("qwen", "qwen"),
             Map.entry("tongyi", "qwen"),
             Map.entry("dashscope", "qwen"),
@@ -268,7 +270,8 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
         String selectedModel = resolveModel(safeContext, normalizeProvider(selectedProvider));
         logRoutingSample(safeContext, selectedProvider, selectedModel, false);
         String apiKey = resolveApiKey(safeContext, selectedProvider);
-        if (apiKey == null || apiKey.isBlank()) {
+        boolean apiKeyRequired = requiresApiKey(selectedProvider, selectedEndpoint);
+        if (apiKeyRequired && (apiKey == null || apiKey.isBlank())) {
             logLlmPrecheckFailure(safeContext, selectedProvider, selectedEndpoint, selectedModel, apiKey,
                     "missing_api_key", false);
             String output = buildMissingApiKeyReply(safeContext, selectedProvider);
@@ -330,7 +333,8 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
         String selectedModel = resolveModel(safeContext, normalizeProvider(selectedProvider));
         logRoutingSample(safeContext, selectedProvider, selectedModel, true);
         String apiKey = resolveApiKey(safeContext, selectedProvider);
-        if (apiKey == null || apiKey.isBlank()) {
+        boolean apiKeyRequired = requiresApiKey(selectedProvider, selectedEndpoint);
+        if (apiKeyRequired && (apiKey == null || apiKey.isBlank())) {
             logLlmPrecheckFailure(safeContext, selectedProvider, selectedEndpoint, selectedModel, apiKey,
                     "missing_api_key", true);
             if (onDelta != null) {
@@ -482,6 +486,9 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
                                 Consumer<String> deltaConsumer,
                                 AtomicBoolean streamEmitted) {
         String normalized = normalizeProvider(providerName);
+        if (httpEnabled && isOllamaGenerateEndpoint(endpointValue)) {
+            return callOllamaGenerateProvider(endpointValue, model, prompt, context, deltaConsumer, streamEmitted);
+        }
         if (httpEnabled && isNativeGeminiEndpoint(endpointValue)) {
             return callNativeGeminiProvider(endpointValue, prompt, context, apiKey, deltaConsumer, streamEmitted);
         }
@@ -531,6 +538,13 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
             return false;
         }
         return endpointValue.trim().toLowerCase(Locale.ROOT).contains(":generatecontent");
+    }
+
+    private boolean isOllamaGenerateEndpoint(String endpointValue) {
+        if (endpointValue == null || endpointValue.isBlank()) {
+            return false;
+        }
+        return endpointValue.trim().toLowerCase(Locale.ROOT).contains("/api/generate");
     }
 
     private String callOpenAiCompatibleProvider(String endpointValue,
@@ -645,6 +659,63 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
         }
     }
 
+    private String callOllamaGenerateProvider(String endpointValue,
+                                              String model,
+                                              String prompt,
+                                              Map<String, Object> context,
+                                              Consumer<String> deltaConsumer,
+                                              AtomicBoolean streamEmitted) {
+        String endpointText = endpointValue == null ? "" : endpointValue.trim();
+        if (endpointText.isBlank()) {
+            throw new RuntimeException("empty endpoint");
+        }
+        try {
+            Map<String, Object> requestPayload = new LinkedHashMap<>();
+            requestPayload.put("model", model);
+            requestPayload.put("prompt", prompt);
+            requestPayload.put("stream", true);
+
+            Map<String, Object> options = new LinkedHashMap<>();
+            Double temperature = resolveTemperature(context);
+            if (temperature != null) {
+                options.put("temperature", temperature);
+            }
+            Integer maxTokens = resolveMaxTokens(context);
+            if (maxTokens != null) {
+                options.put("num_predict", maxTokens);
+            }
+            if (!options.isEmpty()) {
+                requestPayload.put("options", options);
+            }
+
+            String requestBody = objectMapper.writeValueAsString(requestPayload);
+            HttpRequest request = HttpRequest.newBuilder(URI.create(endpointText))
+                    .timeout(HTTP_TIMEOUT)
+                    .header("Content-Type", "application/json")
+                    .header("Accept", "application/x-ndjson")
+                    .POST(HttpRequest.BodyPublishers.ofString(requestBody))
+                    .build();
+
+            HttpResponse<InputStream> response = httpClient.send(request, HttpResponse.BodyHandlers.ofInputStream());
+            int status = response.statusCode();
+            String body = readResponseBody(response.body());
+            if (status < 200 || status >= 300) {
+                throw new RuntimeException("http_" + status + ": " + abbreviate(body, 300));
+            }
+
+            String content = extractOllamaText(body, deltaConsumer, streamEmitted);
+            if (content == null || content.isBlank()) {
+                throw new RuntimeException("empty_response_content");
+            }
+            return content;
+        } catch (IOException | InterruptedException ex) {
+            if (ex instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
+            throw new RuntimeException("http_call_failed: " + ex.getMessage(), ex);
+        }
+    }
+
     private String extractAssistantText(String responseBody,
                                         Consumer<String> deltaConsumer,
                                         AtomicBoolean streamEmitted) {
@@ -694,6 +765,57 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
             JsonNode root = objectMapper.readTree(responseBody == null ? "" : responseBody);
             String content = extractGeminiText(root);
             return content == null ? null : content.trim();
+        } catch (Exception ex) {
+            throw new RuntimeException("invalid_response_json", ex);
+        }
+    }
+
+    private String extractOllamaText(String responseBody,
+                                     Consumer<String> deltaConsumer,
+                                     AtomicBoolean streamEmitted) {
+        if (responseBody == null || responseBody.isBlank()) {
+            return null;
+        }
+        StringBuilder aggregated = new StringBuilder();
+        for (String rawLine : responseBody.split("\\R")) {
+            String line = rawLine.trim();
+            if (line.isBlank()) {
+                continue;
+            }
+            String chunk = extractOllamaChunkText(line);
+            if (chunk != null && !chunk.isBlank()) {
+                aggregated.append(chunk);
+                if (deltaConsumer != null) {
+                    deltaConsumer.accept(chunk);
+                    if (streamEmitted != null) {
+                        streamEmitted.set(true);
+                    }
+                }
+            }
+        }
+        if (!aggregated.isEmpty()) {
+            return aggregated.toString().trim();
+        }
+        try {
+            JsonNode root = objectMapper.readTree(responseBody);
+            String text = root.path("response").asText("");
+            return text.isBlank() ? null : text.trim();
+        } catch (Exception ex) {
+            throw new RuntimeException("invalid_response_json", ex);
+        }
+    }
+
+    private String extractOllamaChunkText(String chunkPayload) {
+        try {
+            JsonNode root = objectMapper.readTree(chunkPayload);
+            String error = root.path("error").asText("");
+            if (!error.isBlank()) {
+                throw new RuntimeException("ollama_error: " + abbreviate(error, 200));
+            }
+            String content = root.path("response").asText("");
+            return content.isBlank() ? null : content;
+        } catch (RuntimeException runtimeEx) {
+            throw runtimeEx;
         } catch (Exception ex) {
             throw new RuntimeException("invalid_response_json", ex);
         }
@@ -1030,7 +1152,18 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
         if ("doubao".equals(normalizedProvider)) {
             return null;
         }
+        if ("local".equals(normalizedProvider) || "ollama".equals(normalizedProvider)) {
+            return "gemma4:2b";
+        }
         return normalizedProvider;
+    }
+
+    private boolean requiresApiKey(String providerName, String endpointValue) {
+        String normalizedProvider = normalizeProvider(providerName);
+        if ("local".equals(normalizedProvider) || "ollama".equals(normalizedProvider)) {
+            return false;
+        }
+        return !isOllamaGenerateEndpoint(endpointValue);
     }
 
     private boolean isTemplatePlaceholder(String value) {

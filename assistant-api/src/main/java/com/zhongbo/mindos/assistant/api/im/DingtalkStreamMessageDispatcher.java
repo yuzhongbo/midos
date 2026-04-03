@@ -6,8 +6,10 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
@@ -42,6 +44,8 @@ class DingtalkStreamMessageDispatcher {
     private final AtomicLong firstStatusLatencyCount = new AtomicLong(0L);
     private final AtomicLong firstTokenLatencyTotalMs = new AtomicLong(0L);
     private final AtomicLong firstTokenLatencyCount = new AtomicLong(0L);
+    private final AtomicLong waitingDecisionSentCount = new AtomicLong(0L);
+    private final AtomicLong waitingDecisionSuppressedCount = new AtomicLong(0L);
     private final Map<String, Integer> sessionCardUpdateCounts = new ConcurrentHashMap<>();
 
     @Value("${mindos.im.dingtalk.reply-max-chars:1200}")
@@ -61,6 +65,15 @@ class DingtalkStreamMessageDispatcher {
 
     @Value("${mindos.im.dingtalk.card.update.min-delta-chars:24}")
     private int cardUpdateMinDeltaChars = 24;
+
+    @Value("${mindos.im.dingtalk.stream.waiting.smart-enabled:true}")
+    private boolean smartWaitingEnabled = true;
+
+    @Value("${mindos.im.dingtalk.stream.waiting.smart.min-input-chars:12}")
+    private int smartWaitingMinInputChars = 12;
+
+    @Value("${mindos.im.dingtalk.stream.waiting.smart.keywords:搜索,查一下,查下,新闻,最新,实时,总结,总结一下,分析,解释,方案,规划,计划,代码,修复,排查,生成,compare,analysis,debug,search,latest,news,report,plan}")
+    private String smartWaitingKeywords = "搜索,查一下,查下,新闻,最新,实时,总结,总结一下,分析,解释,方案,规划,计划,代码,修复,排查,生成,compare,analysis,debug,search,latest,news,report,plan";
 
     DingtalkStreamMessageDispatcher(ImGatewayService imGatewayService,
                                     DingtalkConversationSender conversationSender,
@@ -150,6 +163,7 @@ class DingtalkStreamMessageDispatcher {
         }
 
         boolean streamCardUpdateEnabled = dingtalkCardEnabled && dingtalkMessageUpdateEnabled;
+        WaitingDecision waitingDecision = decideWaitingStrategy(text, streamCardUpdateEnabled);
         long receivedAtMillis = System.currentTimeMillis();
         AtomicBoolean firstStatusRecorded = new AtomicBoolean(false);
         AtomicBoolean firstTokenRecorded = new AtomicBoolean(false);
@@ -169,7 +183,7 @@ class DingtalkStreamMessageDispatcher {
                         return;
                     }
                     recordFirstTokenLatency(receivedAtMillis, firstTokenRecorded);
-                    if (waitingAttempted.compareAndSet(false, true)) {
+                    if (waitingDecision.immediate() && waitingAttempted.compareAndSet(false, true)) {
                         ScheduledFuture<?> waitingTask = waitingTaskRef.get();
                         if (waitingTask != null) {
                             waitingTask.cancel(false);
@@ -205,7 +219,7 @@ class DingtalkStreamMessageDispatcher {
                 })
                 : imGatewayService.chatAsync(senderId, conversationId, text);
         ScheduledFuture<?> waitingTask = null;
-        if (settings.streamForceWaiting()) {
+        if (waitingDecision.immediate()) {
             if (waitingAttempted.compareAndSet(false, true)) {
                 DingtalkMessageHandle handle = sendWaitingStatus(conversationId, sessionWebhook, settings.streamWaitingText());
                 messageHandleRef.set(handle);
@@ -219,10 +233,11 @@ class DingtalkStreamMessageDispatcher {
                                 "conversationHash", safeHash(conversationId),
                                 "senderHash", safeHash(senderId),
                                 "replyLength", settings.streamWaitingText().length(),
-                                "waitingDelayMs", 0
+                                "waitingDelayMs", 0,
+                                "waitingReason", waitingDecision.reason()
                         ));
             }
-        } else {
+        } else if (waitingDecision.delayed()) {
             waitingTask = waitingScheduler.schedule(() -> {
                 if (replyFuture.isDone()) {
                     return;
@@ -242,9 +257,19 @@ class DingtalkStreamMessageDispatcher {
                                 "conversationHash", safeHash(conversationId),
                                 "senderHash", safeHash(senderId),
                                 "replyLength", settings.streamWaitingText().length(),
-                                "waitingDelayMs", settings.streamWaitingDelayMs()
+                                "waitingDelayMs", settings.streamWaitingDelayMs(),
+                                "waitingReason", waitingDecision.reason()
                         ));
             }, settings.streamWaitingDelayMs(), TimeUnit.MILLISECONDS);
+        } else {
+            logEvent(Level.INFO, "dingtalk.stream.waiting.skipped", Map.of(
+                    "conversationHash", safeHash(conversationId),
+                    "senderHash", safeHash(senderId),
+                    "textLength", text.length(),
+                    "waitingReason", waitingDecision.reason(),
+                    "smartWaitingEnabled", smartWaitingEnabled,
+                    "forceWaiting", settings.streamForceWaiting()
+            ));
         }
         waitingTaskRef.set(waitingTask);
 
@@ -385,7 +410,7 @@ class DingtalkStreamMessageDispatcher {
             }
         }
         if (hadWaitingStatus && dingtalkMessageUpdateEnabled) {
-            return sendText(conversationId, "【更新】\n" + (finalReply == null ? "" : finalReply), sessionWebhook);
+            return sendText(conversationId, finalReply, sessionWebhook);
         }
         return sendText(conversationId, finalReply, sessionWebhook);
     }
@@ -500,8 +525,50 @@ class DingtalkStreamMessageDispatcher {
         stats.put("avgFirstTokenLatencyMs", averageMillis(tokenTotal, tokenCount));
         stats.put("firstStatusSamples", statusCount);
         stats.put("firstTokenSamples", tokenCount);
+        stats.put("waitingSentDecisions", waitingDecisionSentCount.get());
+        stats.put("waitingSuppressedDecisions", waitingDecisionSuppressedCount.get());
         stats.put("cardUpdatesPerConversation", Map.copyOf(new LinkedHashMap<>(sessionCardUpdateCounts)));
         return Map.copyOf(stats);
+    }
+
+    private WaitingDecision decideWaitingStrategy(String text, boolean streamCardUpdateEnabled) {
+        if (settings.streamForceWaiting()) {
+            waitingDecisionSentCount.incrementAndGet();
+            return new WaitingDecision(true, false, "force_waiting");
+        }
+        if (!smartWaitingEnabled) {
+            waitingDecisionSentCount.incrementAndGet();
+            return new WaitingDecision(false, true, "smart_waiting_disabled");
+        }
+        String normalized = stringValue(text).toLowerCase();
+        if (normalized.length() >= Math.max(1, smartWaitingMinInputChars)) {
+            waitingDecisionSentCount.incrementAndGet();
+            return new WaitingDecision(false, true, "input_length");
+        }
+        for (String keyword : parseSmartWaitingKeywords()) {
+            if (!keyword.isBlank() && normalized.contains(keyword)) {
+                waitingDecisionSentCount.incrementAndGet();
+                return new WaitingDecision(false, true, "keyword:" + keyword);
+            }
+        }
+        if (streamCardUpdateEnabled && (normalized.contains("进展") || normalized.contains("继续") || normalized.contains("过程") || normalized.contains("stream"))) {
+            waitingDecisionSentCount.incrementAndGet();
+            return new WaitingDecision(false, true, "stream_card_progress");
+        }
+        waitingDecisionSuppressedCount.incrementAndGet();
+        return new WaitingDecision(false, false, "light_request");
+    }
+
+    private Set<String> parseSmartWaitingKeywords() {
+        Set<String> keywords = new LinkedHashSet<>();
+        String configured = smartWaitingKeywords == null ? "" : smartWaitingKeywords;
+        for (String raw : configured.split(",")) {
+            String normalized = raw == null ? "" : raw.trim().toLowerCase();
+            if (!normalized.isBlank()) {
+                keywords.add(normalized);
+            }
+        }
+        return keywords;
     }
 
     private java.util.List<String> splitForDingtalk(String reply) {
@@ -661,6 +728,9 @@ class DingtalkStreamMessageDispatcher {
 
     Map<String, Object> emptyAck() {
         return new LinkedHashMap<>();
+    }
+
+    private record WaitingDecision(boolean immediate, boolean delayed, String reason) {
     }
 }
 

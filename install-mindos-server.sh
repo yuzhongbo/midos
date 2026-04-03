@@ -58,6 +58,7 @@ MINDOS_IM_DINGTALK_OUTBOUND_UPDATE_URL=https://api.dingtalk.com/v1.0/im/chat/mes
 # 可选 outbound 覆盖；留空则复用上面的 stream clientId/clientSecret
 MINDOS_IM_DINGTALK_OUTBOUND_APP_KEY=
 MINDOS_IM_DINGTALK_OUTBOUND_APP_SECRET=
+MINDOS_IM_DINGTALK_OUTBOUND_SEND_URL=https://api.dingtalk.com/v1.0/im/chat/messages/send
 
 # 兼容旧变量名（若你已有旧配置，可继续保留）
 # MINDOS_IM_DINGTALK_APP_KEY=

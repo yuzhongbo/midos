@@ -9,13 +9,16 @@ import ai.onnxruntime.OrtException;
 import ai.onnxruntime.OrtSession;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.DisposableBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 
+import java.io.InputStream;
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
@@ -25,10 +28,17 @@ import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.atomic.AtomicInteger;
 
 @Service
 @ConditionalOnProperty(prefix = "mindos.memory.embedding.onnx", name = "enabled", havingValue = "true")
 public class OnnxEmbeddingService implements EmbeddingService, DisposableBean {
+
+    private static final String CLASSPATH_PREFIX = "classpath:";
+    private static final String BGE_MICRO_MODEL_RESOURCE = "models/bge-micro/model_quantized.onnx";
+    private static final String BGE_MICRO_TOKENIZER_RESOURCE = "models/bge-micro/tokenizer.json";
 
     private static final ThreadLocal<MessageDigest> SHA_256 = ThreadLocal.withInitial(() -> {
         try {
@@ -44,6 +54,7 @@ public class OnnxEmbeddingService implements EmbeddingService, DisposableBean {
     private final BatchInferenceRunner batchInferenceRunner;
     private final int dimensions;
 
+    @Autowired
     public OnnxEmbeddingService(MemoryConsolidationService memoryConsolidationService,
                                 MemoryRuntimeProperties properties) throws OrtException, IOException {
         this(memoryConsolidationService,
@@ -176,10 +187,10 @@ public class OnnxEmbeddingService implements EmbeddingService, DisposableBean {
                 onnx.setOutputName("sentence_embedding");
             }
             if (isBlank(onnx.getModelPath())) {
-                onnx.setModelPath(Paths.get("models", "bge-micro", "bge-micro.onnx").toString());
+                onnx.setModelPath(CLASSPATH_PREFIX + BGE_MICRO_MODEL_RESOURCE);
             }
             if (isBlank(onnx.getTokenizerPath())) {
-                onnx.setTokenizerPath(Paths.get("models", "bge-micro", "tokenizer.json").toString());
+                onnx.setTokenizerPath(CLASSPATH_PREFIX + BGE_MICRO_TOKENIZER_RESOURCE);
             }
         }
         return properties;
@@ -208,11 +219,11 @@ public class OnnxEmbeddingService implements EmbeddingService, DisposableBean {
         private static final String ATTENTION_MASK = "attention_mask";
         private static final String TOKEN_TYPE_IDS = "token_type_ids";
 
-        private final OrtEnvironment environment;
-        private final OrtSession session;
-        private final HuggingFaceTokenizer tokenizer;
-        private final int maxLength;
-        private final String outputName;
+        private static final ConcurrentMap<String, SharedRuntimeHolder> SHARED_RUNTIMES = new ConcurrentHashMap<>();
+        private static final ConcurrentMap<String, Path> CLASSPATH_RESOURCE_CACHE = new ConcurrentHashMap<>();
+
+        private final String runtimeKey;
+        private final SharedRuntime sharedRuntime;
 
         OrtBatchInferenceRunner(MemoryRuntimeProperties properties) throws OrtException, IOException {
             MemoryRuntimeProperties.Embedding.Onnx onnx = properties.getEmbedding().getOnnx();
@@ -222,14 +233,63 @@ public class OnnxEmbeddingService implements EmbeddingService, DisposableBean {
             if (onnx.getTokenizerPath() == null || onnx.getTokenizerPath().isBlank()) {
                 throw new IllegalStateException("ONNX tokenizer path must be configured via mindos.memory.embedding.onnx.tokenizer-path when mindos.memory.embedding.onnx.enabled=true");
             }
-            this.environment = OrtEnvironment.getEnvironment();
-            OrtSession.SessionOptions options = new OrtSession.SessionOptions();
-            options.setInterOpNumThreads(onnx.getInterOpThreads());
-            options.setIntraOpNumThreads(onnx.getIntraOpThreads());
-            this.session = environment.createSession(onnx.getModelPath(), options);
-            this.tokenizer = HuggingFaceTokenizer.newInstance(Path.of(onnx.getTokenizerPath()));
-            this.maxLength = onnx.getMaxLength();
-            this.outputName = resolveOutputName(session, onnx.getOutputName());
+            Path modelPath = resolveRuntimePath(onnx.getModelPath(), "model");
+            Path tokenizerPath = resolveRuntimePath(onnx.getTokenizerPath(), "tokenizer");
+            this.runtimeKey = runtimeKey(modelPath, tokenizerPath, onnx);
+            this.sharedRuntime = acquireSharedRuntime(runtimeKey, modelPath, tokenizerPath, onnx);
+        }
+
+        private Path resolveRuntimePath(String configuredPath, String kind) throws IOException {
+            String normalized = configuredPath == null ? "" : configuredPath.trim();
+            if (normalized.isBlank()) {
+                throw new IllegalStateException("ONNX " + kind + " path is blank");
+            }
+            if (normalized.startsWith(CLASSPATH_PREFIX)) {
+                String resourcePath = normalized.substring(CLASSPATH_PREFIX.length()).trim();
+                if (resourcePath.isBlank()) {
+                    throw new IllegalStateException("ONNX " + kind + " classpath path is blank: " + configuredPath);
+                }
+                return extractClasspathResource(resourcePath, kind);
+            }
+            return Path.of(normalized);
+        }
+
+        private Path extractClasspathResource(String resourcePath, String kind) throws IOException {
+            Path cached = CLASSPATH_RESOURCE_CACHE.get(resourcePath);
+            if (cached != null) {
+                return cached;
+            }
+            ClassLoader classLoader = Thread.currentThread().getContextClassLoader();
+            if (classLoader == null) {
+                classLoader = OnnxEmbeddingService.class.getClassLoader();
+            }
+            final ClassLoader finalClassLoader = classLoader;
+            try {
+                return CLASSPATH_RESOURCE_CACHE.computeIfAbsent(resourcePath, ignored -> {
+                    InputStream inputStream = finalClassLoader.getResourceAsStream(resourcePath);
+                    if (inputStream == null) {
+                        throw new IllegalStateException("ONNX " + kind + " classpath resource not found: " + resourcePath
+                                + ". Put preset files under assistant-memory/src/main/resources/" + resourcePath + " or set explicit file paths.");
+                    }
+                    String suffix = resourcePath.contains(".") ? resourcePath.substring(resourcePath.lastIndexOf('.')) : ".bin";
+                    try {
+                        Path tempFile = Files.createTempFile("mindos-onnx-" + kind + "-", suffix);
+                        try (InputStream stream = inputStream) {
+                            Files.copy(stream, tempFile, StandardCopyOption.REPLACE_EXISTING);
+                        }
+                        tempFile.toFile().deleteOnExit();
+                        return tempFile;
+                    } catch (IOException ex) {
+                        throw new IllegalStateException("Failed to extract ONNX " + kind + " resource: " + resourcePath, ex);
+                    }
+                });
+            } catch (IllegalStateException ex) {
+                Throwable cause = ex.getCause();
+                if (cause instanceof IOException ioException) {
+                    throw ioException;
+                }
+                throw ex;
+            }
         }
 
         @Override
@@ -237,28 +297,30 @@ public class OnnxEmbeddingService implements EmbeddingService, DisposableBean {
             if (texts == null || texts.isEmpty()) {
                 return List.of();
             }
-            Encoding[] encodings = tokenizer.batchEncode(texts);
+            Encoding[] encodings = sharedRuntime.tokenizer().batchEncode(texts);
             long[][] inputIds = new long[encodings.length][];
             long[][] attentionMasks = new long[encodings.length][];
             long[][] tokenTypeIds = new long[encodings.length][];
             for (int i = 0; i < encodings.length; i++) {
-                inputIds[i] = pad(encodings[i].getIds(), maxLength);
-                attentionMasks[i] = pad(encodings[i].getAttentionMask(), maxLength);
+                inputIds[i] = pad(encodings[i].getIds(), sharedRuntime.maxLength());
+                attentionMasks[i] = pad(encodings[i].getAttentionMask(), sharedRuntime.maxLength());
                 long[] typeIds = encodings[i].getTypeIds();
-                tokenTypeIds[i] = typeIds == null || typeIds.length == 0 ? new long[maxLength] : pad(typeIds, maxLength);
+                tokenTypeIds[i] = typeIds == null || typeIds.length == 0
+                        ? new long[sharedRuntime.maxLength()]
+                        : pad(typeIds, sharedRuntime.maxLength());
             }
-            try (OnnxTensor inputIdsTensor = OnnxTensor.createTensor(environment, inputIds);
-                 OnnxTensor attentionMaskTensor = OnnxTensor.createTensor(environment, attentionMasks)) {
+            try (OnnxTensor inputIdsTensor = OnnxTensor.createTensor(sharedRuntime.environment(), inputIds);
+                 OnnxTensor attentionMaskTensor = OnnxTensor.createTensor(sharedRuntime.environment(), attentionMasks)) {
                 Map<String, OnnxTensor> inputs = new LinkedHashMap<>();
                 inputs.put(INPUT_IDS, inputIdsTensor);
                 inputs.put(ATTENTION_MASK, attentionMaskTensor);
                 OnnxTensor typeIdsTensor = null;
-                if (session.getInputInfo().containsKey(TOKEN_TYPE_IDS)) {
-                    typeIdsTensor = OnnxTensor.createTensor(environment, tokenTypeIds);
+                if (sharedRuntime.session().getInputInfo().containsKey(TOKEN_TYPE_IDS)) {
+                    typeIdsTensor = OnnxTensor.createTensor(sharedRuntime.environment(), tokenTypeIds);
                     inputs.put(TOKEN_TYPE_IDS, typeIdsTensor);
                 }
-                try (OrtSession.Result result = session.run(inputs)) {
-                    OnnxValue output = result.get(outputName).orElse(null);
+                try (OrtSession.Result result = sharedRuntime.session().run(inputs)) {
+                    OnnxValue output = result.get(sharedRuntime.outputName()).orElse(null);
                     if (output == null) {
                         output = result.get(0);
                     }
@@ -275,8 +337,77 @@ public class OnnxEmbeddingService implements EmbeddingService, DisposableBean {
 
         @Override
         public void close() throws Exception {
-            session.close();
-            tokenizer.close();
+            releaseSharedRuntime(runtimeKey);
+        }
+
+        private String runtimeKey(Path modelPath,
+                                  Path tokenizerPath,
+                                  MemoryRuntimeProperties.Embedding.Onnx onnx) {
+            return modelPath.toAbsolutePath().normalize()
+                    + "|" + tokenizerPath.toAbsolutePath().normalize()
+                    + "|" + onnx.getInterOpThreads()
+                    + "|" + onnx.getIntraOpThreads()
+                    + "|" + onnx.getMaxLength()
+                    + "|" + safeOutputName(onnx.getOutputName());
+        }
+
+        private SharedRuntime acquireSharedRuntime(String key,
+                                                   Path modelPath,
+                                                   Path tokenizerPath,
+                                                   MemoryRuntimeProperties.Embedding.Onnx onnx) throws OrtException, IOException {
+            try {
+                SharedRuntimeHolder holder = SHARED_RUNTIMES.compute(key, (ignored, existing) -> {
+                    if (existing != null) {
+                        existing.references().incrementAndGet();
+                        return existing;
+                    }
+                    try {
+                        return new SharedRuntimeHolder(newSharedRuntime(modelPath, tokenizerPath, onnx), new AtomicInteger(1));
+                    } catch (OrtException | IOException ex) {
+                        throw new RuntimeException(ex);
+                    }
+                });
+                return holder.runtime();
+            } catch (RuntimeException ex) {
+                Throwable cause = ex.getCause();
+                if (cause instanceof OrtException ortException) {
+                    throw ortException;
+                }
+                if (cause instanceof IOException ioException) {
+                    throw ioException;
+                }
+                throw ex;
+            }
+        }
+
+        private void releaseSharedRuntime(String key) throws Exception {
+            SharedRuntimeHolder holder = SHARED_RUNTIMES.get(key);
+            if (holder == null) {
+                return;
+            }
+            if (holder.references().decrementAndGet() > 0) {
+                return;
+            }
+            if (SHARED_RUNTIMES.remove(key, holder)) {
+                holder.runtime().close();
+            }
+        }
+
+        private SharedRuntime newSharedRuntime(Path modelPath,
+                                               Path tokenizerPath,
+                                               MemoryRuntimeProperties.Embedding.Onnx onnx) throws OrtException, IOException {
+            OrtEnvironment environment = OrtEnvironment.getEnvironment();
+            OrtSession.SessionOptions options = new OrtSession.SessionOptions();
+            options.setInterOpNumThreads(onnx.getInterOpThreads());
+            options.setIntraOpNumThreads(onnx.getIntraOpThreads());
+            OrtSession session = environment.createSession(modelPath.toString(), options);
+            HuggingFaceTokenizer tokenizer = HuggingFaceTokenizer.newInstance(tokenizerPath);
+            String outputName = resolveOutputName(session, safeOutputName(onnx.getOutputName()));
+            return new SharedRuntime(environment, session, tokenizer, onnx.getMaxLength(), outputName);
+        }
+
+        private String safeOutputName(String configuredOutputName) {
+            return configuredOutputName == null ? "" : configuredOutputName.trim();
         }
 
         private static String resolveOutputName(OrtSession session, String configuredOutputName) throws OrtException {
@@ -353,6 +484,21 @@ public class OnnxEmbeddingService implements EmbeddingService, DisposableBean {
             }
             System.arraycopy(values, 0, padded, 0, Math.min(values.length, length));
             return padded;
+        }
+
+        private record SharedRuntime(OrtEnvironment environment,
+                                     OrtSession session,
+                                     HuggingFaceTokenizer tokenizer,
+                                     int maxLength,
+                                     String outputName) implements AutoCloseable {
+            @Override
+            public void close() throws Exception {
+                session.close();
+                tokenizer.close();
+            }
+        }
+
+        private record SharedRuntimeHolder(SharedRuntime runtime, AtomicInteger references) {
         }
     }
 }

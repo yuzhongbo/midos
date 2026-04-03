@@ -68,6 +68,7 @@ if not exist "%SECRETS_FILE%" (
     echo # 可选 outbound 覆盖；留空则复用上面的 stream clientId/clientSecret
     echo MINDOS_IM_DINGTALK_OUTBOUND_APP_KEY=
     echo MINDOS_IM_DINGTALK_OUTBOUND_APP_SECRET=
+    echo MINDOS_IM_DINGTALK_OUTBOUND_SEND_URL=https://api.dingtalk.com/v1.0/im/chat/messages/send
     echo.
     echo # 兼容旧变量名（若你已有旧配置，可取消注释后继续使用）
     echo # MINDOS_IM_DINGTALK_APP_KEY=

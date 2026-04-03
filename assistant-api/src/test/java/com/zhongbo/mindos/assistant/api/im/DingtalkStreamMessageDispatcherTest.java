@@ -133,6 +133,8 @@ class DingtalkStreamMessageDispatcherTest {
 
         assertEquals(1, sender.messages.size());
         assertEquals("你好，我在。", sender.messages.get(0));
+        Map<String, Object> stats = dispatcher.streamStatsSnapshot();
+        assertTrue(((Number) stats.get("waitingSuppressedDecisions")).longValue() >= 1L);
     }
 
     @Test
@@ -404,7 +406,14 @@ class DingtalkStreamMessageDispatcherTest {
                 "text", Map.of("content", "给我看进展")
         ));
 
-        waitUntil(() -> sender.messages.size() == 1 && sender.updateCalls > 0, 1000);
+        waitUntil(() -> {
+            if (sender.messages.size() != 1) {
+                return false;
+            }
+            @SuppressWarnings("unchecked")
+            Map<String, Object> perConversation = (Map<String, Object>) dispatcher.streamStatsSnapshot().get("cardUpdatesPerConversation");
+            return perConversation != null && !perConversation.isEmpty();
+        }, 1000);
 
         assertEquals(1, sender.messages.size());
         assertTrue(sender.messages.get(0).contains("已完成"));
@@ -418,6 +427,145 @@ class DingtalkStreamMessageDispatcherTest {
         @SuppressWarnings("unchecked")
         Map<String, Object> perConversation = (Map<String, Object>) stats.get("cardUpdatesPerConversation");
         assertTrue(!perConversation.isEmpty());
+    }
+
+    @Test
+    void shouldNotSendFastTrackWaitingForQuickStreamWhenForceWaitingDisabled() throws Exception {
+        ImGatewayService gatewayService = mock(ImGatewayService.class);
+        RecordingConversationSender sender = new RecordingConversationSender(true);
+        DingtalkIntegrationSettings settings = new DingtalkIntegrationSettings(
+                true,
+                true,
+                true,
+                "client-id",
+                "client-secret",
+                DingtalkIntegrationSettings.BOT_MESSAGE_TOPIC,
+                300L,
+                "处理中",
+                false,
+                30000L,
+                true,
+                1000L,
+                60000L,
+                2.0d,
+                0.2d,
+                0,
+                true,
+                "robot-code",
+                "",
+                ""
+        );
+        when(gatewayService.chatAsync("staff-quick", "cid-quick", "测速"))
+                .thenReturn(CompletableFuture.completedFuture("网络正常"));
+        dispatcher = new DingtalkStreamMessageDispatcher(gatewayService, sender, settings);
+        setPrivateBooleanField(dispatcher, "dingtalkCardEnabled", false);
+        setPrivateBooleanField(dispatcher, "dingtalkMessageUpdateEnabled", false);
+
+        dispatcher.handleIncomingPayload(Map.of(
+                "conversationId", "cid-quick",
+                "senderStaffId", "staff-quick",
+                "text", Map.of("content", "测速")
+        ));
+
+        waitUntil(() -> !sender.messages.isEmpty(), 1000);
+        TimeUnit.MILLISECONDS.sleep(400L);
+
+        assertEquals(1, sender.messages.size());
+        assertEquals("网络正常", sender.messages.get(0));
+    }
+
+    @Test
+    void shouldSendNaturalFinalReplyWhenWaitingFallbackCannotUpdateInPlace() throws Exception {
+        ImGatewayService gatewayService = mock(ImGatewayService.class);
+        RecordingConversationSender sender = new RecordingConversationSender(true);
+        DingtalkIntegrationSettings settings = new DingtalkIntegrationSettings(
+                true,
+                true,
+                true,
+                "client-id",
+                "client-secret",
+                DingtalkIntegrationSettings.BOT_MESSAGE_TOPIC,
+                500L,
+                "已收到，正在处理",
+                true,
+                30000L,
+                true,
+                1000L,
+                60000L,
+                2.0d,
+                0.2d,
+                0,
+                true,
+                "robot-code",
+                "",
+                ""
+        );
+        when(gatewayService.chatAsync("staff-natural", "cid-natural", "测速"))
+                .thenReturn(CompletableFuture.completedFuture("服务器网络正常，延迟较低。"));
+        dispatcher = new DingtalkStreamMessageDispatcher(gatewayService, sender, settings);
+        setPrivateBooleanField(dispatcher, "dingtalkCardEnabled", false);
+        setPrivateBooleanField(dispatcher, "dingtalkMessageUpdateEnabled", true);
+
+        dispatcher.handleIncomingPayload(Map.of(
+                "conversationId", "cid-natural",
+                "senderStaffId", "staff-natural",
+                "text", Map.of("content", "测速")
+        ));
+
+        waitUntil(() -> sender.messages.size() >= 2, 1000);
+
+        assertEquals("已收到，正在处理", sender.messages.get(0));
+        assertEquals("服务器网络正常，延迟较低。", sender.messages.get(1));
+    }
+
+    @Test
+    void shouldSuppressWaitingForShortLightRequestEvenWhenReplyIsSlow() throws Exception {
+        ImGatewayService gatewayService = mock(ImGatewayService.class);
+        RecordingConversationSender sender = new RecordingConversationSender(true);
+        CompletableFuture<String> replyFuture = new CompletableFuture<>();
+        DingtalkIntegrationSettings settings = new DingtalkIntegrationSettings(
+                true,
+                true,
+                true,
+                "client-id",
+                "client-secret",
+                DingtalkIntegrationSettings.BOT_MESSAGE_TOPIC,
+                10L,
+                "处理中",
+                false,
+                30000L,
+                true,
+                1000L,
+                60000L,
+                2.0d,
+                0.2d,
+                0,
+                true,
+                "robot-code",
+                "",
+                ""
+        );
+        when(gatewayService.chatAsync("staff-light", "cid-light", "测速"))
+                .thenReturn(replyFuture);
+        dispatcher = new DingtalkStreamMessageDispatcher(gatewayService, sender, settings);
+        setPrivateBooleanField(dispatcher, "dingtalkCardEnabled", false);
+        setPrivateBooleanField(dispatcher, "dingtalkMessageUpdateEnabled", false);
+
+        dispatcher.handleIncomingPayload(Map.of(
+                "conversationId", "cid-light",
+                "senderStaffId", "staff-light",
+                "text", Map.of("content", "测速")
+        ));
+
+        TimeUnit.MILLISECONDS.sleep(120L);
+        assertEquals(0, sender.messages.size());
+
+        replyFuture.complete("服务器网络正常，延迟较低。");
+        waitUntil(() -> sender.messages.size() == 1, 1000);
+
+        assertEquals("服务器网络正常，延迟较低。", sender.messages.get(0));
+        Map<String, Object> stats = dispatcher.streamStatsSnapshot();
+        assertTrue(((Number) stats.get("waitingSuppressedDecisions")).longValue() >= 1L);
     }
 
     private void setPrivateIntField(Object target, String fieldName, int value) throws Exception {

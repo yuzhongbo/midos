@@ -12,6 +12,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -95,6 +96,48 @@ class McpJsonRpcClientTest {
         assertTrue(initializeHeaderSeen.get());
         assertTrue(listHeaderSeen.get());
         assertTrue(callHeaderSeen.get());
+    }
+
+    @Test
+    void shouldRetryTransientHttpFailureWhenCallingTool() throws Exception {
+        AtomicInteger callAttempts = new AtomicInteger();
+        server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/mcp", exchange -> {
+            Map<String, Object> request = objectMapper.readValue(
+                    exchange.getRequestBody().readAllBytes(), new TypeReference<>() {});
+            String method = String.valueOf(request.get("method"));
+            byte[] response;
+            int statusCode = 200;
+            if ("tools/call".equals(method) && callAttempts.incrementAndGet() == 1) {
+                response = json(Map.of("error", "temporary_unavailable"));
+                statusCode = 503;
+            } else if ("tools/call".equals(method)) {
+                response = json(Map.of(
+                        "jsonrpc", "2.0",
+                        "id", request.get("id"),
+                        "result", Map.of("content", List.of(Map.of("type", "text", "text", "retry-ok")))
+                ));
+            } else {
+                response = json(Map.of(
+                        "jsonrpc", "2.0",
+                        "id", request.get("id"),
+                        "result", Map.of("serverInfo", Map.of("name", "fake-mcp", "version", "1.0"))
+                ));
+            }
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(statusCode, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+        server.start();
+
+        String baseUrl = "http://127.0.0.1:" + server.getAddress().getPort() + "/mcp";
+        McpJsonRpcClient client = new McpJsonRpcClient();
+
+        String output = client.callTool(baseUrl, "weather", Map.of("city", "Shanghai"), Map.of());
+
+        assertEquals("retry-ok", output);
+        assertEquals(2, callAttempts.get());
     }
 
     private byte[] json(Map<String, Object> value) throws IOException {

@@ -203,6 +203,57 @@ class ApiKeyLlmClientTest {
     }
 
     @Test
+    void shouldCallOllamaGenerateEndpointWithoutApiKey() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
+        ConcurrentHashMap<String, String> observed = new ConcurrentHashMap<>();
+        server.createContext("/api/generate", exchange -> {
+            observed.put("path", exchange.getRequestURI().getPath());
+            observed.put("auth", String.valueOf(exchange.getRequestHeaders().getFirst("Authorization")));
+            observed.put("body", new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            byte[] body = (
+                    "{\"model\":\"gemma4:2b\",\"response\":\"本地\",\"done\":false}\n"
+                            + "{\"model\":\"gemma4:2b\",\"response\":\"优先\",\"done\":true}\n"
+            ).getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/x-ndjson");
+            exchange.sendResponseHeaders(200, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+        try {
+            ApiKeyLlmClient client = newClient(
+                    "local",
+                    "auto",
+                    "llm-dsl:local,llm-fallback:qwen",
+                    "cost:local,quality:qwen",
+                    "qwen:key-qwen",
+                    "local:gemma4:2b",
+                    false,
+                    60,
+                    "",
+                    true,
+                    "local:http://127.0.0.1:" + server.getAddress().getPort() + "/api/generate,qwen:https://api.example.com/v1/chat/completions"
+            );
+
+            String output = client.generateResponse("做个简短总结", Map.of(
+                    "userId", "u-ollama",
+                    "llmProvider", "local",
+                    "temperature", 0.1,
+                    "maxTokens", 64
+            ));
+
+            assertEquals("本地优先", output);
+            assertEquals("/api/generate", observed.get("path"));
+            assertEquals("null", observed.get("auth"));
+            assertTrue(observed.get("body").contains("\"model\":\"gemma4:2b\""));
+            assertTrue(observed.get("body").contains("\"prompt\":\"做个简短总结\""));
+            assertTrue(observed.get("body").contains("\"num_predict\":64"));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
     void shouldKeepExistingGeminiQueryKeyAndMaskItInMetrics() throws Exception {
         HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
         ConcurrentHashMap<String, String> observed = new ConcurrentHashMap<>();

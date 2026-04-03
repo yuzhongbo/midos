@@ -28,10 +28,16 @@ public class EmbeddingSimilarityReranker implements RerankerService {
         int maxCandidates = Math.max(1, properties.getRerank().getMaxCandidates());
         double weight = properties.getRerank().getScoreWeight();
         float[] queryEmbedding = embeddingService.embed(query);
+        int candidateCount = Math.min(candidates.size(), maxCandidates);
+        List<String> candidateTexts = new ArrayList<>(candidateCount);
+        for (int i = 0; i < candidateCount; i++) {
+            candidateTexts.add(candidates.get(i).content());
+        }
+        List<float[]> candidateEmbeddings = embeddingService.embedBatch(candidateTexts);
         List<Scored> scored = new ArrayList<>();
-        for (int i = 0; i < candidates.size() && i < maxCandidates; i++) {
+        for (int i = 0; i < candidateCount; i++) {
             HybridSearchService.HybridSearchResult candidate = candidates.get(i);
-            float[] docEmbedding = embeddingService.embed(candidate.content());
+            float[] docEmbedding = i < candidateEmbeddings.size() ? candidateEmbeddings.get(i) : new float[0];
             double similarity = cosine(queryEmbedding, docEmbedding);
             double combined = weight * similarity + (1.0 - weight) * candidate.finalScore();
             scored.add(new Scored(candidate, combined));

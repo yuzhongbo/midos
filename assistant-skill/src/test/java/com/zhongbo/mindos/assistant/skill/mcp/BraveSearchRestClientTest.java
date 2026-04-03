@@ -375,6 +375,47 @@ class BraveSearchRestClientTest {
         }
     }
 
+    @Test
+    void shouldRetryConnectionResetAndEventuallySucceed() {
+        Logger logger = Logger.getLogger(BraveSearchRestClient.class.getName());
+        CapturingHandler handler = new CapturingHandler();
+        Level previousLevel = logger.getLevel();
+        boolean previousUseParentHandlers = logger.getUseParentHandlers();
+        logger.setLevel(Level.INFO);
+        logger.addHandler(handler);
+        logger.setUseParentHandlers(false);
+        try {
+            BraveSearchRestClient client = new BraveSearchRestClient(
+                    new FlakyHttpClient(
+                            new java.io.IOException("Connection reset"),
+                            okResponse(200, "{\"web\":{\"results\":[{\"title\":\"Recovered result\",\"description\":\"Retry success\",\"url\":\"https://example.com/recovered\"}]}}")
+                    ),
+                    objectMapper
+            );
+
+            String result = client.callTool(
+                    "https://api.search.brave.com/res/v1/web/search",
+                    "webSearch",
+                    Map.of("query", "国际实时新闻"),
+                    Map.of("X-Subscription-Token", "token")
+            );
+
+            assertTrue(result.contains("Recovered result"));
+            String logs = String.join("\n", handler.messages);
+            assertTrue(logs.contains("brave.search.retry"));
+            assertTrue(logs.contains("Connection reset"));
+            assertTrue(logs.contains("\"phase\":\"success\""));
+        } finally {
+            logger.removeHandler(handler);
+            logger.setLevel(previousLevel);
+            logger.setUseParentHandlers(previousUseParentHandlers);
+        }
+    }
+
+    private HttpResponse<String> okResponse(int statusCode, String body) {
+        return new StubHttpResponse(statusCode, body);
+    }
+
     private static final class CapturingHandler extends Handler {
         private final List<String> messages = new ArrayList<>();
 
@@ -462,6 +503,133 @@ class BraveSearchRestClientTest {
                                                                 HttpResponse.BodyHandler<T> responseBodyHandler,
                                                                 HttpResponse.PushPromiseHandler<T> pushPromiseHandler) {
             return CompletableFuture.failedFuture(new UnsupportedOperationException("not used in tests"));
+        }
+    }
+
+    private static final class FlakyHttpClient extends HttpClient {
+        private final List<Object> outcomes;
+        private int index;
+
+        private FlakyHttpClient(Object... outcomes) {
+            this.outcomes = Arrays.asList(outcomes);
+        }
+
+        @Override
+        public Optional<CookieHandler> cookieHandler() {
+            return Optional.empty();
+        }
+
+        @Override
+        public Optional<Duration> connectTimeout() {
+            return Optional.of(Duration.ofSeconds(5));
+        }
+
+        @Override
+        public Redirect followRedirects() {
+            return Redirect.NEVER;
+        }
+
+        @Override
+        public Optional<ProxySelector> proxy() {
+            return Optional.empty();
+        }
+
+        @Override
+        public SSLContext sslContext() {
+            return null;
+        }
+
+        @Override
+        public SSLParameters sslParameters() {
+            return new SSLParameters();
+        }
+
+        @Override
+        public Optional<Authenticator> authenticator() {
+            return Optional.empty();
+        }
+
+        @Override
+        public Version version() {
+            return Version.HTTP_1_1;
+        }
+
+        @Override
+        public Optional<Executor> executor() {
+            return Optional.empty();
+        }
+
+        @Override
+        @SuppressWarnings("unchecked")
+        public <T> HttpResponse<T> send(HttpRequest request, HttpResponse.BodyHandler<T> responseBodyHandler) throws java.io.IOException {
+            Object outcome = outcomes.get(Math.min(index++, outcomes.size() - 1));
+            if (outcome instanceof java.io.IOException ioException) {
+                throw ioException;
+            }
+            return (HttpResponse<T>) outcome;
+        }
+
+        @Override
+        public <T> CompletableFuture<HttpResponse<T>> sendAsync(HttpRequest request,
+                                                                HttpResponse.BodyHandler<T> responseBodyHandler) {
+            return CompletableFuture.failedFuture(new UnsupportedOperationException("not used in tests"));
+        }
+
+        @Override
+        public <T> CompletableFuture<HttpResponse<T>> sendAsync(HttpRequest request,
+                                                                HttpResponse.BodyHandler<T> responseBodyHandler,
+                                                                HttpResponse.PushPromiseHandler<T> pushPromiseHandler) {
+            return CompletableFuture.failedFuture(new UnsupportedOperationException("not used in tests"));
+        }
+    }
+
+    private static final class StubHttpResponse implements HttpResponse<String> {
+        private final int statusCode;
+        private final String body;
+
+        private StubHttpResponse(int statusCode, String body) {
+            this.statusCode = statusCode;
+            this.body = body;
+        }
+
+        @Override
+        public int statusCode() {
+            return statusCode;
+        }
+
+        @Override
+        public HttpRequest request() {
+            return HttpRequest.newBuilder(URI.create("https://example.com")).build();
+        }
+
+        @Override
+        public Optional<HttpResponse<String>> previousResponse() {
+            return Optional.empty();
+        }
+
+        @Override
+        public HttpHeaders headers() {
+            return HttpHeaders.of(Map.of(), (a, b) -> true);
+        }
+
+        @Override
+        public String body() {
+            return body;
+        }
+
+        @Override
+        public Optional<SSLSession> sslSession() {
+            return Optional.empty();
+        }
+
+        @Override
+        public URI uri() {
+            return URI.create("https://example.com");
+        }
+
+        @Override
+        public HttpClient.Version version() {
+            return HttpClient.Version.HTTP_1_1;
         }
     }
 }

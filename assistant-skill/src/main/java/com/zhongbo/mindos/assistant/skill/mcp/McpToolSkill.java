@@ -358,6 +358,14 @@ public class McpToolSkill implements Skill {
                 || lowerCaseMessage.contains("just a moment"))) {
             return "抱歉，Brave 搜索接口当前触发了访问拦截（HTTP 403）。我建议先重试一次；如果仍失败，请检查 Brave API Key、请求头 X-Subscription-Token，或切换到另一个搜索 MCP。";
         }
+        if (lowerCaseMessage.contains("connection reset")
+                || lowerCaseMessage.contains("socket timeout")
+                || lowerCaseMessage.contains("timed out")
+                || lowerCaseMessage.contains("connection refused")
+                || lowerCaseMessage.contains("broken pipe")
+                || lowerCaseMessage.contains("reset by peer")) {
+            return "抱歉，联网搜索服务刚才网络不稳定，我已经自动重试过，但这次仍未成功。请稍后再试一次；如果持续出现，请检查 MCP 服务地址、反向代理/网络连通性，或切换到另一个搜索 MCP。";
+        }
         return "MCP tool call failed: " + normalized;
     }
 }

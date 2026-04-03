@@ -26,6 +26,9 @@ final class BraveSearchRestClient extends McpJsonRpcClient {
     private static final Logger LOGGER = Logger.getLogger(BraveSearchRestClient.class.getName());
     private static final int FIRST_TITLE_LOG_MAX_CHARS = 80;
     private static final int ERROR_PREVIEW_LOG_MAX_CHARS = 160;
+    private static final int DEFAULT_MAX_ATTEMPTS = 3;
+    private static final long RETRY_DELAY_MILLIS = 250L;
+    private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(12);
     private static final Pattern TRAILING_RESULT_COUNT_PATTERN = Pattern.compile("(?:^|\\s)(?:前|要|看)?\\s*([0-9一二两三四五六七八九十]+)\\s*(?:条|个)(?:新闻|资讯|结果)?\\s*$");
 
     private static final Set<String> SUPPORTED_QUERY_PARAMETERS = Set.of(
@@ -80,6 +83,7 @@ final class BraveSearchRestClient extends McpJsonRpcClient {
         logRequest(toolName, requestUri, normalizedArguments, headers);
         HttpRequest.Builder requestBuilder = HttpRequest.newBuilder(requestUri)
                 .header("Accept", "application/json")
+                .timeout(REQUEST_TIMEOUT)
                 .GET();
         if (headers != null) {
             for (Map.Entry<String, String> header : headers.entrySet()) {
@@ -91,34 +95,51 @@ final class BraveSearchRestClient extends McpJsonRpcClient {
             }
         }
 
-        HttpResponse<String> response;
+        HttpRequest request = requestBuilder.build();
         try {
-            response = httpClient.send(requestBuilder.build(), HttpResponse.BodyHandlers.ofString());
-        } catch (IOException e) {
-            logOutcome(toolName, requestUri, 0, 0, "", "transport_error", rootCauseMessage(e));
-            throw new IllegalStateException("Failed to call Brave search: " + rootCauseMessage(e), e);
+            for (int attempt = 1; attempt <= DEFAULT_MAX_ATTEMPTS; attempt++) {
+                HttpResponse<String> response;
+                try {
+                    response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+                } catch (IOException e) {
+                    String cause = rootCauseMessage(e);
+                    if (attempt < DEFAULT_MAX_ATTEMPTS && isRetryableTransportError(cause)) {
+                        logRetry(toolName, requestUri, attempt, cause);
+                        sleepBeforeRetry();
+                        continue;
+                    }
+                    logOutcome(toolName, requestUri, 0, 0, "", "transport_error", cause);
+                    throw new IllegalStateException("Failed to call Brave search: " + cause, e);
+                }
+
+                String errorPreview = summarizeErrorBody(response.body());
+                if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                    if (attempt < DEFAULT_MAX_ATTEMPTS && isRetryableStatus(response.statusCode())) {
+                        logRetry(toolName, requestUri, attempt, "http_" + response.statusCode());
+                        sleepBeforeRetry();
+                        continue;
+                    }
+                    String errorMessage = buildHttpErrorMessage(response.statusCode(), errorPreview);
+                    logOutcome(toolName, requestUri, response.statusCode(), 0, "", "http_error", errorPreview);
+                    throw new IllegalStateException(errorMessage);
+                }
+
+                try {
+                    RenderedBraveResponse rendered = renderResponse(query, response.body());
+                    logOutcome(toolName, requestUri, response.statusCode(), rendered.resultCount(), rendered.firstTitle(), "success", "");
+                    return rendered.output();
+                } catch (IOException e) {
+                    logOutcome(toolName, requestUri, response.statusCode(), 0, "", "parse_error",
+                            errorPreview.isBlank() ? rootCauseMessage(e) : errorPreview);
+                    throw new IllegalStateException("Failed to parse Brave search response" + previewSuffix(errorPreview), e);
+                }
+            }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             logOutcome(toolName, requestUri, 0, 0, "", "interrupted", rootCauseMessage(e));
             throw new IllegalStateException("Interrupted while calling Brave search", e);
         }
-
-        String errorPreview = summarizeErrorBody(response.body());
-        if (response.statusCode() < 200 || response.statusCode() >= 300) {
-            String errorMessage = buildHttpErrorMessage(response.statusCode(), errorPreview);
-            logOutcome(toolName, requestUri, response.statusCode(), 0, "", "http_error", errorPreview);
-            throw new IllegalStateException(errorMessage);
-        }
-
-        try {
-            RenderedBraveResponse rendered = renderResponse(query, response.body());
-            logOutcome(toolName, requestUri, response.statusCode(), rendered.resultCount(), rendered.firstTitle(), "success", "");
-            return rendered.output();
-        } catch (IOException e) {
-            logOutcome(toolName, requestUri, response.statusCode(), 0, "", "parse_error",
-                    errorPreview.isBlank() ? rootCauseMessage(e) : errorPreview);
-            throw new IllegalStateException("Failed to parse Brave search response" + previewSuffix(errorPreview), e);
-        }
+        throw new IllegalStateException("Failed to call Brave search");
     }
 
     private Map<String, Object> normalizeSearchArguments(Map<String, Object> arguments) {
@@ -314,6 +335,18 @@ final class BraveSearchRestClient extends McpJsonRpcClient {
                 + "\"}");
     }
 
+    private void logRetry(String toolName, URI requestUri, int attempt, String reason) {
+        LOGGER.info(() -> "{\"event\":\"brave.search.retry\",\"tool\":\""
+                + escapeJson(stringValue(toolName))
+                + "\",\"url\":\""
+                + escapeJson(stringValue(requestUri))
+                + "\",\"attempt\":"
+                + attempt
+                + ",\"reason\":\""
+                + escapeJson(stringValue(reason))
+                + "\"}");
+    }
+
     private RenderedBraveResponse renderResponse(String query, String body) throws IOException {
         Map<String, Object> payload = objectMapper.readValue(body, new TypeReference<>() {});
         Object web = payload.get("web");
@@ -390,6 +423,39 @@ final class BraveSearchRestClient extends McpJsonRpcClient {
                     + "Please verify Brave key/header and source IP allowlist, then retry.";
         }
         return "Brave search returned HTTP " + statusCode + previewSuffix(errorPreview);
+    }
+
+    private boolean isRetryableStatus(int statusCode) {
+        return statusCode == 408
+                || statusCode == 409
+                || statusCode == 425
+                || statusCode == 429
+                || statusCode == 500
+                || statusCode == 502
+                || statusCode == 503
+                || statusCode == 504;
+    }
+
+    private boolean isRetryableTransportError(String message) {
+        String normalized = stringValue(message).toLowerCase();
+        if (normalized.isBlank()) {
+            return false;
+        }
+        return normalized.contains("connection reset")
+                || normalized.contains("broken pipe")
+                || normalized.contains("connection refused")
+                || normalized.contains("timed out")
+                || normalized.contains("timeout")
+                || normalized.contains("eof")
+                || normalized.contains("stream closed")
+                || normalized.contains("stream reset")
+                || normalized.contains("goaway")
+                || normalized.contains("http/2 error")
+                || normalized.contains("reset by peer");
+    }
+
+    private void sleepBeforeRetry() throws InterruptedException {
+        Thread.sleep(RETRY_DELAY_MILLIS);
     }
 
     private boolean looksLikeCloudflareChallenge(String preview) {

@@ -3,13 +3,11 @@ package com.zhongbo.mindos.assistant.memory;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import org.junit.jupiter.api.Test;
 
-import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class OnnxEmbeddingServiceTest {
 
@@ -96,9 +94,9 @@ class OnnxEmbeddingServiceTest {
                 }
         );
 
-        assertEquals(Paths.get("models", "bge-micro", "bge-micro.onnx").toString(),
+        assertEquals("classpath:models/bge-micro/model_quantized.onnx",
                 properties.getEmbedding().getOnnx().getModelPath());
-        assertEquals(Paths.get("models", "bge-micro", "tokenizer.json").toString(),
+        assertEquals("classpath:models/bge-micro/tokenizer.json",
                 properties.getEmbedding().getOnnx().getTokenizerPath());
         assertEquals(384, properties.getEmbedding().getOnnx().getDimensions());
         assertEquals(512, properties.getEmbedding().getOnnx().getMaxLength());

@@ -9,7 +9,7 @@ import java.util.List;
 
 @Service
 @Primary
-@ConditionalOnBean(EmbeddingService.class)
+@ConditionalOnBean(OnnxEmbeddingService.class)
 public class OnnxLocalEmbeddingServiceAdapter implements LocalEmbeddingService {
 
     private final EmbeddingService embeddingService;

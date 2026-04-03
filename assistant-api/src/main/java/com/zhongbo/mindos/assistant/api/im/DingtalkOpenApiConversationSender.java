@@ -24,7 +24,8 @@ import java.util.logging.Logger;
 public class DingtalkOpenApiConversationSender implements DingtalkConversationSender {
 
     private static final Logger LOGGER = Logger.getLogger(DingtalkOpenApiConversationSender.class.getName());
-    private static final URI SEND_MESSAGE_URI = URI.create("https://api.dingtalk.com/v1.0/im/chat/messages/send");
+    private static final String DEFAULT_SEND_MESSAGE_URL = "https://api.dingtalk.com/v1.0/im/chat/messages/send";
+    private static final String DEFAULT_SEND_TO_CONVERSATION_URL = "https://api.dingtalk.com/v1.0/im/messages/sendToConversation";
     private static final String TOKEN_ENDPOINT = "https://oapi.dingtalk.com/gettoken";
     private static final String DEFAULT_UPDATE_MESSAGE_URL = "https://api.dingtalk.com/v1.0/im/chat/messages/update";
 
@@ -38,11 +39,16 @@ public class DingtalkOpenApiConversationSender implements DingtalkConversationSe
     private volatile Instant lastTokenRefreshAt = Instant.EPOCH;
     private volatile String lastTokenFailureReason = "";
     private volatile Map<String, Object> lastOutboundSendDebug = Map.of();
+    private volatile Map<String, Object> lastOutboundPrimarySendAttemptDebug = Map.of();
+    private volatile Map<String, Object> lastOutboundFallbackSendAttemptDebug = Map.of();
     private volatile Map<String, Object> lastOutboundUpdateDebug = Map.of();
     private final Object accessTokenLock = new Object();
 
     @org.springframework.beans.factory.annotation.Value("${mindos.im.dingtalk.outbound.update-url:https://api.dingtalk.com/v1.0/im/chat/messages/update}")
     private String updateMessageUrl = DEFAULT_UPDATE_MESSAGE_URL;
+
+    @org.springframework.beans.factory.annotation.Value("${mindos.im.dingtalk.outbound.send-url:https://api.dingtalk.com/v1.0/im/chat/messages/send}")
+    private String sendMessageUrl = DEFAULT_SEND_MESSAGE_URL;
 
     @Autowired
     public DingtalkOpenApiConversationSender(DingtalkIntegrationSettings settings) {
@@ -101,7 +107,7 @@ public class DingtalkOpenApiConversationSender implements DingtalkConversationSe
                         "msgType", "markdown"
                 ));
                 IdentifierBundle identifiers = extractIdentifiers(response);
-                recordOutboundDebug("lastSend", conversationId, "session_webhook", 200, identifiers, "");
+                recordOutboundDebug("lastSend", conversationId, "session_webhook", 200, identifiers, "", webhook, "session_webhook");
                 return identifiers.selectedId().isBlank()
                         ? DingtalkMessageHandle.sentWithoutUpdate(conversationId, webhook)
                         : DingtalkMessageHandle.updatable(conversationId, webhook, identifiers.selectedId());
@@ -211,57 +217,76 @@ public class DingtalkOpenApiConversationSender implements DingtalkConversationSe
             return DingtalkMessageHandle.sentWithoutUpdate(conversationId, sessionWebhook);
         }
         try {
+            if (!isAllowedSendEndpoint(sendMessageUrl)) {
+                logEvent(Level.WARNING, "dingtalk.stream.outbound.skipped", Map.of(
+                        "conversationHash", safeHash(conversationId),
+                        "reason", "invalid_send_url",
+                        "sendUrl", safe(sendMessageUrl)
+                ));
+                return DingtalkMessageHandle.notSent(conversationId, sessionWebhook);
+            }
             String accessToken = resolveAccessToken();
-            Map<String, Object> payload = new LinkedHashMap<>();
-            payload.put("openConversationIds", List.of(conversationId));
-            payload.put("robotCode", settings.effectiveRobotCode());
-            payload.put("msgType", msgType);
-            payload.put("msgContent", objectMapper.writeValueAsString(msgContent));
-            String requestBody = objectMapper.writeValueAsString(payload);
-            HttpRequest request = HttpRequest.newBuilder(SEND_MESSAGE_URI)
-                    .timeout(Duration.ofSeconds(8))
-                    .header("Content-Type", "application/json")
-                    .header("Authorization", "Bearer " + accessToken)
-                    .header("x-acs-dingtalk-access-token", accessToken)
-                    .POST(HttpRequest.BodyPublishers.ofString(requestBody, StandardCharsets.UTF_8))
-                    .build();
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
-            if (response.statusCode() / 100 != 2) {
-                recordOutboundDebug("lastSend", conversationId, "openapi_send", response.statusCode(), IdentifierBundle.empty(), clip(response.body()));
+            SendApiType primaryType = detectSendApiType(sendMessageUrl);
+            List<SendTarget> targets = resolveSendTargets(primaryType);
+            SendAttemptResult lastFailure = null;
+            for (SendTarget target : targets) {
+                SendAttemptResult attempt = performSendAttempt(target, conversationId, msgType, msgContent, accessToken);
+                if (attempt.success()) {
+                    Map<String, Object> sentLogFields = new LinkedHashMap<>();
+                    sentLogFields.put("conversationHash", safeHash(conversationId));
+                    sentLogFields.put("replyLength", Math.max(0, replyLength));
+                    sentLogFields.put("msgType", msgType);
+                    sentLogFields.put("apiType", target.apiType().name().toLowerCase());
+                    sentLogFields.put("channel", target.channelName());
+                    applyIdentifierFields(sentLogFields, attempt.identifiers());
+                    logEvent(Level.INFO, "dingtalk.stream.outbound.sent", Map.copyOf(sentLogFields));
+                    recordOutboundDebug(
+                            "lastSend",
+                            conversationId,
+                            target.channelName(),
+                            attempt.statusCode(),
+                            attempt.identifiers(),
+                            "",
+                            target.url(),
+                            target.apiType().name().toLowerCase()
+                    );
+                    String platformMessageId = attempt.identifiers().selectedId();
+                    return platformMessageId.isBlank()
+                            ? DingtalkMessageHandle.sentWithoutUpdate(conversationId, sessionWebhook)
+                            : DingtalkMessageHandle.updatable(conversationId, sessionWebhook, platformMessageId);
+                }
+                lastFailure = attempt;
                 logEvent(Level.WARNING, "dingtalk.stream.outbound.failed", Map.of(
                         "conversationHash", safeHash(conversationId),
                         "replyLength", Math.max(0, replyLength),
-                        "status", response.statusCode(),
-                        "body", clip(response.body())
+                        "status", attempt.statusCode(),
+                        "body", clip(attempt.responseBody()),
+                        "hint", buildSendFailureHint(attempt.statusCode(), attempt.responseBody()),
+                        "apiType", target.apiType().name().toLowerCase(),
+                        "channel", target.channelName()
                 ));
+                recordOutboundDebug(
+                        "lastSend",
+                        conversationId,
+                        target.channelName(),
+                        attempt.statusCode(),
+                        attempt.identifiers(),
+                        clip(attempt.responseBody()),
+                        target.url(),
+                        target.apiType().name().toLowerCase()
+                );
+                if (target != targets.get(targets.size() - 1)) {
+                    logEvent(Level.INFO, "dingtalk.stream.outbound.fallback.attempt", Map.of(
+                            "conversationHash", safeHash(conversationId),
+                            "fromApiType", target.apiType().name().toLowerCase(),
+                            "toApiType", targets.get(targets.indexOf(target) + 1).apiType().name().toLowerCase()
+                    ));
+                }
+            }
+            if (lastFailure != null && lastFailure.success() == false && lastFailure.identifiers() != null) {
                 return DingtalkMessageHandle.notSent(conversationId, sessionWebhook);
             }
-            JsonNode body = parseJson(response.body());
-            boolean success = body.path("success").asBoolean(true);
-            IdentifierBundle identifiers = extractIdentifiers(body);
-            if (!success) {
-                recordOutboundDebug("lastSend", conversationId, "openapi_send", response.statusCode(), identifiers, clip(response.body()));
-                logEvent(Level.WARNING, "dingtalk.stream.outbound.rejected", Map.of(
-                        "conversationHash", safeHash(conversationId),
-                        "replyLength", Math.max(0, replyLength),
-                        "body", clip(response.body())
-                ));
-            } else {
-                Map<String, Object> sentLogFields = new LinkedHashMap<>();
-                sentLogFields.put("conversationHash", safeHash(conversationId));
-                sentLogFields.put("replyLength", Math.max(0, replyLength));
-                sentLogFields.put("msgType", msgType);
-                applyIdentifierFields(sentLogFields, identifiers);
-                logEvent(Level.INFO, "dingtalk.stream.outbound.sent", Map.copyOf(sentLogFields));
-                recordOutboundDebug("lastSend", conversationId, "openapi_send", response.statusCode(), identifiers, "");
-            }
-            if (!success) {
-                return DingtalkMessageHandle.notSent(conversationId, sessionWebhook);
-            }
-            String platformMessageId = identifiers.selectedId();
-            return platformMessageId.isBlank()
-                    ? DingtalkMessageHandle.sentWithoutUpdate(conversationId, sessionWebhook)
-                    : DingtalkMessageHandle.updatable(conversationId, sessionWebhook, platformMessageId);
+            return DingtalkMessageHandle.notSent(conversationId, sessionWebhook);
         } catch (Exception ex) {
             recordOutboundDebug("lastSend", conversationId, "openapi_send", 0, IdentifierBundle.empty(), clip(ex.getMessage()));
             logEvent(Level.WARNING, "dingtalk.stream.outbound.exception", Map.of(
@@ -359,6 +384,7 @@ public class DingtalkOpenApiConversationSender implements DingtalkConversationSe
         snapshot.put("lastRefreshAt", lastTokenRefreshAt.equals(Instant.EPOCH) ? "" : lastTokenRefreshAt.toString());
         snapshot.put("lastFailureReason", safe(lastTokenFailureReason));
         snapshot.put("updateUrl", safe(updateMessageUrl));
+        snapshot.put("sendUrl", safe(sendMessageUrl));
         return Map.copyOf(snapshot);
     }
 
@@ -366,6 +392,8 @@ public class DingtalkOpenApiConversationSender implements DingtalkConversationSe
         Map<String, Object> snapshot = new LinkedHashMap<>();
         snapshot.put("senderReady", isReady());
         snapshot.put("lastSend", lastOutboundSendDebug);
+        snapshot.put("lastPrimaryAttempt", lastOutboundPrimarySendAttemptDebug);
+        snapshot.put("lastFallbackAttempt", lastOutboundFallbackSendAttemptDebug);
         snapshot.put("lastUpdate", lastOutboundUpdateDebug);
         return Map.copyOf(snapshot);
     }
@@ -434,11 +462,15 @@ public class DingtalkOpenApiConversationSender implements DingtalkConversationSe
                                      String channel,
                                      int status,
                                      IdentifierBundle identifiers,
-                                     String error) {
+                                     String error,
+                                     String requestUrl,
+                                     String apiType) {
         Map<String, Object> snapshot = new LinkedHashMap<>();
         snapshot.put("timestamp", Instant.now().toString());
         snapshot.put("conversationHash", safeHash(conversationId));
         snapshot.put("channel", safe(channel));
+        snapshot.put("requestUrl", safe(requestUrl));
+        snapshot.put("apiType", safe(apiType));
         snapshot.put("status", status);
         applyIdentifierFields(snapshot, identifiers);
         snapshot.put("error", safe(error));
@@ -447,7 +479,21 @@ public class DingtalkOpenApiConversationSender implements DingtalkConversationSe
             lastOutboundUpdateDebug = immutableSnapshot;
         } else {
             lastOutboundSendDebug = immutableSnapshot;
+            if ("openapi_send_primary".equals(channel)) {
+                lastOutboundPrimarySendAttemptDebug = immutableSnapshot;
+            } else if ("openapi_send_fallback".equals(channel)) {
+                lastOutboundFallbackSendAttemptDebug = immutableSnapshot;
+            }
         }
+    }
+
+    private void recordOutboundDebug(String kind,
+                                     String conversationId,
+                                     String channel,
+                                     int status,
+                                     IdentifierBundle identifiers,
+                                     String error) {
+        recordOutboundDebug(kind, conversationId, channel, status, identifiers, error, "", "");
     }
 
     private boolean isAllowedUpdateEndpoint(String url) {
@@ -459,6 +505,116 @@ public class DingtalkOpenApiConversationSender implements DingtalkConversationSe
         } catch (Exception ex) {
             return false;
         }
+    }
+
+    private boolean isAllowedSendEndpoint(String url) {
+        try {
+            URI uri = URI.create(safe(url));
+            String scheme = safe(uri.getScheme()).toLowerCase();
+            String host = safe(uri.getHost()).toLowerCase();
+            return !host.isBlank() && "https".equals(scheme);
+        } catch (Exception ex) {
+            return false;
+        }
+    }
+
+    private String buildSendFailureHint(int statusCode, String body) {
+        String normalizedBody = safe(body);
+        if (statusCode == 404 && normalizedBody.contains("InvalidAction.NotFound")) {
+            return "send-url not supported for current DingTalk app type; configure mindos.im.dingtalk.outbound.send-url or verify robot OpenAPI permissions";
+        }
+        return "";
+    }
+
+    private SendApiType detectSendApiType(String url) {
+        String normalized = safe(url).toLowerCase();
+        if (normalized.contains("/im/messages/sendtoconversation")) {
+            return SendApiType.SEND_TO_CONVERSATION;
+        }
+        return SendApiType.CHAT_MESSAGES_SEND;
+    }
+
+    private List<SendTarget> resolveSendTargets(SendApiType primaryType) {
+        SendTarget primary = new SendTarget(primaryType, safe(sendMessageUrl), "openapi_send_primary");
+        SendTarget alternate;
+        if (primaryType == SendApiType.CHAT_MESSAGES_SEND) {
+            alternate = new SendTarget(
+                    SendApiType.SEND_TO_CONVERSATION,
+                    DEFAULT_SEND_TO_CONVERSATION_URL,
+                    "openapi_send_fallback"
+            );
+        } else {
+            alternate = new SendTarget(
+                    SendApiType.CHAT_MESSAGES_SEND,
+                    DEFAULT_SEND_MESSAGE_URL,
+                    "openapi_send_fallback"
+            );
+        }
+        if (!isAllowedSendEndpoint(alternate.url()) || safe(alternate.url()).equals(safe(primary.url()))) {
+            return List.of(primary);
+        }
+        return List.of(primary, alternate);
+    }
+
+    private SendAttemptResult performSendAttempt(SendTarget target,
+                                                 String conversationId,
+                                                 String msgType,
+                                                 Map<String, Object> msgContent,
+                                                 String accessToken) {
+        try {
+            Map<String, Object> payload = buildSendPayload(target.apiType(), conversationId, msgType, msgContent);
+            String requestBody = objectMapper.writeValueAsString(payload);
+            HttpRequest request = HttpRequest.newBuilder(URI.create(target.url().trim()))
+                    .timeout(Duration.ofSeconds(8))
+                    .header("Content-Type", "application/json")
+                    .header("Authorization", "Bearer " + accessToken)
+                    .header("x-acs-dingtalk-access-token", accessToken)
+                    .POST(HttpRequest.BodyPublishers.ofString(requestBody, StandardCharsets.UTF_8))
+                    .build();
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+            if (response.statusCode() / 100 != 2) {
+                return SendAttemptResult.httpFailure(response.statusCode(), response.body());
+            }
+            JsonNode body = parseJson(response.body());
+            boolean success = body.path("success").asBoolean(true);
+            IdentifierBundle identifiers = extractIdentifiers(body);
+            if (!success) {
+                return SendAttemptResult.rejected(response.statusCode(), response.body(), identifiers);
+            }
+            return SendAttemptResult.success(response.statusCode(), response.body(), identifiers);
+        } catch (Exception ex) {
+            return SendAttemptResult.httpFailure(0, ex.getMessage() == null ? ex.getClass().getSimpleName() : ex.getMessage());
+        }
+    }
+
+    private Map<String, Object> buildSendPayload(SendApiType apiType,
+                                                 String conversationId,
+                                                 String msgType,
+                                                 Map<String, Object> msgContent) throws Exception {
+        if (apiType == SendApiType.SEND_TO_CONVERSATION) {
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("robotCode", settings.effectiveRobotCode());
+            payload.put("openConversationId", conversationId);
+            if ("markdown".equalsIgnoreCase(msgType)) {
+                payload.put("msgKey", "sampleMarkdown");
+                payload.put("msgParam", objectMapper.writeValueAsString(Map.of(
+                        "title", safe(String.valueOf(msgContent.get("title"))),
+                        "text", safe(String.valueOf(msgContent.get("text")))
+                )));
+            } else {
+                payload.put("msgKey", "sampleText");
+                payload.put("msgParam", objectMapper.writeValueAsString(Map.of(
+                        "content", safe(String.valueOf(msgContent.get("content")))
+                )));
+            }
+            return payload;
+        }
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("openConversationIds", List.of(conversationId));
+        payload.put("robotCode", settings.effectiveRobotCode());
+        payload.put("msgType", msgType);
+        payload.put("msgContent", objectMapper.writeValueAsString(msgContent));
+        return payload;
     }
 
     private boolean trySendBySessionWebhook(String conversationId, String message, String sessionWebhook) {
@@ -545,6 +701,28 @@ public class DingtalkOpenApiConversationSender implements DingtalkConversationSe
     ) {
         private static IdentifierBundle empty() {
             return new IdentifierBundle("", "", "", "", "", "");
+        }
+    }
+
+    private enum SendApiType {
+        CHAT_MESSAGES_SEND,
+        SEND_TO_CONVERSATION
+    }
+
+    private record SendTarget(SendApiType apiType, String url, String channelName) {
+    }
+
+    private record SendAttemptResult(boolean success, int statusCode, String responseBody, IdentifierBundle identifiers) {
+        private static SendAttemptResult success(int statusCode, String responseBody, IdentifierBundle identifiers) {
+            return new SendAttemptResult(true, statusCode, responseBody, identifiers == null ? IdentifierBundle.empty() : identifiers);
+        }
+
+        private static SendAttemptResult rejected(int statusCode, String responseBody, IdentifierBundle identifiers) {
+            return new SendAttemptResult(false, statusCode, responseBody, identifiers == null ? IdentifierBundle.empty() : identifiers);
+        }
+
+        private static SendAttemptResult httpFailure(int statusCode, String responseBody) {
+            return new SendAttemptResult(false, statusCode, responseBody, IdentifierBundle.empty());
         }
     }
 
