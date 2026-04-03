@@ -60,7 +60,11 @@ public class SemanticMemoryService implements MemoryWriteGateMetricsReader, Memo
     }
 
     public SemanticMemoryService(MemoryConsolidationService memoryConsolidationService) {
-        MemoryRuntimeProperties props = MemoryRuntimeProperties.fromSystemProperties();
+        this(memoryConsolidationService, MemoryRuntimeProperties.fromSystemProperties());
+    }
+
+    private SemanticMemoryService(MemoryConsolidationService memoryConsolidationService,
+                                  MemoryRuntimeProperties props) {
         this(memoryConsolidationService,
                 props,
                 new Bm25LexicalSearchScorer(),
