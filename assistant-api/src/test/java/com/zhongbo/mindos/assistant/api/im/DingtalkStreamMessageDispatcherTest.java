@@ -411,6 +411,13 @@ class DingtalkStreamMessageDispatcherTest {
         assertTrue(sender.messages.get(0).contains("第一段"));
         assertTrue(sender.updateCalls >= 1);
         assertEquals("", sender.lastSessionWebhook);
+
+        Map<String, Object> stats = dispatcher.streamStatsSnapshot();
+        assertTrue(((Number) stats.get("firstStatusSamples")).longValue() >= 1L);
+        assertTrue(((Number) stats.get("firstTokenSamples")).longValue() >= 1L);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> perConversation = (Map<String, Object>) stats.get("cardUpdatesPerConversation");
+        assertTrue(!perConversation.isEmpty());
     }
 
     private void setPrivateIntField(Object target, String fieldName, int value) throws Exception {

@@ -29,8 +29,7 @@ class DingtalkStreamMessageDispatcher {
     private static final long ECHO_SUPPRESSION_TTL_MILLIS = 180_000L;
     private static final int ECHO_SUPPRESSION_MAX_ENTRIES = 256;
     private static final String TIMEOUT_BRIDGE_PREFIX = "感谢等待，以下是完整回复：\n";
-    private static final long CARD_UPDATE_MIN_INTERVAL_MILLIS = 250L;
-    private static final int CARD_UPDATE_MIN_DELTA_CHARS = 24;
+    private static final int STREAM_STATS_MAX_SESSION_ENTRIES = 512;
 
     private final ImGatewayService imGatewayService;
     private final DingtalkConversationSender conversationSender;
@@ -39,6 +38,11 @@ class DingtalkStreamMessageDispatcher {
     private final ExecutorService cardUpdateExecutor;
     private final ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
     private final Map<String, Long> recentBotEchoes = new ConcurrentHashMap<>();
+    private final AtomicLong firstStatusLatencyTotalMs = new AtomicLong(0L);
+    private final AtomicLong firstStatusLatencyCount = new AtomicLong(0L);
+    private final AtomicLong firstTokenLatencyTotalMs = new AtomicLong(0L);
+    private final AtomicLong firstTokenLatencyCount = new AtomicLong(0L);
+    private final Map<String, Integer> sessionCardUpdateCounts = new ConcurrentHashMap<>();
 
     @Value("${mindos.im.dingtalk.reply-max-chars:1200}")
     private int dingtalkReplyMaxChars = 1200;
@@ -51,6 +55,12 @@ class DingtalkStreamMessageDispatcher {
 
     @Value("${mindos.im.dingtalk.agent-status.enabled:false}")
     private boolean dingtalkAgentStatusEnabled;
+
+    @Value("${mindos.im.dingtalk.card.update.min-interval-ms:250}")
+    private long cardUpdateMinIntervalMillis = 250L;
+
+    @Value("${mindos.im.dingtalk.card.update.min-delta-chars:24}")
+    private int cardUpdateMinDeltaChars = 24;
 
     DingtalkStreamMessageDispatcher(ImGatewayService imGatewayService,
                                     DingtalkConversationSender conversationSender,
@@ -140,6 +150,9 @@ class DingtalkStreamMessageDispatcher {
         }
 
         boolean streamCardUpdateEnabled = dingtalkCardEnabled && dingtalkMessageUpdateEnabled;
+        long receivedAtMillis = System.currentTimeMillis();
+        AtomicBoolean firstStatusRecorded = new AtomicBoolean(false);
+        AtomicBoolean firstTokenRecorded = new AtomicBoolean(false);
         AtomicReference<DingtalkMessageHandle> messageHandleRef = new AtomicReference<>();
         AtomicLong lastCardUpdateAtMillis = new AtomicLong(0L);
         AtomicInteger lastCardUpdateChars = new AtomicInteger(0);
@@ -155,6 +168,7 @@ class DingtalkStreamMessageDispatcher {
                     if (chunk == null || chunk.isBlank()) {
                         return;
                     }
+                    recordFirstTokenLatency(receivedAtMillis, firstTokenRecorded);
                     if (waitingAttempted.compareAndSet(false, true)) {
                         ScheduledFuture<?> waitingTask = waitingTaskRef.get();
                         if (waitingTask != null) {
@@ -163,6 +177,9 @@ class DingtalkStreamMessageDispatcher {
                         DingtalkMessageHandle handle = sendWaitingStatus(conversationId, sessionWebhook, settings.streamWaitingText());
                         messageHandleRef.set(handle);
                         waitingSent.set(handle != null && handle.sent());
+                        if (waitingSent.get()) {
+                            recordFirstStatusLatency(receivedAtMillis, firstStatusRecorded);
+                        }
                         logEvent(waitingSent.get() ? Level.INFO : Level.WARNING,
                                 waitingSent.get() ? "dingtalk.stream.waiting.fast-track.sent" : "dingtalk.stream.waiting.fast-track.failed",
                                 Map.of(
@@ -193,6 +210,9 @@ class DingtalkStreamMessageDispatcher {
                 DingtalkMessageHandle handle = sendWaitingStatus(conversationId, sessionWebhook, settings.streamWaitingText());
                 messageHandleRef.set(handle);
                 waitingSent.set(handle != null && handle.sent());
+                if (waitingSent.get()) {
+                    recordFirstStatusLatency(receivedAtMillis, firstStatusRecorded);
+                }
                 logEvent(waitingSent.get() ? Level.INFO : Level.WARNING,
                         waitingSent.get() ? "dingtalk.stream.waiting.sent" : "dingtalk.stream.waiting.failed",
                         Map.of(
@@ -213,6 +233,9 @@ class DingtalkStreamMessageDispatcher {
                 DingtalkMessageHandle handle = sendWaitingStatus(conversationId, sessionWebhook, settings.streamWaitingText());
                 messageHandleRef.set(handle);
                 waitingSent.set(handle != null && handle.sent());
+                if (waitingSent.get()) {
+                    recordFirstStatusLatency(receivedAtMillis, firstStatusRecorded);
+                }
                 logEvent(waitingSent.get() ? Level.INFO : Level.WARNING,
                         waitingSent.get() ? "dingtalk.stream.waiting.sent" : "dingtalk.stream.waiting.failed",
                         Map.of(
@@ -245,6 +268,7 @@ class DingtalkStreamMessageDispatcher {
             messageHandleRef.set(handle);
             if (handle != null && handle.sent()) {
                 waitingSent.set(true);
+                recordFirstStatusLatency(receivedAtMillis, firstStatusRecorded);
             }
             logEvent(waitingSent.get() ? Level.INFO : Level.WARNING,
                     waitingSent.get() ? "dingtalk.stream.timeout.notice.sent" : "dingtalk.stream.timeout.notice.failed",
@@ -390,8 +414,8 @@ class DingtalkStreamMessageDispatcher {
         }
         long now = System.currentTimeMillis();
         int currentLength = snapshot.length();
-        if (now - lastCardUpdateAtMillis.get() < CARD_UPDATE_MIN_INTERVAL_MILLIS
-                && currentLength - lastCardUpdateChars.get() < CARD_UPDATE_MIN_DELTA_CHARS) {
+        if (now - lastCardUpdateAtMillis.get() < Math.max(0L, cardUpdateMinIntervalMillis)
+                && currentLength - lastCardUpdateChars.get() < Math.max(1, cardUpdateMinDeltaChars)) {
             return;
         }
         pendingCardSnapshot.set(snapshot);
@@ -436,6 +460,8 @@ class DingtalkStreamMessageDispatcher {
                             "conversationHash", safeHash(conversationId),
                             "replyLength", snapshot.length()
                     ));
+                    sessionCardUpdateCounts.merge(safeHash(conversationId), 1, Integer::sum);
+                    trimSessionStatsIfNeeded();
                 }
             }
         } finally {
@@ -462,6 +488,20 @@ class DingtalkStreamMessageDispatcher {
         markdown.append("- 渠道：DingTalk Stream\n\n");
         markdown.append(normalizedBody.isBlank() ? "(暂无文本内容)" : normalizedBody);
         return markdown.toString();
+    }
+
+    Map<String, Object> streamStatsSnapshot() {
+        Map<String, Object> stats = new LinkedHashMap<>();
+        long statusCount = firstStatusLatencyCount.get();
+        long statusTotal = firstStatusLatencyTotalMs.get();
+        long tokenCount = firstTokenLatencyCount.get();
+        long tokenTotal = firstTokenLatencyTotalMs.get();
+        stats.put("avgFirstStatusLatencyMs", averageMillis(statusTotal, statusCount));
+        stats.put("avgFirstTokenLatencyMs", averageMillis(tokenTotal, tokenCount));
+        stats.put("firstStatusSamples", statusCount);
+        stats.put("firstTokenSamples", tokenCount);
+        stats.put("cardUpdatesPerConversation", Map.copyOf(new LinkedHashMap<>(sessionCardUpdateCounts)));
+        return Map.copyOf(stats);
     }
 
     private java.util.List<String> splitForDingtalk(String reply) {
@@ -569,6 +609,41 @@ class DingtalkStreamMessageDispatcher {
 
     private int safeLength(String value) {
         return value == null ? 0 : value.trim().length();
+    }
+
+    private void recordFirstStatusLatency(long receivedAtMillis, AtomicBoolean recordedFlag) {
+        if (!recordedFlag.compareAndSet(false, true)) {
+            return;
+        }
+        long latency = Math.max(0L, System.currentTimeMillis() - receivedAtMillis);
+        firstStatusLatencyTotalMs.addAndGet(latency);
+        firstStatusLatencyCount.incrementAndGet();
+    }
+
+    private void recordFirstTokenLatency(long receivedAtMillis, AtomicBoolean recordedFlag) {
+        if (!recordedFlag.compareAndSet(false, true)) {
+            return;
+        }
+        long latency = Math.max(0L, System.currentTimeMillis() - receivedAtMillis);
+        firstTokenLatencyTotalMs.addAndGet(latency);
+        firstTokenLatencyCount.incrementAndGet();
+    }
+
+    private double averageMillis(long total, long count) {
+        if (count <= 0L) {
+            return 0.0d;
+        }
+        return Math.round((total * 10.0d) / count) / 10.0d;
+    }
+
+    private void trimSessionStatsIfNeeded() {
+        if (sessionCardUpdateCounts.size() <= STREAM_STATS_MAX_SESSION_ENTRIES) {
+            return;
+        }
+        String keyToRemove = sessionCardUpdateCounts.keySet().stream().findFirst().orElse("");
+        if (!keyToRemove.isBlank()) {
+            sessionCardUpdateCounts.remove(keyToRemove);
+        }
     }
 
     private void logEvent(Level level, String eventName, Map<String, Object> fields) {

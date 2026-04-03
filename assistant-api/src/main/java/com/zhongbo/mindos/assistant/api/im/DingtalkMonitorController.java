@@ -17,15 +17,18 @@ public class DingtalkMonitorController {
 
     private final DingtalkOpenApiConversationSender conversationSender;
     private final DingtalkOpenApiMessageClient openApiMessageClient;
+    private final DingtalkStreamMessageDispatcher streamMessageDispatcher;
     private final AdminTokenGuard adminTokenGuard;
     private final boolean tokenMonitorEnabled;
 
     public DingtalkMonitorController(DingtalkOpenApiConversationSender conversationSender,
                                      DingtalkOpenApiMessageClient openApiMessageClient,
+                                     DingtalkStreamMessageDispatcher streamMessageDispatcher,
                                      AdminTokenGuard adminTokenGuard,
                                      @Value("${mindos.im.dingtalk.token-monitor.enabled:true}") boolean tokenMonitorEnabled) {
         this.conversationSender = conversationSender;
         this.openApiMessageClient = openApiMessageClient;
+        this.streamMessageDispatcher = streamMessageDispatcher;
         this.adminTokenGuard = adminTokenGuard;
         this.tokenMonitorEnabled = tokenMonitorEnabled;
     }
@@ -51,6 +54,15 @@ public class DingtalkMonitorController {
         Map<String, Object> response = new LinkedHashMap<>();
         response.put("timestamp", Instant.now().toString());
         response.put("streamOutbound", conversationSender.outboundDebugSnapshot());
+        return Map.copyOf(response);
+    }
+
+    @GetMapping("/stream-stats")
+    public Map<String, Object> streamStats(HttpServletRequest request) {
+        adminTokenGuard.verify(request, "admin", "im.dingtalk.stream-stats", "/api/im/dingtalk/stream-stats");
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("timestamp", Instant.now().toString());
+        response.put("stats", streamMessageDispatcher.streamStatsSnapshot());
         return Map.copyOf(response);
     }
 }
