@@ -3,6 +3,8 @@ package com.zhongbo.mindos.assistant.memory;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
 
+import java.util.Arrays;
+import java.util.List;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -14,6 +16,8 @@ public class MemoryRuntimeProperties {
     private final Search search = new Search();
     private final Embedding embedding = new Embedding();
     private final Layers layers = new Layers();
+    private final Filter filter = new Filter();
+    private final Rerank rerank = new Rerank();
 
     public WriteGate getWriteGate() {
         return writeGate;
@@ -29,6 +33,14 @@ public class MemoryRuntimeProperties {
 
     public Layers getLayers() {
         return layers;
+    }
+
+    public Filter getFilter() {
+        return filter;
+    }
+
+    public Rerank getRerank() {
+        return rerank;
     }
 
     public static MemoryRuntimeProperties fromSystemProperties() {
@@ -69,6 +81,12 @@ public class MemoryRuntimeProperties {
                 System.getProperty("mindos.memory.search.hybrid.k1"), 1.2));
         properties.getSearch().getHybrid().setB(parsePositiveDouble(
                 System.getProperty("mindos.memory.search.hybrid.b"), 0.75));
+        properties.getFilter().setEnabled(Boolean.parseBoolean(
+                System.getProperty("mindos.memory.filter.enabled", "false")));
+        properties.getFilter().setBlockTerms(parseCsv(
+                System.getProperty("mindos.memory.filter.block-terms"), List.of()));
+        properties.getFilter().setAllowTerms(parseCsv(
+                System.getProperty("mindos.memory.filter.allow-terms"), List.of()));
         properties.getEmbedding().getLocal().setEnabled(Boolean.parseBoolean(
                 System.getProperty("mindos.memory.embedding.local.enabled", "false")));
         properties.getEmbedding().getLocal().setDimensions(parsePositiveInt(
@@ -105,6 +123,12 @@ public class MemoryRuntimeProperties {
                 System.getProperty("mindos.memory.embedding.onnx.cache.maximum-size"), 10_000));
         properties.getEmbedding().getOnnx().getCache().setExpireAfterAccessSeconds(parsePositiveInt(
                 System.getProperty("mindos.memory.embedding.onnx.cache.expire-after-access-seconds"), 3600));
+        properties.getRerank().setEnabled(Boolean.parseBoolean(
+                System.getProperty("mindos.memory.rerank.enabled", "false")));
+        properties.getRerank().setMaxCandidates(parsePositiveInt(
+                System.getProperty("mindos.memory.rerank.max-candidates"), 10));
+        properties.getRerank().setScoreWeight(parsePositiveDouble(
+                System.getProperty("mindos.memory.rerank.score-weight"), 0.5));
         properties.getLayers().setEnabled(Boolean.parseBoolean(
                 System.getProperty("mindos.memory.layers.enabled", "false")));
         properties.getLayers().setBufferHours(parsePositiveInt(
@@ -156,6 +180,17 @@ public class MemoryRuntimeProperties {
         } catch (NumberFormatException ex) {
             return fallback;
         }
+    }
+
+    private static List<String> parseCsv(String raw, List<String> fallback) {
+        if (raw == null || raw.isBlank()) {
+            return fallback;
+        }
+        List<String> values = Arrays.stream(raw.split(","))
+                .map(String::trim)
+                .filter(value -> !value.isBlank())
+                .toList();
+        return values.isEmpty() ? fallback : values;
     }
 
     public static class WriteGate {
@@ -386,6 +421,36 @@ public class MemoryRuntimeProperties {
         }
     }
 
+    public static class Filter {
+        private boolean enabled = false;
+        private List<String> blockTerms = List.of();
+        private List<String> allowTerms = List.of();
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
+        }
+
+        public List<String> getBlockTerms() {
+            return blockTerms;
+        }
+
+        public void setBlockTerms(List<String> blockTerms) {
+            this.blockTerms = blockTerms == null ? List.of() : List.copyOf(blockTerms);
+        }
+
+        public List<String> getAllowTerms() {
+            return allowTerms;
+        }
+
+        public void setAllowTerms(List<String> allowTerms) {
+            this.allowTerms = allowTerms == null ? List.of() : List.copyOf(allowTerms);
+        }
+    }
+
     public static class Embedding {
         private final Local local = new Local();
         private final Onnx onnx = new Onnx();
@@ -584,6 +649,40 @@ public class MemoryRuntimeProperties {
                     this.expireAfterAccessSeconds = expireAfterAccessSeconds > 0 ? expireAfterAccessSeconds : 3600;
                 }
             }
+        }
+    }
+
+    public static class Rerank {
+        private boolean enabled = false;
+        private int maxCandidates = 10;
+        private double scoreWeight = 0.5;
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
+        }
+
+        public int getMaxCandidates() {
+            return maxCandidates;
+        }
+
+        public void setMaxCandidates(int maxCandidates) {
+            this.maxCandidates = maxCandidates > 0 ? maxCandidates : 10;
+        }
+
+        public double getScoreWeight() {
+            return scoreWeight;
+        }
+
+        public void setScoreWeight(double scoreWeight) {
+            if (!Double.isFinite(scoreWeight)) {
+                this.scoreWeight = 0.5;
+                return;
+            }
+            this.scoreWeight = Math.max(0.0, Math.min(1.0, scoreWeight));
         }
     }
 

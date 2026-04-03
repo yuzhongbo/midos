@@ -38,6 +38,7 @@ public class SemanticMemoryService implements MemoryWriteGateMetricsReader, Memo
     private final LexicalSearchScorer lexicalSearchScorer;
     private final MemoryLayerPolicy memoryLayerPolicy;
     private final LocalEmbeddingService localEmbeddingService;
+    private final ContentFilter contentFilter;
     private final Map<String, UserSemanticStore> entriesByUser = new ConcurrentHashMap<>();
     private final Map<String, Map<String, MemoryRecord>> semanticTopicRecordsByUser = new ConcurrentHashMap<>();
     private final AtomicLong secondaryDuplicateCheckCount = new AtomicLong();
@@ -48,20 +49,24 @@ public class SemanticMemoryService implements MemoryWriteGateMetricsReader, Memo
                                  MemoryRuntimeProperties properties,
                                  LexicalSearchScorer lexicalSearchScorer,
                                  MemoryLayerPolicy memoryLayerPolicy,
-                                 LocalEmbeddingService localEmbeddingService) {
+                                 LocalEmbeddingService localEmbeddingService,
+                                 ContentFilter contentFilter) {
         this.memoryConsolidationService = memoryConsolidationService;
         this.properties = properties;
         this.lexicalSearchScorer = lexicalSearchScorer;
         this.memoryLayerPolicy = memoryLayerPolicy;
         this.localEmbeddingService = localEmbeddingService;
+        this.contentFilter = contentFilter;
     }
 
     public SemanticMemoryService(MemoryConsolidationService memoryConsolidationService) {
+        MemoryRuntimeProperties props = MemoryRuntimeProperties.fromSystemProperties();
         this(memoryConsolidationService,
-                MemoryRuntimeProperties.fromSystemProperties(),
+                props,
                 new Bm25LexicalSearchScorer(),
                 new DefaultMemoryLayerPolicy(),
-                new HashingLocalEmbeddingService(memoryConsolidationService));
+                new HashingLocalEmbeddingService(memoryConsolidationService, props),
+                new KeywordContentFilter(props, memoryConsolidationService));
     }
 
     public void remember(String userId, String text, List<Double> embedding) {
@@ -75,6 +80,9 @@ public class SemanticMemoryService implements MemoryWriteGateMetricsReader, Memo
     public boolean storeAcceptedEntry(String userId, SemanticMemoryEntry entry, String bucket) {
         SemanticMemoryEntry consolidated = prepareEntry(entry);
         if (consolidated == null || consolidated.text().isBlank()) {
+            return false;
+        }
+        if (!contentFilter.isAllowed(consolidated.text())) {
             return false;
         }
         String normalizedBucket = normalizeBucket(bucket);
@@ -96,6 +104,9 @@ public class SemanticMemoryService implements MemoryWriteGateMetricsReader, Memo
     public void addEntry(String userId, SemanticMemoryEntry entry, String bucket) {
         SemanticMemoryEntry consolidated = prepareEntry(entry);
         if (consolidated == null || consolidated.text().isBlank()) {
+            return;
+        }
+        if (!contentFilter.isAllowed(consolidated.text())) {
             return;
         }
         String normalizedBucket = normalizeBucket(bucket);

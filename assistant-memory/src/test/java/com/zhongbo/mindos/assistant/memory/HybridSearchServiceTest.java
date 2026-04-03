@@ -65,4 +65,31 @@ class HybridSearchServiceTest {
                     results.stream().map(HybridSearchService.HybridSearchResult::documentId).toList());
         }
     }
+
+    @Test
+    void shouldRerankWithEmbeddingSimilarity() throws IOException {
+        EmbeddingService embeddingService = text -> switch (text) {
+            case "query" -> new float[]{1.0f, 0.0f};
+            case "doc strong" -> new float[]{0.9f, 0.1f};
+            case "doc weak" -> new float[]{0.1f, 0.9f};
+            default -> new float[]{0.0f, 0.0f};
+        };
+        MemoryRuntimeProperties properties = new MemoryRuntimeProperties();
+        properties.getRerank().setEnabled(true);
+        properties.getRerank().setMaxCandidates(2);
+        properties.getRerank().setScoreWeight(1.0);
+
+        RerankerService reranker = new EmbeddingSimilarityReranker(embeddingService, properties);
+
+        try (HybridSearchService service = new HybridSearchService(embeddingService,
+                0.5, 0.5, 4, reranker)) {
+            service.upsert("doc-1", "doc weak");
+            service.upsert("doc-2", "doc strong");
+
+            List<HybridSearchService.HybridSearchResult> results = service.search("query", 2);
+
+            assertEquals(2, results.size());
+            assertEquals("doc-2", results.get(0).documentId());
+        }
+    }
 }

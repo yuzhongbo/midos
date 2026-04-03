@@ -80,6 +80,31 @@ class SemanticMemoryServiceTest {
     }
 
     @Test
+    void shouldBlockEntriesWhenFilterMatches() {
+        MemoryConsolidationService consolidationService = new MemoryConsolidationService();
+        MemoryRuntimeProperties properties = MemoryRuntimeProperties.fromSystemProperties();
+        properties.getFilter().setEnabled(true);
+        properties.getFilter().setBlockTerms(List.of("广告", "spam"));
+        properties.getFilter().setAllowTerms(List.of("白名单"));
+
+        SemanticMemoryService service = new SemanticMemoryService(
+                consolidationService,
+                properties,
+                new Bm25LexicalSearchScorer(),
+                new DefaultMemoryLayerPolicy(),
+                new HashingLocalEmbeddingService(consolidationService, properties),
+                new KeywordContentFilter(properties, consolidationService)
+        );
+
+        service.addEntry("filter-user", SemanticMemoryEntry.of("这是一条广告内容", List.of(0.1, 0.2)));
+        service.addEntry("filter-user", SemanticMemoryEntry.of("这是一条白名单广告", List.of(0.1, 0.2)));
+
+        List<SemanticMemoryEntry> results = service.search("filter-user", 10);
+        assertEquals(1, results.size());
+        assertTrue(results.get(0).text().contains("白名单"));
+    }
+
+    @Test
     void shouldNotApplyCrossBucketCapWithoutExplicitPreferredBucket() {
         String oldMax = System.getProperty("mindos.memory.search.cross-bucket.max");
         String oldRatio = System.getProperty("mindos.memory.search.cross-bucket.ratio");

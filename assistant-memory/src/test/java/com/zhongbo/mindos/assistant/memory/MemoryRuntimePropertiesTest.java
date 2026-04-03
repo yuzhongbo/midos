@@ -6,6 +6,7 @@ import org.springframework.core.env.MapPropertySource;
 import org.springframework.core.env.MutablePropertySources;
 import org.springframework.core.env.StandardEnvironment;
 
+import java.util.List;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -34,6 +35,9 @@ class MemoryRuntimePropertiesTest {
         assertEquals(0.55, properties.getSearch().getHybrid().getLexicalWeight());
         assertEquals(1.2, properties.getSearch().getHybrid().getK1());
         assertEquals(0.75, properties.getSearch().getHybrid().getB());
+        assertFalse(properties.getFilter().isEnabled());
+        assertTrue(properties.getFilter().getBlockTerms().isEmpty());
+        assertTrue(properties.getFilter().getAllowTerms().isEmpty());
 
         assertFalse(properties.getEmbedding().getLocal().isEnabled());
         assertEquals(16, properties.getEmbedding().getLocal().getDimensions());
@@ -52,6 +56,9 @@ class MemoryRuntimePropertiesTest {
         assertEquals(10_000, properties.getEmbedding().getOnnx().getCache().getMaximumSize());
         assertEquals(3600, properties.getEmbedding().getOnnx().getCache().getExpireAfterAccessSeconds());
 
+        assertFalse(properties.getRerank().isEnabled());
+        assertEquals(10, properties.getRerank().getMaxCandidates());
+        assertEquals(0.5, properties.getRerank().getScoreWeight());
         assertFalse(properties.getLayers().isEnabled());
         assertEquals(6, properties.getLayers().getBufferHours());
         assertEquals(72, properties.getLayers().getWorkingHours());
@@ -75,6 +82,9 @@ class MemoryRuntimePropertiesTest {
                         "mindos.memory.search.hybrid.lexical-weight", "0.6",
                         "mindos.memory.search.hybrid.k1", "1.5",
                         "mindos.memory.search.hybrid.b", "0.7",
+                        "mindos.memory.filter.enabled", "true",
+                        "mindos.memory.filter.block-terms", "广告,spam",
+                        "mindos.memory.filter.allow-terms", "white",
                         "mindos.memory.embedding.local.enabled", "true",
                         "mindos.memory.embedding.local.dimensions", "24",
                         "mindos.memory.embedding.preprocess.enabled", "false",
@@ -93,6 +103,9 @@ class MemoryRuntimePropertiesTest {
                         "mindos.memory.embedding.onnx.cache.enabled", "false",
                         "mindos.memory.embedding.onnx.cache.maximum-size", "2048",
                         "mindos.memory.embedding.onnx.cache.expire-after-access-seconds", "120",
+                        "mindos.memory.rerank.enabled", "true",
+                        "mindos.memory.rerank.max-candidates", "5",
+                        "mindos.memory.rerank.score-weight", "0.7",
                         "mindos.memory.layers.enabled", "true",
                         "mindos.memory.layers.buffer-hours", "4",
                         "mindos.memory.layers.working-hours", "48",
@@ -115,6 +128,9 @@ class MemoryRuntimePropertiesTest {
         assertEquals(0.6, properties.getSearch().getHybrid().getLexicalWeight());
         assertEquals(1.5, properties.getSearch().getHybrid().getK1());
         assertEquals(0.7, properties.getSearch().getHybrid().getB());
+        assertTrue(properties.getFilter().isEnabled());
+        assertEquals(List.of("广告", "spam"), properties.getFilter().getBlockTerms());
+        assertEquals(List.of("white"), properties.getFilter().getAllowTerms());
 
         assertTrue(properties.getEmbedding().getLocal().isEnabled());
         assertEquals(24, properties.getEmbedding().getLocal().getDimensions());
@@ -135,6 +151,9 @@ class MemoryRuntimePropertiesTest {
         assertEquals(2048, properties.getEmbedding().getOnnx().getCache().getMaximumSize());
         assertEquals(120, properties.getEmbedding().getOnnx().getCache().getExpireAfterAccessSeconds());
 
+        assertTrue(properties.getRerank().isEnabled());
+        assertEquals(5, properties.getRerank().getMaxCandidates());
+        assertEquals(0.7, properties.getRerank().getScoreWeight());
         assertTrue(properties.getLayers().isEnabled());
         assertEquals(4, properties.getLayers().getBufferHours());
         assertEquals(48, properties.getLayers().getWorkingHours());
@@ -156,10 +175,12 @@ class MemoryRuntimePropertiesTest {
                         "mindos.memory.search.cross-bucket.ratio", "0.2",
                         "mindos.memory.search.hybrid.enabled", "false",
                         "mindos.memory.search.hybrid.lexical-weight", "0.2",
+                        "mindos.memory.filter.enabled", "false",
                         "mindos.memory.embedding.local.enabled", "false",
                         "mindos.memory.embedding.local.dimensions", "12",
                         "mindos.memory.embedding.onnx.enabled", "false",
                         "mindos.memory.embedding.onnx.batch-size", "8",
+                        "mindos.memory.rerank.enabled", "false",
                         "mindos.memory.layers.enabled", "false",
                         "mindos.memory.layers.working-hours", "24"
                 ),
@@ -175,10 +196,16 @@ class MemoryRuntimePropertiesTest {
                         "mindos.memory.search.cross-bucket.ratio", "0.75",
                         "mindos.memory.search.hybrid.enabled", "true",
                         "mindos.memory.search.hybrid.lexical-weight", "0.9",
+                        "mindos.memory.filter.enabled", "true",
+                        "mindos.memory.filter.block-terms", "deny",
+                        "mindos.memory.filter.allow-terms", "ok",
                         "mindos.memory.embedding.local.enabled", "true",
                         "mindos.memory.embedding.local.dimensions", "40",
                         "mindos.memory.embedding.onnx.enabled", "true",
                         "mindos.memory.embedding.onnx.batch-size", "64",
+                        "mindos.memory.rerank.enabled", "true",
+                        "mindos.memory.rerank.max-candidates", "12",
+                        "mindos.memory.rerank.score-weight", "0.8",
                         "mindos.memory.layers.enabled", "true",
                         "mindos.memory.layers.working-hours", "120"
                 )
@@ -196,10 +223,16 @@ class MemoryRuntimePropertiesTest {
         assertEquals(0.75, properties.getSearch().getCrossBucketRatio());
         assertTrue(properties.getSearch().getHybrid().isEnabled());
         assertEquals(0.9, properties.getSearch().getHybrid().getLexicalWeight());
+        assertTrue(properties.getFilter().isEnabled());
+        assertEquals(List.of("deny"), properties.getFilter().getBlockTerms());
+        assertEquals(List.of("ok"), properties.getFilter().getAllowTerms());
         assertTrue(properties.getEmbedding().getLocal().isEnabled());
         assertEquals(40, properties.getEmbedding().getLocal().getDimensions());
         assertTrue(properties.getEmbedding().getOnnx().isEnabled());
         assertEquals(64, properties.getEmbedding().getOnnx().getBatchSize());
+        assertTrue(properties.getRerank().isEnabled());
+        assertEquals(12, properties.getRerank().getMaxCandidates());
+        assertEquals(0.8, properties.getRerank().getScoreWeight());
         assertTrue(properties.getLayers().isEnabled());
         assertEquals(120, properties.getLayers().getWorkingHours());
     }
