@@ -146,6 +146,12 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
     private final String llmDslPreset;
     private final String llmFallbackProvider;
     private final String llmFallbackPreset;
+    private final boolean localEscalationEnabled;
+    private final String localEscalationCloudProvider;
+    private final String localEscalationCloudPreset;
+    private final int llmDslMaxTokens;
+    private final int llmFallbackMaxTokens;
+    private final int skillFinalizeMaxTokens;
     private final boolean postSkillSummaryEnabled;
     private final Set<String> postSkillSummarySkills;
     private final int postSkillSummaryMaxReplyChars;
@@ -233,6 +239,12 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                               @Value("${mindos.dispatcher.llm-dsl.preset:}") String llmDslPreset,
                               @Value("${mindos.dispatcher.llm-fallback.provider:}") String llmFallbackProvider,
                               @Value("${mindos.dispatcher.llm-fallback.preset:}") String llmFallbackPreset,
+                               @Value("${mindos.dispatcher.local-escalation.enabled:false}") boolean localEscalationEnabled,
+                               @Value("${mindos.dispatcher.local-escalation.cloud-provider:qwen}") String localEscalationCloudProvider,
+                               @Value("${mindos.dispatcher.local-escalation.cloud-preset:quality}") String localEscalationCloudPreset,
+                               @Value("${mindos.dispatcher.llm-dsl.max-tokens:0}") int llmDslMaxTokens,
+                               @Value("${mindos.dispatcher.llm-fallback.max-tokens:0}") int llmFallbackMaxTokens,
+                               @Value("${mindos.dispatcher.skill.finalize-with-llm.max-tokens:0}") int skillFinalizeMaxTokens,
                               @Value("${mindos.memory.post-skill-summary.enabled:false}") boolean postSkillSummaryEnabled,
                               @Value("${mindos.memory.post-skill-summary.skills:teaching.plan,todo.create,eq.coach,code.generate,file.search}") String postSkillSummarySkills,
                               @Value("${mindos.memory.post-skill-summary.max-reply-chars:280}") int postSkillSummaryMaxReplyChars,
@@ -298,6 +310,12 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         this.llmDslPreset = normalizeOptionalConfig(llmDslPreset);
         this.llmFallbackProvider = normalizeOptionalConfig(llmFallbackProvider);
         this.llmFallbackPreset = normalizeOptionalConfig(llmFallbackPreset);
+        this.localEscalationEnabled = localEscalationEnabled;
+        this.localEscalationCloudProvider = normalizeOptionalConfig(localEscalationCloudProvider);
+        this.localEscalationCloudPreset = normalizeOptionalConfig(localEscalationCloudPreset);
+        this.llmDslMaxTokens = Math.max(0, llmDslMaxTokens);
+        this.llmFallbackMaxTokens = Math.max(0, llmFallbackMaxTokens);
+        this.skillFinalizeMaxTokens = Math.max(0, skillFinalizeMaxTokens);
         this.postSkillSummaryEnabled = postSkillSummaryEnabled;
         this.postSkillSummarySkills = parseCsvSet(postSkillSummarySkills);
         this.postSkillSummaryMaxReplyChars = Math.max(80, postSkillSummaryMaxReplyChars);
@@ -562,7 +580,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         if (!llmDecisionEngine.shouldCallLLM(queryContext)) {
             return buildMemoryDirectResult(promptMemoryContext, userInput);
         }
-        return SkillResult.success("llm", llmClient.generateResponse(
+        return SkillResult.success("llm", callLlmWithLocalEscalation(
                 buildFallbackPrompt(memoryContext, promptMemoryContext, userInput, realtimeIntentInput),
                 llmContext
         ));
@@ -595,7 +613,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         });
         String output = aggregated.toString().trim();
         if (output.isBlank()) {
-            output = llmClient.generateResponse(prompt, llmContext);
+            output = callLlmWithLocalEscalation(prompt, llmContext);
         }
         return SkillResult.success("llm", output);
     }
@@ -668,7 +686,8 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         if (skillFinalizeWithLlmPreset != null) {
             finalizeContext.put("llmPreset", skillFinalizeWithLlmPreset);
         }
-        String optimized = llmClient.generateResponse(prompt, finalizeContext);
+        applyStageLlmRoute("skill-postprocess", null, finalizeContext);
+        String optimized = callLlmWithLocalEscalation(prompt, finalizeContext);
         if (optimized == null || optimized.isBlank()) {
             return SkillFinalizeOutcome.notApplied(result);
         }
@@ -1980,19 +1999,12 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         llmContext.put("memoryContext", memoryContext);
         llmContext.put("input", userInput);
         llmContext.put("routeStage", "llm-dsl");
+        applyStageLlmRoute("llm-dsl", profileContext, llmContext);
         List<Map<String, Object>> chatHistory = buildChatHistory(userId);
         if (!chatHistory.isEmpty()) {
             llmContext.put("chatHistory", chatHistory);
         }
-        String llmProvider = profileContext == null ? null : asString(profileContext.get("llmProvider"));
-        if (llmProvider != null) {
-            llmContext.put("llmProvider", llmProvider);
-        }
-        String llmPreset = profileContext == null ? null : asString(profileContext.get("llmPreset"));
-        if (llmPreset != null) {
-            llmContext.put("llmPreset", llmPreset);
-        }
-        String llmReply = llmClient.generateResponse(prompt, Map.copyOf(llmContext));
+        String llmReply = callLlmWithLocalEscalation(prompt, Map.copyOf(llmContext));
         if (llmReply == null || llmReply.isBlank() || "NONE".equalsIgnoreCase(llmReply.trim())) {
             return Optional.empty();
         }
@@ -2417,6 +2429,9 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
     private void applyStageLlmRoute(String stage,
                                     Map<String, Object> profileContext,
                                     Map<String, Object> llmContext) {
+        if (llmContext == null) {
+            return;
+        }
         String profileProvider = profileContext == null ? null : asString(profileContext.get("llmProvider"));
         String profilePreset = profileContext == null ? null : asString(profileContext.get("llmPreset"));
 
@@ -2443,6 +2458,74 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         if (preset != null) {
             llmContext.put("llmPreset", preset);
         }
+        if ("llm-dsl".equals(stage) && llmDslMaxTokens > 0) {
+            llmContext.put("maxTokens", llmDslMaxTokens);
+        }
+        if ("llm-fallback".equals(stage) && llmFallbackMaxTokens > 0) {
+            llmContext.put("maxTokens", llmFallbackMaxTokens);
+        }
+        if ("skill-postprocess".equals(stage) && skillFinalizeMaxTokens > 0) {
+            llmContext.put("maxTokens", skillFinalizeMaxTokens);
+        }
+    }
+
+    private String callLlmWithLocalEscalation(String prompt, Map<String, Object> llmContext) {
+        String primaryReply = llmClient.generateResponse(prompt, llmContext);
+        if (!shouldEscalateLocalFailure(primaryReply, llmContext)) {
+            return primaryReply;
+        }
+        Map<String, Object> escalatedContext = new LinkedHashMap<>(llmContext == null ? Map.of() : llmContext);
+        String cloudProvider = resolveEscalationProvider(escalatedContext);
+        if (cloudProvider == null) {
+            return primaryReply;
+        }
+        escalatedContext.put("llmProvider", cloudProvider);
+        if (localEscalationCloudPreset != null) {
+            escalatedContext.put("llmPreset", localEscalationCloudPreset);
+        }
+        LOGGER.info("Dispatcher route=llm-local-escalation, from=local, to=" + cloudProvider
+                + ", stage=" + asString(escalatedContext.get("routeStage")));
+        return llmClient.generateResponse(prompt, escalatedContext);
+    }
+
+    private boolean shouldEscalateLocalFailure(String reply, Map<String, Object> llmContext) {
+        if (!localEscalationEnabled || llmContext == null || llmContext.isEmpty()) {
+            return false;
+        }
+        String provider = normalize(asString(llmContext.get("llmProvider")));
+        if (!"local".equals(provider) && !"ollama".equals(provider) && !"gemma".equals(provider)) {
+            return false;
+        }
+        String normalizedReply = normalize(reply);
+        if (normalizedReply.isBlank()) {
+            return true;
+        }
+        if (!normalizedReply.startsWith("[llm local]")) {
+            return false;
+        }
+        return normalizedReply.contains("request failed")
+                || normalizedReply.contains("unavailable")
+                || normalizedReply.contains("fallback mode active")
+                || normalizedReply.contains("missing");
+    }
+
+    private String resolveEscalationProvider(Map<String, Object> llmContext) {
+        String configured = localEscalationCloudProvider;
+        if (configured == null) {
+            configured = llmFallbackProvider;
+        }
+        String normalized = normalize(configured);
+        if (normalized.isBlank()
+                || "local".equals(normalized)
+                || "ollama".equals(normalized)
+                || "gemma".equals(normalized)) {
+            return null;
+        }
+        String currentProvider = normalize(asString(llmContext.get("llmProvider")));
+        if (normalized.equals(currentProvider)) {
+            return null;
+        }
+        return configured.trim();
     }
 
     private void recordRoutingReplaySample(String userInput,

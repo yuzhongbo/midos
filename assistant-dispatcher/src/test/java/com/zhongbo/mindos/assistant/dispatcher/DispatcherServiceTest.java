@@ -552,6 +552,116 @@ class DispatcherServiceTest {
     }
 
     @Test
+    void shouldEscalateLocalFallbackToCloudWhenLocalReplyIndicatesFailure() {
+        MemoryManager memoryManager = createMemoryManager();
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of(
+                "[LLM local] request failed after 1 attempt(s). Please retry later.",
+                "cloud-recovered reply"
+        ));
+        DispatcherService service = createDispatcher(
+                memoryManager,
+                llmClient,
+                List.of(),
+                2,
+                "auto",
+                0,
+                "time",
+                "",
+                "",
+                "local",
+                "cost",
+                false,
+                "",
+                false,
+                "",
+                "",
+                "",
+                true,
+                "天气,新闻,热点,实时",
+                true,
+                280,
+                true,
+                true,
+                false,
+                true,
+                "qwen",
+                "quality",
+                0,
+                0,
+                0
+        );
+
+        DispatchResult result = service.dispatch("escalation-user", "谢谢");
+
+        assertEquals("llm", result.channel());
+        assertEquals("cloud-recovered reply", result.reply());
+        assertEquals(2, llmClient.fallbackCallCount());
+        assertEquals("local", String.valueOf(llmClient.fallbackContexts().get(0).get("llmProvider")));
+        assertEquals("qwen", String.valueOf(llmClient.fallbackContexts().get(1).get("llmProvider")));
+    }
+
+    @Test
+    void shouldApplyStageMaxTokensToDslFallbackAndFinalizeContexts() {
+        MemoryManager memoryManager = createMemoryManager();
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of(
+                "{\"skill\":\"echo\",\"input\":{\"text\":\"auto-routed by llm-dsl\"}}",
+                "优化后的技能回复",
+                "普通 fallback 回复"
+        ));
+        DispatcherService service = createDispatcher(
+                memoryManager,
+                llmClient,
+                List.of(new FixedSkill("echo", "Echo text for generic confirmation requests", "raw echo output")),
+                2,
+                "auto",
+                0,
+                "time",
+                "",
+                "",
+                "local",
+                "cost",
+                false,
+                "",
+                true,
+                "echo",
+                "",
+                "",
+                true,
+                "天气,新闻,热点,实时",
+                true,
+                280,
+                true,
+                true,
+                false,
+                false,
+                "qwen",
+                "quality",
+                111,
+                222,
+                77
+        );
+
+        DispatchResult routed = service.dispatch("budget-user", "请帮我自动处理这个请求");
+        DispatchResult fallback = service.dispatch("budget-user", "谢谢");
+
+        assertEquals("echo", routed.channel());
+        assertEquals("llm", fallback.channel());
+        assertEquals(111, ((Number) llmClient.routingContexts().get(0).get("maxTokens")).intValue());
+
+        Map<String, Object> finalizeContext = llmClient.finalizeContexts().stream()
+                .filter(ctx -> "skill-postprocess".equals(String.valueOf(ctx.get("routeStage"))))
+                .findFirst()
+                .orElseThrow();
+        assertEquals(77, ((Number) finalizeContext.get("maxTokens")).intValue());
+
+        Map<String, Object> fallbackContext = llmClient.fallbackContexts().stream()
+                .filter(ctx -> "llm-fallback".equals(String.valueOf(ctx.get("routeStage"))))
+                .findFirst()
+                .orElseThrow();
+        assertEquals(222, ((Number) fallbackContext.get("maxTokens")).intValue());
+    }
+
+    @Test
     void shouldExposeContextCompressionMetricsAfterLongConversation() {
         MemoryManager memoryManager = createMemoryManager();
         RecordingLlmClient llmClient = new RecordingLlmClient(List.of("已完成总结"));
@@ -740,8 +850,51 @@ class DispatcherServiceTest {
                 skillFinalizeEnabled, skillFinalizeSkills, skillFinalizeProvider, skillFinalizePreset,
                 realtimeIntentBypassEnabled, realtimeIntentTerms,
                 realtimeIntentMemoryShrinkEnabled, realtimeIntentMemoryShrinkMaxChars, realtimeIntentMemoryShrinkIncludePersona,
+                semanticAnalysisEnabled, braveFirstSearchRoutingEnabled,
+                false, "qwen", "quality", 0, 0, 0);
+    }
+
+    private DispatcherService createDispatcher(MemoryManager memoryManager,
+                                               LlmClient llmClient,
+                                               List<Skill> skills,
+                                               int llmShortlistMaxSkills,
+                                               String preAnalyzeMode,
+                                               int preAnalyzeThreshold,
+                                               String preAnalyzeSkipSkills,
+                                               String llmDslProvider,
+                                               String llmDslPreset,
+                                               String llmFallbackProvider,
+                                               String llmFallbackPreset,
+                                               boolean postSkillSummaryEnabled,
+                                               String postSkillSummarySkills,
+                                               boolean skillFinalizeEnabled,
+                                               String skillFinalizeSkills,
+                                               String skillFinalizeProvider,
+                                               String skillFinalizePreset,
+                                               boolean realtimeIntentBypassEnabled,
+                                               String realtimeIntentTerms,
+                                               boolean realtimeIntentMemoryShrinkEnabled,
+                                               int realtimeIntentMemoryShrinkMaxChars,
+                                               boolean realtimeIntentMemoryShrinkIncludePersona,
+                                               boolean semanticAnalysisEnabled,
+                                               boolean braveFirstSearchRoutingEnabled,
+                                               boolean localEscalationEnabled,
+                                               String localEscalationCloudProvider,
+                                               String localEscalationCloudPreset,
+                                               int llmDslMaxTokens,
+                                               int llmFallbackMaxTokens,
+                                               int skillFinalizeMaxTokens) {
+        return createDispatcher(memoryManager, llmClient, skills, llmShortlistMaxSkills,
+                preAnalyzeMode, preAnalyzeThreshold, preAnalyzeSkipSkills,
+                llmDslProvider, llmDslPreset, llmFallbackProvider, llmFallbackPreset,
+                postSkillSummaryEnabled, postSkillSummarySkills,
+                skillFinalizeEnabled, skillFinalizeSkills, skillFinalizeProvider, skillFinalizePreset,
+                realtimeIntentBypassEnabled, realtimeIntentTerms,
+                realtimeIntentMemoryShrinkEnabled, realtimeIntentMemoryShrinkMaxChars, realtimeIntentMemoryShrinkIncludePersona,
                 true, "eq.coach,teaching.plan,todo.create,code.generate,file.search,mcp.*", 12000, "eq.coach timeout",
-                semanticAnalysisEnabled, braveFirstSearchRoutingEnabled);
+                semanticAnalysisEnabled, braveFirstSearchRoutingEnabled,
+                localEscalationEnabled, localEscalationCloudProvider, localEscalationCloudPreset,
+                llmDslMaxTokens, llmFallbackMaxTokens, skillFinalizeMaxTokens);
     }
 
     private DispatcherService createDispatcher(MemoryManager memoryManager,
@@ -847,6 +1000,52 @@ class DispatcherServiceTest {
                                                String eqCoachTimeoutReply,
                                                boolean semanticAnalysisEnabled,
                                                boolean braveFirstSearchRoutingEnabled) {
+        return createDispatcher(memoryManager, llmClient, skills, llmShortlistMaxSkills,
+                preAnalyzeMode, preAnalyzeThreshold, preAnalyzeSkipSkills,
+                llmDslProvider, llmDslPreset, llmFallbackProvider, llmFallbackPreset,
+                postSkillSummaryEnabled, postSkillSummarySkills,
+                skillFinalizeEnabled, skillFinalizeSkills, skillFinalizeProvider, skillFinalizePreset,
+                realtimeIntentBypassEnabled, realtimeIntentTerms,
+                realtimeIntentMemoryShrinkEnabled, realtimeIntentMemoryShrinkMaxChars, realtimeIntentMemoryShrinkIncludePersona,
+                preExecuteHeavySkillGuardEnabled, preExecuteHeavySkillGuardSkills, eqCoachTimeoutMs, eqCoachTimeoutReply,
+                semanticAnalysisEnabled, braveFirstSearchRoutingEnabled,
+                false, "qwen", "quality", 0, 0, 0);
+    }
+
+    private DispatcherService createDispatcher(MemoryManager memoryManager,
+                                               LlmClient llmClient,
+                                               List<Skill> skills,
+                                               int llmShortlistMaxSkills,
+                                               String preAnalyzeMode,
+                                               int preAnalyzeThreshold,
+                                               String preAnalyzeSkipSkills,
+                                               String llmDslProvider,
+                                               String llmDslPreset,
+                                               String llmFallbackProvider,
+                                               String llmFallbackPreset,
+                                               boolean postSkillSummaryEnabled,
+                                               String postSkillSummarySkills,
+                                               boolean skillFinalizeEnabled,
+                                               String skillFinalizeSkills,
+                                               String skillFinalizeProvider,
+                                               String skillFinalizePreset,
+                                               boolean realtimeIntentBypassEnabled,
+                                               String realtimeIntentTerms,
+                                               boolean realtimeIntentMemoryShrinkEnabled,
+                                               int realtimeIntentMemoryShrinkMaxChars,
+                                               boolean realtimeIntentMemoryShrinkIncludePersona,
+                                               boolean preExecuteHeavySkillGuardEnabled,
+                                               String preExecuteHeavySkillGuardSkills,
+                                               long eqCoachTimeoutMs,
+                                               String eqCoachTimeoutReply,
+                                               boolean semanticAnalysisEnabled,
+                                               boolean braveFirstSearchRoutingEnabled,
+                                               boolean localEscalationEnabled,
+                                               String localEscalationCloudProvider,
+                                               String localEscalationCloudPreset,
+                                               int llmDslMaxTokens,
+                                               int llmFallbackMaxTokens,
+                                               int skillFinalizeMaxTokens) {
         SkillRegistry registry = new SkillRegistry(skills);
         SkillDslExecutor dslExecutor = new SkillDslExecutor(registry);
         SkillEngine skillEngine = new SkillEngine(registry, dslExecutor, memoryManager);
@@ -924,6 +1123,12 @@ class DispatcherServiceTest {
                 llmDslPreset,
                 llmFallbackProvider,
                 llmFallbackPreset,
+                localEscalationEnabled,
+                localEscalationCloudProvider,
+                localEscalationCloudPreset,
+                llmDslMaxTokens,
+                llmFallbackMaxTokens,
+                skillFinalizeMaxTokens,
                 postSkillSummaryEnabled,
                 postSkillSummarySkills,
                 280,
