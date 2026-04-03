@@ -154,6 +154,10 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
     private final int llmDslMaxTokens;
     private final int llmFallbackMaxTokens;
     private final int skillFinalizeMaxTokens;
+    private final boolean localEscalationQualityEnabled;
+    private final int localEscalationQualityMaxReplyChars;
+    private final Set<String> localEscalationQualityInputTerms;
+    private final Set<String> localEscalationQualityReplyTerms;
     private final boolean postSkillSummaryEnabled;
     private final Set<String> postSkillSummarySkills;
     private final int postSkillSummaryMaxReplyChars;
@@ -253,6 +257,10 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                                @Value("${mindos.dispatcher.llm-dsl.max-tokens:0}") int llmDslMaxTokens,
                                @Value("${mindos.dispatcher.llm-fallback.max-tokens:0}") int llmFallbackMaxTokens,
                                @Value("${mindos.dispatcher.skill.finalize-with-llm.max-tokens:0}") int skillFinalizeMaxTokens,
+                               @Value("${mindos.dispatcher.local-escalation.quality.enabled:true}") boolean localEscalationQualityEnabled,
+                               @Value("${mindos.dispatcher.local-escalation.quality.max-reply-chars:32}") int localEscalationQualityMaxReplyChars,
+                               @Value("${mindos.dispatcher.local-escalation.quality.input-terms:分析,方案,架构,tradeoff,trade-off,对比,设计,复杂,深度,沟通,情绪,关系,计划,why,explain}") String localEscalationQualityInputTerms,
+                               @Value("${mindos.dispatcher.local-escalation.quality.reply-terms:好的,收到,已收到,ok,okay,明白,可以,稍后,后面再说}") String localEscalationQualityReplyTerms,
                               @Value("${mindos.memory.post-skill-summary.enabled:false}") boolean postSkillSummaryEnabled,
                               @Value("${mindos.memory.post-skill-summary.skills:teaching.plan,todo.create,eq.coach,code.generate,file.search}") String postSkillSummarySkills,
                               @Value("${mindos.memory.post-skill-summary.max-reply-chars:280}") int postSkillSummaryMaxReplyChars,
@@ -325,6 +333,10 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         this.llmDslMaxTokens = Math.max(0, llmDslMaxTokens);
         this.llmFallbackMaxTokens = Math.max(0, llmFallbackMaxTokens);
         this.skillFinalizeMaxTokens = Math.max(0, skillFinalizeMaxTokens);
+        this.localEscalationQualityEnabled = localEscalationQualityEnabled;
+        this.localEscalationQualityMaxReplyChars = Math.max(8, localEscalationQualityMaxReplyChars);
+        this.localEscalationQualityInputTerms = parseCsvSet(localEscalationQualityInputTerms);
+        this.localEscalationQualityReplyTerms = parseCsvSet(localEscalationQualityReplyTerms);
         this.postSkillSummaryEnabled = postSkillSummaryEnabled;
         this.postSkillSummarySkills = parseCsvSet(postSkillSummarySkills);
         this.postSkillSummaryMaxReplyChars = Math.max(80, postSkillSummaryMaxReplyChars);
@@ -2582,6 +2594,9 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
     }
 
     private boolean shouldEscalateForQuality(String reply, Map<String, Object> llmContext) {
+        if (!localEscalationQualityEnabled) {
+            return false;
+        }
         if (!isSuccessfulLlmReply(reply)) {
             return false;
         }
@@ -2593,17 +2608,26 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
             return false;
         }
         String normalizedInput = normalize(input);
-        if (!containsAny(normalizedInput,
-                "分析", "方案", "架构", "tradeoff", "trade-off", "对比", "设计", "复杂", "深度",
-                "沟通", "情绪", "关系", "计划", "why", "explain")) {
+        if (!matchesAnyTerm(normalizedInput, localEscalationQualityInputTerms)) {
             return false;
         }
         String normalizedReply = normalize(reply);
-        if (normalizedReply.length() >= 32) {
+        if (normalizedReply.length() > localEscalationQualityMaxReplyChars) {
             return false;
         }
-        return containsAny(normalizedReply,
-                "好的", "收到", "已收到", "ok", "okay", "明白", "可以", "稍后", "后面再说");
+        return matchesAnyTerm(normalizedReply, localEscalationQualityReplyTerms);
+    }
+
+    private boolean matchesAnyTerm(String normalizedText, Set<String> terms) {
+        if (normalizedText == null || normalizedText.isBlank() || terms == null || terms.isEmpty()) {
+            return false;
+        }
+        for (String term : terms) {
+            if (term != null && !term.isBlank() && normalizedText.contains(term)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private boolean isTrue(Object value) {

@@ -18,7 +18,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.regex.Matcher;
@@ -38,17 +37,26 @@ public class SemanticAnalysisService {
     private final boolean enabled;
     private final boolean llmEnabled;
     private final String delegateSkillName;
+    private final String llmProvider;
+    private final String llmPreset;
+    private final int llmMaxTokens;
 
     public SemanticAnalysisService(LlmClient llmClient,
                                    @Lazy SkillRegistry skillRegistry,
                                    @Value("${mindos.dispatcher.semantic-analysis.enabled:true}") boolean enabled,
                                    @Value("${mindos.dispatcher.semantic-analysis.llm-enabled:false}") boolean llmEnabled,
-                                   @Value("${mindos.dispatcher.semantic-analysis.delegate-skill:}") String delegateSkillName) {
+                                   @Value("${mindos.dispatcher.semantic-analysis.delegate-skill:}") String delegateSkillName,
+                                   @Value("${mindos.dispatcher.semantic-analysis.llm-provider:local}") String llmProvider,
+                                   @Value("${mindos.dispatcher.semantic-analysis.llm-preset:cost}") String llmPreset,
+                                   @Value("${mindos.dispatcher.semantic-analysis.max-tokens:120}") int llmMaxTokens) {
         this.llmClient = llmClient;
         this.skillRegistry = skillRegistry;
         this.enabled = enabled;
         this.llmEnabled = llmEnabled;
         this.delegateSkillName = delegateSkillName == null ? "" : delegateSkillName.trim();
+        this.llmProvider = llmProvider == null ? "" : llmProvider.trim();
+        this.llmPreset = llmPreset == null ? "" : llmPreset.trim();
+        this.llmMaxTokens = Math.max(0, llmMaxTokens);
     }
 
     public SemanticAnalysisResult analyze(String userId,
@@ -131,6 +139,15 @@ public class SemanticAnalysisService {
             context.put("userId", userId == null ? "" : userId);
             context.put("routeStage", "semantic-analysis");
             context.put("input", userInput);
+            if (!llmProvider.isBlank()) {
+                context.put("llmProvider", llmProvider);
+            }
+            if (!llmPreset.isBlank()) {
+                context.put("llmPreset", llmPreset);
+            }
+            if (llmMaxTokens > 0) {
+                context.put("maxTokens", llmMaxTokens);
+            }
             if (profileContext != null && !profileContext.isEmpty()) {
                 context.put("profile", profileContext);
             }

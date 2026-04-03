@@ -1253,7 +1253,16 @@ class DispatcherServiceTest {
         SkillRegistry registry = new SkillRegistry(skills);
         SkillDslExecutor dslExecutor = new SkillDslExecutor(registry);
         SkillEngine skillEngine = new SkillEngine(registry, dslExecutor, memoryManager);
-        SemanticAnalysisService semanticAnalysisService = new SemanticAnalysisService(llmClient, registry, semanticAnalysisEnabled, false, "");
+        SemanticAnalysisService semanticAnalysisService = new SemanticAnalysisService(
+                llmClient,
+                registry,
+                semanticAnalysisEnabled,
+                false,
+                "",
+                "local",
+                "cost",
+                120
+        );
         SkillDslParser parser = new SkillDslParser(new SkillDslValidator());
         IntentModelRoutingPolicy intentModelRoutingPolicy = new IntentModelRoutingPolicy(
                 false,
@@ -1335,6 +1344,10 @@ class DispatcherServiceTest {
                 llmDslMaxTokens,
                 llmFallbackMaxTokens,
                 skillFinalizeMaxTokens,
+                true,
+                32,
+                "分析,方案,架构,tradeoff,trade-off,对比,设计,复杂,深度,沟通,情绪,关系,计划,why,explain",
+                "好的,收到,已收到,ok,okay,明白,可以,稍后,后面再说",
                 postSkillSummaryEnabled,
                 postSkillSummarySkills,
                 280,

@@ -10,6 +10,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -22,7 +23,7 @@ class SemanticAnalysisServiceTest {
                 new FixedSkill("todo.create"),
                 new FixedSkill("code.generate")
         ));
-        SemanticAnalysisService service = new SemanticAnalysisService((prompt, context) -> "stub", registry, true, false, "");
+        SemanticAnalysisService service = new SemanticAnalysisService((prompt, context) -> "stub", registry, true, false, "", "local", "cost", 120);
 
         SemanticAnalysisResult result = service.analyze(
                 "u1",
@@ -58,7 +59,7 @@ class SemanticAnalysisServiceTest {
             }
         };
         SkillRegistry registry = new SkillRegistry(List.of(delegateSkill, new FixedSkill("todo.create")));
-        SemanticAnalysisService service = new SemanticAnalysisService((prompt, context) -> "stub", registry, true, false, "mcp.semantic.route");
+        SemanticAnalysisService service = new SemanticAnalysisService((prompt, context) -> "stub", registry, true, false, "mcp.semantic.route", "local", "cost", 120);
 
         SemanticAnalysisResult result = service.analyze(
                 "u1",
@@ -79,7 +80,7 @@ class SemanticAnalysisServiceTest {
         SkillRegistry registry = new SkillRegistry(List.of(new FixedSkill("todo.create")));
         LlmClient llmClient = (prompt, context) ->
                 "{\"intent\":\"创建待办\",\"rewrittenInput\":\"请创建待办：提交周报\",\"suggestedSkill\":\"todo.create\",\"payload\":{\"task\":\"提交周报\"},\"keywords\":[\"待办\",\"周报\"],\"confidence\":0.91}";
-        SemanticAnalysisService service = new SemanticAnalysisService(llmClient, registry, true, true, "");
+        SemanticAnalysisService service = new SemanticAnalysisService(llmClient, registry, true, true, "", "local", "cost", 120);
 
         SemanticAnalysisResult result = service.analyze(
                 "u1",
@@ -96,11 +97,35 @@ class SemanticAnalysisServiceTest {
     }
 
     @Test
+    void shouldForceLocalProviderContextForSemanticLlmAnalysis() {
+        SkillRegistry registry = new SkillRegistry(List.of(new FixedSkill("todo.create")));
+        AtomicReference<Map<String, Object>> capturedContext = new AtomicReference<>();
+        LlmClient llmClient = (prompt, context) -> {
+            capturedContext.set(context);
+            return "{\"intent\":\"创建待办\",\"rewrittenInput\":\"请创建待办：提交周报\",\"suggestedSkill\":\"todo.create\",\"payload\":{\"task\":\"提交周报\"},\"keywords\":[\"待办\",\"周报\"],\"confidence\":0.91}";
+        };
+        SemanticAnalysisService service = new SemanticAnalysisService(llmClient, registry, true, true, "", "local", "cost", 120);
+
+        service.analyze(
+                "u1",
+                "请帮我处理一下周报安排",
+                "history",
+                Map.of(),
+                List.of("todo.create - Creates todo items")
+        );
+
+        assertEquals("semantic-analysis", capturedContext.get().get("routeStage"));
+        assertEquals("local", capturedContext.get().get("llmProvider"));
+        assertEquals("cost", capturedContext.get().get("llmPreset"));
+        assertEquals(120, capturedContext.get().get("maxTokens"));
+    }
+
+    @Test
     void shouldUseConfiguredRoutingKeywordsDuringHeuristicAnalysis() {
         SkillRoutingProperties properties = new SkillRoutingProperties();
         properties.getKeywords().put("teaching.plan", "冲刺路线,路线规划");
         SkillRegistry registry = new SkillRegistry(List.of(new FixedSkill("teaching.plan")), properties);
-        SemanticAnalysisService service = new SemanticAnalysisService((prompt, context) -> "stub", registry, true, false, "");
+        SemanticAnalysisService service = new SemanticAnalysisService((prompt, context) -> "stub", registry, true, false, "", "local", "cost", 120);
 
         SemanticAnalysisResult result = service.analyze(
                 "u1",
