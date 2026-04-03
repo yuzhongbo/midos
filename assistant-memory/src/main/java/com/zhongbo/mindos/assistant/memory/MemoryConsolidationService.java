@@ -31,6 +31,8 @@ public class MemoryConsolidationService {
     private static final Pattern WHITESPACE_SPLIT_PATTERN = Pattern.compile("\\s+");
     private static final Pattern DIGIT_PATTERN = Pattern.compile("\\d");
     private static final Pattern DATE_TIME_PATTERN = Pattern.compile("(\\d{1,2}[:：]\\d{2}|\\d{4}[-/]\\d{1,2}[-/]\\d{1,2}|\\d+\\s*(?:天|周|月|年|小时|分钟)|(?:截止|deadline|due|before|之前|内))", Pattern.CASE_INSENSITIVE);
+    private static final Pattern REPEATED_STRONG_PUNCTUATION = Pattern.compile("([。！？!?]){2,}");
+    private static final Pattern REPEATED_WEAK_PUNCTUATION = Pattern.compile("([,，；;、]){2,}");
 
     private final Set<String> constraintTerms = loadTerms(PROP_KEY_SIGNAL_CONSTRAINT_TERMS,
             "不要", "不能", "禁止", "避免", "务必", "必须", "一定", "优先", "风险", "不可");
@@ -91,6 +93,19 @@ public class MemoryConsolidationService {
 
     public String semanticKey(String text) {
         return normalizeText(text).toLowerCase(Locale.ROOT);
+    }
+
+    public String normalizeForEmbedding(String text, MemoryRuntimeProperties.Embedding embeddingProperties) {
+        String normalized = normalizeText(text);
+        if (embeddingProperties == null || embeddingProperties.getPreprocess() == null) {
+            return normalized;
+        }
+        MemoryRuntimeProperties.Embedding.Preprocess preprocess = embeddingProperties.getPreprocess();
+        if (!preprocess.isEnabled() || normalized.isBlank()) {
+            return normalized;
+        }
+        String collapsed = collapsePunctuation(normalized);
+        return trimForEmbedding(collapsed, preprocess.getMaxSentences(), preprocess.getMaxChars());
     }
 
     public boolean containsKeySignal(String text) {
@@ -252,6 +267,47 @@ public class MemoryConsolidationService {
             return "";
         }
         return value.trim();
+    }
+
+    private String collapsePunctuation(String value) {
+        String collapsed = REPEATED_STRONG_PUNCTUATION.matcher(value).replaceAll("$1");
+        return REPEATED_WEAK_PUNCTUATION.matcher(collapsed).replaceAll("$1");
+    }
+
+    private String trimForEmbedding(String value, int maxSentences, int maxChars) {
+        if (value == null || value.isBlank()) {
+            return "";
+        }
+        int effectiveMaxChars = maxChars > 0 ? maxChars : Integer.MAX_VALUE;
+        int effectiveMaxSentences = maxSentences > 0 ? maxSentences : Integer.MAX_VALUE;
+        StringBuilder builder = new StringBuilder(Math.min(value.length(), effectiveMaxChars));
+        int sentences = 0;
+        for (int i = 0; i < value.length(); i++) {
+            char current = value.charAt(i);
+            if (builder.length() >= effectiveMaxChars) {
+                break;
+            }
+            builder.append(current);
+            if (isSentenceBoundary(current)) {
+                sentences++;
+                if (sentences >= effectiveMaxSentences) {
+                    break;
+                }
+            }
+        }
+        if (builder.length() > effectiveMaxChars) {
+            builder.setLength(effectiveMaxChars);
+        }
+        return builder.toString().trim();
+    }
+
+    private boolean isSentenceBoundary(char value) {
+        return value == '。'
+                || value == '！'
+                || value == '!'
+                || value == '？'
+                || value == '?'
+                || value == '\n';
     }
 
     private double round(double value) {

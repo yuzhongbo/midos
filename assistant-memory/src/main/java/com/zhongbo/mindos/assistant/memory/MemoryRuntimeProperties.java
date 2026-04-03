@@ -73,8 +73,16 @@ public class MemoryRuntimeProperties {
                 System.getProperty("mindos.memory.embedding.local.enabled", "false")));
         properties.getEmbedding().getLocal().setDimensions(parsePositiveInt(
                 System.getProperty("mindos.memory.embedding.local.dimensions"), 16));
+        properties.getEmbedding().getPreprocess().setEnabled(Boolean.parseBoolean(
+                System.getProperty("mindos.memory.embedding.preprocess.enabled", "true")));
+        properties.getEmbedding().getPreprocess().setMaxChars(parsePositiveInt(
+                System.getProperty("mindos.memory.embedding.preprocess.max-chars"), 1200));
+        properties.getEmbedding().getPreprocess().setMaxSentences(parsePositiveInt(
+                System.getProperty("mindos.memory.embedding.preprocess.max-sentences"), 8));
         properties.getEmbedding().getOnnx().setEnabled(Boolean.parseBoolean(
                 System.getProperty("mindos.memory.embedding.onnx.enabled", "false")));
+        properties.getEmbedding().getOnnx().setPreset(System.getProperty(
+                "mindos.memory.embedding.onnx.preset", "custom"));
         properties.getEmbedding().getOnnx().setModelPath(System.getProperty(
                 "mindos.memory.embedding.onnx.model-path", ""));
         properties.getEmbedding().getOnnx().setTokenizerPath(System.getProperty(
@@ -381,6 +389,7 @@ public class MemoryRuntimeProperties {
     public static class Embedding {
         private final Local local = new Local();
         private final Onnx onnx = new Onnx();
+        private final Preprocess preprocess = new Preprocess();
 
         public Local getLocal() {
             return local;
@@ -388,6 +397,10 @@ public class MemoryRuntimeProperties {
 
         public Onnx getOnnx() {
             return onnx;
+        }
+
+        public Preprocess getPreprocess() {
+            return preprocess;
         }
 
         public static class Local {
@@ -411,8 +424,39 @@ public class MemoryRuntimeProperties {
             }
         }
 
+        public static class Preprocess {
+            private boolean enabled = true;
+            private int maxChars = 1200;
+            private int maxSentences = 8;
+
+            public boolean isEnabled() {
+                return enabled;
+            }
+
+            public void setEnabled(boolean enabled) {
+                this.enabled = enabled;
+            }
+
+            public int getMaxChars() {
+                return maxChars;
+            }
+
+            public void setMaxChars(int maxChars) {
+                this.maxChars = maxChars > 0 ? maxChars : 1200;
+            }
+
+            public int getMaxSentences() {
+                return maxSentences;
+            }
+
+            public void setMaxSentences(int maxSentences) {
+                this.maxSentences = maxSentences > 0 ? maxSentences : 8;
+            }
+        }
+
         public static class Onnx {
             private boolean enabled = false;
+            private String preset = "custom";
             private String modelPath = "";
             private String tokenizerPath = "";
             private String outputName = "sentence_embedding";
@@ -429,6 +473,18 @@ public class MemoryRuntimeProperties {
 
             public void setEnabled(boolean enabled) {
                 this.enabled = enabled;
+            }
+
+            public String getPreset() {
+                return preset;
+            }
+
+            public void setPreset(String preset) {
+                if (preset == null || preset.isBlank()) {
+                    this.preset = "custom";
+                    return;
+                }
+                this.preset = preset.trim().toLowerCase();
             }
 
             public String getModelPath() {

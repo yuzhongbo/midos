@@ -37,7 +37,11 @@ class MemoryRuntimePropertiesTest {
 
         assertFalse(properties.getEmbedding().getLocal().isEnabled());
         assertEquals(16, properties.getEmbedding().getLocal().getDimensions());
+        assertTrue(properties.getEmbedding().getPreprocess().isEnabled());
+        assertEquals(1200, properties.getEmbedding().getPreprocess().getMaxChars());
+        assertEquals(8, properties.getEmbedding().getPreprocess().getMaxSentences());
         assertFalse(properties.getEmbedding().getOnnx().isEnabled());
+        assertEquals("custom", properties.getEmbedding().getOnnx().getPreset());
         assertEquals("sentence_embedding", properties.getEmbedding().getOnnx().getOutputName());
         assertEquals(384, properties.getEmbedding().getOnnx().getDimensions());
         assertEquals(16, properties.getEmbedding().getOnnx().getBatchSize());
@@ -73,7 +77,11 @@ class MemoryRuntimePropertiesTest {
                         "mindos.memory.search.hybrid.b", "0.7",
                         "mindos.memory.embedding.local.enabled", "true",
                         "mindos.memory.embedding.local.dimensions", "24",
+                        "mindos.memory.embedding.preprocess.enabled", "false",
+                        "mindos.memory.embedding.preprocess.max-chars", "640",
+                        "mindos.memory.embedding.preprocess.max-sentences", "3",
                         "mindos.memory.embedding.onnx.enabled", "true",
+                        "mindos.memory.embedding.onnx.preset", "bge-micro",
                         "mindos.memory.embedding.onnx.model-path", "/models/bge-small.onnx",
                         "mindos.memory.embedding.onnx.tokenizer-path", "/models/tokenizer.json",
                         "mindos.memory.embedding.onnx.output-name", "last_hidden_state",
@@ -110,7 +118,11 @@ class MemoryRuntimePropertiesTest {
 
         assertTrue(properties.getEmbedding().getLocal().isEnabled());
         assertEquals(24, properties.getEmbedding().getLocal().getDimensions());
+        assertFalse(properties.getEmbedding().getPreprocess().isEnabled());
+        assertEquals(640, properties.getEmbedding().getPreprocess().getMaxChars());
+        assertEquals(3, properties.getEmbedding().getPreprocess().getMaxSentences());
         assertTrue(properties.getEmbedding().getOnnx().isEnabled());
+        assertEquals("bge-micro", properties.getEmbedding().getOnnx().getPreset());
         assertEquals("/models/bge-small.onnx", properties.getEmbedding().getOnnx().getModelPath());
         assertEquals("/models/tokenizer.json", properties.getEmbedding().getOnnx().getTokenizerPath());
         assertEquals("last_hidden_state", properties.getEmbedding().getOnnx().getOutputName());
