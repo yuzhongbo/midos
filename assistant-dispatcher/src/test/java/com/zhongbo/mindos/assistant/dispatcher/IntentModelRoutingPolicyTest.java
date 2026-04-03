@@ -19,6 +19,7 @@ class IntentModelRoutingPolicyTest {
                 "gpt",
                 "grok",
                 "gemini",
+                "qwen",
                 "openai/gpt-5-mini",
                 "openai/gpt-5.2",
                 "openai/gpt-5.2",
@@ -56,6 +57,7 @@ class IntentModelRoutingPolicyTest {
                 "gpt",
                 "grok",
                 "gemini",
+                "qwen",
                 "openai/gpt-5-mini",
                 "openai/gpt-5.2",
                 "openai/gpt-5.2",
@@ -93,6 +95,7 @@ class IntentModelRoutingPolicyTest {
                 "gpt",
                 "grok",
                 "gemini",
+                "qwen",
                 "openai/gpt-5-mini",
                 "openai/gpt-5.2",
                 "openai/gpt-5.2",
@@ -120,5 +123,42 @@ class IntentModelRoutingPolicyTest {
 
         assertNull(llmContext.get("llmProvider"));
         assertNull(llmContext.get("model"));
+    }
+
+    @Test
+    void shouldRouteHardGeneralInputToHardProvider() {
+        IntentModelRoutingPolicy policy = new IntentModelRoutingPolicy(
+                true,
+                "local",
+                "local",
+                "qwen",
+                "qwen",
+                "qwen",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "情绪,焦虑",
+                120
+        );
+
+        Map<String, Object> llmContext = new LinkedHashMap<>();
+        policy.applyForFallback(
+                "请给我一个分阶段的系统架构设计方案，分析 tradeoff 并比较实现路径",
+                new PromptMemoryContextDto("", "", "", Map.of(), java.util.List.of()),
+                false,
+                Map.of(),
+                llmContext
+        );
+
+        assertEquals("qwen", llmContext.get("llmProvider"));
     }
 }

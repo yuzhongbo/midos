@@ -10,6 +10,7 @@ import com.zhongbo.mindos.assistant.common.dto.ContextCompressionMetricsDto;
 import com.zhongbo.mindos.assistant.common.dto.ExecutionTraceDto;
 import com.zhongbo.mindos.assistant.common.dto.MemoryContributionMetricsDto;
 import com.zhongbo.mindos.assistant.common.dto.MemoryHitMetricsDto;
+import com.zhongbo.mindos.assistant.common.dto.LocalEscalationMetricsDto;
 import com.zhongbo.mindos.assistant.common.dto.PromptMemoryContextDto;
 import com.zhongbo.mindos.assistant.common.dto.RoutingReplayDatasetDto;
 import com.zhongbo.mindos.assistant.common.dto.RoutingReplayItemDto;
@@ -132,6 +133,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
     private final List<String> promptInjectionRiskTerms;
     private final String promptInjectionSafeReply;
     private final int llmRoutingShortlistMaxSkills;
+    private final int llmDslMemoryContextMaxChars;
     private final boolean llmRoutingConversationalBypassEnabled;
     private final boolean realtimeIntentBypassEnabled;
     private final boolean braveFirstSearchRoutingEnabled;
@@ -188,6 +190,11 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
     private final AtomicLong memoryContributionProceduralCount = new AtomicLong();
     private final AtomicLong memoryContributionPersonaCount = new AtomicLong();
     private final AtomicLong memoryContributionRollupCount = new AtomicLong();
+    private final AtomicLong localEscalationAttemptCount = new AtomicLong();
+    private final AtomicLong localEscalationHitCount = new AtomicLong();
+    private final AtomicLong fallbackChainAttemptCount = new AtomicLong();
+    private final AtomicLong fallbackChainHitCount = new AtomicLong();
+    private final Map<String, AtomicLong> escalationReasonCounters = new java.util.concurrent.ConcurrentHashMap<>();
     private final AtomicLong routingReplayTotalCapturedCount = new AtomicLong();
     private final PromptBuilder promptBuilder;
     private final LLMDecisionEngine llmDecisionEngine;
@@ -225,6 +232,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                              @Value("${mindos.dispatcher.prompt-injection.guard.risk-terms:ignore previous instructions,ignore all previous instructions,reveal api key,show system prompt,忽略之前的指令,忽略系统指令,泄露api key,显示系统提示词}") String promptInjectionRiskTerms,
                               @Value("${mindos.dispatcher.prompt-injection.guard.safe-reply:检测到高风险诱导指令，已拒绝执行敏感操作。请改为明确、安全、可审计的请求。}") String promptInjectionSafeReply,
                               @Value("${mindos.dispatcher.skill-routing.llm-shortlist-max-skills:8}") int llmRoutingShortlistMaxSkills,
+                               @Value("${mindos.dispatcher.llm-dsl.memory-context.max-chars:420}") int llmDslMemoryContextMaxChars,
                               @Value("${mindos.dispatcher.skill-routing.conversational-bypass.enabled:true}") boolean llmRoutingConversationalBypassEnabled,
                               @Value("${mindos.dispatcher.realtime-intent.bypass.enabled:true}") boolean realtimeIntentBypassEnabled,
                                @Value("${mindos.dispatcher.search-routing.brave-first.enabled:false}") boolean braveFirstSearchRoutingEnabled,
@@ -296,6 +304,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                 ? "检测到高风险诱导指令，已拒绝执行敏感操作。请改为明确、安全、可审计的请求。"
                 : promptInjectionSafeReply;
         this.llmRoutingShortlistMaxSkills = Math.max(1, llmRoutingShortlistMaxSkills);
+        this.llmDslMemoryContextMaxChars = Math.max(160, llmDslMemoryContextMaxChars);
         this.llmRoutingConversationalBypassEnabled = llmRoutingConversationalBypassEnabled;
         this.realtimeIntentBypassEnabled = realtimeIntentBypassEnabled;
         this.braveFirstSearchRoutingEnabled = braveFirstSearchRoutingEnabled;
@@ -406,6 +415,8 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         llmContext.put("semanticAnalysis", semanticAnalysis.asAttributes());
         llmContext.put("routeStage", "llm-fallback");
         llmContext.put("profile", resolvedProfileContext);
+        copyEscalationHints(profileContext, llmContext);
+        copyEscalationHints(resolvedProfileContext, llmContext);
         copyInteractionContext(resolvedProfileContext, llmContext);
         applyStageLlmRoute("llm-fallback", resolvedProfileContext, llmContext);
         intentModelRoutingPolicy.applyForFallback(userInput, promptMemoryContext, realtimeIntentInput, resolvedProfileContext, llmContext);
@@ -511,6 +522,8 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         llmContext.put("semanticAnalysis", semanticAnalysis.asAttributes());
         llmContext.put("routeStage", "llm-fallback");
         llmContext.put("profile", resolvedProfileContext);
+        copyEscalationHints(profileContext, llmContext);
+        copyEscalationHints(resolvedProfileContext, llmContext);
         copyInteractionContext(resolvedProfileContext, llmContext);
         applyStageLlmRoute("llm-fallback", resolvedProfileContext, llmContext);
         intentModelRoutingPolicy.applyForFallback(userInput, promptMemoryContext, realtimeIntentInput, resolvedProfileContext, llmContext);
@@ -1755,6 +1768,18 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         }
     }
 
+    private void copyEscalationHints(Map<String, Object> profileContext, Map<String, Object> llmContext) {
+        if (profileContext == null || profileContext.isEmpty() || llmContext == null) {
+            return;
+        }
+        if (profileContext.containsKey("localEscalationReason")) {
+            llmContext.put("localEscalationReason", profileContext.get("localEscalationReason"));
+        }
+        if (profileContext.containsKey("forceCloudRetry")) {
+            llmContext.put("forceCloudRetry", profileContext.get("forceCloudRetry"));
+        }
+    }
+
     private boolean isContinuationOnlyInput(String userInput) {
         String normalized = normalize(userInput);
         return isContinuationIntent(normalized)
@@ -1990,13 +2015,13 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         String prompt = "You are a dispatcher. Decide whether a skill is needed. "
                 + "Return ONLY JSON with schema {\"skill\":\"name\",\"input\":{...}} or NONE.\n"
                 + "Only choose from these candidate skills: " + capText(knownSkills, 800) + ".\n"
-                + "Context:\n" + capText(memoryContext, memoryContextMaxChars) + "\n"
+                + "Context:\n" + capText(buildLlmDslMemoryContext(memoryContext, profileContext), llmDslMemoryContextMaxChars) + "\n"
                 + "User input:\n" + capText(userInput, 400);
         prompt = capText(prompt, promptMaxChars);
 
         Map<String, Object> llmContext = new LinkedHashMap<>();
         llmContext.put("userId", userId);
-        llmContext.put("memoryContext", memoryContext);
+        llmContext.put("memoryContext", buildLlmDslMemoryContext(memoryContext, profileContext));
         llmContext.put("input", userInput);
         llmContext.put("routeStage", "llm-dsl");
         applyStageLlmRoute("llm-dsl", profileContext, llmContext);
@@ -2470,10 +2495,20 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
     }
 
     private String callLlmWithLocalEscalation(String prompt, Map<String, Object> llmContext) {
+        boolean localPrimary = isLocalProviderContext(llmContext);
+        if (localPrimary) {
+            localEscalationAttemptCount.incrementAndGet();
+        }
         String primaryReply = llmClient.generateResponse(prompt, llmContext);
-        if (!shouldEscalateLocalFailure(primaryReply, llmContext)) {
+        String reason = detectEscalationReason(primaryReply, llmContext);
+        if (reason == null) {
+            if (localPrimary && isSuccessfulLlmReply(primaryReply)) {
+                localEscalationHitCount.incrementAndGet();
+            }
             return primaryReply;
         }
+        fallbackChainAttemptCount.incrementAndGet();
+        incrementEscalationReason(reason);
         Map<String, Object> escalatedContext = new LinkedHashMap<>(llmContext == null ? Map.of() : llmContext);
         String cloudProvider = resolveEscalationProvider(escalatedContext);
         if (cloudProvider == null) {
@@ -2483,30 +2518,218 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         if (localEscalationCloudPreset != null) {
             escalatedContext.put("llmPreset", localEscalationCloudPreset);
         }
+        escalatedContext.put("localEscalationReason", reason);
         LOGGER.info("Dispatcher route=llm-local-escalation, from=local, to=" + cloudProvider
-                + ", stage=" + asString(escalatedContext.get("routeStage")));
-        return llmClient.generateResponse(prompt, escalatedContext);
+                + ", stage=" + asString(escalatedContext.get("routeStage"))
+                + ", reason=" + reason);
+        String escalatedReply = llmClient.generateResponse(prompt, escalatedContext);
+        if (isSuccessfulLlmReply(escalatedReply)) {
+            fallbackChainHitCount.incrementAndGet();
+        }
+        return escalatedReply;
     }
 
-    private boolean shouldEscalateLocalFailure(String reply, Map<String, Object> llmContext) {
+    private String detectEscalationReason(String reply, Map<String, Object> llmContext) {
         if (!localEscalationEnabled || llmContext == null || llmContext.isEmpty()) {
-            return false;
+            return null;
         }
-        String provider = normalize(asString(llmContext.get("llmProvider")));
+        String provider = resolveEscalationSourceProvider(llmContext);
         if (!"local".equals(provider) && !"ollama".equals(provider) && !"gemma".equals(provider)) {
-            return false;
+            return null;
+        }
+        if (isManualEscalationRequested(llmContext)) {
+            return "manual";
         }
         String normalizedReply = normalize(reply);
         if (normalizedReply.isBlank()) {
-            return true;
+            return "empty_response";
         }
         if (!normalizedReply.startsWith("[llm local]")) {
+            return shouldEscalateForQuality(reply, llmContext) ? "quality" : null;
+        }
+        if (normalizedReply.contains("reason=timeout") || normalizedReply.contains(" timed out") || normalizedReply.contains(" timeout")) {
+            return "timeout";
+        }
+        if (normalizedReply.contains("reason=upstream_5xx")
+                || normalizedReply.contains("http_500")
+                || normalizedReply.contains("http_502")
+                || normalizedReply.contains("http_503")
+                || normalizedReply.contains("http_504")) {
+            return "upstream_5xx";
+        }
+        if (normalizedReply.contains("reason=empty_response")
+                || normalizedReply.contains("empty_response_content")
+                || normalizedReply.contains("empty response")) {
+            return "empty_response";
+        }
+        return null;
+    }
+
+    private boolean isManualEscalationRequested(Map<String, Object> llmContext) {
+        String directReason = normalize(asString(llmContext.get("localEscalationReason")));
+        if ("manual".equals(directReason)) {
+            return true;
+        }
+        if (isTrue(llmContext.get("forceCloudRetry"))) {
+            return true;
+        }
+        Map<String, Object> profile = asObjectMap(llmContext.get("profile"));
+        String profileReason = normalize(asString(profile.get("localEscalationReason")));
+        if ("manual".equals(profileReason)) {
+            return true;
+        }
+        return isTrue(profile.get("forceCloudRetry"));
+    }
+
+    private boolean shouldEscalateForQuality(String reply, Map<String, Object> llmContext) {
+        if (!isSuccessfulLlmReply(reply)) {
             return false;
         }
-        return normalizedReply.contains("request failed")
-                || normalizedReply.contains("unavailable")
-                || normalizedReply.contains("fallback mode active")
-                || normalizedReply.contains("missing");
+        String input = asString(llmContext.get("originalInput"));
+        if (input == null) {
+            input = asString(llmContext.get("input"));
+        }
+        if (input == null) {
+            return false;
+        }
+        String normalizedInput = normalize(input);
+        if (!containsAny(normalizedInput,
+                "分析", "方案", "架构", "tradeoff", "trade-off", "对比", "设计", "复杂", "深度",
+                "沟通", "情绪", "关系", "计划", "why", "explain")) {
+            return false;
+        }
+        String normalizedReply = normalize(reply);
+        if (normalizedReply.length() >= 32) {
+            return false;
+        }
+        return containsAny(normalizedReply,
+                "好的", "收到", "已收到", "ok", "okay", "明白", "可以", "稍后", "后面再说");
+    }
+
+    private boolean isTrue(Object value) {
+        if (value instanceof Boolean bool) {
+            return bool;
+        }
+        if (value instanceof Number number) {
+            return number.intValue() != 0;
+        }
+        if (value instanceof String text) {
+            String normalized = normalize(text);
+            return "true".equals(normalized) || "1".equals(normalized) || "yes".equals(normalized) || "on".equals(normalized);
+        }
+        return false;
+    }
+
+    private Map<String, Object> asObjectMap(Object value) {
+        if (!(value instanceof Map<?, ?> raw)) {
+            return Map.of();
+        }
+        Map<String, Object> mapped = new LinkedHashMap<>();
+        for (Map.Entry<?, ?> entry : raw.entrySet()) {
+            mapped.put(String.valueOf(entry.getKey()), entry.getValue());
+        }
+        return mapped.isEmpty() ? Map.of() : Map.copyOf(mapped);
+    }
+
+    private boolean isLocalProviderContext(Map<String, Object> llmContext) {
+        if (llmContext == null || llmContext.isEmpty()) {
+            return false;
+        }
+        String provider = resolveEscalationSourceProvider(llmContext);
+        return "local".equals(provider) || "ollama".equals(provider) || "gemma".equals(provider);
+    }
+
+    private String resolveEscalationSourceProvider(Map<String, Object> llmContext) {
+        String provider = normalize(asString(llmContext.get("llmProvider")));
+        if (!provider.isBlank()) {
+            return provider;
+        }
+        Map<String, Object> profile = asObjectMap(llmContext.get("profile"));
+        String profileProvider = normalize(asString(profile.get("llmProvider")));
+        if (!profileProvider.isBlank() && !"auto".equals(profileProvider)) {
+            return profileProvider;
+        }
+        String routeStage = normalize(asString(llmContext.get("routeStage")));
+        if ("llm-fallback".equals(routeStage)) {
+            return normalize(llmFallbackProvider);
+        }
+        if ("llm-dsl".equals(routeStage)) {
+            return normalize(llmDslProvider);
+        }
+        return provider;
+    }
+
+    private boolean isSuccessfulLlmReply(String reply) {
+        if (reply == null || reply.isBlank()) {
+            return false;
+        }
+        return !normalize(reply).startsWith("[llm ");
+    }
+
+    private void incrementEscalationReason(String reason) {
+        if (reason == null || reason.isBlank()) {
+            return;
+        }
+        escalationReasonCounters.computeIfAbsent(reason, ignored -> new AtomicLong()).incrementAndGet();
+    }
+
+    private String buildLlmDslMemoryContext(String memoryContext, Map<String, Object> profileContext) {
+        StringBuilder builder = new StringBuilder();
+        String semanticIntent = asString(profileContext == null ? null : profileContext.get("semanticIntent"));
+        String semanticRewritten = asString(profileContext == null ? null : profileContext.get("semanticRewrittenInput"));
+        if (semanticIntent != null || semanticRewritten != null) {
+            builder.append("Semantic hint:\n");
+            if (semanticIntent != null) {
+                builder.append("- intent: ").append(semanticIntent).append('\n');
+            }
+            if (semanticRewritten != null) {
+                builder.append("- rewrittenInput: ").append(semanticRewritten).append('\n');
+            }
+        }
+        List<Map<String, Object>> history = extractRecentChatHistory(profileContext, 2);
+        if (!history.isEmpty()) {
+            builder.append("Recent chat turns:\n");
+            for (Map<String, Object> turn : history) {
+                String role = asString(turn.get("role"));
+                String content = asString(turn.get("content"));
+                if (content == null) {
+                    continue;
+                }
+                builder.append("- ").append(role == null ? "assistant" : role).append(": ")
+                        .append(capText(content, 140)).append('\n');
+            }
+        }
+        if (builder.length() == 0) {
+            return capText(memoryContext == null ? "" : memoryContext, llmDslMemoryContextMaxChars);
+        }
+        if (memoryContext != null && !memoryContext.isBlank()) {
+            builder.append("Memory summary:\n")
+                    .append(capText(memoryContext, Math.max(120, llmDslMemoryContextMaxChars / 2)));
+        }
+        return capText(builder.toString(), llmDslMemoryContextMaxChars);
+    }
+
+    private List<Map<String, Object>> extractRecentChatHistory(Map<String, Object> profileContext, int keepLast) {
+        if (profileContext == null || keepLast <= 0) {
+            return List.of();
+        }
+        Object raw = profileContext.get("chatHistory");
+        if (!(raw instanceof List<?> list) || list.isEmpty()) {
+            return List.of();
+        }
+        int from = Math.max(0, list.size() - keepLast);
+        List<Map<String, Object>> turns = new ArrayList<>();
+        for (int i = from; i < list.size(); i++) {
+            Object item = list.get(i);
+            if (item instanceof Map<?, ?> map) {
+                Map<String, Object> normalized = new LinkedHashMap<>();
+                for (Map.Entry<?, ?> entry : map.entrySet()) {
+                    normalized.put(String.valueOf(entry.getKey()), entry.getValue());
+                }
+                turns.add(Map.copyOf(normalized));
+            }
+        }
+        return turns.isEmpty() ? List.of() : List.copyOf(turns);
     }
 
     private String resolveEscalationProvider(Map<String, Object> llmContext) {
@@ -2827,6 +3050,29 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                 memoryContributionProceduralCount.get(),
                 memoryContributionPersonaCount.get(),
                 memoryContributionRollupCount.get()
+        );
+    }
+
+    @Override
+    public LocalEscalationMetricsDto snapshotLocalEscalationMetrics() {
+        long localAttempts = localEscalationAttemptCount.get();
+        long localHits = localEscalationHitCount.get();
+        long fallbackAttempts = fallbackChainAttemptCount.get();
+        long fallbackHits = fallbackChainHitCount.get();
+        Map<String, Long> reasons = new LinkedHashMap<>();
+        reasons.put("timeout", escalationReasonCounters.getOrDefault("timeout", new AtomicLong()).get());
+        reasons.put("upstream_5xx", escalationReasonCounters.getOrDefault("upstream_5xx", new AtomicLong()).get());
+        reasons.put("empty_response", escalationReasonCounters.getOrDefault("empty_response", new AtomicLong()).get());
+        reasons.put("quality", escalationReasonCounters.getOrDefault("quality", new AtomicLong()).get());
+        reasons.put("manual", escalationReasonCounters.getOrDefault("manual", new AtomicLong()).get());
+        return new LocalEscalationMetricsDto(
+                localAttempts,
+                localHits,
+                localAttempts <= 0 ? 0.0 : localHits / (double) localAttempts,
+                fallbackAttempts,
+                fallbackHits,
+                fallbackAttempts <= 0 ? 0.0 : fallbackHits / (double) fallbackAttempts,
+                Map.copyOf(reasons)
         );
     }
 

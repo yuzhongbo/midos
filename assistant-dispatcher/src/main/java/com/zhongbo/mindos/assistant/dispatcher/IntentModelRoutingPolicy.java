@@ -17,6 +17,7 @@ public class IntentModelRoutingPolicy {
     private final String codeProvider;
     private final String realtimeProvider;
     private final String emotionalProvider;
+    private final String hardProvider;
     private final String generalModelEasy;
     private final String generalModelMedium;
     private final String generalModelHard;
@@ -38,6 +39,7 @@ public class IntentModelRoutingPolicy {
             @Value("${mindos.dispatcher.intent-routing.code-provider:gpt}") String codeProvider,
             @Value("${mindos.dispatcher.intent-routing.realtime-provider:grok}") String realtimeProvider,
             @Value("${mindos.dispatcher.intent-routing.emotional-provider:gemini}") String emotionalProvider,
+            @Value("${mindos.dispatcher.intent-routing.hard-provider:}") String hardProvider,
             @Value("${mindos.dispatcher.intent-routing.model.general.easy:}") String generalModelEasy,
             @Value("${mindos.dispatcher.intent-routing.model.general.medium:}") String generalModelMedium,
             @Value("${mindos.dispatcher.intent-routing.model.general.hard:}") String generalModelHard,
@@ -57,6 +59,7 @@ public class IntentModelRoutingPolicy {
         this.codeProvider = normalizeOptional(codeProvider);
         this.realtimeProvider = normalizeOptional(realtimeProvider);
         this.emotionalProvider = normalizeOptional(emotionalProvider);
+        this.hardProvider = normalizeOptional(hardProvider);
         this.generalModelEasy = normalizeOptional(generalModelEasy);
         this.generalModelMedium = normalizeOptional(generalModelMedium);
         this.generalModelHard = normalizeOptional(generalModelHard);
@@ -87,7 +90,7 @@ public class IntentModelRoutingPolicy {
         IntentType intentType = detectIntentType(userInput, realtimeIntentInput);
         Difficulty difficulty = detectDifficulty(userInput, promptMemoryContext);
 
-        String provider = providerFor(intentType);
+        String provider = providerFor(intentType, difficulty);
         if (provider != null) {
             llmContext.put("llmProvider", provider);
         }
@@ -151,7 +154,10 @@ public class IntentModelRoutingPolicy {
         return Difficulty.MEDIUM;
     }
 
-    private String providerFor(IntentType intentType) {
+    private String providerFor(IntentType intentType, Difficulty difficulty) {
+        if (difficulty == Difficulty.HARD && hardProvider != null) {
+            return hardProvider;
+        }
         return switch (intentType) {
             case CODE -> fallbackIfNull(codeProvider, defaultProvider);
             case REALTIME -> fallbackIfNull(realtimeProvider, defaultProvider);

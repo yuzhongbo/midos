@@ -77,6 +77,7 @@ public class LlmMetricsController {
                 dispatcherRoutingMetricsReader.snapshotSkillPreAnalyzeMetrics(),
                 dispatcherRoutingMetricsReader.snapshotMemoryHitMetrics(),
                 dispatcherRoutingMetricsReader.snapshotMemoryContributionMetrics(),
+                dispatcherRoutingMetricsReader.snapshotLocalEscalationMetrics(),
                 windowCache.hitRate(),
                 windowCache.hits(),
                 windowCache.misses(),

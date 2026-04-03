@@ -1249,8 +1249,30 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
         if (isImContext(context)) {
             return buildImDegradedReply(providerName, classifyImErrorCategory(lastError));
         }
-        return "[LLM " + normalizeProvider(providerName) + "] request failed after " + Math.max(1, attempts)
-                + " attempt(s). Please retry later.";
+        String normalizedProvider = normalizeProvider(providerName);
+        String reason = classifyEscalationReason(lastError);
+        String reasonSuffix = "local".equals(normalizedProvider) && reason != null
+                ? " reason=" + reason + "."
+                : "";
+        return "[LLM " + normalizedProvider + "] request failed after " + Math.max(1, attempts)
+                + " attempt(s)." + reasonSuffix + " Please retry later.";
+    }
+
+    private String classifyEscalationReason(RuntimeException lastError) {
+        if (lastError == null || lastError.getMessage() == null) {
+            return null;
+        }
+        String message = lastError.getMessage().toLowerCase(Locale.ROOT);
+        if (message.contains("timeout") || message.contains("timed out") || message.contains("http_408") || message.contains("http_504")) {
+            return "timeout";
+        }
+        if (message.contains("http_500") || message.contains("http_502") || message.contains("http_503") || message.contains("http_505")) {
+            return "upstream_5xx";
+        }
+        if (message.contains("empty_response_content") || message.contains("invalid_response_json") || message.contains("empty response")) {
+            return "empty_response";
+        }
+        return null;
     }
 
     private String buildSkeletonReply(Map<String, Object> context,

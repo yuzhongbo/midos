@@ -4,6 +4,7 @@ import com.zhongbo.mindos.assistant.common.LlmMetricsReader;
 import com.zhongbo.mindos.assistant.common.dto.LlmCallMetricDto;
 import com.zhongbo.mindos.assistant.common.dto.LlmMetricsResponseDto;
 import com.zhongbo.mindos.assistant.common.dto.LlmProviderAggregateDto;
+import com.zhongbo.mindos.assistant.common.dto.LocalEscalationMetricsDto;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -84,6 +85,7 @@ public class LlmMetricsService implements LlmMetricsReader {
                 null,
                 null,
                 null,
+                new LocalEscalationMetricsDto(0L, 0L, 0.0, 0L, 0L, 0.0, Map.of()),
                 0.0,
                 0L,
                 0L,

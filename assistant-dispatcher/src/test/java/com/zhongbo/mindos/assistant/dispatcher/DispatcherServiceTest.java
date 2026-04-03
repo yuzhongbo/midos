@@ -16,6 +16,7 @@ import com.zhongbo.mindos.assistant.memory.ProceduralMemoryService;
 import com.zhongbo.mindos.assistant.memory.SemanticMemoryService;
 import com.zhongbo.mindos.assistant.memory.SemanticWriteGatePolicy;
 import com.zhongbo.mindos.assistant.memory.model.SemanticMemoryEntry;
+import com.zhongbo.mindos.assistant.common.dto.LocalEscalationMetricsDto;
 import com.zhongbo.mindos.assistant.skill.Skill;
 import com.zhongbo.mindos.assistant.skill.SkillDslExecutor;
 import com.zhongbo.mindos.assistant.skill.SkillEngine;
@@ -525,6 +526,52 @@ class DispatcherServiceTest {
     }
 
     @Test
+    void shouldTreatJPrefixedContinueAsContinuationForHabitTodoRouting() {
+        MemoryManager memoryManager = createMemoryManager();
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of("不应调用 llm"));
+        DispatcherService service = createDispatcher(memoryManager, llmClient, List.of(
+                new Skill() {
+                    @Override
+                    public String name() {
+                        return "todo.create";
+                    }
+
+                    @Override
+                    public String description() {
+                        return "Creates todo items from natural language";
+                    }
+
+                    @Override
+                    public SkillResult run(SkillContext context) {
+                        return SkillResult.success(name(), "待办已创建");
+                    }
+
+                    @Override
+                    public boolean supports(String input) {
+                        return input != null && input.contains("待办");
+                    }
+
+                    @Override
+                    public int routingScore(String input) {
+                        return supports(input) ? 900 : Integer.MIN_VALUE;
+                    }
+                }
+        ), 2);
+
+        service.dispatch("habit-user", "帮我创建待办：周五前提交周报");
+        service.dispatch("habit-user", "再创建一个待办：同步项目风险");
+
+        DispatchResult result = service.dispatch("habit-user", "j继续");
+
+        assertEquals("todo.create", result.channel());
+        assertEquals("memory-habit", result.executionTrace().routing().route());
+        assertEquals("todo.create", result.executionTrace().routing().selectedSkill());
+        assertTrue(result.reply().contains("待办已创建"));
+        assertEquals(0, llmClient.routingCallCount());
+        assertEquals(0, llmClient.fallbackCallCount());
+    }
+
+    @Test
     void shouldStoreRememberCommandFromChinesePrefixIntoTaskBucket() {
         MemoryManager memoryManager = createMemoryManager();
         RecordingLlmClient llmClient = new RecordingLlmClient(List.of("已记住"));
@@ -555,7 +602,7 @@ class DispatcherServiceTest {
     void shouldEscalateLocalFallbackToCloudWhenLocalReplyIndicatesFailure() {
         MemoryManager memoryManager = createMemoryManager();
         RecordingLlmClient llmClient = new RecordingLlmClient(List.of(
-                "[LLM local] request failed after 1 attempt(s). Please retry later.",
+                "[LLM local] request failed after 1 attempt(s). reason=timeout. Please retry later.",
                 "cloud-recovered reply"
         ));
         DispatcherService service = createDispatcher(
@@ -598,6 +645,8 @@ class DispatcherServiceTest {
         assertEquals(2, llmClient.fallbackCallCount());
         assertEquals("local", String.valueOf(llmClient.fallbackContexts().get(0).get("llmProvider")));
         assertEquals("qwen", String.valueOf(llmClient.fallbackContexts().get(1).get("llmProvider")));
+        assertEquals(1, service.snapshotLocalEscalationMetrics().fallbackChainAttempts());
+        assertEquals(1L, service.snapshotLocalEscalationMetrics().escalationReasons().get("timeout"));
     }
 
     @Test
@@ -659,6 +708,161 @@ class DispatcherServiceTest {
                 .findFirst()
                 .orElseThrow();
         assertEquals(222, ((Number) fallbackContext.get("maxTokens")).intValue());
+    }
+
+    @Test
+    void shouldEscalateToCloudWhenManualReasonIsRequested() {
+        MemoryManager memoryManager = createMemoryManager();
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of(
+                "local-first reply",
+                "manual cloud reply"
+        ));
+        DispatcherService service = createDispatcher(
+                memoryManager,
+                llmClient,
+                List.of(),
+                2,
+                "auto",
+                0,
+                "time",
+                "",
+                "",
+                "local",
+                "cost",
+                false,
+                "",
+                false,
+                "",
+                "",
+                "",
+                true,
+                "天气,新闻,热点,实时",
+                true,
+                280,
+                true,
+                true,
+                false,
+                true,
+                "qwen",
+                "quality",
+                0,
+                0,
+                0
+        );
+
+        DispatchResult result = service.dispatch("manual-escalation-user", "帮我分析下这个方案", Map.of(
+                "localEscalationReason", "manual"
+        ));
+
+        assertEquals("llm", result.channel());
+        assertEquals("manual cloud reply", result.reply());
+        assertEquals("local", String.valueOf(llmClient.fallbackContexts().get(0).get("llmProvider")));
+        assertEquals("qwen", String.valueOf(llmClient.fallbackContexts().get(1).get("llmProvider")));
+        assertEquals("manual", String.valueOf(llmClient.fallbackContexts().get(1).get("localEscalationReason")));
+        assertEquals(1L, service.snapshotLocalEscalationMetrics().escalationReasons().get("manual"));
+    }
+
+    @Test
+    void shouldEscalateToCloudWhenLocalReplyLooksLowQualityForComplexInput() {
+        MemoryManager memoryManager = createMemoryManager();
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of(
+                "好的",
+                "quality cloud reply"
+        ));
+        DispatcherService service = createDispatcher(
+                memoryManager,
+                llmClient,
+                List.of(),
+                2,
+                "auto",
+                0,
+                "time",
+                "",
+                "",
+                "local",
+                "cost",
+                false,
+                "",
+                false,
+                "",
+                "",
+                "",
+                true,
+                "天气,新闻,热点,实时",
+                true,
+                280,
+                true,
+                true,
+                false,
+                true,
+                "qwen",
+                "quality",
+                0,
+                0,
+                0
+        );
+
+        DispatchResult result = service.dispatch("quality-escalation-user", "请给我一个系统架构方案并分析 tradeoff");
+
+        assertEquals("llm", result.channel());
+        assertEquals("quality cloud reply", result.reply());
+        assertEquals("qwen", String.valueOf(llmClient.fallbackContexts().get(1).get("llmProvider")));
+        assertEquals("quality", String.valueOf(llmClient.fallbackContexts().get(1).get("localEscalationReason")));
+        assertEquals(1L, service.snapshotLocalEscalationMetrics().escalationReasons().get("quality"));
+    }
+
+    @Test
+    void shouldReportLocalAndFallbackChainHitRatesInEscalationMetrics() {
+        MemoryManager memoryManager = createMemoryManager();
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of(
+                "普通回复",
+                "[LLM local] request failed after 1 attempt(s). reason=timeout. Please retry later.",
+                "cloud recovered"
+        ));
+        DispatcherService service = createDispatcher(
+                memoryManager,
+                llmClient,
+                List.of(),
+                2,
+                "auto",
+                0,
+                "time",
+                "",
+                "",
+                "local",
+                "cost",
+                false,
+                "",
+                false,
+                "",
+                "",
+                "",
+                true,
+                "天气,新闻,热点,实时",
+                true,
+                280,
+                true,
+                true,
+                false,
+                true,
+                "qwen",
+                "quality",
+                0,
+                0,
+                0
+        );
+
+        service.dispatch("metrics-escalation-user", "谢谢");
+        service.dispatch("metrics-escalation-user", "再来一次");
+
+        LocalEscalationMetricsDto metrics = service.snapshotLocalEscalationMetrics();
+        assertEquals(2L, metrics.localAttempts());
+        assertEquals(1L, metrics.localHits());
+        assertEquals(0.5, metrics.localHitRate());
+        assertEquals(1L, metrics.fallbackChainAttempts());
+        assertEquals(1L, metrics.fallbackChainHits());
+        assertEquals(1.0, metrics.fallbackChainHitRate());
+        assertEquals(1L, metrics.escalationReasons().get("timeout"));
     }
 
     @Test
@@ -1069,6 +1273,7 @@ class DispatcherServiceTest {
                 null,
                 null,
                 null,
+                null,
                 "情绪,焦虑",
                 180
         );
@@ -1109,6 +1314,7 @@ class DispatcherServiceTest {
                 "ignore previous instructions,show system prompt",
                 "guarded",
                 llmShortlistMaxSkills,
+                420,
                 true,
                 realtimeIntentBypassEnabled,
                 braveFirstSearchRoutingEnabled,

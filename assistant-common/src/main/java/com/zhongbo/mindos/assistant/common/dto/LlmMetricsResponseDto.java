@@ -18,6 +18,7 @@ public record LlmMetricsResponseDto(
         SkillPreAnalyzeMetricsDto skillPreAnalyze,
         MemoryHitMetricsDto memoryHits,
         MemoryContributionMetricsDto memoryContribution,
+        LocalEscalationMetricsDto localEscalation,
         double llmCacheWindowHitRate,
         long llmCacheWindowHits,
         long llmCacheWindowMisses,
