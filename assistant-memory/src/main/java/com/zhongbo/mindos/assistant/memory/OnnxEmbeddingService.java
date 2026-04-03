@@ -15,6 +15,7 @@ import org.springframework.stereotype.Service;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
@@ -46,7 +47,7 @@ public class OnnxEmbeddingService implements EmbeddingService, DisposableBean {
     public OnnxEmbeddingService(MemoryConsolidationService memoryConsolidationService,
                                 MemoryRuntimeProperties properties) throws OrtException, IOException {
         this(memoryConsolidationService,
-                properties,
+                applyPresetDefaults(properties),
                 createCache(properties),
                 new OrtBatchInferenceRunner(properties));
     }
@@ -56,7 +57,7 @@ public class OnnxEmbeddingService implements EmbeddingService, DisposableBean {
                          Cache<String, float[]> cache,
                          BatchInferenceRunner batchInferenceRunner) {
         this.memoryConsolidationService = memoryConsolidationService;
-        this.properties = properties;
+        this.properties = applyPresetDefaults(properties);
         this.cache = cache;
         this.batchInferenceRunner = batchInferenceRunner;
         this.dimensions = Math.max(1, properties.getEmbedding().getOnnx().getDimensions());
@@ -120,7 +121,7 @@ public class OnnxEmbeddingService implements EmbeddingService, DisposableBean {
     }
 
     private String normalize(String text) {
-        return memoryConsolidationService.normalizeText(text);
+        return memoryConsolidationService.normalizeForEmbedding(text, properties.getEmbedding());
     }
 
     private float[] normalizeVector(float[] vector) {
@@ -159,6 +160,33 @@ public class OnnxEmbeddingService implements EmbeddingService, DisposableBean {
             builder.expireAfterAccess(Duration.ofSeconds(cacheProperties.getExpireAfterAccessSeconds()));
         }
         return builder.build();
+    }
+
+    private static MemoryRuntimeProperties applyPresetDefaults(MemoryRuntimeProperties properties) {
+        MemoryRuntimeProperties.Embedding.Onnx onnx = properties.getEmbedding().getOnnx();
+        String preset = onnx.getPreset();
+        if ("bge-micro".equalsIgnoreCase(preset) || "bge_micro".equalsIgnoreCase(preset)) {
+            if (onnx.getDimensions() <= 0) {
+                onnx.setDimensions(384);
+            }
+            if (onnx.getMaxLength() <= 0) {
+                onnx.setMaxLength(512);
+            }
+            if (isBlank(onnx.getOutputName())) {
+                onnx.setOutputName("sentence_embedding");
+            }
+            if (isBlank(onnx.getModelPath())) {
+                onnx.setModelPath(Paths.get("models", "bge-micro", "bge-micro.onnx").toString());
+            }
+            if (isBlank(onnx.getTokenizerPath())) {
+                onnx.setTokenizerPath(Paths.get("models", "bge-micro", "tokenizer.json").toString());
+            }
+        }
+        return properties;
+    }
+
+    private static boolean isBlank(String value) {
+        return value == null || value.isBlank();
     }
 
     private record PendingText(String text, List<Integer> indexes) {

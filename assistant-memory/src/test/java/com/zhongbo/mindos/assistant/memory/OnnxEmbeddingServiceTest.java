@@ -3,6 +3,7 @@ package com.zhongbo.mindos.assistant.memory;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import org.junit.jupiter.api.Test;
 
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -67,6 +68,45 @@ class OnnxEmbeddingServiceTest {
         for (float value : vector) {
             assertEquals(0.0f, value);
         }
+    }
+
+    @Test
+    void shouldApplyBgeMicroPresetDefaultsWhenUnset() {
+        MemoryRuntimeProperties properties = new MemoryRuntimeProperties();
+        properties.getEmbedding().getOnnx().setEnabled(true);
+        properties.getEmbedding().getOnnx().setPreset("bge-micro");
+        properties.getEmbedding().getOnnx().setDimensions(0);
+        properties.getEmbedding().getOnnx().setMaxLength(0);
+        properties.getEmbedding().getOnnx().setModelPath("");
+        properties.getEmbedding().getOnnx().setTokenizerPath("");
+
+        OnnxEmbeddingService service = new OnnxEmbeddingService(
+                new MemoryConsolidationService(),
+                properties,
+                Caffeine.newBuilder().maximumSize(8).build(),
+                new OnnxEmbeddingService.BatchInferenceRunner() {
+                    @Override
+                    public List<float[]> embedBatch(List<String> texts) {
+                        return texts.stream().map(text -> new float[]{1f, 2f, 3f}).toList();
+                    }
+
+                    @Override
+                    public void close() {
+                    }
+                }
+        );
+
+        assertEquals(Paths.get("models", "bge-micro", "bge-micro.onnx").toString(),
+                properties.getEmbedding().getOnnx().getModelPath());
+        assertEquals(Paths.get("models", "bge-micro", "tokenizer.json").toString(),
+                properties.getEmbedding().getOnnx().getTokenizerPath());
+        assertEquals(384, properties.getEmbedding().getOnnx().getDimensions());
+        assertEquals(512, properties.getEmbedding().getOnnx().getMaxLength());
+        assertEquals("sentence_embedding", properties.getEmbedding().getOnnx().getOutputName());
+
+        // ensure service still functions
+        float[] vector = service.embed("test");
+        assertEquals(properties.getEmbedding().getOnnx().getDimensions(), vector.length);
     }
 
     private static final class CountingRunner implements OnnxEmbeddingService.BatchInferenceRunner {
