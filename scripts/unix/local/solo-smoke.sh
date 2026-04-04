@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 cd "$ROOT_DIR"
 
 SERVER_URL="${MINDOS_SERVER:-http://localhost:8080}"
@@ -11,7 +11,7 @@ TIMEOUT_SECONDS="${MINDOS_SMOKE_TIMEOUT_SECONDS:-8}"
 if [[ "${1:-}" == "--help" ]]; then
   cat <<'USAGE'
 Usage:
-  ./solo-smoke.sh
+  ./scripts/unix/local/solo-smoke.sh
 
 Environment overrides:
   MINDOS_SERVER=http://localhost:8080
@@ -51,4 +51,3 @@ fi
 
 echo "[OK] /api/metrics/llm reachable (windowMinutes=${metrics_window})"
 echo "[PASS] solo smoke checks completed"
-

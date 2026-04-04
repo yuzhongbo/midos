@@ -2,10 +2,11 @@
 REM MindOS CLI 一键安装脚本 (Windows)
 REM 用法: 双击或在命令行运行 install-mindos-cli.bat
 
-set REPO_DIR=%~dp0
-set CLI_MODULE=mindos-cli
-set JAR_NAME=mindos-cli-0.1.0-SNAPSHOT.jar
-set INSTALL_DIR=%USERPROFILE%\.mindos-cli
+set "SCRIPT_DIR=%~dp0"
+for %%I in ("%SCRIPT_DIR%..\..") do set "REPO_DIR=%%~fI"
+set "CLI_MODULE=mindos-cli"
+set "JAR_NAME=mindos-cli-0.1.0-SNAPSHOT.jar"
+set "INSTALL_DIR=%USERPROFILE%\.mindos-cli"
 
 REM 构建 CLI
 cd /d %REPO_DIR%
@@ -32,4 +33,3 @@ if "%PATH_CHECK%"=="%PATH%" (
 endlocal
 
 echo [MindOS] 安装完成！可用 mindos 命令启动 CLI。
-

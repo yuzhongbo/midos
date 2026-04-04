@@ -13,45 +13,60 @@ if exist "%ROOT_DIR%mindos-secrets.properties" (
 )
 
 set "MINDOS_ENV_STAGE=defaults"
+
+REM 基本默认（仅示例，可被 mindos-secrets.properties 覆盖）
 if not defined MINDOS_SPRING_PROFILE set "MINDOS_SPRING_PROFILE=solo"
 if not defined MINDOS_SERVER_PORT set "MINDOS_SERVER_PORT=8080"
 if not defined MINDOS_MEMORY_FILE_REPO_ENABLED set "MINDOS_MEMORY_FILE_REPO_ENABLED=true"
 if not defined MINDOS_MEMORY_FILE_REPO_BASE_DIR set "MINDOS_MEMORY_FILE_REPO_BASE_DIR=data/memory-sync"
 if not defined MINDOS_PAUSE_ON_EXIT set "MINDOS_PAUSE_ON_EXIT=true"
 
-REM LLM routing profile (override these in mindos-secrets.properties when needed)
+REM LLM 配置说明（中文详解）
+REM 本节说明如何在存在多个 provider / 多个 apiKey 的情况下进行路由与配置。
+REM 核心变量（key/value 都是逗号分隔的 provider 映射）：
+REM - MINDOS_LLM_PROVIDER_ENDPOINTS
+REM     格式: provider:baseUrl,provider2:baseUrl2
+REM     例如: local:http://localhost:11434/api/chat,qwen:https://dashscope.aliyuncs.com/...
+REM - MINDOS_LLM_PROVIDER_KEYS
+REM     格式: provider:key,provider2:key2
+REM     例如: qwen:sk-qwen-xxx,openrouter:sk-or-xxx,openai:sk-oa-xxx
+REM - MINDOS_LLM_PROVIDER_MODELS
+REM     格式: provider:modelId,provider2:modelId2
+REM     例如: qwen:qwen3.5-plus,openai:gpt-4.1
+REM
+REM 多 key 情况下的常见配置策略（示例）:
+REM 1) local 优先 + 云 provider 作为降级/扩展
+REM    set "MINDOS_LLM_PROFILE=CUSTOM_LOCAL_FIRST"
+REM    REM set "MINDOS_LLM_PROVIDER_ENDPOINTS=local:http://localhost:11434/api/chat,qwen:https://dashscope..."
+REM    REM set "MINDOS_LLM_PROVIDER_KEYS=qwen:sk-qwen-xxx"
+REM    说明: 本地模型负责语义分析与大部分低成本请求；当本地不满足或需要云能力时，按 routing 设置调用 qwen
+REM
+REM 2) 多 cloud provider 并存（按场景路由）
+REM    REM set "MINDOS_LLM_PROVIDER_ENDPOINTS=qwen:https://...,openrouter:https://...,openai:https://..."
+REM    REM set "MINDOS_LLM_PROVIDER_KEYS=qwen:sk-qwen,openrouter:sk-or,openai:sk-oa"
+REM    REM set "MINDOS_LLM_ROUTING_STAGE_MAP=llm-dsl:openrouter,llm-fallback:qwen"
+REM    REM set "MINDOS_LLM_ROUTING_PRESET_MAP=cost:qwen,quality:openai"
+REM    说明: stage map 指定不同任务阶段使用哪个 provider；preset map 可按 cost/quality 选不同 provider
+REM
+REM 3) 单 provider（生产/简化）
+REM    set "MINDOS_LLM_PROFILE=QWEN_STABLE"
+REM    set "MINDOS_LLM_PROVIDER=qwen"
+REM    set "MINDOS_LLM_PROVIDER_KEYS=qwen:sk-qwen-xxx"
+REM    说明: 最简单、可审计且易轮换密钥的配置
+REM
+REM 注意事项与校验：
+REM - 键名和值中不要包含空格，map 以逗号分隔，每个条目内部以第一个冒号分隔 provider 与 value。
+REM - 脚本中有格式校验函数 mindos_validate_kv_map_format，会在启动/发布时检查 map 的语法并报错。
+REM - 为避免在 dist 模板中产生噪音，请把真实的 API keys 写入 release 专用文件（mindos-secrets.release.properties）或由 CI 在发布时注入。
+REM - local endpoint（local:http://localhost:11434/api/chat）建议作为语义分析/省 token 的可选端点，与云 provider 并存，优先级由 profile/routing 决定。
+
+REM 默认路由示例（模板保留最小默认，实际请在 release 中设置 keys）
 if not defined MINDOS_LLM_PROFILE set "MINDOS_LLM_PROFILE=QWEN_STABLE"
 if not defined MINDOS_LLM_MODE set "MINDOS_LLM_MODE=QWEN_NATIVE"
 if not defined MINDOS_LLM_PROVIDER set "MINDOS_LLM_PROVIDER=qwen"
-if not defined MINDOS_LLM_ROUTING_MODE set "MINDOS_LLM_ROUTING_MODE=fixed"
-if not defined MINDOS_LLM_ROUTING_STAGE_MAP set "MINDOS_LLM_ROUTING_STAGE_MAP=llm-dsl:qwen,llm-fallback:qwen"
-if not defined MINDOS_LLM_ROUTING_PRESET_MAP set "MINDOS_LLM_ROUTING_PRESET_MAP=cost:qwen,balanced:qwen,quality:qwen"
-if not defined MINDOS_LLM_ENDPOINT_QWEN set "MINDOS_LLM_ENDPOINT_QWEN=https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
-if not defined MINDOS_LLM_ENDPOINT_DOUBAO set "MINDOS_LLM_ENDPOINT_DOUBAO=https://ark.cn-beijing.volces.com/api/v3/chat/completions"
-if not defined MINDOS_LLM_ENDPOINT_OPENROUTER set "MINDOS_LLM_ENDPOINT_OPENROUTER=https://openrouter.ai/api/v1/chat/completions"
-if not defined MINDOS_LLM_ENDPOINT_OPENAI set "MINDOS_LLM_ENDPOINT_OPENAI=https://api.openai.com/v1/chat/completions"
-if not defined MINDOS_LLM_ENDPOINT_GEMINI set "MINDOS_LLM_ENDPOINT_GEMINI=https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent"
-if not defined MINDOS_LLM_ENDPOINT_GROK set "MINDOS_LLM_ENDPOINT_GROK=https://api.x.ai/v1/chat/completions"
-if not defined MINDOS_OPENROUTER_KEY set "MINDOS_OPENROUTER_KEY=REPLACE_WITH_OPENROUTER_KEY"
-if not defined MINDOS_OPENAI_KEY set "MINDOS_OPENAI_KEY=REPLACE_WITH_OPENAI_KEY"
-if not defined MINDOS_GEMINI_KEY set "MINDOS_GEMINI_KEY=REPLACE_WITH_GEMINI_KEY"
-if not defined MINDOS_GROK_KEY set "MINDOS_GROK_KEY=REPLACE_WITH_GROK_KEY"
-if not defined MINDOS_QWEN_KEY set "MINDOS_QWEN_KEY=REPLACE_WITH_QWEN_KEY"
-if not defined MINDOS_OPENAI_MODEL set "MINDOS_OPENAI_MODEL=gpt-4.1"
-if not defined MINDOS_GEMINI_MODEL set "MINDOS_GEMINI_MODEL=gemini-2.5-pro"
-if not defined MINDOS_GROK_MODEL set "MINDOS_GROK_MODEL=grok-4"
-if not defined MINDOS_QWEN_MODEL set "MINDOS_QWEN_MODEL=qwen3.5-plus"
-if not defined MINDOS_DOUBAO_ARK_KEY set "MINDOS_DOUBAO_ARK_KEY=REPLACE_WITH_DOUBAO_ARK_KEY"
-if not defined MINDOS_DOUBAO_ENDPOINT_ID set "MINDOS_DOUBAO_ENDPOINT_ID=REPLACE_WITH_DOUBAO_ENDPOINT_ID"
-if not defined MINDOS_SKILLS_MCP_BRAVE_ENABLED set "MINDOS_SKILLS_MCP_BRAVE_ENABLED=false"
-if not defined MINDOS_SKILLS_MCP_BRAVE_ALIAS set "MINDOS_SKILLS_MCP_BRAVE_ALIAS=brave"
-if not defined MINDOS_SKILLS_MCP_BRAVE_URL set "MINDOS_SKILLS_MCP_BRAVE_URL="
-if not defined MINDOS_SKILLS_MCP_BRAVE_API_KEY set "MINDOS_SKILLS_MCP_BRAVE_API_KEY="
-if not defined MINDOS_SKILLS_MCP_BRAVE_API_KEY_HEADER set "MINDOS_SKILLS_MCP_BRAVE_API_KEY_HEADER=X-Subscription-Token"
-if not defined MINDOS_LLM_PROVIDER_ENDPOINTS set "MINDOS_LLM_PROVIDER_ENDPOINTS=gpt:https://openrouter.ai/api/v1/chat/completions,grok:https://openrouter.ai/api/v1/chat/completions,gemini:https://openrouter.ai/api/v1/chat/completions"
-if not defined MINDOS_LLM_PROVIDER_KEYS set "MINDOS_LLM_PROVIDER_KEYS=gpt:%MINDOS_OPENROUTER_KEY%,grok:%MINDOS_OPENROUTER_KEY%,gemini:%MINDOS_OPENROUTER_KEY%,doubao:%MINDOS_DOUBAO_ARK_KEY%,qwen:%MINDOS_QWEN_KEY%"
-if not defined MINDOS_LLM_PROVIDER_MODELS set "MINDOS_LLM_PROVIDER_MODELS=gpt:openai/gpt-5.2,grok:x-ai/grok-4,gemini:google/gemini-2.5-pro,doubao:%MINDOS_DOUBAO_ENDPOINT_ID%,qwen:%MINDOS_QWEN_MODEL%"
-if not defined MINDOS_SECURITY_METRICS_REQUIRE_ADMIN_TOKEN set "MINDOS_SECURITY_METRICS_REQUIRE_ADMIN_TOKEN=false"
+
+
+REM 不要在模板中保留大量 REPLACE_WITH_* 的活跃赋值，避免在预检中产生噪音。
 set "MINDOS_INTENT_ROUTING_EXPLICIT="
 if defined MINDOS_DISPATCHER_INTENT_ROUTING_ENABLED set "MINDOS_INTENT_ROUTING_EXPLICIT=1"
 if not defined MINDOS_DISPATCHER_INTENT_ROUTING_ENABLED set "MINDOS_DISPATCHER_INTENT_ROUTING_ENABLED=false"

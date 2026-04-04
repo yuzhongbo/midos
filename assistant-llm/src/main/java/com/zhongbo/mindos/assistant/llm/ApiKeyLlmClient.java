@@ -489,6 +489,9 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
         if (httpEnabled && isOllamaGenerateEndpoint(endpointValue)) {
             return callOllamaGenerateProvider(endpointValue, model, prompt, context, deltaConsumer, streamEmitted);
         }
+        if (httpEnabled && isOllamaChatEndpoint(endpointValue)) {
+            return callOllamaChatProvider(endpointValue, model, prompt, context, deltaConsumer, streamEmitted);
+        }
         if (httpEnabled && isNativeGeminiEndpoint(endpointValue)) {
             return callNativeGeminiProvider(endpointValue, prompt, context, apiKey, deltaConsumer, streamEmitted);
         }
@@ -545,6 +548,13 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
             return false;
         }
         return endpointValue.trim().toLowerCase(Locale.ROOT).contains("/api/generate");
+    }
+
+    private boolean isOllamaChatEndpoint(String endpointValue) {
+        if (endpointValue == null || endpointValue.isBlank()) {
+            return false;
+        }
+        return endpointValue.trim().toLowerCase(Locale.ROOT).contains("/api/chat");
     }
 
     private String callOpenAiCompatibleProvider(String endpointValue,
@@ -669,6 +679,8 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
         if (endpointText.isBlank()) {
             throw new RuntimeException("empty endpoint");
         }
+        logOllamaRequest("generate", endpointText, model, context);
+        Instant startedAt = Instant.now();
         try {
             Map<String, Object> requestPayload = new LinkedHashMap<>();
             requestPayload.put("model", model);
@@ -707,12 +719,119 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
             if (content == null || content.isBlank()) {
                 throw new RuntimeException("empty_response_content");
             }
+            logOllamaResult("generate", endpointText, content, startedAt, null);
             return content;
         } catch (IOException | InterruptedException ex) {
             if (ex instanceof InterruptedException) {
                 Thread.currentThread().interrupt();
             }
+            logOllamaResult("generate", endpointText, null, startedAt, ex);
             throw new RuntimeException("http_call_failed: " + ex.getMessage(), ex);
+        } catch (RuntimeException ex) {
+            logOllamaResult("generate", endpointText, null, startedAt, ex);
+            throw ex;
+        }
+    }
+
+    private String callOllamaChatProvider(String endpointValue,
+                                          String model,
+                                          String prompt,
+                                          Map<String, Object> context,
+                                          Consumer<String> deltaConsumer,
+                                          AtomicBoolean streamEmitted) {
+        String endpointText = endpointValue == null ? "" : endpointValue.trim();
+        if (endpointText.isBlank()) {
+            throw new RuntimeException("empty endpoint");
+        }
+        logOllamaRequest("chat", endpointText, model, context);
+        Instant startedAt = Instant.now();
+        try {
+            Map<String, Object> requestPayload = new LinkedHashMap<>();
+            requestPayload.put("model", model);
+            requestPayload.put("messages", List.of(Map.of("role", "user", "content", prompt)));
+            requestPayload.put("stream", true);
+
+            Map<String, Object> options = new LinkedHashMap<>();
+            Double temperature = resolveTemperature(context);
+            if (temperature != null) {
+                options.put("temperature", temperature);
+            }
+            Integer maxTokens = resolveMaxTokens(context);
+            if (maxTokens != null) {
+                options.put("num_predict", maxTokens);
+            }
+            if (!options.isEmpty()) {
+                requestPayload.put("options", options);
+            }
+
+            String requestBody = objectMapper.writeValueAsString(requestPayload);
+            HttpRequest request = HttpRequest.newBuilder(URI.create(endpointText))
+                    .timeout(HTTP_TIMEOUT)
+                    .header("Content-Type", "application/json")
+                    .header("Accept", "application/x-ndjson")
+                    .POST(HttpRequest.BodyPublishers.ofString(requestBody))
+                    .build();
+
+            HttpResponse<InputStream> response = httpClient.send(request, HttpResponse.BodyHandlers.ofInputStream());
+            int status = response.statusCode();
+            String body = readResponseBody(response.body());
+            if (status < 200 || status >= 300) {
+                throw new RuntimeException("http_" + status + ": " + abbreviate(body, 300));
+            }
+
+            String content = extractOllamaText(body, deltaConsumer, streamEmitted);
+            if (content == null || content.isBlank()) {
+                throw new RuntimeException("empty_response_content");
+            }
+            logOllamaResult("chat", endpointText, content, startedAt, null);
+            return content;
+        } catch (IOException | InterruptedException ex) {
+            if (ex instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
+            logOllamaResult("chat", endpointText, null, startedAt, ex);
+            throw new RuntimeException("http_call_failed: " + ex.getMessage(), ex);
+        } catch (RuntimeException ex) {
+            logOllamaResult("chat", endpointText, null, startedAt, ex);
+            throw ex;
+        }
+    }
+
+    private void logOllamaRequest(String apiType, String endpointText, String model, Map<String, Object> context) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("event", "llm.call.ollama.request");
+        payload.put("apiType", apiType);
+        payload.put("routeStage", asText(context == null ? null : context.get("routeStage")));
+        payload.put("llmProfile", llmProfile);
+        payload.put("endpoint", sanitizeEndpointForMetrics(endpointText));
+        payload.put("model", model == null ? "" : model);
+        try {
+            LOGGER.info(objectMapper.writeValueAsString(payload));
+        } catch (JsonProcessingException jsonEx) {
+            LOGGER.log(Level.INFO, String.valueOf(payload), jsonEx);
+        }
+    }
+
+    private void logOllamaResult(String apiType, String endpointText, String content, Instant startedAt, Exception error) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("event", error == null ? "llm.call.ollama.response" : "llm.call.ollama.failed");
+        payload.put("apiType", apiType);
+        payload.put("endpoint", sanitizeEndpointForMetrics(endpointText));
+        payload.put("durationMs", Duration.between(startedAt, Instant.now()).toMillis());
+        if (error == null) {
+            payload.put("replyLength", content == null ? 0 : content.length());
+        } else {
+            payload.put("errorType", error.getClass().getSimpleName().toLowerCase(Locale.ROOT));
+            payload.put("message", abbreviate(error.getMessage(), 200));
+        }
+        try {
+            if (error == null) {
+                LOGGER.info(objectMapper.writeValueAsString(payload));
+            } else {
+                LOGGER.warning(objectMapper.writeValueAsString(payload));
+            }
+        } catch (JsonProcessingException jsonEx) {
+            LOGGER.log(error == null ? Level.INFO : Level.WARNING, String.valueOf(payload), jsonEx);
         }
     }
 
@@ -813,6 +932,9 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
                 throw new RuntimeException("ollama_error: " + abbreviate(error, 200));
             }
             String content = root.path("response").asText("");
+            if (content.isBlank()) {
+                content = root.path("message").path("content").asText("");
+            }
             return content.isBlank() ? null : content;
         } catch (RuntimeException runtimeEx) {
             throw runtimeEx;
@@ -1153,7 +1275,7 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
             return null;
         }
         if ("local".equals(normalizedProvider) || "ollama".equals(normalizedProvider)) {
-            return "gemma4:2b";
+            return "gemma4:e2b-it-q4_K_M";
         }
         return normalizedProvider;
     }

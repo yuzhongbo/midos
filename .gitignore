@@ -38,3 +38,5 @@ assistant-api/data/memory-sync/*.jsonl
 logs/
 /server.log
 env.bat
+mindos-secrets.local.properties
+mindos-secrets.release.properties

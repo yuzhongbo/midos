@@ -211,8 +211,8 @@ class ApiKeyLlmClientTest {
             observed.put("auth", String.valueOf(exchange.getRequestHeaders().getFirst("Authorization")));
             observed.put("body", new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
             byte[] body = (
-                    "{\"model\":\"gemma4:2b\",\"response\":\"本地\",\"done\":false}\n"
-                            + "{\"model\":\"gemma4:2b\",\"response\":\"优先\",\"done\":true}\n"
+                    "{\"model\":\"gemma4:e2b-it-q4_K_M\",\"response\":\"本地\",\"done\":false}\n"
+                            + "{\"model\":\"gemma4:e2b-it-q4_K_M\",\"response\":\"优先\",\"done\":true}\n"
             ).getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().add("Content-Type", "application/x-ndjson");
             exchange.sendResponseHeaders(200, body.length);
@@ -227,7 +227,7 @@ class ApiKeyLlmClientTest {
                     "llm-dsl:local,llm-fallback:qwen",
                     "cost:local,quality:qwen",
                     "qwen:key-qwen",
-                    "local:gemma4:2b",
+                    "local:gemma4:e2b-it-q4_K_M",
                     false,
                     60,
                     "",
@@ -245,8 +245,60 @@ class ApiKeyLlmClientTest {
             assertEquals("本地优先", output);
             assertEquals("/api/generate", observed.get("path"));
             assertEquals("null", observed.get("auth"));
-            assertTrue(observed.get("body").contains("\"model\":\"gemma4:2b\""));
+            assertTrue(observed.get("body").contains("\"model\":\"gemma4:e2b-it-q4_K_M\""));
             assertTrue(observed.get("body").contains("\"prompt\":\"做个简短总结\""));
+            assertTrue(observed.get("body").contains("\"num_predict\":64"));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void shouldCallOllamaChatEndpointWithoutApiKey() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
+        ConcurrentHashMap<String, String> observed = new ConcurrentHashMap<>();
+        server.createContext("/api/chat", exchange -> {
+            observed.put("path", exchange.getRequestURI().getPath());
+            observed.put("auth", String.valueOf(exchange.getRequestHeaders().getFirst("Authorization")));
+            observed.put("body", new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            byte[] body = (
+                    "{\"model\":\"gemma4:e2b-it-q4_K_M\",\"message\":{\"role\":\"assistant\",\"content\":\"本地\"},\"done\":false}\n"
+                            + "{\"model\":\"gemma4:e2b-it-q4_K_M\",\"message\":{\"role\":\"assistant\",\"content\":\"对话\"},\"done\":true}\n"
+            ).getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/x-ndjson");
+            exchange.sendResponseHeaders(200, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+        try {
+            ApiKeyLlmClient client = newClient(
+                    "local",
+                    "auto",
+                    "llm-dsl:local,llm-fallback:qwen",
+                    "cost:local,quality:qwen",
+                    "qwen:key-qwen",
+                    "local:gemma4:e2b-it-q4_K_M",
+                    false,
+                    60,
+                    "",
+                    true,
+                    "local:http://127.0.0.1:" + server.getAddress().getPort() + "/api/chat,qwen:https://api.example.com/v1/chat/completions"
+            );
+
+            String output = client.generateResponse("做个简短总结", Map.of(
+                    "userId", "u-ollama-chat",
+                    "llmProvider", "local",
+                    "temperature", 0.1,
+                    "maxTokens", 64
+            ));
+
+            assertEquals("本地对话", output);
+            assertEquals("/api/chat", observed.get("path"));
+            assertEquals("null", observed.get("auth"));
+            assertTrue(observed.get("body").contains("\"model\":\"gemma4:e2b-it-q4_K_M\""));
+            assertTrue(observed.get("body").contains("\"messages\""));
+            assertTrue(observed.get("body").contains("\"role\":\"user\""));
             assertTrue(observed.get("body").contains("\"num_predict\":64"));
         } finally {
             server.stop(0);

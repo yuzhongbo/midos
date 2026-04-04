@@ -4,7 +4,8 @@
 
 set -e
 
-REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_DIR="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 API_MODULE="assistant-api"
 JAR_NAME="assistant-api-0.1.0-SNAPSHOT.jar"
 INSTALL_DIR="$HOME/.mindos-server"

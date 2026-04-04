@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 cd "$ROOT_DIR"
 
 usage() {
   cat <<'USAGE'
 Usage:
-  ./export-mindos-windows-dist.sh /path/to/output-dir
+  ./scripts/unix/export/export-mindos-windows-dist.sh /path/to/output-dir
 
 Environment overrides:
   SKIP_TESTS=1   # default: 1, set to 0 to run tests during package
@@ -51,7 +52,7 @@ if [[ ! -d "$OUTPUT_PARENT" ]]; then
     echo "[ERROR] Cannot create output parent directory: $OUTPUT_PARENT"
     echo "        It may be read-only or permission denied."
     echo "        Try a writable path, e.g.:"
-    echo "        ./export-mindos-windows-dist.sh \"$HOME/dist/mindos-windows-server\""
+    echo "        ./scripts/unix/export/export-mindos-windows-dist.sh \"$HOME/dist/mindos-windows-server\""
     exit 1
   fi
 fi
@@ -59,7 +60,7 @@ fi
 if [[ ! -w "$OUTPUT_PARENT" ]]; then
   echo "[ERROR] Output parent directory is not writable: $OUTPUT_PARENT"
   echo "        Try a writable path, e.g.:"
-  echo "        ./export-mindos-windows-dist.sh \"$HOME/dist/mindos-windows-server\""
+  echo "        ./scripts/unix/export/export-mindos-windows-dist.sh \"$HOME/dist/mindos-windows-server\""
   exit 1
 fi
 
@@ -91,67 +92,103 @@ cp "$ENV_TEMPLATE" "$OUTPUT_DIR/mindos-server.env.bat"
 
 cat > "$OUTPUT_DIR/mindos-secrets.properties" <<'PROPS'
 # Only edit the values on the right side. Lines starting with # or ; are ignored.
-# LLM providers
-# Profile switch (recommended):
-# - QWEN_STABLE / DOUBAO_STABLE / CN_DUAL (mainland vendors)
-# - OPENAI_NATIVE / GEMINI_NATIVE / GROK_NATIVE (native single-vendor)
-# - OPENROUTER_INTENT (OpenRouter multi-vendor intent routing)
+# Template layout (three sections):
+# 1) 建议默认 — recommended defaults (safe, opinionated)
+# 2) 可选填   — optional values you may set (safe to leave blank)
+# 3) 必须填   — required placeholders that will be strictly checked in release
+
+######################### 1) 建议默认 (recommended defaults) #########################
+# Keep a single-provider, production-friendly default: QWEN only.
 MINDOS_LLM_PROFILE=QWEN_STABLE
-# Optional manual override for display/debug (normally auto-set by profile)
-# MINDOS_LLM_MODE=QWEN_NATIVE
-# Optional explicit override (wins over profile default)
-# MINDOS_DISPATCHER_INTENT_ROUTING_ENABLED=false
+# Explicitly pick qwen as the active provider for this packaged distro (safe default).
+MINDOS_LLM_PROVIDER=qwen
 
-# Optional endpoint overrides
+# Endpoint override (commented example; uncomment if you need a custom endpoint)
 # MINDOS_LLM_ENDPOINT_QWEN=https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions
-# MINDOS_LLM_ENDPOINT_DOUBAO=https://ark.cn-beijing.volces.com/api/v3/chat/completions
-# MINDOS_LLM_ENDPOINT_OPENROUTER=https://openrouter.ai/api/v1/chat/completions
-# MINDOS_LLM_ENDPOINT_OPENAI=https://api.openai.com/v1/chat/completions
-# MINDOS_LLM_ENDPOINT_GEMINI=https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent
-# MINDOS_LLM_ENDPOINT_GROK=https://api.x.ai/v1/chat/completions
 
-MINDOS_OPENROUTER_KEY=REPLACE_WITH_OPENROUTER_KEY
-MINDOS_OPENAI_KEY=REPLACE_WITH_OPENAI_KEY
-MINDOS_GEMINI_KEY=REPLACE_WITH_GEMINI_KEY
-MINDOS_GROK_KEY=REPLACE_WITH_GROK_KEY
-MINDOS_QWEN_KEY=REPLACE_WITH_QWEN_KEY
-MINDOS_OPENAI_MODEL=gpt-4.1
-MINDOS_GEMINI_MODEL=gemini-2.5-pro
-MINDOS_GROK_MODEL=grok-4
-MINDOS_QWEN_MODEL=qwen3.5-plus
-MINDOS_DOUBAO_ARK_KEY=REPLACE_WITH_DOUBAO_ARK_KEY
-MINDOS_DOUBAO_ENDPOINT_ID=REPLACE_WITH_DOUBAO_ENDPOINT_ID
+# Models (reference only)
+# MINDOS_QWEN_MODEL=qwen3.5-plus
+# MINDOS_OPENAI_MODEL=gpt-4.1
 
-# Search MCP (dual): one Qwen WebSearch MCP + one Brave MCP
-MINDOS_SKILLS_MCP_SERVERS=qwensearch:https://dashscope.aliyuncs.com/api/v1/mcps/WebSearch/mcp,bravesearch:REPLACE_WITH_BRAVE_MCP_URL
-MINDOS_SKILLS_MCP_SERVER_HEADERS=qwensearch:Authorization=Bearer REPLACE_WITH_QWEN_KEY,bravesearch:X-Subscription-Token=REPLACE_WITH_BRAVE_KEY
+# Local/cloud escalation knobs — tightened: disable local->cloud automatic escalation by default.
+MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_LOCAL_ESCALATION_ENABLED=false
+MINDOS_DISPATCHER_LOCAL_ESCALATION_ENABLED=false
 
-# Brave Search MCP shortcut (optional, kept for compatibility)
-# Keep disabled when using dual MCP config above.
-MINDOS_SKILLS_MCP_BRAVE_ENABLED=false
-MINDOS_SKILLS_MCP_BRAVE_URL=
-MINDOS_SKILLS_MCP_BRAVE_API_KEY=
-# Optional overrides
-# MINDOS_SKILLS_MCP_BRAVE_ALIAS=brave
-# MINDOS_SKILLS_MCP_BRAVE_API_KEY_HEADER=X-Subscription-Token
+######################### 2) 可选填 (optional / recommended-to-leave-empty) ################
+# MCP (tool) servers/headers: leave empty by default to avoid accidental credentials in dist.
+# To enable, set these in your target machine's release secrets or via CI secrets.
+MINDOS_SKILLS_MCP_SERVERS=
+MINDOS_SKILLS_MCP_SERVER_HEADERS=
 
-# DingTalk stream mode (fill these three for long-connection bot replies)
-# DingTalk console mapping:
-# - Client ID (old AppKey / SuiteKey) -> MINDOS_IM_DINGTALK_STREAM_CLIENT_ID
-# - Client Secret (old AppSecret / SuiteSecret) -> MINDOS_IM_DINGTALK_STREAM_CLIENT_SECRET
-# - Robot Code -> MINDOS_IM_DINGTALK_OUTBOUND_ROBOT_CODE
-# Note: AgentId/App ID is not read directly by the current stream integration.
+# Example (commented):
+# MINDOS_SKILLS_MCP_SERVERS=bravesearch:https://api.search.brave.com/res/v1/web/search
+# MINDOS_SKILLS_MCP_SERVER_HEADERS=bravesearch:X-Subscription-Token=xxxx
+
+# DingTalk stream examples (optional; left blank in dist):
 MINDOS_IM_DINGTALK_STREAM_CLIENT_ID=
 MINDOS_IM_DINGTALK_STREAM_CLIENT_SECRET=
 MINDOS_IM_DINGTALK_OUTBOUND_ROBOT_CODE=
 
-# Optional outbound overrides; leave blank to reuse the stream clientId/clientSecret above.
-MINDOS_IM_DINGTALK_OUTBOUND_APP_KEY=
-MINDOS_IM_DINGTALK_OUTBOUND_APP_SECRET=
+# Minimal local Ollama + Qwen example (commented reference only):
+# Use local Ollama for semantic analysis / low-cost reasoning, keep qwen for stronger cloud fallback.
+# Real qwen secrets are defined in section 3 below.
+# MINDOS_LLM_PROFILE=CUSTOM_LOCAL_FIRST
+# MINDOS_LLM_PROVIDER=qwen
+# MINDOS_LLM_PROVIDER_ENDPOINTS=local:http://localhost:11434/api/chat,qwen:https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions
+# MINDOS_LLM_PROVIDER_MODELS=local:gemma4:e2b-it-q4_K_M,qwen:qwen3.5-plus
+# MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_LLM_ENABLED=true
+# MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_FORCE_LOCAL=true
+# MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_LOCAL_ESCALATION_ENABLED=true
+# MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_LLM_PROVIDER=local
+# MINDOS_DISPATCHER_LLM_FALLBACK_PROVIDER=qwen
 
-# Legacy aliases are still accepted by mindos-server.env.bat if you already used them.
-# MINDOS_IM_DINGTALK_APP_KEY=
-# MINDOS_IM_DINGTALK_APP_SECRET=
+######################### 3) 必须填 (required placeholders for release) ################
+# Only these keys are treated as required placeholders for release prechecks.
+MINDOS_QWEN_KEY=REPLACE_WITH_QWEN_KEY
+# Provider keys map: keep only qwen in the map for packaged dist. CI / target host may replace.
+MINDOS_LLM_PROVIDER_KEYS=qwen:REPLACE_WITH_QWEN_KEY
+
+# Other provider keys are kept here as commented references (do not uncomment in dist unless
+# you intend to supply the real secrets on the target machine or via CI during deploy).
+# MINDOS_OPENROUTER_KEY=REPLACE_WITH_OPENROUTER_KEY
+# MINDOS_OPENAI_KEY=REPLACE_WITH_OPENAI_KEY
+# MINDOS_GEMINI_KEY=REPLACE_WITH_GEMINI_KEY
+# MINDOS_GROK_KEY=REPLACE_WITH_GROK_KEY
+# MINDOS_DOUBAO_ARK_KEY=REPLACE_WITH_DOUBAO_ARK_KEY
+# MINDOS_DOUBAO_ENDPOINT_ID=REPLACE_WITH_DOUBAO_ENDPOINT_ID
+
+# Non-sensitive runtime tuning and feature flags (example defaults; safe to change on host):
+MINDOS_DISPATCHER_SEARCH_ROUTING_BRAVE_FIRST_ENABLED=true
+MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_LLM_ENABLED=true
+MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_FORCE_LOCAL=true
+MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_LLM_PROVIDER=local
+MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_MAX_TOKENS=120
+
+MINDOS_DISPATCHER_LLM_DSL_PROVIDER=local
+MINDOS_DISPATCHER_LLM_DSL_PRESET=cost
+MINDOS_DISPATCHER_LLM_FALLBACK_PROVIDER=local
+MINDOS_DISPATCHER_LLM_FALLBACK_PRESET=cost
+MINDOS_DISPATCHER_LLM_DSL_MAX_TOKENS=160
+MINDOS_DISPATCHER_LLM_FALLBACK_MAX_TOKENS=420
+MINDOS_DISPATCHER_SKILL_FINALIZE_WITH_LLM_MAX_TOKENS=220
+
+MINDOS_SKILL_NEWS_SEARCH_HTTP_TIMEOUT_MS=8000
+MINDOS_SKILL_NEWS_SEARCH_CACHE_TTL_SECONDS=300
+MINDOS_SKILL_NEWS_SEARCH_CACHE_MAX_ENTRIES=128
+MINDOS_SKILL_NEWS_SEARCH_MAX_ITEMS=8
+MINDOS_SKILL_NEWS_SEARCH_SUMMARY_ENABLED=true
+MINDOS_SKILL_NEWS_SEARCH_SUMMARY_PROVIDER=local
+MINDOS_SKILL_NEWS_SEARCH_SUMMARY_PRESET=cost
+MINDOS_SKILL_NEWS_SEARCH_SUMMARY_MAX_TOKENS=220
+
+MINDOS_DISPATCHER_ROUTING_REPLAY_MAX_SAMPLES=500
+MINDOS_LLM_METRICS_CACHE_WINDOW_LOW_SAMPLE_THRESHOLD=20
+
+# Logger overrides for deep debugging (commented by default)
+# LOGGING_LEVEL_COM_ZHONGBO_MINDOS_ASSISTANT_DISPATCHER=DEBUG
+# LOGGING_LEVEL_COM_ZHONGBO_MINDOS_ASSISTANT_LLM=DEBUG
+# LOGGING_LEVEL_COM_ZHONGBO_MINDOS_ASSISTANT_SKILL_MCP=DEBUG
+
 PROPS
 
 cat > "$OUTPUT_DIR/mindos-server.full.env.bat" <<'BAT'
@@ -187,6 +224,9 @@ set "MINDOS_DOUBAO_ARK_KEY=REPLACE_WITH_DOUBAO_ARK_KEY"
 set "MINDOS_DOUBAO_ENDPOINT_ID=REPLACE_WITH_DOUBAO_ENDPOINT_ID"
 set "MINDOS_QWEN_KEY=REPLACE_WITH_QWEN_KEY"
 set "MINDOS_QWEN_MODEL=qwen3.5-plus"
+set "MINDOS_LLM_PROVIDER_MODELS=local:gemma4:e2b-it-q4_K_M"
+set "MINDOS_SKILL_NEWS_SEARCH_GOOGLE_RSS_URL_TEMPLATE=https://www.reddit.com/r/worldnews/.rss"
+set "MINDOS_SKILL_NEWS_SEARCH_SUMMARY_MODEL=gemma4:e2b-it-q4_K_M"
 
 set "MINDOS_LLM_HTTP_ENABLED=true"
 set "MINDOS_LLM_MODE=OPENROUTER"

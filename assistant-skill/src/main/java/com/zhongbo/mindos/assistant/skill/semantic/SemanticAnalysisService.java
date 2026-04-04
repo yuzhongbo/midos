@@ -8,6 +8,7 @@ import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.skill.Skill;
 import com.zhongbo.mindos.assistant.skill.SkillRegistry;
 import org.springframework.context.annotation.Lazy;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -30,33 +31,74 @@ public class SemanticAnalysisService {
     private static final Pattern JSON_BLOCK_PATTERN = Pattern.compile("\\{.*}", Pattern.DOTALL);
     private static final Pattern DUE_DATE_PATTERN = Pattern.compile("(?:截止|due|到期|deadline)\\s*(?:时间|日期|date)?\\s*[:：]?\\s*([^，。；;\\n]+)",
             Pattern.CASE_INSENSITIVE);
+    private static final String SEMANTIC_LOCAL_PROVIDER = "local";
 
     private final LlmClient llmClient;
     private final SkillRegistry skillRegistry;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final boolean enabled;
     private final boolean llmEnabled;
+    private final boolean forceLocalProvider;
     private final String delegateSkillName;
     private final String llmProvider;
     private final String llmPreset;
     private final int llmMaxTokens;
+    private final boolean semanticLocalEscalationEnabled;
+    private final String semanticCloudProvider;
+    private final String semanticCloudPreset;
+    private final double semanticLocalEscalationMinConfidence;
 
+    @Autowired
     public SemanticAnalysisService(LlmClient llmClient,
                                    @Lazy SkillRegistry skillRegistry,
                                    @Value("${mindos.dispatcher.semantic-analysis.enabled:true}") boolean enabled,
                                    @Value("${mindos.dispatcher.semantic-analysis.llm-enabled:false}") boolean llmEnabled,
+                                   @Value("${mindos.dispatcher.semantic-analysis.force-local:true}") boolean forceLocalProvider,
                                    @Value("${mindos.dispatcher.semantic-analysis.delegate-skill:}") String delegateSkillName,
                                    @Value("${mindos.dispatcher.semantic-analysis.llm-provider:local}") String llmProvider,
                                    @Value("${mindos.dispatcher.semantic-analysis.llm-preset:cost}") String llmPreset,
-                                   @Value("${mindos.dispatcher.semantic-analysis.max-tokens:120}") int llmMaxTokens) {
+                                   @Value("${mindos.dispatcher.semantic-analysis.max-tokens:120}") int llmMaxTokens,
+                                   @Value("${mindos.dispatcher.semantic-analysis.local-escalation.enabled:false}") boolean semanticLocalEscalationEnabled,
+                                   @Value("${mindos.dispatcher.semantic-analysis.local-escalation.cloud-provider:qwen}") String semanticCloudProvider,
+                                   @Value("${mindos.dispatcher.semantic-analysis.local-escalation.cloud-preset:quality}") String semanticCloudPreset,
+                                   @Value("${mindos.dispatcher.semantic-analysis.local-escalation.min-confidence:0.78}") double semanticLocalEscalationMinConfidence) {
         this.llmClient = llmClient;
         this.skillRegistry = skillRegistry;
         this.enabled = enabled;
         this.llmEnabled = llmEnabled;
+        this.forceLocalProvider = forceLocalProvider;
         this.delegateSkillName = delegateSkillName == null ? "" : delegateSkillName.trim();
         this.llmProvider = llmProvider == null ? "" : llmProvider.trim();
         this.llmPreset = llmPreset == null ? "" : llmPreset.trim();
         this.llmMaxTokens = Math.max(0, llmMaxTokens);
+        this.semanticLocalEscalationEnabled = semanticLocalEscalationEnabled;
+        this.semanticCloudProvider = semanticCloudProvider == null ? "" : semanticCloudProvider.trim();
+        this.semanticCloudPreset = semanticCloudPreset == null ? "" : semanticCloudPreset.trim();
+        this.semanticLocalEscalationMinConfidence = Math.max(0.0, Math.min(1.0, semanticLocalEscalationMinConfidence));
+    }
+
+    public SemanticAnalysisService(LlmClient llmClient,
+                                   SkillRegistry skillRegistry,
+                                   boolean enabled,
+                                   boolean llmEnabled,
+                                   boolean forceLocalProvider,
+                                   String delegateSkillName,
+                                   String llmProvider,
+                                   String llmPreset,
+                                   int llmMaxTokens) {
+        this(llmClient,
+                skillRegistry,
+                enabled,
+                llmEnabled,
+                forceLocalProvider,
+                delegateSkillName,
+                llmProvider,
+                llmPreset,
+                llmMaxTokens,
+                false,
+                "qwen",
+                "quality",
+                0.78);
     }
 
     public SemanticAnalysisResult analyze(String userId,
@@ -126,36 +168,85 @@ public class SemanticAnalysisService {
         if (baseline != null && baseline.confidence() >= 0.86) {
             return Optional.empty();
         }
+        String prompt = "You are a semantic intent analyzer for an AI assistant. "
+                + "Return ONLY JSON with schema "
+                + "{\"intent\":\"...\",\"rewrittenInput\":\"...\",\"suggestedSkill\":\"...\",\"payload\":{},"
+                + "\"keywords\":[\"...\"],\"confidence\":0.0}. "
+                + "If no local skill should be suggested, use an empty suggestedSkill.\n"
+                + "Available skills: " + String.join(", ", availableSkillSummaries == null ? List.of() : availableSkillSummaries) + "\n"
+                + "Memory context:\n" + (memoryContext == null ? "" : memoryContext) + "\n"
+                + "User input:\n" + userInput;
+
+        Optional<SemanticAnalysisResult> localResult = Optional.empty();
+        if (semanticLocalEscalationEnabled) {
+            localResult = callSemanticLlm(prompt, userId, userInput, profileContext, SEMANTIC_LOCAL_PROVIDER, llmPreset);
+            LOGGER.info("semantic.analysis.local.result confidence="
+                    + localResult.map(SemanticAnalysisResult::confidence).orElse(0.0)
+                    + ", threshold=" + semanticLocalEscalationMinConfidence
+                    + ", hasResult=" + localResult.isPresent());
+            if (localResult.isPresent() && localResult.get().confidence() >= semanticLocalEscalationMinConfidence) {
+                return localResult;
+            }
+            String cloudProvider = resolveSemanticCloudProvider();
+            if (cloudProvider.isBlank() || SEMANTIC_LOCAL_PROVIDER.equals(cloudProvider)) {
+                return localResult;
+            }
+            LOGGER.info("semantic.analysis.local.escalate provider=" + cloudProvider
+                    + ", reason=" + (localResult.isEmpty() ? "local_empty" : "low_confidence"));
+            Optional<SemanticAnalysisResult> cloudResult = callSemanticLlm(
+                    prompt,
+                    userId,
+                    userInput,
+                    profileContext,
+                    cloudProvider,
+                    semanticCloudPreset.isBlank() ? llmPreset : semanticCloudPreset
+            );
+            if (cloudResult.isPresent() && (localResult.isEmpty() || cloudResult.get().confidence() >= localResult.get().confidence())) {
+                LOGGER.info("semantic.analysis.local.escalate.accepted cloudConfidence=" + cloudResult.get().confidence());
+                return cloudResult;
+            }
+            LOGGER.info("semantic.analysis.local.escalate.skipped-cloud-result");
+            return localResult;
+        }
+
+        return callSemanticLlm(prompt, userId, userInput, profileContext, resolveSemanticLlmProvider(), llmPreset);
+    }
+
+    private Optional<SemanticAnalysisResult> callSemanticLlm(String prompt,
+                                                             String userId,
+                                                             String userInput,
+                                                             Map<String, Object> profileContext,
+                                                             String provider,
+                                                             String preset) {
         try {
-            String prompt = "You are a semantic intent analyzer for an AI assistant. "
-                    + "Return ONLY JSON with schema "
-                    + "{\"intent\":\"...\",\"rewrittenInput\":\"...\",\"suggestedSkill\":\"...\",\"payload\":{},"
-                    + "\"keywords\":[\"...\"],\"confidence\":0.0}. "
-                    + "If no local skill should be suggested, use an empty suggestedSkill.\n"
-                    + "Available skills: " + String.join(", ", availableSkillSummaries == null ? List.of() : availableSkillSummaries) + "\n"
-                    + "Memory context:\n" + (memoryContext == null ? "" : memoryContext) + "\n"
-                    + "User input:\n" + userInput;
-            Map<String, Object> context = new LinkedHashMap<>();
-            context.put("userId", userId == null ? "" : userId);
-            context.put("routeStage", "semantic-analysis");
-            context.put("input", userInput);
-            if (!llmProvider.isBlank()) {
-                context.put("llmProvider", llmProvider);
-            }
-            if (!llmPreset.isBlank()) {
-                context.put("llmPreset", llmPreset);
-            }
-            if (llmMaxTokens > 0) {
-                context.put("maxTokens", llmMaxTokens);
-            }
-            if (profileContext != null && !profileContext.isEmpty()) {
-                context.put("profile", profileContext);
-            }
+            Map<String, Object> context = buildSemanticLlmContext(userId, userInput, profileContext, provider, preset);
             return parseResult(llmClient.generateResponse(prompt, Map.copyOf(context)), "llm");
         } catch (RuntimeException ex) {
             LOGGER.log(Level.WARNING, "Semantic analysis LLM call failed, fallback to local analysis", ex);
             return Optional.empty();
         }
+    }
+
+    private Map<String, Object> buildSemanticLlmContext(String userId,
+                                                         String userInput,
+                                                         Map<String, Object> profileContext,
+                                                         String provider,
+                                                         String preset) {
+        Map<String, Object> context = new LinkedHashMap<>();
+        context.put("userId", userId == null ? "" : userId);
+        context.put("routeStage", "semantic-analysis");
+        context.put("input", userInput);
+        context.put("llmProvider", provider == null || provider.isBlank() ? resolveSemanticLlmProvider() : provider);
+        if (preset != null && !preset.isBlank()) {
+            context.put("llmPreset", preset);
+        }
+        if (llmMaxTokens > 0) {
+            context.put("maxTokens", llmMaxTokens);
+        }
+        if (profileContext != null && !profileContext.isEmpty()) {
+            context.put("profile", profileContext);
+        }
+        return context;
     }
 
     private Optional<SemanticAnalysisResult> parseResult(String raw, String source) {
@@ -355,6 +446,28 @@ public class SemanticAnalysisService {
 
     private String normalize(String value) {
         return value == null ? "" : value.trim().toLowerCase(Locale.ROOT).replaceAll("\\s+", " ");
+    }
+
+    private String resolveSemanticLlmProvider() {
+        if (forceLocalProvider || llmProvider == null || llmProvider.isBlank()) {
+            return SEMANTIC_LOCAL_PROVIDER;
+        }
+        String normalized = llmProvider.trim().toLowerCase(Locale.ROOT);
+        if ("local".equals(normalized) || "ollama".equals(normalized) || "gemma".equals(normalized)) {
+            return SEMANTIC_LOCAL_PROVIDER;
+        }
+        return normalized;
+    }
+
+    private String resolveSemanticCloudProvider() {
+        if (semanticCloudProvider == null || semanticCloudProvider.isBlank()) {
+            return "";
+        }
+        String normalized = semanticCloudProvider.trim().toLowerCase(Locale.ROOT);
+        if ("ollama".equals(normalized) || "gemma".equals(normalized)) {
+            return SEMANTIC_LOCAL_PROVIDER;
+        }
+        return normalized;
     }
 
     private boolean containsAny(String normalized, String... terms) {

@@ -6,7 +6,7 @@ set -euo pipefail
 usage() {
   cat <<'USAGE'
 Usage:
-  CLOUD_HOST=1.2.3.4 CLOUD_USER=root ./init-authorized-keys.sh
+  CLOUD_HOST=1.2.3.4 CLOUD_USER=root ./scripts/unix/cloud/init-authorized-keys.sh
 
 Optional env:
   CLOUD_PORT=22
@@ -85,5 +85,5 @@ ESCAPED_KEY="$(printf '%s' "$PUB_KEY_CONTENT" | sed "s/'/'\\''/g")"
 run_ssh "mkdir -p ~/.ssh && chmod 700 ~/.ssh && touch ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && (grep -F '$ESCAPED_KEY' ~/.ssh/authorized_keys >/dev/null 2>&1 || echo '$ESCAPED_KEY' >> ~/.ssh/authorized_keys)"
 
 echo "[OK] authorized_keys initialized for $CLOUD_USER@$CLOUD_HOST"
-echo "     Next: CLOUD_HOST=$CLOUD_HOST CLOUD_USER=$CLOUD_USER ./deploy-cloud.sh"
+echo "     Next: CLOUD_HOST=$CLOUD_HOST CLOUD_USER=$CLOUD_USER ./scripts/unix/cloud/deploy-cloud.sh"
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 cd "$ROOT_DIR"
 
 PORT="${MINDOS_PORT:-8080}"
@@ -25,10 +25,10 @@ while [[ $# -gt 0 ]]; do
     --help)
       cat <<'USAGE'
 Usage:
-  ./solo-stop.sh
-  ./solo-stop.sh --port 8080
-  ./solo-stop.sh --pattern "MindOsApplication|assistant-api"
-  ./solo-stop.sh --force
+  ./scripts/unix/local/solo-stop.sh
+  ./scripts/unix/local/solo-stop.sh --port 8080
+  ./scripts/unix/local/solo-stop.sh --pattern "MindOsApplication|assistant-api"
+  ./scripts/unix/local/solo-stop.sh --force
 
 Environment overrides:
   MINDOS_PORT=8080
@@ -43,7 +43,7 @@ USAGE
       ;;
     *)
       echo "Unknown argument: $1"
-      echo "Run ./solo-stop.sh --help"
+      echo "Run ./scripts/unix/local/solo-stop.sh --help"
       exit 1
       ;;
   esac
@@ -84,4 +84,3 @@ if [[ "$stopped_any" == "true" ]]; then
 else
   echo "[PASS] Nothing to stop"
 fi
-

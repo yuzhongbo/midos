@@ -1258,6 +1258,7 @@ class DispatcherServiceTest {
                 registry,
                 semanticAnalysisEnabled,
                 false,
+                true,
                 "",
                 "local",
                 "cost",
@@ -1289,6 +1290,21 @@ class DispatcherServiceTest {
         MetaOrchestratorService metaOrchestratorService = new MetaOrchestratorService(false);
         SkillCapabilityPolicy capabilityPolicy = new SkillCapabilityPolicy(false, "fs.read,fs.write,exec,net", "");
         PersonaCoreService personaCoreService = new PersonaCoreService(memoryManager, false, 2, "unknown,null,n/a");
+        DispatcherLlmTuningProperties tuningProperties = new DispatcherLlmTuningProperties();
+        tuningProperties.getLlmDsl().setProvider(llmDslProvider);
+        tuningProperties.getLlmDsl().setPreset(llmDslPreset);
+        tuningProperties.getLlmDsl().setMaxTokens(llmDslMaxTokens);
+        tuningProperties.getLlmFallback().setProvider(llmFallbackProvider);
+        tuningProperties.getLlmFallback().setPreset(llmFallbackPreset);
+        tuningProperties.getLlmFallback().setMaxTokens(llmFallbackMaxTokens);
+        tuningProperties.getSkillFinalizeWithLlm().setMaxTokens(skillFinalizeMaxTokens);
+        tuningProperties.getLocalEscalation().setEnabled(localEscalationEnabled);
+        tuningProperties.getLocalEscalation().setCloudProvider(localEscalationCloudProvider);
+        tuningProperties.getLocalEscalation().setCloudPreset(localEscalationCloudPreset);
+        tuningProperties.getLocalEscalation().getQuality().setEnabled(true);
+        tuningProperties.getLocalEscalation().getQuality().setMaxReplyChars(32);
+        tuningProperties.getLocalEscalation().getQuality().setInputTerms("分析,方案,架构,tradeoff,trade-off,对比,设计,复杂,深度,沟通,情绪,关系,计划,why,explain");
+        tuningProperties.getLocalEscalation().getQuality().setReplyTerms("好的,收到,已收到,ok,okay,明白,可以,稍后,后面再说");
         return new DispatcherService(
                 skillEngine,
                 parser,
@@ -1334,20 +1350,7 @@ class DispatcherServiceTest {
                 preAnalyzeMode,
                 preAnalyzeThreshold,
                 preAnalyzeSkipSkills,
-                llmDslProvider,
-                llmDslPreset,
-                llmFallbackProvider,
-                llmFallbackPreset,
-                localEscalationEnabled,
-                localEscalationCloudProvider,
-                localEscalationCloudPreset,
-                llmDslMaxTokens,
-                llmFallbackMaxTokens,
-                skillFinalizeMaxTokens,
-                true,
-                32,
-                "分析,方案,架构,tradeoff,trade-off,对比,设计,复杂,深度,沟通,情绪,关系,计划,why,explain",
-                "好的,收到,已收到,ok,okay,明白,可以,稍后,后面再说",
+                tuningProperties,
                 postSkillSummaryEnabled,
                 postSkillSummarySkills,
                 280,

@@ -36,14 +36,109 @@ The `solo` Spring profile optimizes for day-to-day personal use: warmer replies,
 
 Helpers:
 ```bash
-chmod +x ./run-mindos-solo.sh ./solo-cli.sh ./solo-smoke.sh ./solo-stop.sh
-./run-mindos-solo.sh          # one-click local server
-./solo-cli.sh                 # CLI with defaults
-./solo-smoke.sh               # lightweight /chat and /api/metrics/llm check
-./solo-stop.sh                # stop by port or process pattern
+chmod +x ./scripts/unix/local/*.sh ./scripts/check-secrets.sh
+./scripts/unix/local/run-mindos-solo.sh          # one-click local server
+./scripts/unix/local/run-local.sh                # load dist secrets + optional local overrides, then start solo
+./scripts/unix/local/run-local.sh --dry-run      # preflight only: print effective summary and exit
+./scripts/unix/local/run-local.sh --strict       # fail if placeholders are still active
+./scripts/unix/local/run-release.sh              # release startup with strict placeholder checks
+./scripts/unix/local/run-release.sh --dry-run    # release preflight only (strict)
+./scripts/check-secrets.sh --mode=local
+./scripts/check-secrets.sh --mode=release
+./scripts/unix/local/solo-cli.sh                 # CLI with defaults
+./scripts/unix/local/solo-smoke.sh               # lightweight /chat and /api/metrics/llm check
+./scripts/unix/local/solo-stop.sh                # stop by port or process pattern
 ```
 
-Windows equivalents live beside the scripts above (`run-mindos-solo.bat`, `solo-smoke.bat`, `install-mindos-server.bat`).
+Local key management for debugging (recommended):
+```bash
+cp mindos-secrets.local.properties.example mindos-secrets.local.properties
+chmod +x ./scripts/unix/local/run-local.sh
+./scripts/unix/local/run-local.sh
+```
+- `scripts/unix/local/run-local.sh` loads `dist/mindos-windows-server/mindos-secrets.properties` first, then optional `mindos-secrets.local.properties` overrides.
+- `scripts/unix/local/run-release.sh` loads `dist/.../mindos-secrets.properties` plus optional `mindos-secrets.release.properties`, and fails fast on placeholder secrets.
+- Keep real keys only in `mindos-secrets.local.properties` / `mindos-secrets.release.properties` (both ignored by git).
+
+### Secrets file layout and multi-provider routing
+
+`dist/mindos-windows-server/mindos-secrets.properties` uses a three-part layout:
+- `1) 建议默认`: safe defaults that usually stay enabled in packaged dist, e.g. `MINDOS_LLM_PROFILE=QWEN_STABLE` and a single-provider `qwen` default.
+- `2) 可选填`: values that are intentionally left blank in dist, such as `MINDOS_SKILLS_MCP_SERVERS`, `MINDOS_SKILLS_MCP_SERVER_HEADERS`, and DingTalk stream/outbound credentials.
+- `3) 必须填`: release placeholders that strict prechecks will reject until replaced, currently centered on `MINDOS_QWEN_KEY` and `MINDOS_LLM_PROVIDER_KEYS`.
+
+For multi-provider setups, these variables are comma-separated provider maps:
+- `MINDOS_LLM_PROVIDER_ENDPOINTS`: `provider:baseUrl,provider2:baseUrl2`
+- `MINDOS_LLM_PROVIDER_KEYS`: `provider:key,provider2:key2`
+- `MINDOS_LLM_PROVIDER_MODELS`: `provider:modelId,provider2:modelId2`
+
+Examples:
+- Local-first token-saving setup: `local:http://localhost:11434/api/chat,qwen:https://dashscope.aliyuncs.com/...`
+- Single-provider release setup: `MINDOS_LLM_PROFILE=QWEN_STABLE`, `MINDOS_LLM_PROVIDER=qwen`, `MINDOS_LLM_PROVIDER_KEYS=qwen:...`
+- Stage-based cloud routing: `MINDOS_LLM_ROUTING_STAGE_MAP=llm-dsl:openrouter,llm-fallback:qwen`
+
+Recommended routing patterns from `mindos-server.env.template.sh`:
+- `CUSTOM_LOCAL_FIRST`: local Ollama endpoint handles semantic analysis / low-cost requests first, cloud provider stays available for stronger fallback.
+- Multi-cloud stage routing: use `MINDOS_LLM_ROUTING_STAGE_MAP` and `MINDOS_LLM_ROUTING_PRESET_MAP` to pin providers by dispatcher stage or preset.
+- `QWEN_STABLE`: simplest production mode when you want one provider, one key map, and easy auditability.
+
+Validation rules:
+- Do not put spaces inside provider maps; entries are comma-separated and each entry is split at the first `:`.
+- `scripts/unix/lib/mindos-env.sh` validates map syntax via `mindos_validate_kv_map_format` during startup/export flows.
+- Keep real secrets in `mindos-secrets.local.properties` or `mindos-secrets.release.properties`; keep dist templates placeholder-only to reduce config drift and accidental secret leakage.
+
+### Minimal local Ollama + Qwen example
+
+If you want low-cost local semantic analysis first, then Qwen for stronger cloud replies when needed, this is the smallest practical env-style setup:
+
+```properties
+MINDOS_LLM_PROFILE=CUSTOM_LOCAL_FIRST
+MINDOS_LLM_PROVIDER=qwen
+MINDOS_LLM_PROVIDER_ENDPOINTS=local:http://localhost:11434/api/chat,qwen:https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions
+MINDOS_LLM_PROVIDER_MODELS=local:gemma4:e2b-it-q4_K_M,qwen:qwen3.5-plus
+MINDOS_QWEN_KEY=REPLACE_WITH_QWEN_KEY
+MINDOS_LLM_PROVIDER_KEYS=qwen:REPLACE_WITH_QWEN_KEY
+
+MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_LLM_ENABLED=true
+MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_FORCE_LOCAL=true
+MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_LOCAL_ESCALATION_ENABLED=true
+MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_LLM_PROVIDER=local
+MINDOS_DISPATCHER_LLM_FALLBACK_PROVIDER=qwen
+```
+
+What this setup is for:
+- `local:http://localhost:11434/api/chat` is used as the cheap local endpoint for semantic analysis and short, low-cost reasoning.
+- `qwen` stays available as the cloud provider for stronger fallback/final reply quality.
+- Keep the real Qwen secret in `mindos-secrets.local.properties` or `mindos-secrets.release.properties`, not in the dist template.
+
+Quick local check before starting MindOS:
+
+```bash
+curl http://localhost:11434/api/chat \
+  -d '{"model":"gemma4:e2b-it-q4_K_M","messages":[{"role":"user","content":"Hello!"}]}'
+```
+
+If this call does not return successfully, fix Ollama first; otherwise MindOS may log routing to `local` but still fail before real semantic-analysis output is produced.
+
+### Pre-release Checklist (3 Commands)
+
+```bash
+./scripts/check-secrets.sh --mode=release
+./scripts/unix/local/run-release.sh --dry-run
+./mvnw -q test
+```
+
+Script layout (organized by OS first, then role):
+- `scripts/unix/local/*`: local dev/runtime launchers (`run-local`, `run-release`, `run-mindos-solo`, `solo-*`)
+- `scripts/unix/cloud/*`: cloud bootstrap/deploy/rollback helpers (`init-authorized-keys`, `cloud-init`, `deploy-cloud`, `cloud-check`, `rollback-cloud`)
+- `scripts/unix/install/*`: Unix install/uninstall helpers (`install-mindos-*`, `uninstall-mindos-*`)
+- `scripts/unix/export/*`: packaging/export helpers (`export-mindos-windows-dist`)
+- `scripts/unix/tools/*`: preflight/check helpers (`check-secrets`)
+- `scripts/unix/lib/*`: shared shell utilities (`mindos-env.sh`)
+- `scripts/windows/*`: Windows launch/install/smoke helpers (`*.bat`)
+- root Unix wrapper scripts are removed; use the `scripts/unix/*` paths directly.
+
+Windows scripts are centralized in `scripts/windows/*`.
 
 ## CLI Quick Start
 Three-minute path (natural language first):
@@ -94,11 +189,13 @@ curl http://localhost:8080/api/skills
 ## Cloud Deploy (single host)
 Passwordless flow (recommended):
 ```bash
-chmod +x ./init-authorized-keys.sh ./cloud-init.sh ./cloud-check.sh ./deploy-cloud.sh ./rollback-cloud.sh
-CLOUD_HOST=1.2.3.4 CLOUD_USER=root ./init-authorized-keys.sh
-CLOUD_HOST=1.2.3.4 CLOUD_USER=root ./cloud-init.sh
-CLOUD_HOST=1.2.3.4 CLOUD_USER=root ./deploy-cloud.sh
-CLOUD_HOST=1.2.3.4 CLOUD_USER=root ./cloud-check.sh
+chmod +x ./scripts/unix/cloud/*.sh
+CLOUD_HOST=1.2.3.4 CLOUD_USER=root ./scripts/unix/cloud/init-authorized-keys.sh
+CLOUD_HOST=1.2.3.4 CLOUD_USER=root ./scripts/unix/cloud/cloud-init.sh
+CLOUD_HOST=1.2.3.4 CLOUD_USER=root ./scripts/unix/cloud/deploy-cloud.sh
+CLOUD_HOST=1.2.3.4 CLOUD_USER=root ./scripts/unix/cloud/cloud-check.sh
+CLOUD_HOST=1.2.3.4 CLOUD_USER=root ./scripts/unix/cloud/rollback-cloud.sh
+CLOUD_HOST=1.2.3.4 CLOUD_USER=root ./scripts/unix/cloud/cloud-check.sh
 ```
 
 ## Validation Shortcuts

@@ -247,20 +247,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                               @Value("${mindos.dispatcher.skill.pre-analyze.mode:auto}") String skillPreAnalyzeMode,
                               @Value("${mindos.dispatcher.skill.pre-analyze.confidence-threshold:0}") int skillPreAnalyzeConfidenceThreshold,
                               @Value("${mindos.dispatcher.skill.pre-analyze.skip-skills:time}") String skillPreAnalyzeSkipSkills,
-                              @Value("${mindos.dispatcher.llm-dsl.provider:}") String llmDslProvider,
-                              @Value("${mindos.dispatcher.llm-dsl.preset:}") String llmDslPreset,
-                              @Value("${mindos.dispatcher.llm-fallback.provider:}") String llmFallbackProvider,
-                              @Value("${mindos.dispatcher.llm-fallback.preset:}") String llmFallbackPreset,
-                               @Value("${mindos.dispatcher.local-escalation.enabled:false}") boolean localEscalationEnabled,
-                               @Value("${mindos.dispatcher.local-escalation.cloud-provider:qwen}") String localEscalationCloudProvider,
-                               @Value("${mindos.dispatcher.local-escalation.cloud-preset:quality}") String localEscalationCloudPreset,
-                               @Value("${mindos.dispatcher.llm-dsl.max-tokens:0}") int llmDslMaxTokens,
-                               @Value("${mindos.dispatcher.llm-fallback.max-tokens:0}") int llmFallbackMaxTokens,
-                               @Value("${mindos.dispatcher.skill.finalize-with-llm.max-tokens:0}") int skillFinalizeMaxTokens,
-                               @Value("${mindos.dispatcher.local-escalation.quality.enabled:true}") boolean localEscalationQualityEnabled,
-                               @Value("${mindos.dispatcher.local-escalation.quality.max-reply-chars:32}") int localEscalationQualityMaxReplyChars,
-                               @Value("${mindos.dispatcher.local-escalation.quality.input-terms:分析,方案,架构,tradeoff,trade-off,对比,设计,复杂,深度,沟通,情绪,关系,计划,why,explain}") String localEscalationQualityInputTerms,
-                               @Value("${mindos.dispatcher.local-escalation.quality.reply-terms:好的,收到,已收到,ok,okay,明白,可以,稍后,后面再说}") String localEscalationQualityReplyTerms,
+                              DispatcherLlmTuningProperties llmTuningProperties,
                               @Value("${mindos.memory.post-skill-summary.enabled:false}") boolean postSkillSummaryEnabled,
                               @Value("${mindos.memory.post-skill-summary.skills:teaching.plan,todo.create,eq.coach,code.generate,file.search}") String postSkillSummarySkills,
                               @Value("${mindos.memory.post-skill-summary.max-reply-chars:280}") int postSkillSummaryMaxReplyChars,
@@ -323,20 +310,21 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         this.skillPreAnalyzeMode = normalizeSkillPreAnalyzeMode(skillPreAnalyzeMode);
         this.skillPreAnalyzeConfidenceThreshold = Math.max(0, skillPreAnalyzeConfidenceThreshold);
         this.skillPreAnalyzeSkipSkills = parseCsvSet(skillPreAnalyzeSkipSkills);
-        this.llmDslProvider = normalizeOptionalConfig(llmDslProvider);
-        this.llmDslPreset = normalizeOptionalConfig(llmDslPreset);
-        this.llmFallbackProvider = normalizeOptionalConfig(llmFallbackProvider);
-        this.llmFallbackPreset = normalizeOptionalConfig(llmFallbackPreset);
-        this.localEscalationEnabled = localEscalationEnabled;
-        this.localEscalationCloudProvider = normalizeOptionalConfig(localEscalationCloudProvider);
-        this.localEscalationCloudPreset = normalizeOptionalConfig(localEscalationCloudPreset);
-        this.llmDslMaxTokens = Math.max(0, llmDslMaxTokens);
-        this.llmFallbackMaxTokens = Math.max(0, llmFallbackMaxTokens);
-        this.skillFinalizeMaxTokens = Math.max(0, skillFinalizeMaxTokens);
-        this.localEscalationQualityEnabled = localEscalationQualityEnabled;
-        this.localEscalationQualityMaxReplyChars = Math.max(8, localEscalationQualityMaxReplyChars);
-        this.localEscalationQualityInputTerms = parseCsvSet(localEscalationQualityInputTerms);
-        this.localEscalationQualityReplyTerms = parseCsvSet(localEscalationQualityReplyTerms);
+        DispatcherLlmTuningProperties effectiveLlmTuning = llmTuningProperties == null ? new DispatcherLlmTuningProperties() : llmTuningProperties;
+        this.llmDslProvider = normalizeOptionalConfig(effectiveLlmTuning.getLlmDsl().getProvider());
+        this.llmDslPreset = normalizeOptionalConfig(effectiveLlmTuning.getLlmDsl().getPreset());
+        this.llmFallbackProvider = normalizeOptionalConfig(effectiveLlmTuning.getLlmFallback().getProvider());
+        this.llmFallbackPreset = normalizeOptionalConfig(effectiveLlmTuning.getLlmFallback().getPreset());
+        this.localEscalationEnabled = effectiveLlmTuning.getLocalEscalation().isEnabled();
+        this.localEscalationCloudProvider = normalizeOptionalConfig(effectiveLlmTuning.getLocalEscalation().getCloudProvider());
+        this.localEscalationCloudPreset = normalizeOptionalConfig(effectiveLlmTuning.getLocalEscalation().getCloudPreset());
+        this.llmDslMaxTokens = Math.max(0, effectiveLlmTuning.getLlmDsl().getMaxTokens());
+        this.llmFallbackMaxTokens = Math.max(0, effectiveLlmTuning.getLlmFallback().getMaxTokens());
+        this.skillFinalizeMaxTokens = Math.max(0, effectiveLlmTuning.getSkillFinalizeWithLlm().getMaxTokens());
+        this.localEscalationQualityEnabled = effectiveLlmTuning.getLocalEscalation().getQuality().isEnabled();
+        this.localEscalationQualityMaxReplyChars = Math.max(8, effectiveLlmTuning.getLocalEscalation().getQuality().getMaxReplyChars());
+        this.localEscalationQualityInputTerms = parseCsvSet(effectiveLlmTuning.getLocalEscalation().getQuality().getInputTerms());
+        this.localEscalationQualityReplyTerms = parseCsvSet(effectiveLlmTuning.getLocalEscalation().getQuality().getReplyTerms());
         this.postSkillSummaryEnabled = postSkillSummaryEnabled;
         this.postSkillSummarySkills = parseCsvSet(postSkillSummarySkills);
         this.postSkillSummaryMaxReplyChars = Math.max(80, postSkillSummaryMaxReplyChars);

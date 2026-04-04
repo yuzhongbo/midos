@@ -4,7 +4,8 @@ REM 用法: 双击或在命令行运行 install-mindos-server.bat
 
 setlocal enabledelayedexpansion
 
-set "REPO_DIR=%~dp0"
+set "SCRIPT_DIR=%~dp0"
+for %%I in ("%SCRIPT_DIR%..\..") do set "REPO_DIR=%%~fI"
 set "API_MODULE=assistant-api"
 set "JAR_NAME=assistant-api-0.1.0-SNAPSHOT.jar"
 set "INSTALL_DIR=%USERPROFILE%\.mindos-server"

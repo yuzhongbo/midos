@@ -4,7 +4,8 @@
 
 set -e
 
-REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_DIR="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 CLI_MODULE="mindos-cli"
 JAR_NAME="mindos-cli-0.1.0-SNAPSHOT.jar"
 INSTALL_DIR="$HOME/.mindos-cli"
@@ -32,4 +33,3 @@ if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
 fi
 
 echo "[MindOS] 安装完成！可用 mindos 命令启动 CLI。"
-

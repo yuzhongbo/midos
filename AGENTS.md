@@ -4,11 +4,11 @@
 This repository is a lightweight, single-user personal AI assistant backend. Optimize for small, safe changes that keep `assistant-api` bootable and the reactor test suite passing.
 
 ## Existing AI instruction sources
-- Glob scan for `**/{.github/copilot-instructions.md,AGENT.md,AGENTS.md,CLAUDE.md,.cursorrules,.windsurfrules,.clinerules,.cursor/rules/**,.windsurf/rules/**,.clinerules/**,README.md}` found only this file and `README.md`.
+- Glob scan for `**/{.github/copilot-instructions.md,AGENT.md,AGENTS.md,CLAUDE.md,.cursorrules,.windsurfrules,.clinerules,.cursor/rules/**,.windsurf/rules/**,.clinerules/**,README.md}` found `AGENTS.md`, root `README.md`, and `assistant-memory/src/main/resources/models/bge-micro/README.md`.
 - Treat this file as primary coding-agent guidance.
 
 ## Architecture snapshot
-- Root `pom.xml` is an aggregator (`packaging=pom`) using Java `17` and Spring Boot `3.2.5`.
+- Root `pom.xml` is an aggregator (`packaging=pom`) using Java `17` and Spring Boot `3.3.10`.
 - Modules and boundaries:
   - `assistant-api`: REST entrypoint and Spring Boot app
   - `assistant-dispatcher`: routes user input to skills/LLM
@@ -27,7 +27,10 @@ This repository is a lightweight, single-user personal AI assistant backend. Opt
 - Persona inspection flow: `/api/memory/{userId}/persona` (`GET`) returns the confirmed long-term persona profile learned for that user.
 - Persona explain flow: `/api/memory/{userId}/persona/explain` (`GET`) returns confirmed profile plus pending override candidates for debug visibility.
 - LLM metrics flow: `/api/metrics/llm` (`GET`) returns windowed call stats (provider aggregates, success/fallback rate, latency, estimated token usage, optional recent calls) plus `securityAudit` writer summary (`queueDepth`, `enqueuedCount`, `writtenCount`, fallback/flush counters).
+- News push flow: `/api/news/status|config|push` for scheduled/manual news delivery controls and runtime status.
+- DingTalk observability flow: `/api/im/dingtalk/token-monitor|outbound-debug|stream-stats` for token, outbound-channel, and stream-update diagnostics.
 - LLM auto-routing supports optional stage mapping via `mindos.llm.routing.mode` and `mindos.llm.routing.stage-map`; per-request `profile.llmProvider` can still force a single provider or `auto`.
+- Semantic analysis can run in local-first mode via `mindos.dispatcher.semantic-analysis.*`; local model downgrade/escalation policy is configurable via `mindos.dispatcher.local-escalation.*`.
 - Memory compression planning flow: `/api/memory/{userId}/style` (`GET`/`POST`) + `/api/memory/{userId}/compress-plan` (`POST`) for gradual compression with per-user style profile.
 - `compress-plan` 可选 `focus`（learning/task/review）；`style` 更新可选 `autoTune=true&sampleText=...` 做轻量风格微调。
 - MemoryIntentNlu 的 focus/style/tone/format 同义词支持通过系统属性配置（`mindos.memory.nlu.*-terms`，逗号分隔）；若新增或调整键名/默认词，需同步更新 `README.md` 示例。
@@ -39,11 +42,14 @@ This repository is a lightweight, single-user personal AI assistant backend. Opt
 - `assistant-api/src/main/java/com/zhongbo/mindos/assistant/api/ChatController.java`: chat HTTP interface.
 - `assistant-api/src/main/java/com/zhongbo/mindos/assistant/api/MemorySyncController.java`: memory sync/style/compress-plan/persona APIs.
 - `assistant-api/src/main/java/com/zhongbo/mindos/assistant/api/SkillController.java`: lists/reloads custom skills and loads external JAR skills.
+- `assistant-api/src/main/java/com/zhongbo/mindos/assistant/api/news/NewsController.java`: scheduled news push status/config/manual trigger APIs.
 - `assistant-api/src/main/java/com/zhongbo/mindos/assistant/api/LongTaskController.java`: long-task APIs for multi-worker claiming and progress updates.
 - `assistant-api/src/main/java/com/zhongbo/mindos/assistant/api/LlmMetricsController.java`: LLM metrics API and recent-call window query.
 - `assistant-api/src/main/java/com/zhongbo/mindos/assistant/api/SecurityChallengeController.java`: challenge issuing + security audit query/read APIs.
 - `assistant-api/src/main/java/com/zhongbo/mindos/assistant/api/im/ImWebhookController.java`: Feishu/DingTalk/WeChat webhook adapter entrypoints.
+- `assistant-api/src/main/java/com/zhongbo/mindos/assistant/api/im/DingtalkMonitorController.java`: DingTalk token monitor/outbound debug/stream stats APIs.
 - `assistant-skill/src/main/java/com/zhongbo/mindos/assistant/skill/mcp/McpSkillLoader.java`: maps configured MCP servers to namespaced skills (`mcp.<alias>.<tool>`).
+- `assistant-skill/src/main/java/com/zhongbo/mindos/assistant/skill/examples/NewsSearchSkill.java`: built-in `news_search` skill (Google RSS + 36kr aggregation, cache, local LLM summary).
 - `assistant-dispatcher/src/main/java/com/zhongbo/mindos/assistant/dispatcher/DispatcherService.java`: intent routing and memory orchestration.
 - `assistant-skill/src/main/java/com/zhongbo/mindos/assistant/skill/SkillEngine.java`: skill execution + procedural logging.
 - `assistant-memory/src/main/java/com/zhongbo/mindos/assistant/memory/`: in-memory stores plus optional JDBC-backed central memory repository selection (`CentralMemoryRepositoryConfig`).
@@ -58,7 +64,7 @@ This repository is a lightweight, single-user personal AI assistant backend. Opt
 - Run all tests: `./mvnw -q test`
 - Run API locally: `./mvnw -pl assistant-api -am spring-boot:run`
 - Run API locally in solo profile: `./mvnw -pl assistant-api -am spring-boot:run -Dspring-boot.run.profiles=solo`
-- Solo helper scripts: `./run-mindos-solo.sh`, `./solo-cli.sh`, `./solo-smoke.sh`, `./solo-stop.sh` (CLI semantics unchanged; wrappers only set defaults/check health)
+- Solo helper scripts: `./scripts/unix/local/run-mindos-solo.sh`, `./scripts/unix/local/solo-cli.sh`, `./scripts/unix/local/solo-smoke.sh`, `./scripts/unix/local/solo-stop.sh` (CLI semantics unchanged)
 - Build all modules: `./mvnw clean package`
 - Fast SDK/CLI validation: `./mvnw -q -pl assistant-sdk,mindos-cli -am test`
 - Fast memory sync API validation: `./mvnw -q -pl assistant-api -am test -Dtest=MemorySyncControllerTest`
@@ -67,6 +73,8 @@ This repository is a lightweight, single-user personal AI assistant backend. Opt
 - Fast security audit API validation: `./mvnw -q -pl assistant-api -am test -Dtest=SecurityAuditApiTest`
 - Fast IM webhook validation: `./mvnw -q -pl assistant-api -am test -Dtest=im.ImWebhookControllerTest`
 - Fast solo profile smoke validation: `./mvnw -q -pl assistant-api -am test -Dtest=SoloProfileSmokeTest`
+- Fast news skill validation: `./mvnw -q -pl assistant-skill -am test -Dtest=NewsSearchSkillTest`
+- Fast DingTalk stream/message validation: `./mvnw -q -pl assistant-api -am test -Dtest=DingtalkStreamMessageDispatcherTest,DingtalkOpenApiConversationSenderTest`
 
 ## Project conventions
 - Keep package root under `com.zhongbo.mindos.assistant...`.
@@ -80,6 +88,7 @@ This repository is a lightweight, single-user personal AI assistant backend. Opt
 - Challenge approval is strict (`operation + resource + actor + IP`, one-time consume); security audit supports traceId and recent-event query via `/api/security/audit` and filtered signed-cursor query via `/api/security/audit/query` (JWT-style cursor + expiry + key-version `kid`).
 - MCP-loaded tools are namespaced as `mcp.<serverAlias>.<toolName>` to avoid collisions with built-in skills.
 - Dispatcher auto-routing can execute registered skills via `Skill.supports(...)`, so MCP tool descriptions/names should stay specific enough to avoid accidental matches.
+- Runtime LLM profile switching is centralized by `mindos.llm.profile` / `MINDOS_LLM_PROFILE` (e.g., `QWEN_STABLE`, `DOUBAO_STABLE`, `CN_DUAL`, `OPENROUTER_INTENT`, native single-vendor profiles); keep profile defaults and env template scripts aligned.
 - New skills should implement `Skill` and be autodiscovered as Spring components.
 - Preserve `contextLoads()` smoke test in `assistant-api` when adding integrations.
 - Keep this repo single-user and in-memory by default; persistence can be layered later.
@@ -126,6 +135,12 @@ This repository is a lightweight, single-user personal AI assistant backend. Opt
   - `priorityFocus`：`p1|p2|p3`
 - 风险等级词表可由 `mindos.eq.coach.risk.high-terms`、`mindos.eq.coach.risk.medium-terms` 覆盖（默认词见 EmotionalCoachSkill.java）。
 
+#### 新闻检索（news_search）Skill
+- 入口：`assistant-skill/src/main/java/com/zhongbo/mindos/assistant/skill/examples/NewsSearchSkill.java`
+- 功能：聚合 Google News RSS + 36kr，支持缓存、热点关键词提取、上下文总结；摘要默认走本地 provider（`mindos.skill.news-search.summary-provider=local`）。
+- 参数：`source=google|36kr|all`、`sort=latest|relevance`、`limit=数字`，并支持自然语言条数（如“前五条”）。
+- 关键配置：`mindos.skill.news-search.*`（Google RSS 模板、36kr feed、缓存 TTL、摘要模型/Token 等）。
+
 ---
 
 ### CLI 交互与自然语言指令
@@ -153,6 +168,7 @@ This repository is a lightweight, single-user personal AI assistant backend. Opt
   - `assistant-skill/src/test/java/com/zhongbo/mindos/assistant/skill/examples/EmotionalCoachSkillTest.java`
   - `assistant-api/src/test/java/com/zhongbo/mindos/assistant/api/ChatControllerTest.java`
   - `assistant-api/src/test/java/com/zhongbo/mindos/assistant/api/im/ImWebhookControllerTest.java`
+  - `assistant-skill/src/test/java/com/zhongbo/mindos/assistant/skill/examples/NewsSearchSkillTest.java`
   - `mindos-cli/src/test/java/com/zhongbo/mindos/assistant/cli/CommandNluParserTest.java`
   - `mindos-cli/src/test/java/com/zhongbo/mindos/assistant/cli/MindosCliApplicationTest.java`
 
@@ -215,6 +231,7 @@ mindos.skills.cloud-api.config-dir=/path/to/cloud-skills
 - Map.of 最多 10 对，超长参数请用 LinkedHashMap。
 - 中文数字解析支持到“万”位。
 - 交互全部窗口内完成，无需记忆命令格式。
+- ONNX 嵌入 preset `bge-micro` 默认资源路径是 `assistant-memory/src/main/resources/models/bge-micro/model_quantized.onnx` 与 `assistant-memory/src/main/resources/models/bge-micro/tokenizer.json`；如改文件名需同步 `mindos.memory.embedding.onnx.model-path/tokenizer-path`。
 
 ---
 
@@ -223,6 +240,12 @@ mindos.skills.cloud-api.config-dir=/path/to/cloud-skills
 ---
 
 **本次 AGENTS.md 主要新增/修改内容：**
+- 同步 Spring Boot 版本到 `3.3.10`
+- 更新 instruction sources 扫描结果（新增 `assistant-memory/.../README.md`）
+- 增补 news push 与 DingTalk observability 运行流及关键控制器映射
+- 增补 `news_search` skill（参数、配置、测试入口）
+- 增补本地语义分析/本地失败升级云端相关配置提示
+- 增补 `MINDOS_LLM_PROFILE` 配置约定与 ONNX bge-micro 默认资源路径说明
 - teaching.plan skill 多维画像与 LLM/schema 路径说明
 - Dispatcher/CLI 端自然语言教学规划路由与参数抽取说明
 - CLI `/teach plan` 命令与自然语言触发说明

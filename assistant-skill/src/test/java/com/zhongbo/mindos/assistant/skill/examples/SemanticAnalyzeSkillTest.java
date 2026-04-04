@@ -16,7 +16,7 @@ class SemanticAnalyzeSkillTest {
     @Test
     void shouldRenderHumanReadableSemanticSummary() {
         SkillRegistry registry = new SkillRegistry(List.of(new FixedSkill("code.generate")));
-        SemanticAnalysisService service = new SemanticAnalysisService((prompt, context) -> "stub", registry, true, false, "", "local", "cost", 120);
+        SemanticAnalysisService service = new SemanticAnalysisService((prompt, context) -> "stub", registry, true, false, true, "", "local", "cost", 120);
         SemanticAnalyzeSkill skill = new SemanticAnalyzeSkill(service);
 
         String output = skill.run(new SkillContext("u1", "请帮我修复 Spring 接口 bug", Map.of())).output();

@@ -7,10 +7,10 @@ usage() {
   cat <<'USAGE'
 Usage:
   # 推荐：SSH key（默认）
-  CLOUD_HOST=1.2.3.4 CLOUD_USER=root ./cloud-check.sh
+  CLOUD_HOST=1.2.3.4 CLOUD_USER=root ./scripts/unix/cloud/cloud-check.sh
 
   # 临时兜底：密码（不推荐长期使用）
-  CLOUD_HOST=1.2.3.4 CLOUD_USER=root CLOUD_PASS='***' ./cloud-check.sh
+  CLOUD_HOST=1.2.3.4 CLOUD_USER=root CLOUD_PASS='***' ./scripts/unix/cloud/cloud-check.sh
 
 Optional env:
   CLOUD_PORT=22
@@ -78,7 +78,7 @@ if [[ -n "$CLOUD_PASS" ]]; then
 else
   if ! ssh "${SSH_OPTS[@]}" -o BatchMode=yes -o ConnectTimeout=5 "$CLOUD_USER@$CLOUD_HOST" "true" >/dev/null 2>&1; then
     echo "[ERROR] SSH key 登录失败，且未提供 CLOUD_PASS。"
-    echo "        请先执行: CLOUD_HOST=$CLOUD_HOST CLOUD_USER=$CLOUD_USER ./init-authorized-keys.sh"
+    echo "        请先执行: CLOUD_HOST=$CLOUD_HOST CLOUD_USER=$CLOUD_USER ./scripts/unix/cloud/init-authorized-keys.sh"
     exit 1
   fi
 fi
