@@ -92,7 +92,7 @@ public class NewsSearchSkill implements Skill {
                            @Value("${mindos.skill.news-search.summary-enabled:true}") boolean summaryEnabled,
                            @Value("${mindos.skill.news-search.summary-provider:local}") String summaryProvider,
                            @Value("${mindos.skill.news-search.summary-preset:cost}") String summaryPreset,
-                           @Value("${mindos.skill.news-search.summary-model:gemma4:e2b-it-q4_K_M}") String summaryModel,
+                           @Value("${mindos.skill.news-search.summary-model:gemma3:1b-it-q4_K_M}") String summaryModel,
                            @Value("${mindos.skill.news-search.summary-max-tokens:220}") int summaryMaxTokens) {
         this(llmClient,
                 new DefaultNewsFeedFetcher(),
@@ -138,7 +138,7 @@ public class NewsSearchSkill implements Skill {
         this.summaryEnabled = summaryEnabled;
         this.summaryProvider = summaryProvider == null || summaryProvider.isBlank() ? "local" : summaryProvider.trim();
         this.summaryPreset = summaryPreset == null ? "" : summaryPreset.trim();
-        this.summaryModel = summaryModel == null || summaryModel.isBlank() ? "gemma4:e2b-it-q4_K_M" : summaryModel.trim();
+        this.summaryModel = summaryModel == null || summaryModel.isBlank() ? "gemma3:1b-it-q4_K_M" : summaryModel.trim();
         this.summaryMaxTokens = Math.max(80, summaryMaxTokens);
     }
 

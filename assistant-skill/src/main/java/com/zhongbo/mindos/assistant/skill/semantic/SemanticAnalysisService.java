@@ -32,6 +32,8 @@ public class SemanticAnalysisService {
     private static final Pattern DUE_DATE_PATTERN = Pattern.compile("(?:截止|due|到期|deadline)\\s*(?:时间|日期|date)?\\s*[:：]?\\s*([^，。；;\\n]+)",
             Pattern.CASE_INSENSITIVE);
     private static final String SEMANTIC_LOCAL_PROVIDER = "local";
+    private static final int DEFAULT_LLM_COMPLEXITY_MIN_INPUT_CHARS = 10;
+    private static final String DEFAULT_LLM_COMPLEXITY_TRIGGER_TERMS = "新闻,搜索,实时,分析,规划,计划,代码,排查,debug,search,latest,news,plan,report";
 
     private final LlmClient llmClient;
     private final SkillRegistry skillRegistry;
@@ -42,11 +44,15 @@ public class SemanticAnalysisService {
     private final String delegateSkillName;
     private final String llmProvider;
     private final String llmPreset;
+    private final String llmModel;
     private final int llmMaxTokens;
     private final boolean semanticLocalEscalationEnabled;
     private final String semanticCloudProvider;
     private final String semanticCloudPreset;
+    private final String semanticCloudModel;
     private final double semanticLocalEscalationMinConfidence;
+    private final int llmComplexityMinInputChars;
+    private final List<String> llmComplexityTriggerTerms;
 
     @Autowired
     public SemanticAnalysisService(LlmClient llmClient,
@@ -57,11 +63,15 @@ public class SemanticAnalysisService {
                                    @Value("${mindos.dispatcher.semantic-analysis.delegate-skill:}") String delegateSkillName,
                                    @Value("${mindos.dispatcher.semantic-analysis.llm-provider:local}") String llmProvider,
                                    @Value("${mindos.dispatcher.semantic-analysis.llm-preset:cost}") String llmPreset,
+                                   @Value("${mindos.dispatcher.semantic-analysis.llm-model:}") String llmModel,
                                    @Value("${mindos.dispatcher.semantic-analysis.max-tokens:120}") int llmMaxTokens,
                                    @Value("${mindos.dispatcher.semantic-analysis.local-escalation.enabled:false}") boolean semanticLocalEscalationEnabled,
                                    @Value("${mindos.dispatcher.semantic-analysis.local-escalation.cloud-provider:qwen}") String semanticCloudProvider,
                                    @Value("${mindos.dispatcher.semantic-analysis.local-escalation.cloud-preset:quality}") String semanticCloudPreset,
-                                   @Value("${mindos.dispatcher.semantic-analysis.local-escalation.min-confidence:0.78}") double semanticLocalEscalationMinConfidence) {
+                                   @Value("${mindos.dispatcher.semantic-analysis.local-escalation.cloud-model:}") String semanticCloudModel,
+                                   @Value("${mindos.dispatcher.semantic-analysis.local-escalation.min-confidence:0.78}") double semanticLocalEscalationMinConfidence,
+                                   @Value("${mindos.dispatcher.semantic-analysis.llm-complexity.min-input-chars:10}") int llmComplexityMinInputChars,
+                                   @Value("${mindos.dispatcher.semantic-analysis.llm-complexity.trigger-terms:新闻,搜索,实时,分析,规划,计划,代码,排查,debug,search,latest,news,plan,report}") String llmComplexityTriggerTerms) {
         this.llmClient = llmClient;
         this.skillRegistry = skillRegistry;
         this.enabled = enabled;
@@ -70,11 +80,15 @@ public class SemanticAnalysisService {
         this.delegateSkillName = delegateSkillName == null ? "" : delegateSkillName.trim();
         this.llmProvider = llmProvider == null ? "" : llmProvider.trim();
         this.llmPreset = llmPreset == null ? "" : llmPreset.trim();
+        this.llmModel = llmModel == null ? "" : llmModel.trim();
         this.llmMaxTokens = Math.max(0, llmMaxTokens);
         this.semanticLocalEscalationEnabled = semanticLocalEscalationEnabled;
         this.semanticCloudProvider = semanticCloudProvider == null ? "" : semanticCloudProvider.trim();
         this.semanticCloudPreset = semanticCloudPreset == null ? "" : semanticCloudPreset.trim();
+        this.semanticCloudModel = semanticCloudModel == null ? "" : semanticCloudModel.trim();
         this.semanticLocalEscalationMinConfidence = Math.max(0.0, Math.min(1.0, semanticLocalEscalationMinConfidence));
+        this.llmComplexityMinInputChars = Math.max(0, llmComplexityMinInputChars);
+        this.llmComplexityTriggerTerms = parseTerms(llmComplexityTriggerTerms);
     }
 
     public SemanticAnalysisService(LlmClient llmClient,
@@ -94,11 +108,47 @@ public class SemanticAnalysisService {
                 delegateSkillName,
                 llmProvider,
                 llmPreset,
+                "",
                 llmMaxTokens,
                 false,
                 "qwen",
                 "quality",
-                0.78);
+                "",
+                0.78,
+                DEFAULT_LLM_COMPLEXITY_MIN_INPUT_CHARS,
+                DEFAULT_LLM_COMPLEXITY_TRIGGER_TERMS);
+    }
+
+    public SemanticAnalysisService(LlmClient llmClient,
+                                   SkillRegistry skillRegistry,
+                                   boolean enabled,
+                                   boolean llmEnabled,
+                                   boolean forceLocalProvider,
+                                   String delegateSkillName,
+                                   String llmProvider,
+                                   String llmPreset,
+                                   int llmMaxTokens,
+                                   boolean semanticLocalEscalationEnabled,
+                                   String semanticCloudProvider,
+                                   String semanticCloudPreset,
+                                   double semanticLocalEscalationMinConfidence) {
+        this(llmClient,
+                skillRegistry,
+                enabled,
+                llmEnabled,
+                forceLocalProvider,
+                delegateSkillName,
+                llmProvider,
+                llmPreset,
+                "",
+                llmMaxTokens,
+                semanticLocalEscalationEnabled,
+                semanticCloudProvider,
+                semanticCloudPreset,
+                "",
+                semanticLocalEscalationMinConfidence,
+                DEFAULT_LLM_COMPLEXITY_MIN_INPUT_CHARS,
+                DEFAULT_LLM_COMPLEXITY_TRIGGER_TERMS);
     }
 
     public SemanticAnalysisResult analyze(String userId,
@@ -168,18 +218,22 @@ public class SemanticAnalysisService {
         if (baseline != null && baseline.confidence() >= 0.86) {
             return Optional.empty();
         }
+        if (shouldSkipLlmByComplexity(userInput)) {
+            return Optional.empty();
+        }
         String prompt = "You are a semantic intent analyzer for an AI assistant. "
-                + "Return ONLY JSON with schema "
+                + "Return ONLY JSON. Required keys: intent, suggestedSkill, summary, confidence, and payload (or params as alias). "
+                + "Use this schema exactly: "
                 + "{\"intent\":\"...\",\"rewrittenInput\":\"...\",\"suggestedSkill\":\"...\",\"payload\":{},"
-                + "\"keywords\":[\"...\"],\"confidence\":0.0}. "
-                + "If no local skill should be suggested, use an empty suggestedSkill.\n"
+                + "\"params\":{},\"keywords\":[\"...\"],\"summary\":\"...\",\"confidence\":0.0}. "
+                + "If no local skill should be suggested, use an empty suggestedSkill and empty payload/params.\n"
                 + "Available skills: " + String.join(", ", availableSkillSummaries == null ? List.of() : availableSkillSummaries) + "\n"
                 + "Memory context:\n" + (memoryContext == null ? "" : memoryContext) + "\n"
                 + "User input:\n" + userInput;
 
         Optional<SemanticAnalysisResult> localResult = Optional.empty();
         if (semanticLocalEscalationEnabled) {
-            localResult = callSemanticLlm(prompt, userId, userInput, profileContext, SEMANTIC_LOCAL_PROVIDER, llmPreset);
+            localResult = callSemanticLlm(prompt, userId, userInput, profileContext, SEMANTIC_LOCAL_PROVIDER, llmPreset, resolveSemanticLocalModel());
             LOGGER.info("semantic.analysis.local.result confidence="
                     + localResult.map(SemanticAnalysisResult::confidence).orElse(0.0)
                     + ", threshold=" + semanticLocalEscalationMinConfidence
@@ -199,7 +253,8 @@ public class SemanticAnalysisService {
                     userInput,
                     profileContext,
                     cloudProvider,
-                    semanticCloudPreset.isBlank() ? llmPreset : semanticCloudPreset
+                    semanticCloudPreset.isBlank() ? llmPreset : semanticCloudPreset,
+                    semanticCloudModel
             );
             if (cloudResult.isPresent() && (localResult.isEmpty() || cloudResult.get().confidence() >= localResult.get().confidence())) {
                 LOGGER.info("semantic.analysis.local.escalate.accepted cloudConfidence=" + cloudResult.get().confidence());
@@ -209,7 +264,37 @@ public class SemanticAnalysisService {
             return localResult;
         }
 
-        return callSemanticLlm(prompt, userId, userInput, profileContext, resolveSemanticLlmProvider(), llmPreset);
+        return callSemanticLlm(prompt, userId, userInput, profileContext, resolveSemanticLlmProvider(), llmPreset, llmModel);
+    }
+
+    private boolean shouldSkipLlmByComplexity(String userInput) {
+        String normalizedInput = normalize(userInput);
+        if (normalizedInput.isBlank()) {
+            return true;
+        }
+        if (normalizedInput.length() >= llmComplexityMinInputChars) {
+            return false;
+        }
+        for (String term : llmComplexityTriggerTerms) {
+            if (!term.isBlank() && normalizedInput.contains(term)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private List<String> parseTerms(String rawTerms) {
+        if (rawTerms == null || rawTerms.isBlank()) {
+            return List.of();
+        }
+        List<String> terms = new ArrayList<>();
+        for (String candidate : rawTerms.split(",")) {
+            String normalized = normalize(candidate);
+            if (!normalized.isBlank()) {
+                terms.add(normalized);
+            }
+        }
+        return List.copyOf(terms);
     }
 
     private Optional<SemanticAnalysisResult> callSemanticLlm(String prompt,
@@ -217,9 +302,10 @@ public class SemanticAnalysisService {
                                                              String userInput,
                                                              Map<String, Object> profileContext,
                                                              String provider,
-                                                             String preset) {
+                                                             String preset,
+                                                             String model) {
         try {
-            Map<String, Object> context = buildSemanticLlmContext(userId, userInput, profileContext, provider, preset);
+            Map<String, Object> context = buildSemanticLlmContext(userId, userInput, profileContext, provider, preset, model);
             return parseResult(llmClient.generateResponse(prompt, Map.copyOf(context)), "llm");
         } catch (RuntimeException ex) {
             LOGGER.log(Level.WARNING, "Semantic analysis LLM call failed, fallback to local analysis", ex);
@@ -231,7 +317,8 @@ public class SemanticAnalysisService {
                                                          String userInput,
                                                          Map<String, Object> profileContext,
                                                          String provider,
-                                                         String preset) {
+                                                         String preset,
+                                                         String model) {
         Map<String, Object> context = new LinkedHashMap<>();
         context.put("userId", userId == null ? "" : userId);
         context.put("routeStage", "semantic-analysis");
@@ -239,6 +326,11 @@ public class SemanticAnalysisService {
         context.put("llmProvider", provider == null || provider.isBlank() ? resolveSemanticLlmProvider() : provider);
         if (preset != null && !preset.isBlank()) {
             context.put("llmPreset", preset);
+        }
+        String profileModel = profileContext == null ? "" : stringValue(profileContext.get("llmModel"));
+        String effectiveModel = profileModel.isBlank() ? model : profileModel;
+        if (effectiveModel != null && !effectiveModel.isBlank()) {
+            context.put("model", effectiveModel);
         }
         if (llmMaxTokens > 0) {
             context.put("maxTokens", llmMaxTokens);
@@ -257,11 +349,78 @@ public class SemanticAnalysisService {
         try {
             Map<String, Object> payload = objectMapper.readValue(jsonBody, new TypeReference<>() {
             });
-            return Optional.of(fromMap(payload, source));
+            // Validate and clean the incoming map according to a lightweight schema to avoid
+            // unpredictable/malicious LLM outputs. This will normalize aliases (params -> payload),
+            // coerce simple types, and drop unknown keys.
+            Map<String, Object> cleaned = validateAndCleanSemanticMap(payload);
+            return Optional.of(fromMap(cleaned, source));
         } catch (Exception ex) {
             LOGGER.log(Level.FINE, "Semantic analysis JSON parse failed", ex);
             return Optional.empty();
         }
+    }
+
+    /**
+     * Lightweight validation and cleaning for semantic analysis result maps.
+     * Accepts only the allowed keys and normalizes types where reasonable.
+     */
+    private Map<String, Object> validateAndCleanSemanticMap(Map<String, Object> raw) {
+        if (raw == null || raw.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, Object> cleaned = new LinkedHashMap<>();
+
+        // Strings: intent, rewrittenInput, suggestedSkill, summary
+        cleaned.put("intent", stringValue(raw.get("intent")));
+        cleaned.put("rewrittenInput", stringValue(raw.get("rewrittenInput")));
+        cleaned.put("suggestedSkill", stringValue(raw.get("suggestedSkill")));
+        cleaned.put("summary", stringValue(raw.get("summary")));
+
+        // Payload / params alias: prefer payload, fallback to params; coerce only if map-like
+        Object payloadObj = raw.get("payload");
+        if (!(payloadObj instanceof Map) && raw.get("params") instanceof Map) {
+            payloadObj = raw.get("params");
+        }
+        if (payloadObj instanceof Map<?, ?> mapVal) {
+            cleaned.put("payload", toStringObjectMap(mapVal));
+        } else {
+            // not a map -> treat as empty payload to avoid execution surprises
+            cleaned.put("payload", Map.of());
+        }
+        // debug trace for malformed payloads to aid tests/diagnosis
+        try {
+            if (!(raw.get("payload") instanceof Map)) {
+                LOGGER.fine("semantic.analysis.validate.cleaned payload was non-map; cleaned=" + cleaned);
+            }
+        } catch (RuntimeException ex) {
+            // ignore logging issues
+        }
+
+        // Keywords: accept list of values or comma/space-separated string
+        Object keywordsObj = raw.get("keywords");
+        List<String> keywords = List.of();
+        if (keywordsObj instanceof List<?>) {
+            keywords = toStringList(keywordsObj);
+        } else if (keywordsObj instanceof String s) {
+            List<String> parts = new ArrayList<>();
+            for (String p : s.split("[,;\\s]+")) {
+                String norm = stringValue(p);
+                if (!norm.isBlank()) parts.add(norm);
+            }
+            keywords = List.copyOf(parts);
+        }
+        cleaned.put("keywords", keywords);
+
+        // Candidate intents: list of {intent, confidence}
+        cleaned.put("candidate_intents", parseCandidateIntents(raw.get("candidate_intents")));
+
+        // Confidence: coerce numeric or parseable string, clamp 0..1
+        double conf = numberValue(raw.get("confidence"), 0.0);
+        if (Double.isNaN(conf) || conf < 0.0) conf = 0.0;
+        if (conf > 1.0) conf = 1.0;
+        cleaned.put("confidence", conf);
+
+        return cleaned;
     }
 
     private SemanticAnalysisResult fromMap(Map<String, Object> raw, String source) {
@@ -272,11 +431,64 @@ public class SemanticAnalysisService {
         String rewrittenInput = stringValue(raw.get("rewrittenInput"));
         String suggestedSkill = normalizeSkillName(stringValue(raw.get("suggestedSkill")));
         double confidence = numberValue(raw.get("confidence"), 0.0);
+        String summary = stringValue(raw.get("summary"));
         Map<String, Object> payload = raw.get("payload") instanceof Map<?, ?> nested
                 ? toStringObjectMap(nested)
                 : Map.of();
+        if (payload.isEmpty() && raw.get("params") instanceof Map<?, ?> params) {
+            payload = toStringObjectMap(params);
+        }
+        if (intent.isBlank()) {
+            intent = summary;
+        }
+        if (summary.isBlank()) {
+            summary = !rewrittenInput.isBlank() ? rewrittenInput : intent;
+        }
+        // Log when key semantic fields are missing/backfilled to aid debugging and tests
+        try {
+            List<String> missing = new ArrayList<>();
+            if (intent.isBlank()) missing.add("intent");
+            if (summary.isBlank()) missing.add("summary");
+            if (suggestedSkill.isBlank()) missing.add("suggestedSkill");
+            if (payload == null || payload.isEmpty()) missing.add("payload");
+            if (!missing.isEmpty()) {
+                LOGGER.info("semantic.analysis.parse.missing-fields source=" + source + " missing=" + missing + " rawKeys=" + raw.keySet());
+            }
+        } catch (RuntimeException ex) {
+            // swallow logging errors to avoid affecting analysis flow
+            LOGGER.log(Level.FINE, "Failed to log semantic.parse missing fields", ex);
+        }
         List<String> keywords = toStringList(raw.get("keywords"));
-        return new SemanticAnalysisResult(source, intent, rewrittenInput, suggestedSkill, payload, keywords, confidence);
+        List<SemanticAnalysisResult.CandidateIntent> candidateIntents = parseCandidateIntents(raw.get("candidate_intents"));
+        return new SemanticAnalysisResult(source, intent, rewrittenInput, suggestedSkill, payload, keywords, summary, confidence, candidateIntents);
+    }
+
+    private List<SemanticAnalysisResult.CandidateIntent> parseCandidateIntents(Object raw) {
+        if (!(raw instanceof List<?> values) || values.isEmpty()) {
+            return List.of();
+        }
+        List<SemanticAnalysisResult.CandidateIntent> parsed = new ArrayList<>();
+        for (Object value : values) {
+            if (value instanceof SemanticAnalysisResult.CandidateIntent candidate) {
+                String intent = stringValue(candidate.intent());
+                if (!intent.isBlank()) {
+                    parsed.add(new SemanticAnalysisResult.CandidateIntent(intent,
+                            Math.max(0.0, Math.min(1.0, candidate.confidence()))));
+                }
+                continue;
+            }
+            if (!(value instanceof Map<?, ?> map)) {
+                continue;
+            }
+            String intent = stringValue(map.get("intent"));
+            if (intent.isBlank()) {
+                continue;
+            }
+            double confidence = numberValue(map.get("confidence"), 0.0);
+            confidence = Math.max(0.0, Math.min(1.0, confidence));
+            parsed.add(new SemanticAnalysisResult.CandidateIntent(intent, confidence));
+        }
+        return parsed.isEmpty() ? List.of() : List.copyOf(parsed);
     }
 
     private SemanticAnalysisResult heuristicAnalysis(String userInput) {
@@ -292,6 +504,7 @@ public class SemanticAnalysisService {
                     "",
                     Map.of(),
                     routingKeywordHints(userInput, "semantic.analyze", "语义分析", "semantic"),
+                    capText(userInput, 60),
                     0.92
             );
         }
@@ -303,6 +516,7 @@ public class SemanticAnalysisService {
                     "teaching.plan",
                     Map.of(),
                     routingKeywordHints(userInput, "teaching.plan", "学习计划", "教学规划", "复习计划"),
+                    "用户希望生成学习/教学规划",
                     0.88
             );
         }
@@ -314,6 +528,7 @@ public class SemanticAnalysisService {
                     "eq.coach",
                     Map.of("query", userInput.trim()),
                     routingKeywordHints(userInput, "eq.coach", "沟通", "情商", "心理分析", "冲突"),
+                    "用户需要情绪或沟通场景建议",
                     0.84
             );
         }
@@ -331,6 +546,7 @@ public class SemanticAnalysisService {
                     "todo.create",
                     payload,
                     routingKeywordHints(userInput, "todo.create", "待办", "提醒", "截止"),
+                    "用户要创建待办事项",
                     0.80
             );
         }
@@ -342,6 +558,7 @@ public class SemanticAnalysisService {
                     "code.generate",
                     Map.of("task", userInput.trim()),
                     routingKeywordHints(userInput, "code.generate", "代码", "接口", "API", "DTO", "Controller"),
+                    "用户请求代码相关实现或修复",
                     0.78
             );
         }
@@ -353,6 +570,7 @@ public class SemanticAnalysisService {
                     "file.search",
                     Map.of("path", "./", "keyword", userInput.trim()),
                     routingKeywordHints(userInput, "file.search", "文件", "目录", "路径", "搜索"),
+                    "用户希望搜索文件或路径内容",
                     0.74
             );
         }
@@ -363,6 +581,7 @@ public class SemanticAnalysisService {
                 "",
                 Map.of(),
                 extractKeywords(userInput),
+                capText(userInput, 80),
                 0.35
         );
     }
@@ -376,15 +595,33 @@ public class SemanticAnalysisService {
             suggestedSkill = "";
         }
         String rewrittenInput = result.hasRewrittenInput() ? result.rewrittenInput().trim() : originalInput == null ? "" : originalInput.trim();
+        String summary = stringValue(result.summary());
+        if (summary.isBlank()) {
+            summary = capText(rewrittenInput.isBlank() ? stringValue(originalInput) : rewrittenInput, 90);
+        }
+        String intent = stringValue(result.intent());
+        if (intent.isBlank()) {
+            intent = summary;
+        }
         return new SemanticAnalysisResult(
                 result.source(),
-                stringValue(result.intent()),
+                intent,
                 rewrittenInput,
                 suggestedSkill,
                 result.payload(),
                 result.keywords(),
-                result.confidence()
+                summary,
+                result.confidence(),
+                result.candidateIntents()
         );
+    }
+
+    private String capText(String value, int maxLength) {
+        String normalized = stringValue(value);
+        if (normalized.length() <= maxLength) {
+            return normalized;
+        }
+        return normalized.substring(0, maxLength) + "...";
     }
 
     private String normalizeSkillName(String value) {
@@ -457,6 +694,10 @@ public class SemanticAnalysisService {
             return SEMANTIC_LOCAL_PROVIDER;
         }
         return normalized;
+    }
+
+    private String resolveSemanticLocalModel() {
+        return llmModel;
     }
 
     private String resolveSemanticCloudProvider() {

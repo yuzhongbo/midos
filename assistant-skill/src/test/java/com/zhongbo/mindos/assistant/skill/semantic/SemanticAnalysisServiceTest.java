@@ -10,10 +10,12 @@ import org.junit.jupiter.api.Test;
 
 import java.util.List;
 import java.util.Map;
+import java.util.ArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SemanticAnalysisServiceTest {
@@ -170,6 +172,29 @@ class SemanticAnalysisServiceTest {
     }
 
     @Test
+    void shouldPassConfiguredSemanticModelIntoLlmContext() {
+        SkillRegistry registry = new SkillRegistry(List.of(new FixedSkill("todo.create")));
+        AtomicReference<Map<String, Object>> capturedContext = new AtomicReference<>();
+        LlmClient llmClient = (prompt, context) -> {
+            capturedContext.set(context);
+            return "{\"intent\":\"创建待办\",\"rewrittenInput\":\"请创建待办：提交周报\",\"suggestedSkill\":\"todo.create\",\"payload\":{\"task\":\"提交周报\"},\"keywords\":[\"待办\",\"周报\"],\"confidence\":0.91}";
+        };
+        SemanticAnalysisService service = new SemanticAnalysisService(llmClient, registry, true, true, true, "", "local", "cost", 120);
+
+        service.analyze(
+                "u1",
+                "请帮我处理一下周报安排",
+                "history",
+                Map.of("llmModel", "phi3:mini"),
+                List.of("todo.create - Creates todo items")
+        );
+
+        assertEquals("semantic-analysis", capturedContext.get().get("routeStage"));
+        // Profile-provided model should be preserved in semantic call context.
+        assertEquals("phi3:mini", capturedContext.get().get("model"));
+    }
+
+    @Test
     void shouldUseConfiguredRoutingKeywordsDuringHeuristicAnalysis() {
         SkillRoutingProperties properties = new SkillRoutingProperties();
         properties.getKeywords().put("teaching.plan", "冲刺路线,路线规划");
@@ -193,8 +218,10 @@ class SemanticAnalysisServiceTest {
     void shouldEscalateSemanticAnalysisToCloudWhenLocalConfidenceIsLow() {
         SkillRegistry registry = new SkillRegistry(List.of(new FixedSkill("todo.create")));
         AtomicInteger calls = new AtomicInteger();
+        List<Map<String, Object>> contexts = new ArrayList<>();
         LlmClient llmClient = (prompt, context) -> {
             int idx = calls.incrementAndGet();
+            contexts.add(context);
             if (idx == 1) {
                 return "{\"intent\":\"待办\",\"rewrittenInput\":\"先本地分析\",\"suggestedSkill\":\"todo.create\",\"payload\":{\"task\":\"本地\"},\"keywords\":[\"待办\"],\"confidence\":0.42}";
             }
@@ -228,6 +255,8 @@ class SemanticAnalysisServiceTest {
         assertEquals("todo.create", result.suggestedSkill());
         assertEquals("提交周报", result.payload().get("task"));
         assertTrue(result.confidence() >= 0.9);
+        assertEquals("local", String.valueOf(contexts.get(0).get("llmProvider")));
+        assertEquals("qwen", String.valueOf(contexts.get(1).get("llmProvider")));
     }
 
     @Test
@@ -265,6 +294,159 @@ class SemanticAnalysisServiceTest {
         assertEquals(1, calls.get());
         assertEquals("todo.create", result.suggestedSkill());
         assertTrue(result.confidence() >= 0.89);
+    }
+
+    @Test
+    void shouldSkipSemanticLlmForShortSimpleInput() {
+        SkillRegistry registry = new SkillRegistry(List.of(new FixedSkill("todo.create")));
+        AtomicInteger calls = new AtomicInteger();
+        LlmClient llmClient = (prompt, context) -> {
+            calls.incrementAndGet();
+            return "{\"intent\":\"创建待办\",\"rewrittenInput\":\"请创建待办\",\"suggestedSkill\":\"todo.create\",\"payload\":{\"task\":\"提交周报\"},\"keywords\":[\"待办\"],\"confidence\":0.92}";
+        };
+        SemanticAnalysisService service = new SemanticAnalysisService(llmClient, registry, true, true, true, "", "local", "cost", 120);
+
+        SemanticAnalysisResult result = service.analyze(
+                "u1",
+                "收到",
+                "history",
+                Map.of(),
+                List.of("todo.create - Creates todo items")
+        );
+
+        assertEquals(0, calls.get());
+        assertFalse("llm".equals(result.source()));
+    }
+
+    @Test
+    void shouldUseSemanticLlmForShortInputWhenTriggerTermMatches() {
+        SkillRegistry registry = new SkillRegistry(List.of(new FixedSkill("todo.create")));
+        AtomicInteger calls = new AtomicInteger();
+        LlmClient llmClient = (prompt, context) -> {
+            calls.incrementAndGet();
+            return "{\"intent\":\"新闻查询\",\"rewrittenInput\":\"查询新闻\",\"suggestedSkill\":\"\",\"payload\":{},\"keywords\":[\"新闻\"],\"confidence\":0.90}";
+        };
+        SemanticAnalysisService service = new SemanticAnalysisService(llmClient, registry, true, true, true, "", "local", "cost", 120);
+
+        SemanticAnalysisResult result = service.analyze(
+                "u1",
+                "查新闻",
+                "history",
+                Map.of(),
+                List.of("todo.create - Creates todo items")
+        );
+
+        assertEquals(1, calls.get());
+        assertEquals("llm", result.source());
+        assertTrue(result.confidence() >= 0.9);
+    }
+
+    @Test
+    void shouldExposeSemanticSummaryForHeuristicResult() {
+        SkillRegistry registry = new SkillRegistry(List.of(new FixedSkill("todo.create")));
+        SemanticAnalysisService service = new SemanticAnalysisService((prompt, context) -> "stub", registry, true, false, true, "", "local", "cost", 120);
+
+        SemanticAnalysisResult result = service.analyze(
+                "u1",
+                "帮我创建一个待办，截止明天提交周报",
+                "history",
+                Map.of(),
+                List.of("todo.create - Creates todo items")
+        );
+
+        assertFalse(result.summary().isBlank());
+        assertTrue(String.valueOf(result.asAttributes().get("semanticSummary")).contains("待办"));
+    }
+
+    @Test
+    void shouldParseParamsAliasIntoPayload() {
+        SkillRegistry registry = new SkillRegistry(List.of(new FixedSkill("todo.create")));
+        LlmClient llmClient = (prompt, context) ->
+                "{\"intent\":\"创建待办\",\"rewrittenInput\":\"请创建待办：提交周报\",\"suggestedSkill\":\"todo.create\",\"params\":{\"task\":\"提交周报\"},\"keywords\":[\"待办\",\"周报\"],\"confidence\":0.91}";
+        SemanticAnalysisService service = new SemanticAnalysisService(llmClient, registry, true, true, true, "", "local", "cost", 120);
+
+        SemanticAnalysisResult result = service.analyze(
+                "u1",
+                "查新闻",
+                "history",
+                Map.of(),
+                List.of("todo.create - Creates todo items")
+        );
+
+        assertEquals("llm", result.source());
+        assertEquals("todo.create", result.suggestedSkill());
+        assertEquals("提交周报", result.payload().get("task"));
+    }
+
+    @Test
+    void shouldBackfillIntentAndSummaryWhenLlmFieldsAreMissing() {
+        SkillRegistry registry = new SkillRegistry(List.of(new FixedSkill("todo.create")));
+        LlmClient llmClient = (prompt, context) ->
+                "{\"rewrittenInput\":\"请创建待办：提交周报\",\"suggestedSkill\":\"todo.create\",\"payload\":{\"task\":\"提交周报\"},\"confidence\":0.82}";
+        SemanticAnalysisService service = new SemanticAnalysisService(llmClient, registry, true, true, true, "", "local", "cost", 120);
+
+        SemanticAnalysisResult result = service.analyze(
+                "u1",
+                "请根据这段描述做语义结构化分析并输出路由建议",
+                "history",
+                Map.of(),
+                List.of("todo.create - Creates todo items")
+        );
+
+        assertEquals("todo.create", result.suggestedSkill());
+        assertEquals("提交周报", result.payload().get("task"));
+        assertFalse(result.intent().isBlank());
+        assertFalse(result.summary().isBlank());
+    }
+
+    @Test
+    void shouldHandleMalformedLlmOutputGracefully() {
+        SkillRegistry registry = new SkillRegistry(List.of(new FixedSkill("todo.create")));
+        // Malformed / adversarial LLM output: wrong types, extra keys
+        LlmClient llmClient = (prompt, context) ->
+                "{\"intent\":null,\"rewrittenInput\":123,\"suggestedSkill\":\"todo.create\",\"payload\":\"notamap\",\"keywords\":\"待办,周报\",\"confidence\":\"notanumber\",\"extra\":\"evil\"}";
+        SemanticAnalysisService service = new SemanticAnalysisService(llmClient, registry, true, true, true, "", "local", "cost", 120);
+
+        SemanticAnalysisResult result = service.analyze(
+                "u1",
+                "处理周报",
+                "history",
+                Map.of(),
+                List.of("todo.create - Creates todo items")
+        );
+
+        // Should not throw and should produce predictable, cleaned fields.
+        // Because payload was not a map, the service will avoid suggesting a skill to prevent accidental execution.
+        assertTrue(result.suggestedSkill().isBlank());
+        // payload was not a map -> cleaned to empty
+        assertEquals(0, result.payload().size());
+        // keywords string should be split into tokens
+        assertTrue(result.keywords().size() >= 1);
+        // malformed confidence leads to a low-confidence LLM result; service should fall back to heuristics
+        assertTrue(result.confidence() >= 0.35);
+        // rewrittenInput numeric value should be stringified/backfilled into summary/intent if needed
+        assertFalse(result.summary().isBlank());
+    }
+
+    @Test
+    void shouldParseCandidateIntentsAndExposeSuggestedSkillConfidence() {
+        SkillRegistry registry = new SkillRegistry(List.of(new FixedSkill("todo.create")));
+        LlmClient llmClient = (prompt, context) ->
+                "{\"intent\":\"创建待办\",\"rewrittenInput\":\"帮我弄个待办\",\"suggestedSkill\":\"todo.create\",\"payload\":{\"task\":\"提交周报\"},\"confidence\":0.45,\"candidate_intents\":[{\"intent\":\"todo.create\",\"confidence\":0.84},{\"intent\":\"eq.coach\",\"confidence\":0.31}]}";
+        SemanticAnalysisService service = new SemanticAnalysisService(llmClient, registry, true, true, true, "", "local", "cost", 120);
+
+        SemanticAnalysisResult result = service.analyze(
+                "u1",
+                "请把这段需求做结构化意图分析并路由到合适技能：提交周报",
+                "history",
+                Map.of(),
+                List.of("todo.create - Creates todo items")
+        );
+
+        assertEquals("todo.create", result.suggestedSkill());
+        assertEquals(2, result.candidateIntents().size());
+        assertEquals(0.84, result.confidenceForSkill("todo.create"));
+        assertTrue(result.effectiveConfidence() >= 0.84);
     }
 
     private record FixedSkill(String name) implements Skill {

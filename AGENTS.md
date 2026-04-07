@@ -12,7 +12,7 @@ This repository is a lightweight, single-user personal AI assistant backend. Opt
 - Modules and boundaries:
   - `assistant-api`: REST entrypoint and Spring Boot app
   - `assistant-dispatcher`: routes user input to skills/LLM
-  - `assistant-memory`: episodic, semantic, procedural memory services (in-memory default; JDBC central repository auto-enabled when a `DataSource` exists)
+  - `assistant-memory`: episodic, semantic, procedural memory services (central memory defaults to file-backed storage under `data/memory-sync` when enabled; falls back to in-memory on file-repo init failure; JDBC central repository auto-enabled when a `DataSource` exists)
   - `assistant-skill`: skill interface, registry, DSL execution, example skills; `loader/` sub-package for custom JSON skills and external JAR plugins; `mcp/` sub-package for MCP tool adapters over HTTP JSON-RPC; `cloudapi/` sub-package for semantic cloud API skill adapters
   - `assistant-llm`: API-key-based LLM client adapter (supports global/per-user keys plus provider-specific keys/endpoints; stubbed response when key missing)
   - `assistant-common`: shared contracts (`SkillDsl`, `SkillContext`, `SkillResult`, `LlmClient`)
@@ -22,6 +22,7 @@ This repository is a lightweight, single-user personal AI assistant backend. Opt
 - IM integration flow (optional): `/api/im/feishu/events`, `/api/im/dingtalk/events`, `/api/im/wechat/events` -> dispatcher chat route -> platform text response; DingTalk can also acknowledge immediately and push the final reply later through event `sessionWebhook` when `mindos.im.dingtalk.async-reply.*` is enabled (`allow-insecure-localhost-http` should stay local-test only). If callback delivery fails, the server may optionally try DingTalk OpenAPI proactive delivery via `mindos.im.dingtalk.openapi-fallback.*`; because the current DingTalk integration is conversation-oriented, `conversation-first` is the intended default send mode and `openConversationId` should be preferred when the event provides it. Users can still query missed async tasks in-chat with `查进度` / `查看结果`, and the next DingTalk message will include a compensation notice for any retained results.
 - IM 文本也支持 memory 自然语言入口：如“查看记忆风格”“按任务聚焦压缩这段记忆：...”“根据这段话微调记忆风格：...”。
 - Multi-terminal memory flow: `/api/memory/{userId}/sync` with cursor-based pull (`GET`) and idempotent push (`POST eventId`).
+- Prompt memory retrieval preview flow: `/api/memory/{userId}/retrieve-preview` (`GET`) builds prompt-side memory context for a query; optional admin-token protection is controlled by `mindos.security.memory.retrieve-preview.require-admin-token` together with the shared risky-ops admin token/header settings.
 - Long-task orchestration flow: `/api/tasks/{userId}` for create/list/detail + `/api/tasks/{userId}/claim` for lease-based worker claiming + `/api/tasks/{userId}/{taskId}/progress|status` for multi-day progress updates.
 - Long-task auto-advancer: `/api/tasks/{userId}/auto-run` manual trigger plus optional background scheduler via `mindos.tasks.auto-run.*` properties.
 - Persona inspection flow: `/api/memory/{userId}/persona` (`GET`) returns the confirmed long-term persona profile learned for that user.
@@ -29,8 +30,32 @@ This repository is a lightweight, single-user personal AI assistant backend. Opt
 - LLM metrics flow: `/api/metrics/llm` (`GET`) returns windowed call stats (provider aggregates, success/fallback rate, latency, estimated token usage, optional recent calls) plus `securityAudit` writer summary (`queueDepth`, `enqueuedCount`, `writtenCount`, fallback/flush counters).
 - News push flow: `/api/news/status|config|push` for scheduled/manual news delivery controls and runtime status.
 - DingTalk observability flow: `/api/im/dingtalk/token-monitor|outbound-debug|stream-stats` for token, outbound-channel, and stream-update diagnostics.
-- LLM auto-routing supports optional stage mapping via `mindos.llm.routing.mode` and `mindos.llm.routing.stage-map`; per-request `profile.llmProvider` can still force a single provider or `auto`.
-- Semantic analysis can run in local-first mode via `mindos.dispatcher.semantic-analysis.*`; local model downgrade/escalation policy is configurable via `mindos.dispatcher.local-escalation.*`.
+- LLM auto-routing supports optional stage mapping and preset mapping via `mindos.llm.routing.mode`, `mindos.llm.routing.stage-map`, and `mindos.llm.routing.preset-map`; fallback-stage selection can also auto-route by detected intent/difficulty via `mindos.dispatcher.intent-routing.*`; per-request `profile.llmProvider` / `profile.llmPreset` can still override one request.
+- Semantic analysis can run in local-first mode via `mindos.dispatcher.semantic-analysis.*`; local model downgrade/escalation policy is configurable via `mindos.dispatcher.local-escalation.*`; semantic clarify gating is controlled by `mindos.dispatcher.semantic-analysis.clarify-min-confidence` (default `0.70`).
+- Dispatcher semantic clarification validates required params against the effective payload after memory/default completion (not only raw semantic payload); continuation inputs still bypass semantic-clarify routing.
+
+  - Local semantic analysis (Ollama / Gemma3)
+    - The dispatcher and `SemanticAnalysisService` support a local-first semantic analyzer backed by a local model (examples in logs show `http://localhost:11434/api/chat` with `gemma3:1b-it-q4_K_M`). To enable locally-hosted Ollama + Gemma3, set provider maps and the semantic-analysis properties (examples below).
+    - Recommended environment / secrets (examples placed in `dist/mindos-windows-server/mindos-secrets.properties`):
+      - MINDOS_LLM_PROVIDER_ENDPOINTS=local:http://localhost:11434/api/chat,qwen:https://<cloud>
+      - MINDOS_LLM_PROVIDER_MODELS=local:gemma3:1b-it-q4_K_M,qwen:qwen3.5-plus
+      - MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_LLM_ENABLED=true
+      - MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_FORCE_LOCAL=true
+      - MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_LOCAL_ESCALATION_ENABLED=true
+      - MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_LOCAL_ESCALATION_CLOUD_PROVIDER=qwen
+    - Common local endpoint used in this repo: `http://localhost:11434/api/chat` (the codebase logs and tests use this URL). Pull / serve the quantized Gemma model via your Ollama / local runtime and confirm API readiness before running the server.
+    - Two recommended Gemma3 presets for i5 + 8GB (quantized q4_K_M model chosen to fit memory):
+      - "stable" (bias toward reliability / lower memory usage):
+        - model: `gemma3:1b-it-q4_K_M`
+        - llm-complexity.max-tokens: 120
+        - dispatcher local resource guard: `mindos.dispatcher.local-escalation.resource-guard.min-free-memory-mb=512`
+        - threads: 1-2 (configure via runtime/ollama runner)
+        - local preset mapping: `mindos.llm.routing.preset-map=local:stable`
+      - "quality" (bias toward slightly higher generation quality when resources permit):
+        - model: same quantized model but raise token/prompt budgets: `mindos.dispatcher.semantic-analysis.max-tokens=220`, `mindos.dispatcher.llm-fallback.max-tokens=420`
+        - resource guard: min-free-memory-mb=768 (use only on machines with >8GB free headroom)
+        - threads: 2 (if available)
+    - Keep models configurable via `MINDOS_LLM_PROVIDER_MODELS` and per-request `profile.llmProvider` / `profile.llmPreset` — avoid hard-coding model names in code.
 - Memory compression planning flow: `/api/memory/{userId}/style` (`GET`/`POST`) + `/api/memory/{userId}/compress-plan` (`POST`) for gradual compression with per-user style profile.
 - `compress-plan` 可选 `focus`（learning/task/review）；`style` 更新可选 `autoTune=true&sampleText=...` 做轻量风格微调。
 - MemoryIntentNlu 的 focus/style/tone/format 同义词支持通过系统属性配置（`mindos.memory.nlu.*-terms`，逗号分隔）；若新增或调整键名/默认词，需同步更新 `README.md` 示例。
@@ -40,7 +65,7 @@ This repository is a lightweight, single-user personal AI assistant backend. Opt
 
 ## Repository map
 - `assistant-api/src/main/java/com/zhongbo/mindos/assistant/api/ChatController.java`: chat HTTP interface.
-- `assistant-api/src/main/java/com/zhongbo/mindos/assistant/api/MemorySyncController.java`: memory sync/style/compress-plan/persona APIs.
+- `assistant-api/src/main/java/com/zhongbo/mindos/assistant/api/MemorySyncController.java`: memory sync/retrieve-preview/style/compress-plan/persona APIs.
 - `assistant-api/src/main/java/com/zhongbo/mindos/assistant/api/SkillController.java`: lists/reloads custom skills and loads external JAR skills.
 - `assistant-api/src/main/java/com/zhongbo/mindos/assistant/api/news/NewsController.java`: scheduled news push status/config/manual trigger APIs.
 - `assistant-api/src/main/java/com/zhongbo/mindos/assistant/api/LongTaskController.java`: long-task APIs for multi-worker claiming and progress updates.
@@ -52,9 +77,11 @@ This repository is a lightweight, single-user personal AI assistant backend. Opt
 - `assistant-skill/src/main/java/com/zhongbo/mindos/assistant/skill/examples/NewsSearchSkill.java`: built-in `news_search` skill (Google RSS + 36kr aggregation, cache, local LLM summary).
 - `assistant-dispatcher/src/main/java/com/zhongbo/mindos/assistant/dispatcher/DispatcherService.java`: intent routing and memory orchestration.
 - `assistant-skill/src/main/java/com/zhongbo/mindos/assistant/skill/SkillEngine.java`: skill execution + procedural logging.
-- `assistant-memory/src/main/java/com/zhongbo/mindos/assistant/memory/`: in-memory stores plus optional JDBC-backed central memory repository selection (`CentralMemoryRepositoryConfig`).
+- `assistant-memory/src/main/java/com/zhongbo/mindos/assistant/memory/`: in-memory stores plus central memory repository selection (`CentralMemoryRepositoryConfig`) across file-backed default, in-memory fallback, and optional JDBC.
 - `assistant-api/src/main/resources/application.properties`: app and LLM settings.
 - `assistant-api/src/main/resources/application-solo.properties`: single-user experience profile overrides (cache/context/rollup/metrics token requirement).
+- `scripts/unix/lib/mindos-env.sh`: shared shell env loader/validator for local and release startup; validates provider-routing map syntax, prints effective summaries, and flags placeholder drift.
+- `dist/mindos-windows-server/`: packaged Windows server bundle + baseline `mindos-secrets.properties` consumed by `run-local.sh` / `run-release.sh` layering and Windows launch/smoke scripts.
 - `assistant-sdk/src/main/java/com/zhongbo/mindos/assistant/sdk/AssistantSdkClient.java`: client-side HTTP SDK skeleton.
 - `mindos-cli/src/main/java/com/zhongbo/mindos/assistant/cli/MindosCliApplication.java`: CLI entrypoint.
 - `mindos-cli` also exposes `profile persona show` for inspecting the server-side learned persona profile.
@@ -65,9 +92,14 @@ This repository is a lightweight, single-user personal AI assistant backend. Opt
 - Run API locally: `./mvnw -pl assistant-api -am spring-boot:run`
 - Run API locally in solo profile: `./mvnw -pl assistant-api -am spring-boot:run -Dspring-boot.run.profiles=solo`
 - Solo helper scripts: `./scripts/unix/local/run-mindos-solo.sh`, `./scripts/unix/local/solo-cli.sh`, `./scripts/unix/local/solo-smoke.sh`, `./scripts/unix/local/solo-stop.sh` (CLI semantics unchanged)
+- Local env-layered startup: `./scripts/unix/local/run-local.sh` (loads `dist/mindos-windows-server/mindos-secrets.properties` first, then optional `mindos-secrets.local.properties`; supports `--dry-run` and `--strict`)
+- Release env-layered startup/preflight: `./scripts/unix/local/run-release.sh` (loads dist secrets first, then optional `mindos-secrets.release.properties`; release mode is strict and supports `--dry-run`)
+- Secrets/map preflight: `./scripts/check-secrets.sh --mode=local` or `./scripts/check-secrets.sh --mode=release`
 - Build all modules: `./mvnw clean package`
+- Export Windows bundle: `./scripts/unix/export/export-mindos-windows-dist.sh ./dist/mindos-windows-server` (set `SKIP_TESTS=0` to package with tests)
 - Fast SDK/CLI validation: `./mvnw -q -pl assistant-sdk,mindos-cli -am test`
 - Fast memory sync API validation: `./mvnw -q -pl assistant-api -am test -Dtest=MemorySyncControllerTest`
+- Fast retrieve-preview security validation: `./mvnw -q -pl assistant-api -am test -Dtest=MemoryRetrievePreviewSecurityTest`
 - Fast memory sync performance baseline validation: `./mvnw -q -pl assistant-memory -am test -Dtest=MemorySyncServiceTest#shouldMeetBasicSyncPerformanceBaseline -Dsurefire.failIfNoSpecifiedTests=false` (optional tuning: `-Dmindos.memory.sync.perf-baseline-ms=5000 -Dmindos.memory.sync.perf-retries=2`)
 - Fast skill management API validation: `./mvnw -q -pl assistant-api -am test -Dtest=SkillControllerTest`
 - Fast security audit API validation: `./mvnw -q -pl assistant-api -am test -Dtest=SecurityAuditApiTest`
@@ -75,6 +107,11 @@ This repository is a lightweight, single-user personal AI assistant backend. Opt
 - Fast solo profile smoke validation: `./mvnw -q -pl assistant-api -am test -Dtest=SoloProfileSmokeTest`
 - Fast news skill validation: `./mvnw -q -pl assistant-skill -am test -Dtest=NewsSearchSkillTest`
 - Fast DingTalk stream/message validation: `./mvnw -q -pl assistant-api -am test -Dtest=DingtalkStreamMessageDispatcherTest,DingtalkOpenApiConversationSenderTest`
+
+ - Quick local semantic-analysis smoke & Ollama readiness (manual):
+   1. Ensure Ollama (or compatible local server) is running and the quantized Gemma model is pulled and available.
+   2. Verify HTTP endpoint reachable: `curl -sS http://localhost:11434/api/health | jq .` (or `curl -sS http://localhost:11434/api/chat -d '{"prompt":"hi"}'` depending on your runtime).
+   3. Start the API with the solo profile after confirming `dist/mindos-windows-server/mindos-secrets.properties` maps point to the local provider: `./mvnw -pl assistant-api -am spring-boot:run -Dspring-boot.run.profiles=solo`
 
 ## Project conventions
 - Keep package root under `com.zhongbo.mindos.assistant...`.
@@ -88,18 +125,46 @@ This repository is a lightweight, single-user personal AI assistant backend. Opt
 - Challenge approval is strict (`operation + resource + actor + IP`, one-time consume); security audit supports traceId and recent-event query via `/api/security/audit` and filtered signed-cursor query via `/api/security/audit/query` (JWT-style cursor + expiry + key-version `kid`).
 - MCP-loaded tools are namespaced as `mcp.<serverAlias>.<toolName>` to avoid collisions with built-in skills.
 - Dispatcher auto-routing can execute registered skills via `Skill.supports(...)`, so MCP tool descriptions/names should stay specific enough to avoid accidental matches.
-- Runtime LLM profile switching is centralized by `mindos.llm.profile` / `MINDOS_LLM_PROFILE` (e.g., `QWEN_STABLE`, `DOUBAO_STABLE`, `CN_DUAL`, `OPENROUTER_INTENT`, native single-vendor profiles); keep profile defaults and env template scripts aligned.
+- Runtime LLM profile switching is centralized by `mindos.llm.profile` / `MINDOS_LLM_PROFILE` (e.g., `QWEN_STABLE`, `DOUBAO_STABLE`, `CUSTOM_LOCAL_FIRST`, `CN_DUAL`, `OPENROUTER_INTENT`, native single-vendor profiles); keep profile defaults, `mindos.llm.routing.preset-map`, and env template scripts aligned.
+- Provider/routing env maps (`MINDOS_LLM_PROVIDER_ENDPOINTS`, `MINDOS_LLM_PROVIDER_KEYS`, `MINDOS_LLM_PROVIDER_MODELS`, `MINDOS_LLM_ROUTING_STAGE_MAP`, `MINDOS_LLM_ROUTING_PRESET_MAP`, MCP server/header maps) are comma-separated `key:value` entries without spaces; `scripts/unix/lib/mindos-env.sh` validates them during preflight/startup.
 - New skills should implement `Skill` and be autodiscovered as Spring components.
 - Preserve `contextLoads()` smoke test in `assistant-api` when adding integrations.
-- Keep this repo single-user and in-memory by default; persistence can be layered later.
-- If wiring persistence, follow `CentralMemoryRepositoryConfig`: keep in-memory fallback and let JDBC activation be conditional on `DataSource` presence.
+- Keep this repo single-user; central memory now defaults to file-backed storage under `data/memory-sync` when enabled, falls back to in-memory if file-repo initialization fails, and switches to JDBC automatically when a `DataSource` exists.
+- If wiring persistence, follow `CentralMemoryRepositoryConfig`: preserve the file-backed no-`DataSource` path, keep in-memory fallback on initialization failure, and let JDBC activation stay conditional on `DataSource` presence.
 
 ## Agent checklist
 - Before edits, confirm target module ownership and dependency direction.
 - After Java/config changes, run at least `./mvnw -q test`.
+- If you change env templates/startup scripts/provider-map parsing, run `./scripts/check-secrets.sh --mode=local` and one dry-run launcher (`./scripts/unix/local/run-local.sh --dry-run` or `./scripts/unix/local/run-release.sh --dry-run`).
 - For SDK/CLI endpoint changes, run `./mvnw -q -pl assistant-sdk,mindos-cli -am test` first for fast feedback.
 - If changing dispatch/skill behavior, test one `POST /chat` path (or backward-compatible `POST /api/chat`) manually or with unit tests.
 - Update `README.md` and this file when workflows or module boundaries change.
+
+### Minimal patch & verification checklist (preferred small, low-risk edits)
+When implementing the local semantic + behavior-learning improvements, prefer the smallest change set that keeps the app bootable and tests passing. Suggested minimal edits:
+
+- Files to consider (minimal, prioritized):
+  1. `assistant-skill/src/main/java/com/zhongbo/mindos/assistant/skill/semantic/SemanticAnalysisService.java`
+     - Ensure the analyzer outputs the structured fields used by dispatcher: `intent`, `payload` (or `params`), `summary`, `confidence`, and `suggestedSkill`.
+     - Keep `llm` vs `local` provider resolution based on `mindos.dispatcher.semantic-analysis.*` properties; avoid embedding provider constants.
+  2. `assistant-dispatcher/src/main/java/com/zhongbo/mindos/assistant/dispatcher/DispatcherService.java`
+     - Wire in behavior-learning hooks already present (`behavior-learning.*` props). Validate `completeSemanticPayloadFromMemory()` and `maybeStoreBehaviorProfile()` paths to ensure missing params can be filled from `MemoryManager.getSkillUsageHistory()`.
+     - Enable the parallel detected-skill routing flags for controlled A/B testing via config (`mindos.dispatcher.parallel-routing.*`).
+  3. Tests to update / run:
+     - `assistant-skill/src/test/java/com/zhongbo/mindos/assistant/skill/semantic/SemanticAnalysisServiceTest.java`
+     - `assistant-dispatcher/src/test/java/com/zhongbo/mindos/assistant/dispatcher/DispatcherServiceTest.java`
+     - Run these quickly with:
+       - `./mvnw -q -pl assistant-skill -am test -Dtest=SemanticAnalysisServiceTest`
+       - `./mvnw -q -pl assistant-dispatcher -am test -Dtest=DispatcherServiceTest`
+
+- Quick verification steps after code edits:
+  1. `./mvnw -q test` (run full test suite if CI time allows).
+  2. Start API in `solo` profile and exercise `/api/chat` with a short input that triggers semantic analysis (e.g., "给 stu-1 做一个数学学习计划，六周，每周八小时") and confirm logs show `semantic-analysis` route and local model usage when expected.
+  3. Verify behavior-learning writes to procedural memory: check `assistant-api/data/memory-sync` or in-memory fallbacks for `skill-usage` entries.
+
+Notes:
+- Prefer configuration-driven toggles over code changes — many features (semantic local escalation, parallel routing, behavior learning) are already feature-flagged via `mindos.*` properties. Edit properties first before changing code.
+- Keep changes minimal in a single file where possible and iterate on tests. If a test fails, fix the implementation in the same module and re-run the relevant tests only.
 
 ---
 
@@ -240,18 +305,11 @@ mindos.skills.cloud-api.config-dir=/path/to/cloud-skills
 ---
 
 **本次 AGENTS.md 主要新增/修改内容：**
-- 同步 Spring Boot 版本到 `3.3.10`
-- 更新 instruction sources 扫描结果（新增 `assistant-memory/.../README.md`）
-- 增补 news push 与 DingTalk observability 运行流及关键控制器映射
-- 增补 `news_search` skill（参数、配置、测试入口）
-- 增补本地语义分析/本地失败升级云端相关配置提示
-- 增补 `MINDOS_LLM_PROFILE` 配置约定与 ONNX bge-micro 默认资源路径说明
-- teaching.plan skill 多维画像与 LLM/schema 路径说明
-- Dispatcher/CLI 端自然语言教学规划路由与参数抽取说明
-- CLI `/teach plan` 命令与自然语言触发说明
-- 相关测试与兼容性注意事项
-- Repository map 增补 memory/metrics/security/im 关键控制器
-- 增补 `eq.coach` skill 输入字段、风险词配置与回归测试入口
-- 增补 CLI `/todo policy` 与 `mindos.todo.*` 默认策略来源说明
+- 校正 `assistant-memory` 默认持久化说明：补充 file-backed central repo、初始化失败回退到 in-memory、以及 JDBC 条件启用路径
+- 增补 `/api/memory/{userId}/retrieve-preview` 流程、控制器映射与 `MemoryRetrievePreviewSecurityTest` 快速回归入口
+- 增补 `run-local.sh` / `run-release.sh` 分层启动、`scripts/check-secrets.sh` 预检与 Windows bundle 导出命令
+- Repository map 增补 `scripts/unix/lib/mindos-env.sh` 与 `dist/mindos-windows-server/` 关键路径说明
+- 补充 `mindos.llm.routing.preset-map`、`mindos.dispatcher.intent-routing.*` 与 provider-map 语法校验约定
+- 更新 agent checklist：涉及 env 模板/启动脚本/provider-map 解析时，先跑 secrets preflight 与 dry-run launcher
 
 如需完整 AGENTS.md 文件或有其他模块变更，请告知！

@@ -13,6 +13,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.logging.Handler;
 import java.util.logging.Level;
 import java.util.logging.LogRecord;
@@ -211,8 +213,8 @@ class ApiKeyLlmClientTest {
             observed.put("auth", String.valueOf(exchange.getRequestHeaders().getFirst("Authorization")));
             observed.put("body", new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
             byte[] body = (
-                    "{\"model\":\"gemma4:e2b-it-q4_K_M\",\"response\":\"本地\",\"done\":false}\n"
-                            + "{\"model\":\"gemma4:e2b-it-q4_K_M\",\"response\":\"优先\",\"done\":true}\n"
+                    "{\"model\":\"gemma3:1b-it-q4_K_M\",\"response\":\"本地\",\"done\":false}\n"
+                            + "{\"model\":\"gemma3:1b-it-q4_K_M\",\"response\":\"优先\",\"done\":true}\n"
             ).getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().add("Content-Type", "application/x-ndjson");
             exchange.sendResponseHeaders(200, body.length);
@@ -227,7 +229,7 @@ class ApiKeyLlmClientTest {
                     "llm-dsl:local,llm-fallback:qwen",
                     "cost:local,quality:qwen",
                     "qwen:key-qwen",
-                    "local:gemma4:e2b-it-q4_K_M",
+                    "local:gemma3:1b-it-q4_K_M",
                     false,
                     60,
                     "",
@@ -245,7 +247,7 @@ class ApiKeyLlmClientTest {
             assertEquals("本地优先", output);
             assertEquals("/api/generate", observed.get("path"));
             assertEquals("null", observed.get("auth"));
-            assertTrue(observed.get("body").contains("\"model\":\"gemma4:e2b-it-q4_K_M\""));
+            assertTrue(observed.get("body").contains("\"model\":\"gemma3:1b-it-q4_K_M\""));
             assertTrue(observed.get("body").contains("\"prompt\":\"做个简短总结\""));
             assertTrue(observed.get("body").contains("\"num_predict\":64"));
         } finally {
@@ -262,8 +264,8 @@ class ApiKeyLlmClientTest {
             observed.put("auth", String.valueOf(exchange.getRequestHeaders().getFirst("Authorization")));
             observed.put("body", new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
             byte[] body = (
-                    "{\"model\":\"gemma4:e2b-it-q4_K_M\",\"message\":{\"role\":\"assistant\",\"content\":\"本地\"},\"done\":false}\n"
-                            + "{\"model\":\"gemma4:e2b-it-q4_K_M\",\"message\":{\"role\":\"assistant\",\"content\":\"对话\"},\"done\":true}\n"
+                    "{\"model\":\"gemma3:1b-it-q4_K_M\",\"message\":{\"role\":\"assistant\",\"content\":\"本地\"},\"done\":false}\n"
+                            + "{\"model\":\"gemma3:1b-it-q4_K_M\",\"message\":{\"role\":\"assistant\",\"content\":\"对话\"},\"done\":true}\n"
             ).getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().add("Content-Type", "application/x-ndjson");
             exchange.sendResponseHeaders(200, body.length);
@@ -278,7 +280,7 @@ class ApiKeyLlmClientTest {
                     "llm-dsl:local,llm-fallback:qwen",
                     "cost:local,quality:qwen",
                     "qwen:key-qwen",
-                    "local:gemma4:e2b-it-q4_K_M",
+                    "local:gemma3:1b-it-q4_K_M",
                     false,
                     60,
                     "",
@@ -296,10 +298,65 @@ class ApiKeyLlmClientTest {
             assertEquals("本地对话", output);
             assertEquals("/api/chat", observed.get("path"));
             assertEquals("null", observed.get("auth"));
-            assertTrue(observed.get("body").contains("\"model\":\"gemma4:e2b-it-q4_K_M\""));
+            assertTrue(observed.get("body").contains("\"model\":\"gemma3:1b-it-q4_K_M\""));
             assertTrue(observed.get("body").contains("\"messages\""));
             assertTrue(observed.get("body").contains("\"role\":\"user\""));
             assertTrue(observed.get("body").contains("\"num_predict\":64"));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void shouldStreamOllamaChatChunksWithoutWaitingForWholeBody() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
+        server.createContext("/api/chat", exchange -> {
+            exchange.getResponseHeaders().add("Content-Type", "application/x-ndjson");
+            exchange.sendResponseHeaders(200, 0);
+            var output = exchange.getResponseBody();
+            output.write("{\"message\":{\"content\":\"本地\"},\"done\":false}\n".getBytes(StandardCharsets.UTF_8));
+            output.flush();
+            try {
+                Thread.sleep(350L);
+            } catch (InterruptedException interruptedException) {
+                Thread.currentThread().interrupt();
+            }
+            output.write("{\"message\":{\"content\":\"流式\"},\"done\":true}\n".getBytes(StandardCharsets.UTF_8));
+            output.flush();
+            exchange.close();
+        });
+        server.start();
+        try {
+            ApiKeyLlmClient client = newClient(
+                    "local",
+                    "auto",
+                    "llm-dsl:local,llm-fallback:qwen",
+                    "cost:local,quality:qwen",
+                    "qwen:key-qwen",
+                    "local:gemma3:1b-it-q4_K_M",
+                    false,
+                    60,
+                    "",
+                    true,
+                    "local:http://127.0.0.1:" + server.getAddress().getPort() + "/api/chat,qwen:https://api.example.com/v1/chat/completions"
+            );
+
+            List<String> deltas = new CopyOnWriteArrayList<>();
+            AtomicLong firstDeltaElapsedMs = new AtomicLong(-1L);
+            long startedAt = System.currentTimeMillis();
+
+            client.streamResponse("做个简短总结", Map.of(
+                    "userId", "u-ollama-stream",
+                    "llmProvider", "local"
+            ), chunk -> {
+                deltas.add(chunk);
+                firstDeltaElapsedMs.compareAndSet(-1L, System.currentTimeMillis() - startedAt);
+            });
+
+            assertEquals("本地流式", String.join("", deltas));
+            assertTrue(firstDeltaElapsedMs.get() >= 0, "first delta should be emitted");
+            assertTrue(firstDeltaElapsedMs.get() < 300L,
+                    "first delta should arrive before second chunk delay, actual=" + firstDeltaElapsedMs.get());
         } finally {
             server.stop(0);
         }
@@ -408,6 +465,27 @@ class ApiKeyLlmClientTest {
         String output = client.generateResponse("hello", Map.of("userId", "u-profile"));
 
         assertTrue(output.startsWith("[LLM qwen] fallback mode active."));
+    }
+
+    @Test
+    void shouldPreferLocalProviderFromCustomLocalFirstProfile() {
+        ApiKeyLlmClient client = newClientWithProfile(
+                "qwen",
+                "CUSTOM_LOCAL_FIRST",
+                "fixed",
+                "llm-dsl:qwen,llm-fallback:qwen",
+                "cost:qwen,quality:qwen",
+                "qwen:key-qwen,local:key-local",
+                false,
+                60,
+                false,
+                "local:http://localhost:11434/api/chat,qwen:https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+        );
+
+        String output = client.generateResponse("hello", Map.of("userId", "u-local-profile"));
+
+        assertTrue(output.startsWith("[LLM local] fallback mode active."));
+        assertTrue(output.contains("http://localhost:11434/api/chat"));
     }
 
     @Test

@@ -95,7 +95,7 @@ If you want low-cost local semantic analysis first, then Qwen for stronger cloud
 MINDOS_LLM_PROFILE=CUSTOM_LOCAL_FIRST
 MINDOS_LLM_PROVIDER=qwen
 MINDOS_LLM_PROVIDER_ENDPOINTS=local:http://localhost:11434/api/chat,qwen:https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions
-MINDOS_LLM_PROVIDER_MODELS=local:gemma4:e2b-it-q4_K_M,qwen:qwen3.5-plus
+MINDOS_LLM_PROVIDER_MODELS=local:gemma3:1b-it-q4_K_M,qwen:qwen3.5-plus
 MINDOS_QWEN_KEY=REPLACE_WITH_QWEN_KEY
 MINDOS_LLM_PROVIDER_KEYS=qwen:REPLACE_WITH_QWEN_KEY
 
@@ -103,22 +103,59 @@ MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_LLM_ENABLED=true
 MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_FORCE_LOCAL=true
 MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_LOCAL_ESCALATION_ENABLED=true
 MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_LLM_PROVIDER=local
+MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_CLARIFY_MIN_CONFIDENCE=0.70
 MINDOS_DISPATCHER_LLM_FALLBACK_PROVIDER=qwen
 ```
 
 What this setup is for:
 - `local:http://localhost:11434/api/chat` is used as the cheap local endpoint for semantic analysis and short, low-cost reasoning.
 - `qwen` stays available as the cloud provider for stronger fallback/final reply quality.
+- `MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_CLARIFY_MIN_CONFIDENCE` controls when dispatcher returns `semantic.clarify`; low confidence or still-missing required params trigger clarification.
+- Clarification validates required params against the effective payload after memory/default completion (not only raw semantic payload); continuation inputs still bypass semantic-clarify routing.
 - Keep the real Qwen secret in `mindos-secrets.local.properties` or `mindos-secrets.release.properties`, not in the dist template.
 
 Quick local check before starting MindOS:
 
 ```bash
 curl http://localhost:11434/api/chat \
-  -d '{"model":"gemma4:e2b-it-q4_K_M","messages":[{"role":"user","content":"Hello!"}]}'
+  -d '{"model":"gemma3:1b-it-q4_K_M","messages":[{"role":"user","content":"Hello!"}]}'
 ```
 
 If this call does not return successfully, fix Ollama first; otherwise MindOS may log routing to `local` but still fail before real semantic-analysis output is produced.
+
+### i5 + 8GB local tuning presets (`gemma3:1b-it-q4_K_M`)
+
+Use these as copy/paste starting points when your local model is `gemma3:1b-it-q4_K_M`.
+
+`Stable-first` (lower latency + lower memory pressure):
+
+```properties
+MINDOS_LLM_PROVIDER_MODELS=local:gemma3:1b-it-q4_K_M
+MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_MAX_TOKENS=80
+MINDOS_DISPATCHER_LLM_DSL_MAX_TOKENS=120
+MINDOS_DISPATCHER_LLM_FALLBACK_MAX_TOKENS=220
+MINDOS_DISPATCHER_SKILL_FINALIZE_WITH_LLM_MAX_TOKENS=120
+MINDOS_DISPATCHER_LOCAL_ESCALATION_ENABLED=true
+MINDOS_DISPATCHER_LOCAL_ESCALATION_CLOUD_PROVIDER=qwen
+MINDOS_DISPATCHER_LOCAL_ESCALATION_CLOUD_PRESET=quality
+```
+
+`Quality-first` (better local answer depth, still cloud-fallback capable):
+
+```properties
+MINDOS_LLM_PROVIDER_MODELS=local:gemma3:1b-it-q4_K_M
+MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_MAX_TOKENS=120
+MINDOS_DISPATCHER_LLM_DSL_MAX_TOKENS=180
+MINDOS_DISPATCHER_LLM_FALLBACK_MAX_TOKENS=380
+MINDOS_DISPATCHER_SKILL_FINALIZE_WITH_LLM_MAX_TOKENS=220
+MINDOS_DISPATCHER_LOCAL_ESCALATION_ENABLED=true
+MINDOS_DISPATCHER_LOCAL_ESCALATION_CLOUD_PROVIDER=qwen
+MINDOS_DISPATCHER_LOCAL_ESCALATION_CLOUD_PRESET=quality
+```
+
+Tips:
+- If your local endpoint is unstable, start with `Stable-first` and lower `MINDOS_DISPATCHER_LLM_FALLBACK_MAX_TOKENS` first.
+- If your local endpoint is healthy and response quality is not enough, switch to `Quality-first` before changing provider routing.
 
 ### Pre-release Checklist (3 Commands)
 

@@ -42,7 +42,7 @@ class NewsSearchSkillTest {
                 true,
                 "local",
                 "cost",
-                "gemma4:e2b-it-q4_K_M",
+                "gemma3:1b-it-q4_K_M",
                 220
         );
 
@@ -59,7 +59,7 @@ class NewsSearchSkillTest {
         assertTrue(result.output().contains("36Kr AI 创业观察"));
         assertTrue(capturedPrompt.get().contains("用户上下文: 用户最近一直关注芯片和创业投资。"));
         assertEquals("local", capturedContext.get().get("llmProvider"));
-        assertEquals("gemma4:e2b-it-q4_K_M", capturedContext.get().get("model"));
+        assertEquals("gemma3:1b-it-q4_K_M", capturedContext.get().get("model"));
     }
 
     @Test
@@ -89,7 +89,7 @@ class NewsSearchSkillTest {
                 true,
                 "local",
                 "cost",
-                "gemma4:e2b-it-q4_K_M",
+                "gemma3:1b-it-q4_K_M",
                 220
         );
 
@@ -118,7 +118,7 @@ class NewsSearchSkillTest {
                 true,
                 "local",
                 "cost",
-                "gemma4:e2b-it-q4_K_M",
+                "gemma3:1b-it-q4_K_M",
                 220
         );
 
@@ -169,7 +169,7 @@ class NewsSearchSkillTest {
                 true,
                 "local",
                 "cost",
-                "gemma4:e2b-it-q4_K_M",
+                "gemma3:1b-it-q4_K_M",
                 220
         );
 
@@ -210,7 +210,7 @@ class NewsSearchSkillTest {
                 true,
                 "local",
                 "cost",
-                "gemma4:e2b-it-q4_K_M",
+                "gemma3:1b-it-q4_K_M",
                 220
         );
 
@@ -251,7 +251,7 @@ class NewsSearchSkillTest {
                 true,
                 "local",
                 "cost",
-                "gemma4:e2b-it-q4_K_M",
+                "gemma3:1b-it-q4_K_M",
                 220
         );
 
@@ -300,7 +300,7 @@ class NewsSearchSkillTest {
                 true,
                 "local",
                 "cost",
-                "gemma4:e2b-it-q4_K_M",
+                "gemma3:1b-it-q4_K_M",
                 220
         );
 
@@ -337,7 +337,7 @@ class NewsSearchSkillTest {
                 true,
                 "local",
                 "cost",
-                "gemma4:e2b-it-q4_K_M",
+                "gemma3:1b-it-q4_K_M",
                 220
         );
 
@@ -362,7 +362,7 @@ class NewsSearchSkillTest {
                 true,
                 "local",
                 "cost",
-                "gemma4:e2b-it-q4_K_M",
+                "gemma3:1b-it-q4_K_M",
                 220
         );
 

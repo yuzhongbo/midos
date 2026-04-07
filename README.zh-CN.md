@@ -125,7 +125,7 @@ chmod +x ./scripts/unix/local/run-local.sh ./scripts/unix/local/run-release.sh .
 MINDOS_LLM_PROFILE=CUSTOM_LOCAL_FIRST
 MINDOS_LLM_PROVIDER=qwen
 MINDOS_LLM_PROVIDER_ENDPOINTS=local:http://localhost:11434/api/chat,qwen:https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions
-MINDOS_LLM_PROVIDER_MODELS=local:gemma4:e2b-it-q4_K_M,qwen:qwen3.5-plus
+MINDOS_LLM_PROVIDER_MODELS=local:gemma3:1b-it-q4_K_M,qwen:qwen3.5-plus
 MINDOS_QWEN_KEY=REPLACE_WITH_QWEN_KEY
 MINDOS_LLM_PROVIDER_KEYS=qwen:REPLACE_WITH_QWEN_KEY
 
@@ -133,22 +133,59 @@ MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_LLM_ENABLED=true
 MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_FORCE_LOCAL=true
 MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_LOCAL_ESCALATION_ENABLED=true
 MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_LLM_PROVIDER=local
+MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_CLARIFY_MIN_CONFIDENCE=0.70
 MINDOS_DISPATCHER_LLM_FALLBACK_PROVIDER=qwen
 ```
 
 这组配置的定位是：
 - `local:http://localhost:11434/api/chat` 负责本地语义分析和低成本短推理。
 - `qwen` 保留为云端增强 / 回退 provider，用于更强的最终回复能力。
+- `MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_CLARIFY_MIN_CONFIDENCE` 控制何时返回 `semantic.clarify`；低置信度或补全后仍缺必填参数会触发澄清。
+- 澄清会基于 memory/default completion 后的有效 payload 校验必填参数（而非仅原始语义 payload）；续写类输入仍会跳过 `semantic.clarify` 路由。
 - 真实的 Qwen key 仍建议只放在 `mindos-secrets.local.properties` 或 `mindos-secrets.release.properties` 中。
 
 启动 MindOS 前，建议先单独确认本地 Ollama 接口可用：
 
 ```bash
 curl http://localhost:11434/api/chat \
-  -d '{"model":"gemma4:e2b-it-q4_K_M","messages":[{"role":"user","content":"Hello!"}]}'
+  -d '{"model":"gemma3:1b-it-q4_K_M","messages":[{"role":"user","content":"Hello!"}]}'
 ```
 
 如果这条命令本身不通，MindOS 虽然可能会打印路由到了 `local`，但语义分析阶段依然无法真正拿到本地模型结果。
+
+### i5 + 8GB 本地参数两档（`gemma3:1b-it-q4_K_M`）
+
+当本地模型使用 `gemma3:1b-it-q4_K_M` 时，可直接从这两档参数起步。
+
+`偏稳态`（更稳、更省资源）：
+
+```properties
+MINDOS_LLM_PROVIDER_MODELS=local:gemma3:1b-it-q4_K_M
+MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_MAX_TOKENS=80
+MINDOS_DISPATCHER_LLM_DSL_MAX_TOKENS=120
+MINDOS_DISPATCHER_LLM_FALLBACK_MAX_TOKENS=220
+MINDOS_DISPATCHER_SKILL_FINALIZE_WITH_LLM_MAX_TOKENS=120
+MINDOS_DISPATCHER_LOCAL_ESCALATION_ENABLED=true
+MINDOS_DISPATCHER_LOCAL_ESCALATION_CLOUD_PROVIDER=qwen
+MINDOS_DISPATCHER_LOCAL_ESCALATION_CLOUD_PRESET=quality
+```
+
+`偏质量`（本地回答更完整，仍保留云端兜底）：
+
+```properties
+MINDOS_LLM_PROVIDER_MODELS=local:gemma3:1b-it-q4_K_M
+MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_MAX_TOKENS=120
+MINDOS_DISPATCHER_LLM_DSL_MAX_TOKENS=180
+MINDOS_DISPATCHER_LLM_FALLBACK_MAX_TOKENS=380
+MINDOS_DISPATCHER_SKILL_FINALIZE_WITH_LLM_MAX_TOKENS=220
+MINDOS_DISPATCHER_LOCAL_ESCALATION_ENABLED=true
+MINDOS_DISPATCHER_LOCAL_ESCALATION_CLOUD_PROVIDER=qwen
+MINDOS_DISPATCHER_LOCAL_ESCALATION_CLOUD_PRESET=quality
+```
+
+建议：
+- 本地端点偶发超时时，优先用 `偏稳态`，并先下调 `MINDOS_DISPATCHER_LLM_FALLBACK_MAX_TOKENS`。
+- 本地端点稳定但回答深度不够时，先切到 `偏质量`，再考虑调整 provider 路由。
 
 Reusable solo helper scripts:
 
@@ -376,6 +413,8 @@ Chat 与记忆操作：
     - `solo` / Windows 分发可通过 `MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_FORCE_LOCAL=false` 覆盖
   - `mindos.dispatcher.semantic-analysis.delegate-skill=mcp.<alias>.<tool>`：把语义分析委托给已接入的 MCP skill
   - `mindos.dispatcher.semantic-analysis.route-min-confidence=0.72`：语义分析直接路由到本地 skill 的最小置信度
+  - `mindos.dispatcher.semantic-analysis.clarify-min-confidence=0.70`：触发 `semantic.clarify` 的最小置信度阈值
+  - 说明：澄清会基于 memory/default completion 后的有效 payload 校验必填参数（而非仅原始语义 payload）；续写类输入（如“继续”“按之前”）会跳过 `semantic.clarify` 路由
 
 ### 高级/排障命令速查（可选）
 
@@ -791,7 +830,7 @@ Tips:
     - `mindos.skill.news-search.google-rss-url-template`（默认 `https://ai.2756online.com/google/rss/search?q=%s&hl=zh-CN&gl=CN&ceid=CN:zh-Hans`）
     - `mindos.skill.news-search.kr-feed-url`
     - `mindos.skill.news-search.cache-ttl-seconds`
-    - `mindos.skill.news-search.summary-provider` / `mindos.skill.news-search.summary-model`（默认 `local` + `gemma4:e2b-it-q4_K_M`）
+    - `mindos.skill.news-search.summary-provider` / `mindos.skill.news-search.summary-model`（默认 `local` + `gemma3:1b-it-q4_K_M`）
 - `eq.coach` risk terms are configurable via JVM properties (comma-separated):
   - `mindos.eq.coach.risk.high-terms`
   - `mindos.eq.coach.risk.medium-terms`

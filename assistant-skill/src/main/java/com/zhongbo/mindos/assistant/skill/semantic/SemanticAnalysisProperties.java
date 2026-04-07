@@ -16,6 +16,7 @@ public class SemanticAnalysisProperties {
     private String llmProvider = "local";
     private String llmPreset = "cost";
     private int maxTokens = 120;
+    private LlmComplexity llmComplexity = new LlmComplexity();
     private LocalEscalation localEscalation = new LocalEscalation();
 
     public boolean isEnabled() {
@@ -80,6 +81,35 @@ public class SemanticAnalysisProperties {
 
     public void setLocalEscalation(LocalEscalation localEscalation) {
         this.localEscalation = localEscalation == null ? new LocalEscalation() : localEscalation;
+    }
+
+    public LlmComplexity getLlmComplexity() {
+        return llmComplexity;
+    }
+
+    public void setLlmComplexity(LlmComplexity llmComplexity) {
+        this.llmComplexity = llmComplexity == null ? new LlmComplexity() : llmComplexity;
+    }
+
+    public static class LlmComplexity {
+        private int minInputChars = 10;
+        private String triggerTerms = "新闻,搜索,实时,分析,规划,计划,代码,排查,debug,search,latest,news,plan,report";
+
+        public int getMinInputChars() {
+            return minInputChars;
+        }
+
+        public void setMinInputChars(int minInputChars) {
+            this.minInputChars = Math.max(0, minInputChars);
+        }
+
+        public String getTriggerTerms() {
+            return triggerTerms;
+        }
+
+        public void setTriggerTerms(String triggerTerms) {
+            this.triggerTerms = triggerTerms == null ? "" : triggerTerms.trim();
+        }
     }
 
     public static class LocalEscalation {

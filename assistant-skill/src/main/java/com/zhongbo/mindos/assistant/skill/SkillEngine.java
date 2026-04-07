@@ -24,6 +24,9 @@ import java.util.stream.Collectors;
 @Service
 public class SkillEngine {
 
+    public record SkillCandidate(String skillName, int score) {
+    }
+
     private static final Logger LOGGER = Logger.getLogger(SkillEngine.class.getName());
 
     private final SkillRegistry skillRegistry;
@@ -45,6 +48,12 @@ public class SkillEngine {
 
     public Optional<String> detectSkillName(String input) {
         return skillRegistry.detect(input).map(Skill::name);
+    }
+
+    public List<SkillCandidate> detectSkillCandidates(String input, int limit) {
+        return skillRegistry.detectCandidates(input, limit).stream()
+                .map(candidate -> new SkillCandidate(candidate.skill().name(), candidate.score()))
+                .toList();
     }
 
     public CompletableFuture<Optional<SkillResult>> executeDetectedSkillAsync(SkillContext context) {

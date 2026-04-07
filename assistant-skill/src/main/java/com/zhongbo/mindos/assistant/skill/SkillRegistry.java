@@ -4,6 +4,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.Collection;
+import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -14,6 +15,9 @@ import java.util.Set;
 
 @Component
 public class SkillRegistry {
+
+    public record DetectedSkill(Skill skill, int score) {
+    }
 
     private final Map<String, Skill> skills = new LinkedHashMap<>();
     private final SkillRoutingProperties routingProperties;
@@ -86,7 +90,7 @@ public class SkillRegistry {
             return Optional.empty();
         }
         String normalized = input.trim();
-        String firstToken = normalized.split("\\s+", 2)[0].toLowerCase();
+        String firstToken = normalized.split("\\s+", 2)[0].toLowerCase(Locale.ROOT);
 
         Skill directMatch = skills.get(firstToken);
         if (directMatch != null) {
@@ -103,6 +107,33 @@ public class SkillRegistry {
             }
         }
         return bestScore > 0 && bestMatch != null ? Optional.of(bestMatch) : Optional.empty();
+    }
+
+    public synchronized List<DetectedSkill> detectCandidates(String input, int limit) {
+        if (input == null || input.isBlank() || limit <= 0) {
+            return List.of();
+        }
+        String normalized = input.trim();
+        String firstToken = normalized.split("\\s+", 2)[0].toLowerCase(Locale.ROOT);
+
+        List<DetectedSkill> candidates = new java.util.ArrayList<>();
+        for (Skill skill : skills.values()) {
+            int score = routingScore(skill.name(), normalized);
+            if (skill.name().equalsIgnoreCase(firstToken)) {
+                score = Math.max(score, 1000);
+            }
+            if (score > 0) {
+                candidates.add(new DetectedSkill(skill, score));
+            }
+        }
+        if (candidates.isEmpty()) {
+            return List.of();
+        }
+        candidates.sort(Comparator
+                .comparingInt(DetectedSkill::score).reversed()
+                .thenComparing(candidate -> candidate.skill().name()));
+        int safeLimit = Math.min(limit, candidates.size());
+        return List.copyOf(candidates.subList(0, safeLimit));
     }
 
     private List<String> configuredKeywords(String skillName) {

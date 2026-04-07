@@ -24,6 +24,7 @@ import com.zhongbo.mindos.assistant.skill.SkillRegistry;
 import com.zhongbo.mindos.assistant.skill.mcp.McpJsonRpcClient;
 import com.zhongbo.mindos.assistant.skill.mcp.McpToolDefinition;
 import com.zhongbo.mindos.assistant.skill.mcp.McpToolSkill;
+import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalysisResult;
 import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalysisService;
 import org.junit.jupiter.api.Test;
 
@@ -83,6 +84,70 @@ class DispatcherServiceTest {
     }
 
     @Test
+    void shouldSelectConfiguredPrioritySkillWhenParallelDetectedRoutingIsEnabled() {
+        MemoryManager memoryManager = createMemoryManager();
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of("不应走到 llm"));
+        DispatcherService service = createDispatcherWithParallelDetectedRouting(
+                memoryManager,
+                llmClient,
+                List.of(
+                        new Skill() {
+                            @Override
+                            public String name() {
+                                return "mcp.qwensearch.webSearch";
+                            }
+
+                            @Override
+                            public String description() {
+                                return "Search latest web news";
+                            }
+
+                            @Override
+                            public SkillResult run(SkillContext context) {
+                                return SkillResult.success(name(), "qwen result");
+                            }
+
+                            @Override
+                            public int routingScore(String input) {
+                                return input != null && input.contains("新闻") ? 920 : Integer.MIN_VALUE;
+                            }
+                        },
+                        new Skill() {
+                            @Override
+                            public String name() {
+                                return "mcp.bravesearch.webSearch";
+                            }
+
+                            @Override
+                            public String description() {
+                                return "Brave latest web news search";
+                            }
+
+                            @Override
+                            public SkillResult run(SkillContext context) {
+                                return SkillResult.success(name(), "brave result");
+                            }
+
+                            @Override
+                            public int routingScore(String input) {
+                                return input != null && input.contains("新闻") ? 800 : Integer.MIN_VALUE;
+                            }
+                        }
+                ),
+                "mcp.bravesearch.websearch"
+        );
+
+        DispatchResult result = service.dispatch("news-user", "今天新闻");
+
+        assertEquals("mcp.bravesearch.webSearch", result.channel());
+        assertEquals("brave result", result.reply());
+        assertEquals("detected-skill-parallel", result.executionTrace().routing().route());
+        assertEquals("mcp.bravesearch.webSearch", result.executionTrace().routing().selectedSkill());
+        assertEquals(0, llmClient.routingCallCount());
+        assertEquals(0, llmClient.fallbackCallCount());
+    }
+
+    @Test
     void shouldPreferBraveSearchWhenBraveFirstRoutingIsEnabled() {
         MemoryManager memoryManager = createMemoryManager();
         RecordingLlmClient llmClient = new RecordingLlmClient(List.of("不应走到 llm"));
@@ -97,6 +162,25 @@ class DispatcherServiceTest {
         assertEquals("brave result", result.reply());
         assertEquals("brave-first-search", result.executionTrace().routing().route());
         assertEquals("mcp.bravesearch.webSearch", result.executionTrace().routing().selectedSkill());
+        assertEquals(0, llmClient.routingCallCount());
+        assertEquals(0, llmClient.fallbackCallCount());
+    }
+
+    @Test
+    void shouldContinueWithQwenSearchWhenBraveResultIsLowRelevance() {
+        MemoryManager memoryManager = createMemoryManager();
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of("不应走到 llm"));
+        DispatcherService service = createDispatcher(memoryManager, llmClient, List.of(
+                newMcpSkill("mcp.qwensearch.webSearch", "Search latest web news", "成都天气：今天多云，明天小雨"),
+                newMcpSkill("mcp.bravesearch.webSearch", "Brave latest web news search", "no result")
+        ), 2, true, true);
+
+        DispatchResult result = service.dispatch("news-user", "帮我查一下成都今天到明天天气");
+
+        assertEquals("mcp.qwensearch.webSearch", result.channel());
+        assertTrue(result.reply().contains("成都天气"));
+        assertEquals("brave-first-search-fallback", result.executionTrace().routing().route());
+        assertEquals("mcp.qwensearch.webSearch", result.executionTrace().routing().selectedSkill());
         assertEquals(0, llmClient.routingCallCount());
         assertEquals(0, llmClient.fallbackCallCount());
     }
@@ -511,6 +595,165 @@ class DispatcherServiceTest {
     }
 
     @Test
+    void shouldAskClarificationWhenSemanticConfidenceIsLow() {
+        MemoryManager memoryManager = createMemoryManager();
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of("stub"));
+        SkillRegistry registry = new SkillRegistry(List.of(
+                new FixedSkill("todo.create", "Creates todo items from natural language", "待办已创建")
+        ));
+        SemanticAnalysisService semanticAnalysisService = new SemanticAnalysisService(llmClient, registry, true, false, true, "", "local", "cost", 120) {
+            @Override
+            public SemanticAnalysisResult analyze(String userId,
+                                                  String userInput,
+                                                  String memoryContext,
+                                                  Map<String, Object> profileContext,
+                                                  List<String> availableSkillSummaries) {
+                return new SemanticAnalysisResult(
+                        "llm",
+                        "创建待办",
+                        userInput,
+                        "todo.create",
+                        Map.of(),
+                        List.of("待办"),
+                        "用户要创建待办",
+                        0.55
+                );
+            }
+        };
+        DispatcherService service = createDispatcherWithSemanticService(memoryManager, llmClient, registry, semanticAnalysisService, 2);
+
+        DispatchResult result = service.dispatch("clarify-user", "帮我弄个待办");
+
+        assertEquals("semantic.clarify", result.channel());
+        assertEquals("semantic-clarify", result.executionTrace().routing().route());
+        assertTrue(result.reply().contains("todo.create"));
+        assertTrue(result.reply().contains("关键参数"));
+    }
+
+    @Test
+    void shouldSkipClarificationWhenCandidateIntentConfidenceForSuggestedSkillIsHigh() {
+        MemoryManager memoryManager = createMemoryManager();
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of("stub"));
+        SkillRegistry registry = new SkillRegistry(List.of(
+                new FixedSkill("todo.create", "Creates todo items from natural language", "待办已创建")
+        ));
+        SemanticAnalysisService semanticAnalysisService = new SemanticAnalysisService(llmClient, registry, true, false, true, "", "local", "cost", 120) {
+            @Override
+            public SemanticAnalysisResult analyze(String userId,
+                                                  String userInput,
+                                                  String memoryContext,
+                                                  Map<String, Object> profileContext,
+                                                  List<String> availableSkillSummaries) {
+                return new SemanticAnalysisResult(
+                        "llm",
+                        "创建待办",
+                        userInput,
+                        "todo.create",
+                        Map.of(),
+                        List.of("待办"),
+                        "用户要创建待办",
+                        0.52,
+                        List.of(
+                                new SemanticAnalysisResult.CandidateIntent("todo.create", 0.86),
+                                new SemanticAnalysisResult.CandidateIntent("eq.coach", 0.30)
+                        )
+                );
+            }
+        };
+        DispatcherService service = createDispatcherWithSemanticService(memoryManager, llmClient, registry, semanticAnalysisService, 2);
+
+        DispatchResult result = service.dispatch("semantic-user", "帮我弄个待办");
+
+        assertEquals("todo.create", result.channel());
+        assertEquals("semantic-analysis", result.executionTrace().routing().route());
+        assertEquals("todo.create", result.executionTrace().routing().selectedSkill());
+    }
+
+    @Test
+    void shouldSkipClarificationWhenSemanticPayloadIsCompletedByRoutingDefaults() {
+        MemoryManager memoryManager = createMemoryManager();
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of("stub"));
+        SkillRegistry registry = new SkillRegistry(List.of(
+                new FixedSkill("todo.create", "Creates todo items from natural language", "待办已创建")
+        ));
+        SemanticAnalysisService semanticAnalysisService = new SemanticAnalysisService(llmClient, registry, true, false, true, "", "local", "cost", 120) {
+            @Override
+            public SemanticAnalysisResult analyze(String userId,
+                                                  String userInput,
+                                                  String memoryContext,
+                                                  Map<String, Object> profileContext,
+                                                  List<String> availableSkillSummaries) {
+                return new SemanticAnalysisResult(
+                        "llm",
+                        "创建待办",
+                        userInput,
+                        "todo.create",
+                        Map.of(),
+                        List.of("待办"),
+                        "用户要创建待办",
+                        0.92
+                );
+            }
+        };
+        DispatcherService service = createDispatcherWithSemanticService(memoryManager, llmClient, registry, semanticAnalysisService, 2);
+
+        DispatchResult result = service.dispatch("semantic-user", "帮我弄个待办");
+
+        assertEquals("todo.create", result.channel());
+        assertEquals("semantic-analysis", result.executionTrace().routing().route());
+    }
+
+    @Test
+    void shouldExecuteSemanticSkillWithRoutingCompletedPayload() {
+        MemoryManager memoryManager = createMemoryManager();
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of("stub"));
+        SkillRegistry registry = new SkillRegistry(List.of(
+                new Skill() {
+                    @Override
+                    public String name() {
+                        return "todo.create";
+                    }
+
+                    @Override
+                    public String description() {
+                        return "Creates todo items from natural language";
+                    }
+
+                    @Override
+                    public SkillResult run(SkillContext context) {
+                        return SkillResult.success(name(), "task=" + context.attributes().getOrDefault("task", ""));
+                    }
+                }
+        ));
+        SemanticAnalysisService semanticAnalysisService = new SemanticAnalysisService(llmClient, registry, true, false, true, "", "local", "cost", 120) {
+            @Override
+            public SemanticAnalysisResult analyze(String userId,
+                                                  String userInput,
+                                                  String memoryContext,
+                                                  Map<String, Object> profileContext,
+                                                  List<String> availableSkillSummaries) {
+                return new SemanticAnalysisResult(
+                        "llm",
+                        "创建待办",
+                        userInput,
+                        "todo.create",
+                        Map.of(),
+                        List.of("待办"),
+                        "",
+                        0.92
+                );
+            }
+        };
+        DispatcherService service = createDispatcherWithSemanticService(memoryManager, llmClient, registry, semanticAnalysisService, 2);
+
+        DispatchResult result = service.dispatch("semantic-user", "帮我弄个待办");
+
+        assertEquals("todo.create", result.channel());
+        assertEquals("semantic-analysis", result.executionTrace().routing().route());
+        assertTrue(result.reply().contains("task=帮我弄个待办"));
+    }
+
+    @Test
     void shouldPreserveExplicitSemanticAnalyzeIntent() {
         MemoryManager memoryManager = createMemoryManager();
         RecordingLlmClient llmClient = new RecordingLlmClient(List.of("stub"));
@@ -599,6 +842,159 @@ class DispatcherServiceTest {
     }
 
     @Test
+    void shouldStoreSemanticSummaryWithKeyParamsDigest() {
+        MemoryManager memoryManager = createMemoryManager();
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of("stub"));
+        SkillRegistry registry = new SkillRegistry(List.of(
+                new FixedSkill("todo.create", "Creates todo items from natural language", "待办已创建")
+        ));
+        SemanticAnalysisService semanticAnalysisService = new SemanticAnalysisService(llmClient, registry, true, false, true, "", "local", "cost", 120) {
+            @Override
+            public SemanticAnalysisResult analyze(String userId,
+                                                  String userInput,
+                                                  String memoryContext,
+                                                  Map<String, Object> profileContext,
+                                                  List<String> availableSkillSummaries) {
+                return new SemanticAnalysisResult(
+                        "llm",
+                        "创建待办",
+                        userInput,
+                        "todo.create",
+                        Map.of("task", "提交周报", "dueDate", "周五"),
+                        List.of("待办", "周报"),
+                        "用户要创建待办事项",
+                        0.93
+                );
+            }
+        };
+        DispatcherService service = createDispatcherWithSemanticService(memoryManager, llmClient, registry, semanticAnalysisService, 2);
+
+        service.dispatch("semantic-memory-user", "帮我创建待办：周五前提交周报");
+
+        List<SemanticMemoryEntry> entries = memoryManager.searchKnowledge("semantic-memory-user", "semantic-summary", 10, "task");
+        assertTrue(entries.stream().anyMatch(entry -> entry.text().contains("params=task=提交周报")));
+    }
+
+    @Test
+    void shouldApplyBehaviorLearnedDefaultParamsToSemanticPayload() {
+        MemoryManager memoryManager = createMemoryManager();
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of("stub"));
+        SkillRegistry registry = new SkillRegistry(List.of(
+                new Skill() {
+                    @Override
+                    public String name() {
+                        return "todo.create";
+                    }
+
+                    @Override
+                    public String description() {
+                        return "Creates todo items from natural language";
+                    }
+
+                    @Override
+                    public SkillResult run(SkillContext context) {
+                        return SkillResult.success(name(), "dueDate=" + context.attributes().getOrDefault("dueDate", ""));
+                    }
+                }
+        ));
+        SemanticAnalysisService semanticAnalysisService = new SemanticAnalysisService(llmClient, registry, true, false, true, "", "local", "cost", 120) {
+            @Override
+            public SemanticAnalysisResult analyze(String userId,
+                                                  String userInput,
+                                                  String memoryContext,
+                                                  Map<String, Object> profileContext,
+                                                  List<String> availableSkillSummaries) {
+                return new SemanticAnalysisResult(
+                        "llm",
+                        "创建待办",
+                        userInput,
+                        "todo.create",
+                        Map.of("task", "提交周报"),
+                        List.of("待办"),
+                        "用户要创建待办",
+                        0.91
+                );
+            }
+        };
+        DispatcherService service = createDispatcherWithSemanticService(memoryManager, llmClient, registry, semanticAnalysisService, 2);
+
+        service.dispatch("behavior-user", "skill:todo.create task=日报1 dueDate=周五");
+        service.dispatch("behavior-user", "skill:todo.create task=日报2 dueDate=周五");
+        DispatchResult result = service.dispatch("behavior-user", "帮我创建一个待办");
+
+        assertEquals("todo.create", result.channel());
+        assertTrue(result.reply().contains("dueDate=周五"));
+        List<SemanticMemoryEntry> behaviorEntries = memoryManager.searchKnowledge("behavior-user", "behavior-profile", 10, "task");
+        assertTrue(behaviorEntries.stream().anyMatch(entry -> entry.text().contains("defaults=dueDate=周五")));
+    }
+
+    @Test
+    void shouldKeepSemanticBackfillAndBehaviorDefaultsForImRequests() {
+        MemoryManager memoryManager = createMemoryManager();
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of("stub"));
+        SkillRegistry registry = new SkillRegistry(List.of(
+                new Skill() {
+                    @Override
+                    public String name() {
+                        return "todo.create";
+                    }
+
+                    @Override
+                    public String description() {
+                        return "Creates todo items from natural language";
+                    }
+
+                    @Override
+                    public SkillResult run(SkillContext context) {
+                        return SkillResult.success(
+                                name(),
+                                "imPlatform=" + context.attributes().getOrDefault("imPlatform", "")
+                                        + ",task=" + context.attributes().getOrDefault("task", "")
+                                        + ",dueDate=" + context.attributes().getOrDefault("dueDate", "")
+                        );
+                    }
+                }
+        ));
+        SemanticAnalysisService semanticAnalysisService = new SemanticAnalysisService(llmClient, registry, true, false, true, "", "local", "cost", 120) {
+            @Override
+            public SemanticAnalysisResult analyze(String userId,
+                                                  String userInput,
+                                                  String memoryContext,
+                                                  Map<String, Object> profileContext,
+                                                  List<String> availableSkillSummaries) {
+                return new SemanticAnalysisResult(
+                        "llm",
+                        "创建待办",
+                        userInput,
+                        "todo.create",
+                        Map.of(),
+                        List.of("待办", "周报"),
+                        "提交周报",
+                        0.91
+                );
+            }
+        };
+        DispatcherService service = createDispatcherWithSemanticService(memoryManager, llmClient, registry, semanticAnalysisService, 2);
+
+        Map<String, Object> imProfile = Map.of(
+                "imPlatform", "dingtalk",
+                "imSenderId", "sender-1",
+                "imChatId", "chat-1"
+        );
+
+        service.dispatch("im-user", "skill:todo.create task=日报1 dueDate=周五", imProfile);
+        service.dispatch("im-user", "skill:todo.create task=日报2 dueDate=周五", imProfile);
+
+        DispatchResult result = service.dispatch("im-user", "请帮我安排一个待办", imProfile);
+
+        assertEquals("todo.create", result.channel());
+        assertEquals("semantic-analysis", result.executionTrace().routing().route());
+        assertTrue(result.reply().contains("imPlatform=dingtalk"));
+        assertTrue(result.reply().contains("task=请帮我安排一个待办"));
+        assertTrue(result.reply().contains("dueDate=周五"));
+    }
+
+    @Test
     void shouldEscalateLocalFallbackToCloudWhenLocalReplyIndicatesFailure() {
         MemoryManager memoryManager = createMemoryManager();
         RecordingLlmClient llmClient = new RecordingLlmClient(List.of(
@@ -647,6 +1043,56 @@ class DispatcherServiceTest {
         assertEquals("qwen", String.valueOf(llmClient.fallbackContexts().get(1).get("llmProvider")));
         assertEquals(1, service.snapshotLocalEscalationMetrics().fallbackChainAttempts());
         assertEquals(1L, service.snapshotLocalEscalationMetrics().escalationReasons().get("timeout"));
+    }
+
+    @Test
+    void shouldApplyConfiguredFallbackAndCloudModels() {
+        MemoryManager memoryManager = createMemoryManager();
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of(
+                "[LLM local] request failed after 1 attempt(s). reason=timeout. Please retry later.",
+                "cloud-recovered reply"
+        ));
+        DispatcherLlmTuningProperties tuningProperties = new DispatcherLlmTuningProperties();
+        tuningProperties.getLlmFallback().setProvider("local");
+        tuningProperties.getLlmFallback().setPreset("cost");
+        tuningProperties.getLlmFallback().setModel("tinyllama");
+        tuningProperties.getLocalEscalation().setEnabled(true);
+        tuningProperties.getLocalEscalation().setCloudProvider("qwen");
+        tuningProperties.getLocalEscalation().setCloudPreset("quality");
+        tuningProperties.getLocalEscalation().setCloudModel("qwen3.5-plus");
+        DispatcherService service = createDispatcherWithTuning(memoryManager, llmClient, List.of(), 2, tuningProperties);
+
+        DispatchResult result = service.dispatch("model-routing-user", "谢谢");
+
+        assertEquals("llm", result.channel());
+        assertEquals("cloud-recovered reply", result.reply());
+        assertEquals("tinyllama", String.valueOf(llmClient.fallbackContexts().get(0).get("model")));
+        assertEquals("qwen3.5-plus", String.valueOf(llmClient.fallbackContexts().get(1).get("model")));
+    }
+
+    @Test
+    void shouldEscalateDirectlyWhenLocalResourceGuardTriggers() {
+        MemoryManager memoryManager = createMemoryManager();
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of("resource-guard cloud reply"));
+        DispatcherLlmTuningProperties tuningProperties = new DispatcherLlmTuningProperties();
+        tuningProperties.getLlmFallback().setProvider("local");
+        tuningProperties.getLlmFallback().setPreset("cost");
+        tuningProperties.getLlmFallback().setModel("tinyllama");
+        tuningProperties.getLocalEscalation().setEnabled(true);
+        tuningProperties.getLocalEscalation().setCloudProvider("qwen");
+        tuningProperties.getLocalEscalation().setCloudPreset("quality");
+        tuningProperties.getLocalEscalation().getResourceGuard().setEnabled(true);
+        tuningProperties.getLocalEscalation().getResourceGuard().setMinFreeMemoryMb(Integer.MAX_VALUE);
+        DispatcherService service = createDispatcherWithTuning(memoryManager, llmClient, List.of(), 2, tuningProperties);
+
+        DispatchResult result = service.dispatch("resource-guard-user", "谢谢");
+
+        assertEquals("llm", result.channel());
+        assertEquals("resource-guard cloud reply", result.reply());
+        assertEquals(1, llmClient.fallbackCallCount());
+        assertEquals("qwen", String.valueOf(llmClient.fallbackContexts().get(0).get("llmProvider")));
+        assertEquals("resource_guard", String.valueOf(llmClient.fallbackContexts().get(0).get("localEscalationReason")));
+        assertEquals(1L, service.snapshotLocalEscalationMetrics().escalationReasons().get("resource_guard"));
     }
 
     @Test
@@ -923,6 +1369,225 @@ class DispatcherServiceTest {
                                                List<Skill> skills,
                                                int llmShortlistMaxSkills) {
         return createDispatcher(memoryManager, llmClient, skills, llmShortlistMaxSkills, true);
+    }
+
+    private DispatcherService createDispatcherWithParallelDetectedRouting(MemoryManager memoryManager,
+                                                                          LlmClient llmClient,
+                                                                          List<Skill> skills,
+                                                                          String priorityList) {
+        SkillRegistry registry = new SkillRegistry(skills);
+        SkillDslExecutor dslExecutor = new SkillDslExecutor(registry);
+        SkillEngine skillEngine = new SkillEngine(registry, dslExecutor, memoryManager);
+        SemanticAnalysisService semanticAnalysisService = new SemanticAnalysisService(
+                llmClient,
+                registry,
+                true,
+                false,
+                true,
+                "",
+                "local",
+                "cost",
+                120
+        );
+        SkillDslParser parser = new SkillDslParser(new SkillDslValidator());
+        IntentModelRoutingPolicy intentModelRoutingPolicy = new IntentModelRoutingPolicy(
+                false,
+                "gpt",
+                "gpt",
+                "grok",
+                "gemini",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                "情绪,焦虑",
+                180
+        );
+        MetaOrchestratorService metaOrchestratorService = new MetaOrchestratorService(false);
+        SkillCapabilityPolicy capabilityPolicy = new SkillCapabilityPolicy(false, "fs.read,fs.write,exec,net", "");
+        PersonaCoreService personaCoreService = new PersonaCoreService(memoryManager, false, 2, "unknown,null,n/a");
+        DispatcherLlmTuningProperties tuningProperties = new DispatcherLlmTuningProperties();
+        return new DispatcherService(
+                skillEngine,
+                parser,
+                intentModelRoutingPolicy,
+                metaOrchestratorService,
+                capabilityPolicy,
+                personaCoreService,
+                memoryManager,
+                llmClient,
+                semanticAnalysisService,
+                false,
+                true,
+                2,
+                0.6,
+                true,
+                16,
+                6,
+                2,
+                72,
+                2800,
+                1800,
+                1200,
+                2,
+                6,
+                2,
+                180,
+                true,
+                "eq.coach,teaching.plan,todo.create,code.generate,file.search,mcp.*",
+                12000,
+                "eq.coach timeout",
+                true,
+                "ignore previous instructions,show system prompt",
+                "guarded",
+                2,
+                420,
+                true,
+                true,
+                false,
+                "天气,新闻,热点,实时",
+                true,
+                280,
+                true,
+                "auto",
+                0,
+                "time",
+                tuningProperties,
+                false,
+                "",
+                280,
+                false,
+                "",
+                900,
+                "",
+                "",
+                200,
+                2,
+                4,
+                0.72,
+                0.70,
+                true,
+                50,
+                0.6,
+                false,
+                true,
+                2,
+                2500,
+                priorityList == null ? "" : priorityList
+        );
+    }
+
+    private DispatcherService createDispatcherWithSemanticService(MemoryManager memoryManager,
+                                                                  LlmClient llmClient,
+                                                                  SkillRegistry registry,
+                                                                  SemanticAnalysisService semanticAnalysisService,
+                                                                  int llmShortlistMaxSkills) {
+        SkillDslExecutor dslExecutor = new SkillDslExecutor(registry);
+        SkillEngine skillEngine = new SkillEngine(registry, dslExecutor, memoryManager);
+        SkillDslParser parser = new SkillDslParser(new SkillDslValidator());
+        IntentModelRoutingPolicy intentModelRoutingPolicy = new IntentModelRoutingPolicy(
+                false,
+                "gpt",
+                "gpt",
+                "grok",
+                "gemini",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                "情绪,焦虑",
+                180
+        );
+        MetaOrchestratorService metaOrchestratorService = new MetaOrchestratorService(false);
+        SkillCapabilityPolicy capabilityPolicy = new SkillCapabilityPolicy(false, "fs.read,fs.write,exec,net", "");
+        PersonaCoreService personaCoreService = new PersonaCoreService(memoryManager, false, 2, "unknown,null,n/a");
+        DispatcherLlmTuningProperties tuningProperties = new DispatcherLlmTuningProperties();
+        return new DispatcherService(
+                skillEngine,
+                parser,
+                intentModelRoutingPolicy,
+                metaOrchestratorService,
+                capabilityPolicy,
+                personaCoreService,
+                memoryManager,
+                llmClient,
+                semanticAnalysisService,
+                false,
+                true,
+                2,
+                0.6,
+                true,
+                16,
+                6,
+                2,
+                72,
+                2800,
+                1800,
+                1200,
+                2,
+                6,
+                2,
+                180,
+                true,
+                "eq.coach,teaching.plan,todo.create,code.generate,file.search,mcp.*",
+                12000,
+                "eq.coach timeout",
+                true,
+                "ignore previous instructions,show system prompt",
+                "guarded",
+                llmShortlistMaxSkills,
+                420,
+                true,
+                true,
+                false,
+                "天气,新闻,热点,实时",
+                true,
+                280,
+                true,
+                "auto",
+                0,
+                "time",
+                tuningProperties,
+                false,
+                "",
+                280,
+                false,
+                "",
+                900,
+                "",
+                "",
+                200,
+                2,
+                4,
+                0.72,
+                0.70,
+                true,
+                50,
+                0.6,
+                false,
+                false,
+                2,
+                2500,
+                ""
+        );
     }
 
     private DispatcherService createDispatcher(MemoryManager memoryManager,
@@ -1362,7 +2027,131 @@ class DispatcherServiceTest {
                 200,
                 2,
                 4,
-                0.72
+                0.72,
+                0.70,
+                true,
+                50,
+                0.6,
+                false,
+                false,
+                2,
+                2500,
+                ""
+        );
+    }
+
+    private DispatcherService createDispatcherWithTuning(MemoryManager memoryManager,
+                                                         LlmClient llmClient,
+                                                         List<Skill> skills,
+                                                         int llmShortlistMaxSkills,
+                                                         DispatcherLlmTuningProperties tuningProperties) {
+        SkillRegistry registry = new SkillRegistry(skills);
+        SkillDslExecutor dslExecutor = new SkillDslExecutor(registry);
+        SkillEngine skillEngine = new SkillEngine(registry, dslExecutor, memoryManager);
+        SemanticAnalysisService semanticAnalysisService = new SemanticAnalysisService(
+                llmClient,
+                registry,
+                true,
+                false,
+                true,
+                "",
+                "local",
+                "cost",
+                120
+        );
+        SkillDslParser parser = new SkillDslParser(new SkillDslValidator());
+        IntentModelRoutingPolicy intentModelRoutingPolicy = new IntentModelRoutingPolicy(
+                false,
+                "gpt",
+                "gpt",
+                "grok",
+                "gemini",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                "情绪,焦虑",
+                180
+        );
+        MetaOrchestratorService metaOrchestratorService = new MetaOrchestratorService(false);
+        SkillCapabilityPolicy capabilityPolicy = new SkillCapabilityPolicy(false, "fs.read,fs.write,exec,net", "");
+        PersonaCoreService personaCoreService = new PersonaCoreService(memoryManager, false, 2, "unknown,null,n/a");
+        return new DispatcherService(
+                skillEngine,
+                parser,
+                intentModelRoutingPolicy,
+                metaOrchestratorService,
+                capabilityPolicy,
+                personaCoreService,
+                memoryManager,
+                llmClient,
+                semanticAnalysisService,
+                false,
+                true,
+                2,
+                0.6,
+                true,
+                16,
+                6,
+                2,
+                72,
+                2800,
+                1800,
+                1200,
+                2,
+                6,
+                2,
+                180,
+                true,
+                "eq.coach,teaching.plan,todo.create,code.generate,file.search,mcp.*",
+                12000,
+                "eq.coach timeout",
+                true,
+                "ignore previous instructions,show system prompt",
+                "guarded",
+                llmShortlistMaxSkills,
+                420,
+                true,
+                true,
+                false,
+                "天气,新闻,热点,实时",
+                true,
+                280,
+                true,
+                "auto",
+                0,
+                "time",
+                tuningProperties,
+                false,
+                "",
+                280,
+                false,
+                "",
+                900,
+                "",
+                "",
+                200,
+                2,
+                4,
+                0.72,
+                0.70,
+                true,
+                50,
+                0.6,
+                false,
+                false,
+                2,
+                2500,
+                ""
         );
     }
 

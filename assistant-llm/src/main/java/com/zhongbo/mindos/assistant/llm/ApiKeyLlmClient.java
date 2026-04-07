@@ -710,12 +710,12 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
 
             HttpResponse<InputStream> response = httpClient.send(request, HttpResponse.BodyHandlers.ofInputStream());
             int status = response.statusCode();
-            String body = readResponseBody(response.body());
             if (status < 200 || status >= 300) {
+                String body = readResponseBody(response.body());
                 throw new RuntimeException("http_" + status + ": " + abbreviate(body, 300));
             }
 
-            String content = extractOllamaText(body, deltaConsumer, streamEmitted);
+            String content = readOllamaNdjsonStream(response.body(), deltaConsumer, streamEmitted);
             if (content == null || content.isBlank()) {
                 throw new RuntimeException("empty_response_content");
             }
@@ -774,12 +774,12 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
 
             HttpResponse<InputStream> response = httpClient.send(request, HttpResponse.BodyHandlers.ofInputStream());
             int status = response.statusCode();
-            String body = readResponseBody(response.body());
             if (status < 200 || status >= 300) {
+                String body = readResponseBody(response.body());
                 throw new RuntimeException("http_" + status + ": " + abbreviate(body, 300));
             }
 
-            String content = extractOllamaText(body, deltaConsumer, streamEmitted);
+            String content = readOllamaNdjsonStream(response.body(), deltaConsumer, streamEmitted);
             if (content == null || content.isBlank()) {
                 throw new RuntimeException("empty_response_content");
             }
@@ -922,6 +922,38 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
         } catch (Exception ex) {
             throw new RuntimeException("invalid_response_json", ex);
         }
+    }
+
+    private String readOllamaNdjsonStream(InputStream bodyStream,
+                                          Consumer<String> deltaConsumer,
+                                          AtomicBoolean streamEmitted) throws IOException {
+        if (bodyStream == null) {
+            return null;
+        }
+        StringBuilder aggregated = new StringBuilder();
+        try (InputStream input = bodyStream;
+             BufferedReader reader = new BufferedReader(new InputStreamReader(input, java.nio.charset.StandardCharsets.UTF_8))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                String trimmed = line.trim();
+                if (trimmed.isBlank()) {
+                    continue;
+                }
+                String chunk = extractOllamaChunkText(trimmed);
+                if (chunk == null || chunk.isBlank()) {
+                    continue;
+                }
+                aggregated.append(chunk);
+                if (deltaConsumer != null) {
+                    deltaConsumer.accept(chunk);
+                    if (streamEmitted != null) {
+                        streamEmitted.set(true);
+                    }
+                }
+            }
+        }
+        String content = aggregated.toString().trim();
+        return content.isBlank() ? null : content;
     }
 
     private String extractOllamaChunkText(String chunkPayload) {
@@ -1275,7 +1307,7 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
             return null;
         }
         if ("local".equals(normalizedProvider) || "ollama".equals(normalizedProvider)) {
-            return "gemma4:e2b-it-q4_K_M";
+            return "gemma3:1b-it-q4_K_M";
         }
         return normalizedProvider;
     }
@@ -1546,6 +1578,9 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
         }
         if ("DOUBAO_STABLE".equals(llmProfile)) {
             return "doubao";
+        }
+        if ("CUSTOM_LOCAL_FIRST".equals(llmProfile)) {
+            return "local";
         }
         return null;
     }

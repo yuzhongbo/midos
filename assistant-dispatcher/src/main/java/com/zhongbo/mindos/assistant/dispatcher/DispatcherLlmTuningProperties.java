@@ -31,6 +31,7 @@ public class DispatcherLlmTuningProperties {
     public static class LlmDsl {
         private String provider = "";
         private String preset = "";
+        private String model = "";
         private int maxTokens = 0;
 
         public String getProvider() {
@@ -55,12 +56,21 @@ public class DispatcherLlmTuningProperties {
 
         public void setMaxTokens(int maxTokens) {
             this.maxTokens = Math.max(0, maxTokens);
+        }
+
+        public String getModel() {
+            return model;
+        }
+
+        public void setModel(String model) {
+            this.model = model == null ? "" : model.trim();
         }
     }
 
     public static class LlmFallback {
         private String provider = "";
         private String preset = "";
+        private String model = "";
         private int maxTokens = 0;
 
         public String getProvider() {
@@ -86,10 +96,27 @@ public class DispatcherLlmTuningProperties {
         public void setMaxTokens(int maxTokens) {
             this.maxTokens = Math.max(0, maxTokens);
         }
+
+        public String getModel() {
+            return model;
+        }
+
+        public void setModel(String model) {
+            this.model = model == null ? "" : model.trim();
+        }
     }
 
     public static class SkillFinalizeWithLlm {
+        private String model = "";
         private int maxTokens = 0;
+
+        public String getModel() {
+            return model;
+        }
+
+        public void setModel(String model) {
+            this.model = model == null ? "" : model.trim();
+        }
 
         public int getMaxTokens() {
             return maxTokens;
@@ -104,7 +131,9 @@ public class DispatcherLlmTuningProperties {
         private boolean enabled = false;
         private String cloudProvider = "qwen";
         private String cloudPreset = "quality";
+        private String cloudModel = "";
         private final Quality quality = new Quality();
+        private final ResourceGuard resourceGuard = new ResourceGuard();
 
         public boolean isEnabled() {
             return enabled;
@@ -130,8 +159,20 @@ public class DispatcherLlmTuningProperties {
             this.cloudPreset = cloudPreset == null ? "" : cloudPreset.trim();
         }
 
+        public String getCloudModel() {
+            return cloudModel;
+        }
+
+        public void setCloudModel(String cloudModel) {
+            this.cloudModel = cloudModel == null ? "" : cloudModel.trim();
+        }
+
         public Quality getQuality() {
             return quality;
+        }
+
+        public ResourceGuard getResourceGuard() {
+            return resourceGuard;
         }
     }
 
@@ -171,6 +212,45 @@ public class DispatcherLlmTuningProperties {
 
         public void setReplyTerms(String replyTerms) {
             this.replyTerms = replyTerms == null ? "" : replyTerms.trim();
+        }
+    }
+
+    public static class ResourceGuard {
+        private boolean enabled = false;
+        private int minFreeMemoryMb = 512;
+        private double minFreeMemoryRatio = 0.10;
+        private int minAvailableProcessors = 2;
+
+        public boolean isEnabled() {
+            return enabled;
+        }
+
+        public void setEnabled(boolean enabled) {
+            this.enabled = enabled;
+        }
+
+        public int getMinFreeMemoryMb() {
+            return minFreeMemoryMb;
+        }
+
+        public void setMinFreeMemoryMb(int minFreeMemoryMb) {
+            this.minFreeMemoryMb = Math.max(64, minFreeMemoryMb);
+        }
+
+        public double getMinFreeMemoryRatio() {
+            return minFreeMemoryRatio;
+        }
+
+        public void setMinFreeMemoryRatio(double minFreeMemoryRatio) {
+            this.minFreeMemoryRatio = Math.max(0.0, Math.min(1.0, minFreeMemoryRatio));
+        }
+
+        public int getMinAvailableProcessors() {
+            return minAvailableProcessors;
+        }
+
+        public void setMinAvailableProcessors(int minAvailableProcessors) {
+            this.minAvailableProcessors = Math.max(1, minAvailableProcessors);
         }
     }
 }
