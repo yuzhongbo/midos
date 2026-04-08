@@ -63,9 +63,9 @@ chmod +x ./scripts/unix/local/run-local.sh
 ### Secrets file layout and multi-provider routing
 
 `dist/mindos-windows-server/mindos-secrets.properties` uses a three-part layout:
-- `1) 建议默认`: safe defaults that usually stay enabled in packaged dist, e.g. `MINDOS_LLM_PROFILE=QWEN_STABLE` and a single-provider `qwen` default.
+- `1) 建议默认`: safe defaults that usually stay enabled in packaged dist, e.g. `MINDOS_LLM_PROFILE=OPENROUTER_INTENT` and an OpenRouter-first cloud default.
 - `2) 可选填`: values that are intentionally left blank in dist, such as `MINDOS_SKILLS_MCP_SERVERS`, `MINDOS_SKILLS_MCP_SERVER_HEADERS`, and DingTalk stream/outbound credentials.
-- `3) 必须填`: release placeholders that strict prechecks will reject until replaced, currently centered on `MINDOS_QWEN_KEY` and `MINDOS_LLM_PROVIDER_KEYS`.
+- `3) 必须填`: release placeholders that strict prechecks will reject until replaced, currently centered on `MINDOS_OPENROUTER_KEY`, `MINDOS_QWEN_KEY`, and `MINDOS_LLM_PROVIDER_KEYS`.
 
 For multi-provider setups, these variables are comma-separated provider maps:
 - `MINDOS_LLM_PROVIDER_ENDPOINTS`: `provider:baseUrl,provider2:baseUrl2`
@@ -74,13 +74,13 @@ For multi-provider setups, these variables are comma-separated provider maps:
 
 Examples:
 - Local-first token-saving setup: `local:http://localhost:11434/api/chat,qwen:https://dashscope.aliyuncs.com/...`
-- Single-provider release setup: `MINDOS_LLM_PROFILE=QWEN_STABLE`, `MINDOS_LLM_PROVIDER=qwen`, `MINDOS_LLM_PROVIDER_KEYS=qwen:...`
+- OpenRouter-first release setup: `MINDOS_LLM_PROFILE=OPENROUTER_INTENT`, `MINDOS_LLM_PROVIDER=gpt`, `MINDOS_LLM_PROVIDER_KEYS=gpt:${MINDOS_OPENROUTER_KEY},grok:${MINDOS_OPENROUTER_KEY},gemini:${MINDOS_OPENROUTER_KEY},qwen:${MINDOS_QWEN_KEY}`
 - Stage-based cloud routing: `MINDOS_LLM_ROUTING_STAGE_MAP=llm-dsl:openrouter,llm-fallback:qwen`
 
 Recommended routing patterns from `mindos-server.env.template.sh`:
 - `CUSTOM_LOCAL_FIRST`: local Ollama endpoint handles semantic analysis / low-cost requests first, cloud provider stays available for stronger fallback.
 - Multi-cloud stage routing: use `MINDOS_LLM_ROUTING_STAGE_MAP` and `MINDOS_LLM_ROUTING_PRESET_MAP` to pin providers by dispatcher stage or preset.
-- `QWEN_STABLE`: simplest production mode when you want one provider, one key map, and easy auditability.
+- `OPENROUTER_INTENT`: simplest packaged cloud-routing mode when you want OpenRouter to handle user-facing summaries and keep qwen as a fallback model.
 
 Validation rules:
 - Do not put spaces inside provider maps; entries are comma-separated and each entry is split at the first `:`.
@@ -95,7 +95,7 @@ If you want low-cost local semantic analysis first, then Qwen for stronger cloud
 MINDOS_LLM_PROFILE=CUSTOM_LOCAL_FIRST
 MINDOS_LLM_PROVIDER=qwen
 MINDOS_LLM_PROVIDER_ENDPOINTS=local:http://localhost:11434/api/chat,qwen:https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions
-MINDOS_LLM_PROVIDER_MODELS=local:gemma3:1b-it-q4_K_M,qwen:qwen3.5-plus
+MINDOS_LLM_PROVIDER_MODELS=local:gemma3:1b-it-q4_K_M,qwen:qwen3.6-plus
 MINDOS_QWEN_KEY=REPLACE_WITH_QWEN_KEY
 MINDOS_LLM_PROVIDER_KEYS=qwen:REPLACE_WITH_QWEN_KEY
 
@@ -122,6 +122,54 @@ curl http://localhost:11434/api/chat \
 ```
 
 If this call does not return successfully, fix Ollama first; otherwise MindOS may log routing to `local` but still fail before real semantic-analysis output is produced.
+
+### Local Dispatch Model & Memory Design
+
+If local hardware is limited, keep the dispatcher small and deterministic:
+
+- **Local dispatch model**: `gemma3:1b-it-q4_K_M` for intent parsing, slot filling, clarification, and skill selection.
+- **Cloud summary model**: `qwen3.6-plus` for final user-facing summarization and reply polishing.
+- **Rule of thumb**: local models should decide *what to do*; cloud models should decide *how to say it*.
+
+Ollama commands:
+```bash
+ollama pull gemma3:1b-it-q4_K_M
+ollama serve
+
+curl http://localhost:11434/api/chat \
+  -d '{"model":"gemma3:1b-it-q4_K_M","messages":[{"role":"user","content":"帮我判断这句话要不要调度技能：给学生 stu-1 做数学学习计划，六周，每周八小时"}]}'
+```
+
+Prompt template for dispatch safety:
+```text
+You are MindOS Dispatch Analyzer. Only parse intent and route skills.
+
+Return strict JSON only:
+{
+  "intent": "...",
+  "suggestedSkill": "...",
+  "confidence": 0.0,
+  "clarify": true,
+  "missingFields": ["..."],
+  "payload": {},
+  "summary": "..."
+}
+
+Rules:
+- never generate the final user reply;
+- never invent missing parameters;
+- if confidence is low, set clarify=true;
+- only pick skills from the allowlist;
+- keep output short, structured, and deterministic.
+```
+
+Memory structure suggestion:
+- **Persona**: stable preferences and style, e.g. language, tone, time zone.
+- **Semantic**: confirmed facts and long-term user preferences.
+- **Episodic**: recent turns, task progress, and short conversation summaries.
+- **Procedural**: routing heuristics, common missing fields, and successful skill patterns.
+
+Recommended read order before routing: `Persona -> Semantic -> Procedural -> Recent Episodic -> Current Input`.
 
 ### i5 + 8GB local tuning presets (`gemma3:1b-it-q4_K_M`)
 

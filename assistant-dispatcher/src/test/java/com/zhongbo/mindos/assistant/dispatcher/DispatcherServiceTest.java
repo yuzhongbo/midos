@@ -215,7 +215,7 @@ class DispatcherServiceTest {
         assertTrue(result.reply().startsWith("今日新闻标题："));
         assertTrue(result.reply().contains("1. 这是整理后的新闻摘要"));
         assertTrue(result.reply().contains("2. raw search result: AI 芯片与机器人动态"));
-        assertTrue(result.reply().contains("总结：这是整理后的新闻摘要"));
+        assertTrue(result.reply().contains("这是整理后的新闻摘要"));
         assertEquals(1, llmClient.finalizeContexts().size());
         assertEquals("skill-postprocess", llmClient.finalizeContexts().get(0).get("routeStage"));
     }
@@ -459,6 +459,87 @@ class DispatcherServiceTest {
         assertTrue(result.reply().contains("2. 机器人新品"));
         assertTrue(result.reply().contains("3. 云计算平台升级"));
         assertTrue(result.reply().contains("总结："));
+    }
+
+    @Test
+    void shouldFilterDegradedMarkersAndWeatherNoiseFromNewsBrief() {
+        MemoryManager memoryManager = createMemoryManager();
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of(
+                "今日新闻标题：\n"
+                        + "1. [[MINDOS_IM_DEGRADED|provider=local|category=timeout]]\n"
+                        + "2. 成都天气预报,成都7天天气预报\n"
+                        + "3. AI 芯片产业链再获融资\n"
+                        + "总结：[[MINDOS_IM_DEGRADED|provider=local|category=timeout]]"
+        ));
+        DispatcherService service = createDispatcher(
+                memoryManager,
+                llmClient,
+                List.of(newMcpSkill("mcp.bravesearch.webSearch",
+                        "Brave latest web news search",
+                        "1. AI 芯片产业链再获融资\n2. 机器人公司发布新平台\n3. 云服务厂商更新产品路线")),
+                2,
+                "auto",
+                0,
+                "time",
+                "",
+                "",
+                "",
+                "",
+                false,
+                "",
+                true,
+                "mcp.*",
+                "",
+                ""
+        );
+
+        DispatchResult result = service.dispatch("news-user", "查看今天新闻 科技");
+
+        assertTrue(result.reply().startsWith("今日新闻标题："));
+        assertFalse(result.reply().contains("MINDOS_IM_DEGRADED"));
+        assertFalse(result.reply().contains("天气预报"));
+        assertTrue(result.reply().contains("AI 芯片产业链再获融资"));
+        assertTrue(result.reply().contains("总结："));
+    }
+
+    @Test
+    void shouldPreferNewsDomainHeadlinesWhenOutputContainsWeatherLikeLines() {
+        MemoryManager memoryManager = createMemoryManager();
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of(
+                "今日新闻标题：\n"
+                        + "1. 成都气温走势与降雨提醒\n"
+                        + "2. 科技公司发布新一代 AI 芯片\n"
+                        + "3. A股科技板块午后走强\n"
+                        + "总结：市场关注科技与产业链进展"
+        ));
+        DispatcherService service = createDispatcher(
+                memoryManager,
+                llmClient,
+                List.of(newMcpSkill("mcp.qwensearch.webSearch",
+                        "Search latest web news",
+                        "1. 科技公司发布新一代 AI 芯片\n2. A股科技板块午后走强\n3. 政策发布推动产业升级")),
+                2,
+                "auto",
+                0,
+                "time",
+                "",
+                "",
+                "",
+                "",
+                false,
+                "",
+                true,
+                "mcp.*",
+                "",
+                ""
+        );
+
+        DispatchResult result = service.dispatch("news-user", "查看今天科技财经新闻");
+
+        assertTrue(result.reply().startsWith("今日新闻标题："));
+        assertFalse(result.reply().contains("气温走势"));
+        assertTrue(result.reply().contains("AI 芯片"));
+        assertTrue(result.reply().contains("A股科技板块"));
     }
 
     @Test
@@ -751,6 +832,80 @@ class DispatcherServiceTest {
         assertEquals("todo.create", result.channel());
         assertEquals("semantic-analysis", result.executionTrace().routing().route());
         assertTrue(result.reply().contains("task=帮我弄个待办"));
+    }
+
+    @Test
+    void shouldRouteRealtimeSemanticIntentToLoadedMcpSkillInsteadOfSemanticAnalyze() {
+        MemoryManager memoryManager = createMemoryManager();
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of("stub"));
+        SkillRegistry registry = new SkillRegistry(List.of(
+                new Skill() {
+                    @Override
+                    public String name() {
+                        return "mcp.bravesearch.webSearch";
+                    }
+
+                    @Override
+                    public String description() {
+                        return "Brave weather search";
+                    }
+
+                    @Override
+                    public SkillResult run(SkillContext context) {
+                        return SkillResult.success(name(), "成都天气：今天多云，明天小雨");
+                    }
+
+                    @Override
+                    public int routingScore(String input) {
+                        return Integer.MIN_VALUE;
+                    }
+                }
+        ));
+        SemanticAnalysisService semanticAnalysisService = new SemanticAnalysisService(llmClient, registry, true, false, true, "", "local", "cost", 120) {
+            @Override
+            public SemanticAnalysisResult analyze(String userId,
+                                                  String userInput,
+                                                  String memoryContext,
+                                                  Map<String, Object> profileContext,
+                                                  List<String> availableSkillSummaries) {
+                return new SemanticAnalysisResult(
+                        "llm",
+                        "weather_query",
+                        "查询成都今天的天气",
+                        "semantic.analyze",
+                        Map.of("location", "成都"),
+                        List.of("天气", "成都"),
+                        "查询成都今天的天气",
+                        0.45,
+                        List.of(
+                                new SemanticAnalysisResult.CandidateIntent("semantic.analyze", 0.95),
+                                new SemanticAnalysisResult.CandidateIntent("mcp.bravesearch.webSearch", 0.91)
+                        )
+                );
+            }
+        };
+        DispatcherService service = createDispatcherWithSemanticService(memoryManager, llmClient, registry, semanticAnalysisService, 2);
+
+        DispatchResult result = service.dispatch("weather-user", "今天成都的天气请查询");
+
+        assertEquals("mcp.bravesearch.webSearch", result.channel());
+        assertEquals("semantic-analysis", result.executionTrace().routing().route());
+        assertEquals("mcp.bravesearch.webSearch", result.executionTrace().routing().selectedSkill());
+        assertTrue(result.reply().contains("成都天气"));
+    }
+
+    @Test
+    void shouldNotReturnMemoryDirectForRealtimeFallbackWhenRelevantMemoryExists() {
+        MemoryManager memoryManager = createMemoryManager();
+        memoryManager.storeKnowledge("weather-user", "昨天成都天气：晴，适合外出", List.of(0.2, 0.3), "general");
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of("我正在按最新信息为你查询成都今天天气，请稍候。"));
+        DispatcherService service = createDispatcher(memoryManager, llmClient, List.of(), 2);
+
+        DispatchResult result = service.dispatch("weather-user", "今天成都天气");
+
+        assertEquals("llm", result.channel());
+        assertEquals(1, llmClient.fallbackCallCount());
+        assertFalse(result.reply().contains("根据已有记忆，我先直接回答"));
     }
 
     @Test
@@ -1059,7 +1214,7 @@ class DispatcherServiceTest {
         tuningProperties.getLocalEscalation().setEnabled(true);
         tuningProperties.getLocalEscalation().setCloudProvider("qwen");
         tuningProperties.getLocalEscalation().setCloudPreset("quality");
-        tuningProperties.getLocalEscalation().setCloudModel("qwen3.5-plus");
+        tuningProperties.getLocalEscalation().setCloudModel("qwen3.6-plus");
         DispatcherService service = createDispatcherWithTuning(memoryManager, llmClient, List.of(), 2, tuningProperties);
 
         DispatchResult result = service.dispatch("model-routing-user", "谢谢");
@@ -1067,7 +1222,7 @@ class DispatcherServiceTest {
         assertEquals("llm", result.channel());
         assertEquals("cloud-recovered reply", result.reply());
         assertEquals("tinyllama", String.valueOf(llmClient.fallbackContexts().get(0).get("model")));
-        assertEquals("qwen3.5-plus", String.valueOf(llmClient.fallbackContexts().get(1).get("model")));
+        assertEquals("qwen3.6-plus", String.valueOf(llmClient.fallbackContexts().get(1).get("model")));
     }
 
     @Test

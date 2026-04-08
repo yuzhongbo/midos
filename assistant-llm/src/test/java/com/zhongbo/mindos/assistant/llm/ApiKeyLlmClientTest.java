@@ -538,7 +538,7 @@ class ApiKeyLlmClientTest {
             String output = client.generateResponse("你是谁？", Map.of("userId", "u-qwen", "llmProvider", "qwen"));
 
             assertEquals("qwen ok", output);
-            assertTrue(observed.get("body").contains("\"model\":\"qwen3.5-plus\""));
+            assertTrue(observed.get("body").contains("\"model\":\"qwen3.6-plus\""));
         } finally {
             server.stop(0);
         }
@@ -579,7 +579,7 @@ class ApiKeyLlmClientTest {
 
             assertEquals("qwen override ok", output);
             assertTrue(observed.get("body").contains("\"model\":\"qwen-max-latest\""));
-            assertFalse(observed.get("body").contains("\"model\":\"qwen3.5-plus\""));
+            assertFalse(observed.get("body").contains("\"model\":\"qwen3.6-plus\""));
         } finally {
             server.stop(0);
         }

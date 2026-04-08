@@ -16,6 +16,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class SemanticAnalysisServiceTest {
@@ -315,7 +316,7 @@ class SemanticAnalysisServiceTest {
         );
 
         assertEquals(0, calls.get());
-        assertFalse("llm".equals(result.source()));
+        assertNotEquals("llm", result.source());
     }
 
     @Test
@@ -421,11 +422,29 @@ class SemanticAnalysisServiceTest {
         // payload was not a map -> cleaned to empty
         assertEquals(0, result.payload().size());
         // keywords string should be split into tokens
-        assertTrue(result.keywords().size() >= 1);
+        assertFalse(result.keywords().isEmpty());
         // malformed confidence leads to a low-confidence LLM result; service should fall back to heuristics
         assertTrue(result.confidence() >= 0.35);
         // rewrittenInput numeric value should be stringified/backfilled into summary/intent if needed
         assertFalse(result.summary().isBlank());
+    }
+
+    @Test
+    void shouldIgnoreNonObjectLlmOutputAndFallbackToHeuristics() {
+        SkillRegistry registry = new SkillRegistry(List.of(new FixedSkill("todo.create")));
+        LlmClient llmClient = (prompt, context) -> "[\"todo.create\", \"payload\"]";
+        SemanticAnalysisService service = new SemanticAnalysisService(llmClient, registry, true, true, true, "", "local", "cost", 120);
+
+        SemanticAnalysisResult result = service.analyze(
+                "u1",
+                "请帮我创建待办事项并安排到周五",
+                "history",
+                Map.of(),
+                List.of("todo.create - Creates todo items")
+        );
+
+        assertNotEquals("llm", result.source());
+        assertEquals("todo.create", result.suggestedSkill());
     }
 
     @Test
@@ -447,6 +466,29 @@ class SemanticAnalysisServiceTest {
         assertEquals(2, result.candidateIntents().size());
         assertEquals(0.84, result.confidenceForSkill("todo.create"));
         assertTrue(result.effectiveConfidence() >= 0.84);
+    }
+
+    @Test
+    void shouldDropInternalSemanticAnalyzeSuggestionFromLlmOutput() {
+        SkillRegistry registry = new SkillRegistry(List.of(
+                new FixedSkill("semantic.analyze"),
+                new FixedSkill("mcp.bravesearch.webSearch")
+        ));
+        LlmClient llmClient = (prompt, context) ->
+                "{\"intent\":\"weather_query\",\"rewrittenInput\":\"查询成都今天的天气\",\"suggestedSkill\":\"semantic.analyze\",\"payload\":{\"location\":\"成都\"},\"confidence\":0.52,\"candidate_intents\":[{\"intent\":\"semantic.analyze\",\"confidence\":0.95},{\"intent\":\"mcp.bravesearch.webSearch\",\"confidence\":0.88}]}";
+        SemanticAnalysisService service = new SemanticAnalysisService(llmClient, registry, true, true, true, "", "local", "cost", 120);
+
+        SemanticAnalysisResult result = service.analyze(
+                "u1",
+                "请帮我查询今天成都天气并给出结构化路由",
+                "history",
+                Map.of(),
+                List.of("semantic.analyze - internal semantic analyzer", "mcp.bravesearch.webSearch - search latest web info")
+        );
+
+        assertTrue(result.suggestedSkill().isBlank());
+        assertEquals(1, result.candidateIntents().size());
+        assertEquals("mcp.bravesearch.webSearch", result.candidateIntents().get(0).intent());
     }
 
     private record FixedSkill(String name) implements Skill {

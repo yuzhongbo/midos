@@ -98,17 +98,17 @@ cat > "$OUTPUT_DIR/mindos-secrets.properties" <<'PROPS'
 # 3) 必须填   — required placeholders that will be strictly checked in release
 
 ######################### 1) 建议默认 (recommended defaults) #########################
-# Keep a single-provider, production-friendly default: QWEN only.
-MINDOS_LLM_PROFILE=QWEN_STABLE
-# Explicitly pick qwen as the active provider for this packaged distro (safe default).
-MINDOS_LLM_PROVIDER=qwen
+# OpenRouter-first default for user-facing replies; QWEN stays available as a fallback/provider.
+MINDOS_LLM_PROFILE=OPENROUTER_INTENT
+MINDOS_LLM_PROVIDER=gpt
+MINDOS_OPENROUTER_KEY=REPLACE_WITH_OPENROUTER_KEY
 
-# Endpoint override (commented example; uncomment if you need a custom endpoint)
-# MINDOS_LLM_ENDPOINT_QWEN=https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions
-
-# Models (reference only)
-# MINDOS_QWEN_MODEL=qwen3.5-plus
-# MINDOS_OPENAI_MODEL=gpt-4.1
+# Endpoint / model references
+MINDOS_LLM_ENDPOINT_OPENROUTER=https://openrouter.ai/api/v1/chat/completions
+MINDOS_LLM_PROVIDER_ENDPOINTS=gpt:https://openrouter.ai/api/v1/chat/completions,grok:https://openrouter.ai/api/v1/chat/completions,gemini:https://openrouter.ai/api/v1/chat/completions,qwen:https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions
+MINDOS_LLM_PROVIDER_MODELS=gpt:openai/gpt-5.2,grok:x-ai/grok-4,gemini:google/gemini-2.5-pro,qwen:qwen3.6-plus
+MINDOS_QWEN_MODEL=qwen3.6-plus
+MINDOS_OPENAI_MODEL=gpt-4.1
 
 # Local/cloud escalation knobs — tightened: disable local->cloud automatic escalation by default.
 MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_LOCAL_ESCALATION_ENABLED=false
@@ -135,7 +135,7 @@ MINDOS_IM_DINGTALK_OUTBOUND_ROBOT_CODE=
 # MINDOS_LLM_PROFILE=CUSTOM_LOCAL_FIRST
 # MINDOS_LLM_PROVIDER=qwen
 # MINDOS_LLM_PROVIDER_ENDPOINTS=local:http://localhost:11434/api/chat,qwen:https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions
-# MINDOS_LLM_PROVIDER_MODELS=local:gemma3:1b-it-q4_K_M,qwen:qwen3.5-plus
+# MINDOS_LLM_PROVIDER_MODELS=local:gemma3:1b-it-q4_K_M,qwen:qwen3.6-plus
 # MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_LLM_ENABLED=true
 # MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_FORCE_LOCAL=true
 # MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_LOCAL_ESCALATION_ENABLED=true
@@ -145,8 +145,8 @@ MINDOS_IM_DINGTALK_OUTBOUND_ROBOT_CODE=
 ######################### 3) 必须填 (required placeholders for release) ################
 # Only these keys are treated as required placeholders for release prechecks.
 MINDOS_QWEN_KEY=REPLACE_WITH_QWEN_KEY
-# Provider keys map: keep only qwen in the map for packaged dist. CI / target host may replace.
-MINDOS_LLM_PROVIDER_KEYS=qwen:REPLACE_WITH_QWEN_KEY
+# Provider keys map: OpenRouter providers share the OpenRouter key; qwen keeps a direct key for fallback.
+MINDOS_LLM_PROVIDER_KEYS=gpt:REPLACE_WITH_OPENROUTER_KEY,grok:REPLACE_WITH_OPENROUTER_KEY,gemini:REPLACE_WITH_OPENROUTER_KEY,qwen:REPLACE_WITH_QWEN_KEY
 
 # Other provider keys are kept here as commented references (do not uncomment in dist unless
 # you intend to supply the real secrets on the target machine or via CI during deploy).
@@ -166,19 +166,22 @@ MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_MAX_TOKENS=120
 
 MINDOS_DISPATCHER_LLM_DSL_PROVIDER=local
 MINDOS_DISPATCHER_LLM_DSL_PRESET=cost
-MINDOS_DISPATCHER_LLM_FALLBACK_PROVIDER=local
-MINDOS_DISPATCHER_LLM_FALLBACK_PRESET=cost
+MINDOS_DISPATCHER_LLM_FALLBACK_PROVIDER=qwen
+MINDOS_DISPATCHER_LLM_FALLBACK_PRESET=quality
 MINDOS_DISPATCHER_LLM_DSL_MAX_TOKENS=160
 MINDOS_DISPATCHER_LLM_FALLBACK_MAX_TOKENS=420
 MINDOS_DISPATCHER_SKILL_FINALIZE_WITH_LLM_MAX_TOKENS=220
+MINDOS_DISPATCHER_SKILL_FINALIZE_WITH_LLM_PROVIDER=qwen
+MINDOS_DISPATCHER_SKILL_FINALIZE_WITH_LLM_PRESET=quality
 
 MINDOS_SKILL_NEWS_SEARCH_HTTP_TIMEOUT_MS=8000
 MINDOS_SKILL_NEWS_SEARCH_CACHE_TTL_SECONDS=300
 MINDOS_SKILL_NEWS_SEARCH_CACHE_MAX_ENTRIES=128
 MINDOS_SKILL_NEWS_SEARCH_MAX_ITEMS=8
 MINDOS_SKILL_NEWS_SEARCH_SUMMARY_ENABLED=true
-MINDOS_SKILL_NEWS_SEARCH_SUMMARY_PROVIDER=local
-MINDOS_SKILL_NEWS_SEARCH_SUMMARY_PRESET=cost
+MINDOS_SKILL_NEWS_SEARCH_SUMMARY_PROVIDER=qwen
+MINDOS_SKILL_NEWS_SEARCH_SUMMARY_PRESET=quality
+MINDOS_SKILL_NEWS_SEARCH_SUMMARY_MODEL=qwen3.6-plus
 MINDOS_SKILL_NEWS_SEARCH_SUMMARY_MAX_TOKENS=220
 
 MINDOS_DISPATCHER_ROUTING_REPLAY_MAX_SAMPLES=500
@@ -223,7 +226,7 @@ set "MINDOS_OPENROUTER_KEY=REPLACE_WITH_OPENROUTER_KEY"
 set "MINDOS_DOUBAO_ARK_KEY=REPLACE_WITH_DOUBAO_ARK_KEY"
 set "MINDOS_DOUBAO_ENDPOINT_ID=REPLACE_WITH_DOUBAO_ENDPOINT_ID"
 set "MINDOS_QWEN_KEY=REPLACE_WITH_QWEN_KEY"
-set "MINDOS_QWEN_MODEL=qwen3.5-plus"
+set "MINDOS_QWEN_MODEL=qwen3.6-plus"
 set "MINDOS_LLM_PROVIDER_MODELS=local:gemma3:1b-it-q4_K_M"
 set "MINDOS_SKILL_NEWS_SEARCH_GOOGLE_RSS_URL_TEMPLATE=https://www.reddit.com/r/worldnews/.rss"
 set "MINDOS_SKILL_NEWS_SEARCH_SUMMARY_MODEL=gemma3:1b-it-q4_K_M"

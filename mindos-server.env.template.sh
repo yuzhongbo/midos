@@ -30,6 +30,17 @@ export MINDOS_ENV_STAGE="defaults"
 
 # LLM 配置说明（中文详解）
 # 本节说明如何在存在多个 provider / 多个 apiKey 的情况下进行路由与配置。
+# 默认路径：OpenRouter-first；Qwen 作为显式回退/本地 fallback provider。
+: "${MINDOS_LLM_PROFILE:=OPENROUTER_INTENT}"
+: "${MINDOS_LLM_MODE:=OPENROUTER}"
+: "${MINDOS_LLM_PROVIDER:=gpt}"
+: "${MINDOS_LLM_ENDPOINT_OPENROUTER:=https://openrouter.ai/api/v1/chat/completions}"
+: "${MINDOS_LLM_ROUTING_MODE:=auto}"
+: "${MINDOS_LLM_ROUTING_STAGE_MAP:=llm-dsl:gpt,llm-fallback:grok}"
+: "${MINDOS_LLM_ROUTING_PRESET_MAP:=cost:gpt,balanced:grok,quality:gemini}"
+: "${MINDOS_LLM_PROVIDER_ENDPOINTS:=gpt:${MINDOS_LLM_ENDPOINT_OPENROUTER},grok:${MINDOS_LLM_ENDPOINT_OPENROUTER},gemini:${MINDOS_LLM_ENDPOINT_OPENROUTER},qwen:https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions}"
+: "${MINDOS_LLM_PROVIDER_KEYS:=gpt:${MINDOS_OPENROUTER_KEY:-},grok:${MINDOS_OPENROUTER_KEY:-},gemini:${MINDOS_OPENROUTER_KEY:-},qwen:${MINDOS_QWEN_KEY:-}}"
+: "${MINDOS_LLM_PROVIDER_MODELS:=gpt:openai/gpt-5.2,grok:x-ai/grok-4,gemini:google/gemini-2.5-pro,qwen:qwen3.6-plus}"
 # 核心变量（key/value 都是逗号分隔的 provider 映射）：
 # - MINDOS_LLM_PROVIDER_ENDPOINTS
 #     格式: provider:baseUrl,provider2:baseUrl2
@@ -39,7 +50,7 @@ export MINDOS_ENV_STAGE="defaults"
 #     例如: qwen:sk-qwen-xxx,openrouter:sk-or-xxx,openai:sk-oa-xxx
 # - MINDOS_LLM_PROVIDER_MODELS
 #     格式: provider:modelId,provider2:modelId2
-#     例如: qwen:qwen3.5-plus,openai:gpt-4.1
+#     例如: qwen:qwen3.6-plus,openai:gpt-4.1
 #
 # 多 key 情况下的常见配置策略（示例）:
 # 1) local 优先 + 云 provider 作为降级/扩展
@@ -55,11 +66,11 @@ export MINDOS_ENV_STAGE="defaults"
 #    MINDOS_LLM_ROUTING_PRESET_MAP=cost:qwen,quality:openai
 #    说明: stage map 指定不同任务阶段使用哪个 provider；preset map 可按 cost/quality 选不同 provider
 #
-# 3) 单 provider（生产/简化）
-#    MINDOS_LLM_PROFILE=QWEN_STABLE
-#    MINDOS_LLM_PROVIDER=qwen
-#    MINDOS_LLM_PROVIDER_KEYS=qwen:sk-qwen-xxx
-#    说明: 最简单、可审计且易轮换密钥的配置
+# 3) OpenRouter intent（推荐默认）
+#    MINDOS_LLM_PROFILE=OPENROUTER_INTENT
+#    MINDOS_LLM_PROVIDER=gpt
+#    MINDOS_OPENROUTER_KEY=sk-or-xxx
+#    说明: OpenRouter-first 的默认云路由配置，qwen 可作为回退模型
 #
 # 注意事项与校验：
 # - 键名和值中不要包含空格，map 以逗号分隔，每个条目内部以第一个冒号分隔 provider 与 value。
@@ -68,9 +79,6 @@ export MINDOS_ENV_STAGE="defaults"
 # - local endpoint（local:http://localhost:11434/api/chat）建议作为语义分析/省 token 的可选端点，与云 provider 并存，优先级由 profile/routing 决定。
 #
 # 默认路由示例（模板保留最小默认，实际请在 release 中设置 keys）
-: "${MINDOS_LLM_PROFILE:=QWEN_STABLE}"
-: "${MINDOS_LLM_MODE:=QWEN_NATIVE}"
-: "${MINDOS_LLM_PROVIDER:=qwen}"
 : "${MINDOS_IM_DINGTALK_ENABLED:=true}"
 : "${MINDOS_IM_DINGTALK_VERIFY_SIGNATURE:=false}"
 : "${MINDOS_IM_DINGTALK_REPLY_TIMEOUT_MS:=2500}"

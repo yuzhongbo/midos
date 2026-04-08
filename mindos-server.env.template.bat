@@ -32,7 +32,7 @@ REM     格式: provider:key,provider2:key2
 REM     例如: qwen:sk-qwen-xxx,openrouter:sk-or-xxx,openai:sk-oa-xxx
 REM - MINDOS_LLM_PROVIDER_MODELS
 REM     格式: provider:modelId,provider2:modelId2
-REM     例如: qwen:qwen3.5-plus,openai:gpt-4.1
+REM     例如: qwen:qwen3.6-plus,openai:gpt-4.1
 REM
 REM 多 key 情况下的常见配置策略（示例）:
 REM 1) local 优先 + 云 provider 作为降级/扩展
@@ -48,11 +48,11 @@ REM    REM set "MINDOS_LLM_ROUTING_STAGE_MAP=llm-dsl:openrouter,llm-fallback:qwe
 REM    REM set "MINDOS_LLM_ROUTING_PRESET_MAP=cost:qwen,quality:openai"
 REM    说明: stage map 指定不同任务阶段使用哪个 provider；preset map 可按 cost/quality 选不同 provider
 REM
-REM 3) 单 provider（生产/简化）
-REM    set "MINDOS_LLM_PROFILE=QWEN_STABLE"
-REM    set "MINDOS_LLM_PROVIDER=qwen"
-REM    set "MINDOS_LLM_PROVIDER_KEYS=qwen:sk-qwen-xxx"
-REM    说明: 最简单、可审计且易轮换密钥的配置
+REM 3) OpenRouter intent（推荐默认）
+REM    set "MINDOS_LLM_PROFILE=OPENROUTER_INTENT"
+REM    set "MINDOS_LLM_PROVIDER=gpt"
+REM    set "MINDOS_OPENROUTER_KEY=sk-or-xxx"
+REM    说明: gpt/grok/gemini 通过 OpenRouter 统一出站，qwen 可作为独立回退模型
 REM
 REM 注意事项与校验：
 REM - 键名和值中不要包含空格，map 以逗号分隔，每个条目内部以第一个冒号分隔 provider 与 value。
@@ -61,9 +61,10 @@ REM - 为避免在 dist 模板中产生噪音，请把真实的 API keys 写入 
 REM - local endpoint（local:http://localhost:11434/api/chat）建议作为语义分析/省 token 的可选端点，与云 provider 并存，优先级由 profile/routing 决定。
 
 REM 默认路由示例（模板保留最小默认，实际请在 release 中设置 keys）
-if not defined MINDOS_LLM_PROFILE set "MINDOS_LLM_PROFILE=QWEN_STABLE"
-if not defined MINDOS_LLM_MODE set "MINDOS_LLM_MODE=QWEN_NATIVE"
-if not defined MINDOS_LLM_PROVIDER set "MINDOS_LLM_PROVIDER=qwen"
+if not defined MINDOS_LLM_PROFILE set "MINDOS_LLM_PROFILE=OPENROUTER_INTENT"
+if not defined MINDOS_LLM_MODE set "MINDOS_LLM_MODE=OPENROUTER"
+if not defined MINDOS_LLM_PROVIDER set "MINDOS_LLM_PROVIDER=gpt"
+if not defined MINDOS_LLM_ENDPOINT_OPENROUTER set "MINDOS_LLM_ENDPOINT_OPENROUTER=https://openrouter.ai/api/v1/chat/completions"
 
 
 REM 不要在模板中保留大量 REPLACE_WITH_* 的活跃赋值，避免在预检中产生噪音。

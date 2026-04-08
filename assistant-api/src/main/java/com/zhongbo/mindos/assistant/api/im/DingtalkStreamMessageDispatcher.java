@@ -327,6 +327,7 @@ class DingtalkStreamMessageDispatcher {
                         "DingTalk stream async reply failed, conversationHash=" + safeHash(conversationId),
                         error);
             }
+            finalReply = ImReplySanitizer.sanitize(finalReply);
             boolean sent = sendFinalStatus(conversationId, sessionWebhook, finalReply, waitingSent.get(), messageHandleRef.get());
             logEvent(sent ? Level.INFO : Level.WARNING,
                     sent ? "dingtalk.stream.final.sent" : "dingtalk.stream.final.failed",

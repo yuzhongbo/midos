@@ -2,6 +2,7 @@ package com.zhongbo.mindos.assistant.skill.semantic;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.zhongbo.mindos.assistant.common.LlmClient;
 import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.common.SkillResult;
@@ -32,6 +33,7 @@ public class SemanticAnalysisService {
     private static final Pattern DUE_DATE_PATTERN = Pattern.compile("(?:截止|due|到期|deadline)\\s*(?:时间|日期|date)?\\s*[:：]?\\s*([^，。；;\\n]+)",
             Pattern.CASE_INSENSITIVE);
     private static final String SEMANTIC_LOCAL_PROVIDER = "local";
+    private static final List<String> INTERNAL_SEMANTIC_ROUTE_SKILLS = List.of("semantic.analyze");
     private static final int DEFAULT_LLM_COMPLEXITY_MIN_INPUT_CHARS = 10;
     private static final String DEFAULT_LLM_COMPLEXITY_TRIGGER_TERMS = "新闻,搜索,实时,分析,规划,计划,代码,排查,debug,search,latest,news,plan,report";
 
@@ -159,8 +161,7 @@ public class SemanticAnalysisService {
         if (!enabled || userInput == null || userInput.isBlank()) {
             return SemanticAnalysisResult.empty();
         }
-        SemanticAnalysisResult heuristic = heuristicAnalysis(userInput);
-        SemanticAnalysisResult best = heuristic;
+        SemanticAnalysisResult best = heuristicAnalysis(userInput);
 
         Optional<SemanticAnalysisResult> delegated = analyzeWithDelegateSkill(userId, userInput, memoryContext, profileContext, availableSkillSummaries);
         if (delegated.isPresent() && delegated.get().confidence() >= best.confidence()) {
@@ -221,19 +222,15 @@ public class SemanticAnalysisService {
         if (shouldSkipLlmByComplexity(userInput)) {
             return Optional.empty();
         }
-        String prompt = "You are a semantic intent analyzer for an AI assistant. "
-                + "Return ONLY JSON. Required keys: intent, suggestedSkill, summary, confidence, and payload (or params as alias). "
-                + "Use this schema exactly: "
-                + "{\"intent\":\"...\",\"rewrittenInput\":\"...\",\"suggestedSkill\":\"...\",\"payload\":{},"
-                + "\"params\":{},\"keywords\":[\"...\"],\"summary\":\"...\",\"confidence\":0.0}. "
-                + "If no local skill should be suggested, use an empty suggestedSkill and empty payload/params.\n"
-                + "Available skills: " + String.join(", ", availableSkillSummaries == null ? List.of() : availableSkillSummaries) + "\n"
-                + "Memory context:\n" + (memoryContext == null ? "" : memoryContext) + "\n"
-                + "User input:\n" + userInput;
+        String prompt = "You are MindOS semantic dispatch analyzer. Return strict JSON only. "
+                + "Required keys: intent, suggestedSkill, summary, confidence, payload (params is allowed as alias), keywords. "
+                + "If no local skill applies, leave suggestedSkill empty and payload empty.\n"
+                + "Available skills: " + summarizeAvailableSkills(availableSkillSummaries) + "\n"
+                + "Memory context:\n" + capText(memoryContext, 1000) + "\n"
+                + "User input:\n" + capText(userInput, 400);
 
-        Optional<SemanticAnalysisResult> localResult = Optional.empty();
         if (semanticLocalEscalationEnabled) {
-            localResult = callSemanticLlm(prompt, userId, userInput, profileContext, SEMANTIC_LOCAL_PROVIDER, llmPreset, resolveSemanticLocalModel());
+            Optional<SemanticAnalysisResult> localResult = callSemanticLlm(prompt, userId, userInput, profileContext, SEMANTIC_LOCAL_PROVIDER, llmPreset, resolveSemanticLocalModel());
             LOGGER.info("semantic.analysis.local.result confidence="
                     + localResult.map(SemanticAnalysisResult::confidence).orElse(0.0)
                     + ", threshold=" + semanticLocalEscalationMinConfidence
@@ -347,11 +344,13 @@ public class SemanticAnalysisService {
             return Optional.empty();
         }
         try {
-            Map<String, Object> payload = objectMapper.readValue(jsonBody, new TypeReference<>() {
+            JsonNode root = objectMapper.readTree(jsonBody);
+            if (root == null || !root.isObject()) {
+                LOGGER.fine("Semantic analysis JSON parse ignored non-object root from " + source);
+                return Optional.empty();
+            }
+            Map<String, Object> payload = objectMapper.convertValue(root, new TypeReference<>() {
             });
-            // Validate and clean the incoming map according to a lightweight schema to avoid
-            // unpredictable/malicious LLM outputs. This will normalize aliases (params -> payload),
-            // coerce simple types, and drop unknown keys.
             Map<String, Object> cleaned = validateAndCleanSemanticMap(payload);
             return Optional.of(fromMap(cleaned, source));
         } catch (Exception ex) {
@@ -450,7 +449,7 @@ public class SemanticAnalysisService {
             if (intent.isBlank()) missing.add("intent");
             if (summary.isBlank()) missing.add("summary");
             if (suggestedSkill.isBlank()) missing.add("suggestedSkill");
-            if (payload == null || payload.isEmpty()) missing.add("payload");
+            if (payload.isEmpty()) missing.add("payload");
             if (!missing.isEmpty()) {
                 LOGGER.info("semantic.analysis.parse.missing-fields source=" + source + " missing=" + missing + " rawKeys=" + raw.keySet());
             }
@@ -591,6 +590,9 @@ public class SemanticAnalysisService {
             return SemanticAnalysisResult.empty();
         }
         String suggestedSkill = normalizeSkillName(result.suggestedSkill());
+        if (isInternalSemanticRouteSkill(suggestedSkill)) {
+            suggestedSkill = "";
+        }
         if (!suggestedSkill.isBlank() && skillRegistry.getSkill(suggestedSkill).isEmpty()) {
             suggestedSkill = "";
         }
@@ -603,6 +605,9 @@ public class SemanticAnalysisService {
         if (intent.isBlank()) {
             intent = summary;
         }
+        List<SemanticAnalysisResult.CandidateIntent> candidateIntents = result.candidateIntents().stream()
+                .filter(candidate -> !isInternalSemanticRouteSkill(candidate.intent()))
+                .toList();
         return new SemanticAnalysisResult(
                 result.source(),
                 intent,
@@ -612,8 +617,16 @@ public class SemanticAnalysisService {
                 result.keywords(),
                 summary,
                 result.confidence(),
-                result.candidateIntents()
+                candidateIntents
         );
+    }
+
+    private boolean isInternalSemanticRouteSkill(String skillName) {
+        if (skillName == null || skillName.isBlank()) {
+            return false;
+        }
+        String normalized = skillName.trim();
+        return INTERNAL_SEMANTIC_ROUTE_SKILLS.stream().anyMatch(normalized::equals);
     }
 
     private String capText(String value, int maxLength) {
@@ -622,6 +635,23 @@ public class SemanticAnalysisService {
             return normalized;
         }
         return normalized.substring(0, maxLength) + "...";
+    }
+
+    private String summarizeAvailableSkills(List<String> availableSkillSummaries) {
+        List<String> skills = availableSkillSummaries == null ? List.of() : availableSkillSummaries;
+        if (skills.isEmpty()) {
+            return "";
+        }
+        int limit = Math.min(8, skills.size());
+        List<String> summarized = new ArrayList<>(limit);
+        for (int i = 0; i < limit; i++) {
+            summarized.add(capText(skills.get(i), 72));
+        }
+        String joined = String.join(", ", summarized);
+        if (skills.size() > limit) {
+            joined += " …(+" + (skills.size() - limit) + ")";
+        }
+        return capText(joined, 320);
     }
 
     private String normalizeSkillName(String value) {

@@ -2,6 +2,7 @@ package com.zhongbo.mindos.assistant.skill.examples;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.zhongbo.mindos.assistant.skill.examples.util.ChineseNumberParser;
 import com.zhongbo.mindos.assistant.common.LlmClient;
 import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.common.SkillResult;
@@ -89,8 +90,8 @@ public class TeachingPlanSkill implements Skill {
                 topic,
                 firstNonBlank(asString(attributes, "gradeOrLevel"), "未指定"),
                 firstNonBlank(asString(attributes, "goal"), "夯实基础并稳定提升"),
-                clamp(asInt(attributes.get("durationWeeks"), 8), 1, 52),
-                clamp(asInt(attributes.get("weeklyHours"), 6), 1, 80),
+                clamp(parseFlexibleOrDefault(attributes.get("durationWeeks"), 8), 1, 52),
+                clamp(parseFlexibleOrDefault(attributes.get("weeklyHours"), 6), 1, 80),
                 asStringList(attributes.get("weakTopics")),
                 asStringList(attributes.get("strongTopics")),
                 asStringList(attributes.get("learningStyle")),
@@ -324,6 +325,15 @@ public class TeachingPlanSkill implements Skill {
         } catch (NumberFormatException ignored) {
             return defaultValue;
         }
+    }
+
+    private int parseFlexibleOrDefault(Object value, int defaultValue) {
+        if (value == null) return defaultValue;
+        if (value instanceof Number number) return number.intValue();
+        String s = String.valueOf(value).trim();
+        if (s.isBlank()) return defaultValue;
+        Integer parsed = ChineseNumberParser.parseFlexibleNumber(s);
+        return parsed == null ? defaultValue : parsed;
     }
 
     private List<String> asStringList(Object value) {

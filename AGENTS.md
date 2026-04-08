@@ -34,11 +34,21 @@ This repository is a lightweight, single-user personal AI assistant backend. Opt
 - Semantic analysis can run in local-first mode via `mindos.dispatcher.semantic-analysis.*`; local model downgrade/escalation policy is configurable via `mindos.dispatcher.local-escalation.*`; semantic clarify gating is controlled by `mindos.dispatcher.semantic-analysis.clarify-min-confidence` (default `0.70`).
 - Dispatcher semantic clarification validates required params against the effective payload after memory/default completion (not only raw semantic payload); continuation inputs still bypass semantic-clarify routing.
 
+### 本地调度 / 云端总结（规范版摘要）
+- 本地模型只负责“判定要做什么”：意图识别、槽位补全、澄清判断、技能选择；云端模型只负责“怎么说”：最终回复、总结、润色。
+- 默认遵循 local-first：本地优先，云端仅在回退、增强或高质量总结时介入。
+- 本地 Ollama 端点与模型名必须通过 provider map 配置，禁止在代码里硬编码。
+- 路由分析输出必须是严格 JSON；不得直接生成最终回复，不得补造缺失参数，只能从白名单技能中选择。
+- 低置信度或补全后仍缺必填字段时，必须进入 `semantic.clarify`；续写类输入跳过澄清路由。
+- 路由前按 `Persona -> Semantic -> Procedural -> Recent Episodic -> Current Input` 读取记忆，优先使用已确认信息。
+- 记忆写入要分层：Persona 存稳定偏好，Semantic 存确认事实，Episodic 存近期摘要，Procedural 存路由经验。
+- 本地模型不可用时应先修复 Ollama/本地端点，再观察 MindOS 路由；不要把“已路由到 local”误当成“本地模型可用”。
+
   - Local semantic analysis (Ollama / Gemma3)
     - The dispatcher and `SemanticAnalysisService` support a local-first semantic analyzer backed by a local model (examples in logs show `http://localhost:11434/api/chat` with `gemma3:1b-it-q4_K_M`). To enable locally-hosted Ollama + Gemma3, set provider maps and the semantic-analysis properties (examples below).
     - Recommended environment / secrets (examples placed in `dist/mindos-windows-server/mindos-secrets.properties`):
       - MINDOS_LLM_PROVIDER_ENDPOINTS=local:http://localhost:11434/api/chat,qwen:https://<cloud>
-      - MINDOS_LLM_PROVIDER_MODELS=local:gemma3:1b-it-q4_K_M,qwen:qwen3.5-plus
+      - MINDOS_LLM_PROVIDER_MODELS=local:gemma3:1b-it-q4_K_M,qwen:qwen3.6-plus
       - MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_LLM_ENABLED=true
       - MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_FORCE_LOCAL=true
       - MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_LOCAL_ESCALATION_ENABLED=true
@@ -81,6 +91,8 @@ This repository is a lightweight, single-user personal AI assistant backend. Opt
 - `assistant-api/src/main/resources/application.properties`: app and LLM settings.
 - `assistant-api/src/main/resources/application-solo.properties`: single-user experience profile overrides (cache/context/rollup/metrics token requirement).
 - `scripts/unix/lib/mindos-env.sh`: shared shell env loader/validator for local and release startup; validates provider-routing map syntax, prints effective summaries, and flags placeholder drift.
+- `scripts/unix/tools/check-secrets.sh`: canonical secrets preflight implementation (root `scripts/check-secrets.sh` remains a thin compatibility wrapper).
+- `scripts/unix/cloud/`: cloud bootstrap/deploy/check/rollback helpers for single-host deployment flows.
 - `dist/mindos-windows-server/`: packaged Windows server bundle + baseline `mindos-secrets.properties` consumed by `run-local.sh` / `run-release.sh` layering and Windows launch/smoke scripts.
 - `assistant-sdk/src/main/java/com/zhongbo/mindos/assistant/sdk/AssistantSdkClient.java`: client-side HTTP SDK skeleton.
 - `mindos-cli/src/main/java/com/zhongbo/mindos/assistant/cli/MindosCliApplication.java`: CLI entrypoint.
@@ -89,8 +101,8 @@ This repository is a lightweight, single-user personal AI assistant backend. Opt
 
 ## Developer workflows
 - Run all tests: `./mvnw -q test`
-- Run API locally: `./mvnw -pl assistant-api -am spring-boot:run`
-- Run API locally in solo profile: `./mvnw -pl assistant-api -am spring-boot:run -Dspring-boot.run.profiles=solo`
+- Run API locally: `./mvnw -pl assistant-api -am spring-boot:run -Dspring-boot.run.jvmArguments=-Dfile.encoding=UTF-8`
+- Run API locally in solo profile: `./mvnw -pl assistant-api -am spring-boot:run -Dspring-boot.run.profiles=solo -Dspring-boot.run.jvmArguments=-Dfile.encoding=UTF-8`
 - Solo helper scripts: `./scripts/unix/local/run-mindos-solo.sh`, `./scripts/unix/local/solo-cli.sh`, `./scripts/unix/local/solo-smoke.sh`, `./scripts/unix/local/solo-stop.sh` (CLI semantics unchanged)
 - Local env-layered startup: `./scripts/unix/local/run-local.sh` (loads `dist/mindos-windows-server/mindos-secrets.properties` first, then optional `mindos-secrets.local.properties`; supports `--dry-run` and `--strict`)
 - Release env-layered startup/preflight: `./scripts/unix/local/run-release.sh` (loads dist secrets first, then optional `mindos-secrets.release.properties`; release mode is strict and supports `--dry-run`)
@@ -127,6 +139,7 @@ This repository is a lightweight, single-user personal AI assistant backend. Opt
 - Dispatcher auto-routing can execute registered skills via `Skill.supports(...)`, so MCP tool descriptions/names should stay specific enough to avoid accidental matches.
 - Runtime LLM profile switching is centralized by `mindos.llm.profile` / `MINDOS_LLM_PROFILE` (e.g., `QWEN_STABLE`, `DOUBAO_STABLE`, `CUSTOM_LOCAL_FIRST`, `CN_DUAL`, `OPENROUTER_INTENT`, native single-vendor profiles); keep profile defaults, `mindos.llm.routing.preset-map`, and env template scripts aligned.
 - Provider/routing env maps (`MINDOS_LLM_PROVIDER_ENDPOINTS`, `MINDOS_LLM_PROVIDER_KEYS`, `MINDOS_LLM_PROVIDER_MODELS`, `MINDOS_LLM_ROUTING_STAGE_MAP`, `MINDOS_LLM_ROUTING_PRESET_MAP`, MCP server/header maps) are comma-separated `key:value` entries without spaces; `scripts/unix/lib/mindos-env.sh` validates them during preflight/startup.
+- Unix helper scripts are organized under `scripts/unix/*` (local/cloud/install/export/tools/lib); do not rely on removed root-level Unix wrappers other than the compatibility `scripts/check-secrets.sh`.
 - New skills should implement `Skill` and be autodiscovered as Spring components.
 - Preserve `contextLoads()` smoke test in `assistant-api` when adding integrations.
 - Keep this repo single-user; central memory now defaults to file-backed storage under `data/memory-sync` when enabled, falls back to in-memory if file-repo initialization fails, and switches to JDBC automatically when a `DataSource` exists.
@@ -202,7 +215,7 @@ Notes:
 
 #### 新闻检索（news_search）Skill
 - 入口：`assistant-skill/src/main/java/com/zhongbo/mindos/assistant/skill/examples/NewsSearchSkill.java`
-- 功能：聚合 Google News RSS + 36kr，支持缓存、热点关键词提取、上下文总结；摘要默认走本地 provider（`mindos.skill.news-search.summary-provider=local`）。
+- 功能：聚合 Google News RSS + 36kr，支持缓存、热点关键词提取、上下文总结；摘要默认走云侧 provider（`mindos.skill.news-search.summary-provider=qwen`），本地模型继续承担语义/调度与记忆优化。
 - 参数：`source=google|36kr|all`、`sort=latest|relevance`、`limit=数字`，并支持自然语言条数（如“前五条”）。
 - 关键配置：`mindos.skill.news-search.*`（Google RSS 模板、36kr feed、缓存 TTL、摘要模型/Token 等）。
 

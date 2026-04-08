@@ -1301,7 +1301,7 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
             }
         }
         if ("qwen".equals(normalizedProvider)) {
-            return "qwen3.5-plus";
+            return "qwen3.6-plus";
         }
         if ("doubao".equals(normalizedProvider)) {
             return null;

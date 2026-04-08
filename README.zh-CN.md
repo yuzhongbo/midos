@@ -93,9 +93,9 @@ chmod +x ./scripts/unix/local/run-local.sh ./scripts/unix/local/run-release.sh .
 ### secrets 文件布局与多 provider 路由
 
 `dist/mindos-windows-server/mindos-secrets.properties` 采用三段式布局：
-- `1) 建议默认`：适合分发包直接保留的安全默认值，例如 `MINDOS_LLM_PROFILE=QWEN_STABLE` 与单 provider 的 `qwen` 默认配置。
+- `1) 建议默认`：适合分发包直接保留的安全默认值，例如 `MINDOS_LLM_PROFILE=OPENROUTER_INTENT`、`MINDOS_LLM_PROVIDER=gpt` 与 OpenRouter-first 的默认配置。
 - `2) 可选填`：分发包里默认留空的项目，例如 `MINDOS_SKILLS_MCP_SERVERS`、`MINDOS_SKILLS_MCP_SERVER_HEADERS`、钉钉 stream / outbound 凭据等。
-- `3) 必须填`：发布前严格预检会拦截的占位项，当前主要是 `MINDOS_QWEN_KEY` 与 `MINDOS_LLM_PROVIDER_KEYS`。
+- `3) 必须填`：发布前严格预检会拦截的占位项，当前主要是 `MINDOS_OPENROUTER_KEY`、`MINDOS_QWEN_KEY` 与 `MINDOS_LLM_PROVIDER_KEYS`。
 
 多 provider 场景下，这几个变量都使用逗号分隔的 `provider:value` 映射：
 - `MINDOS_LLM_PROVIDER_ENDPOINTS`
@@ -104,13 +104,13 @@ chmod +x ./scripts/unix/local/run-local.sh ./scripts/unix/local/run-release.sh .
 
 典型写法：
 - 本地优先省 token：`local:http://localhost:11434/api/chat,qwen:https://dashscope.aliyuncs.com/...`
-- 单 provider 发布：`MINDOS_LLM_PROFILE=QWEN_STABLE`、`MINDOS_LLM_PROVIDER=qwen`、`MINDOS_LLM_PROVIDER_KEYS=qwen:...`
+- OpenRouter-first 发布：`MINDOS_LLM_PROFILE=OPENROUTER_INTENT`、`MINDOS_LLM_PROVIDER=gpt`、`MINDOS_LLM_PROVIDER_KEYS=gpt:${MINDOS_OPENROUTER_KEY},grok:${MINDOS_OPENROUTER_KEY},gemini:${MINDOS_OPENROUTER_KEY},qwen:${MINDOS_QWEN_KEY}`
 - 按阶段选 provider：`MINDOS_LLM_ROUTING_STAGE_MAP=llm-dsl:openrouter,llm-fallback:qwen`
 
 推荐路由模式与定位：
 - `CUSTOM_LOCAL_FIRST`：本地 Ollama 端点优先承担语义分析和低成本请求，云端 provider 作为增强或回退能力。
 - 多云按阶段/预设路由：使用 `MINDOS_LLM_ROUTING_STAGE_MAP` 与 `MINDOS_LLM_ROUTING_PRESET_MAP` 按 dispatcher 阶段或 `cost/quality` 预设选择 provider。
-- `QWEN_STABLE`：最适合生产的简化模式，一个 provider、一个 key map，审计和轮换都更直接。
+- `OPENROUTER_INTENT`：最适合默认分发包的云路由模式，OpenRouter 负责面向用户的总结输出，qwen 可作为回退模型。
 
 校验规则：
 - provider 映射中不要包含空格；条目之间用逗号分隔，每个条目以内第一个 `:` 分隔 provider 与值。
@@ -125,7 +125,7 @@ chmod +x ./scripts/unix/local/run-local.sh ./scripts/unix/local/run-release.sh .
 MINDOS_LLM_PROFILE=CUSTOM_LOCAL_FIRST
 MINDOS_LLM_PROVIDER=qwen
 MINDOS_LLM_PROVIDER_ENDPOINTS=local:http://localhost:11434/api/chat,qwen:https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions
-MINDOS_LLM_PROVIDER_MODELS=local:gemma3:1b-it-q4_K_M,qwen:qwen3.5-plus
+MINDOS_LLM_PROVIDER_MODELS=local:gemma3:1b-it-q4_K_M,qwen:qwen3.6-plus
 MINDOS_QWEN_KEY=REPLACE_WITH_QWEN_KEY
 MINDOS_LLM_PROVIDER_KEYS=qwen:REPLACE_WITH_QWEN_KEY
 
@@ -143,6 +143,54 @@ MINDOS_DISPATCHER_LLM_FALLBACK_PROVIDER=qwen
 - `MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_CLARIFY_MIN_CONFIDENCE` 控制何时返回 `semantic.clarify`；低置信度或补全后仍缺必填参数会触发澄清。
 - 澄清会基于 memory/default completion 后的有效 payload 校验必填参数（而非仅原始语义 payload）；续写类输入仍会跳过 `semantic.clarify` 路由。
 - 真实的 Qwen key 仍建议只放在 `mindos-secrets.local.properties` 或 `mindos-secrets.release.properties` 中。
+
+### 本地调度模型与 Memory 结构设计
+
+如果本地硬件受限，建议把调度器保持得尽量小、稳、快：
+
+- **本地调度模型**：`gemma3:1b-it-q4_K_M`，负责意图识别、参数抽取、澄清判断和 skill 选择。
+- **云端总结模型**：`qwen3.6-plus`，负责最终面向用户的总结和润色。
+- **核心原则**：本地模型只决定“做什么”，云端模型只决定“怎么说”。
+
+Ollama 命令：
+```bash
+ollama pull gemma3:1b-it-q4_K_M
+ollama serve
+
+curl http://localhost:11434/api/chat \
+  -d '{"model":"gemma3:1b-it-q4_K_M","messages":[{"role":"user","content":"帮我判断这句话要不要调度技能：给学生 stu-1 做数学学习计划，六周，每周八小时"}]}'
+```
+
+避免乱调度的 Prompt 模板：
+```text
+你是 MindOS 的调度分析器，只负责理解用户输入，不负责直接回答问题。
+
+只返回严格 JSON：
+{
+  "intent": "...",
+  "suggestedSkill": "...",
+  "confidence": 0.0,
+  "clarify": true,
+  "missingFields": ["..."],
+  "payload": {},
+  "summary": "..."
+}
+
+规则：
+- 不能生成最终用户回复；
+- 不能编造缺失参数；
+- 置信度低就必须 clarify=true；
+- 只能从白名单 skill 中选择；
+- 输出要短、结构化、稳定。
+```
+
+Memory 结构建议：
+- **Persona**：长期稳定偏好和风格，例如语言、语气、时区。
+- **Semantic**：已确认事实和长期偏好。
+- **Episodic**：最近对话、任务进度、短摘要。
+- **Procedural**：路由经验、常缺字段、成功的 skill 模式。
+
+建议路由前的读取顺序：`Persona -> Semantic -> Procedural -> Recent Episodic -> Current Input`。
 
 启动 MindOS 前，建议先单独确认本地 Ollama 接口可用：
 
@@ -214,7 +262,7 @@ scripts\\windows\\install-mindos-server.bat
 
 `solo` profile highlights:
 - enables short-TTL LLM cache for repeated prompts
-- defaults to `qwen` as the main provider (`qwen3.5-plus` when no explicit model is supplied)
+- defaults to `qwen` as the main provider (`qwen3.6-plus` when no explicit model is supplied)
 - keeps richer prompt context and slightly longer replies
 - delays conversation rollup so recent dialogue stays hot longer
 - disables admin token requirement for `GET /api/metrics/llm` on local single-user setups
@@ -306,7 +354,7 @@ LLM provider configuration notes:
 - `mindos.llm.provider-models` controls provider -> model mapping.
 - `mindos.llm.profile` (or env `MINDOS_LLM_PROFILE`) can pin stable provider defaults: `QWEN_STABLE` -> `qwen`, `DOUBAO_STABLE` -> `doubao`.
 - startup logs include `llm.routing.profile.effective`, and first-hit samples include `llm.call.routing.sample` (`routeStage` -> `provider/model`) for quick routing verification.
-- `qwen` keeps the built-in default model `qwen3.5-plus` when no model is supplied.
+- `qwen` keeps the built-in default model `qwen3.6-plus` when no model is supplied.
 - `doubao` must be configured with a real Ark `Model ID` or `Endpoint ID`, for example `mindos.llm.provider-models=doubao:ep-202603290001`, before enabling live HTTP calls.
 
 ## Cloud deploy (single-user)
@@ -537,7 +585,7 @@ curl -X POST http://localhost:8080/api/skills/load-mcp \
 - `solo` profile enables real OpenAI-compatible HTTP calls by default; other profiles can opt in with `mindos.llm.http.enabled=true`.
 - `gemini` supports both OpenAI-compatible proxy endpoints (for example `/v1/chat/completions`) and Google's native `.../v1beta/models/<model>:generateContent` endpoint.
 - `qwen` uses DashScope's OpenAI-compatible endpoint: `https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions`.
-- When no explicit `model` is supplied, `qwen` defaults to `qwen3.5-plus`.
+- When no explicit `model` is supplied, `qwen` defaults to `qwen3.6-plus`.
 - For native Gemini, prefer configuring the base endpoint in `mindos.llm.provider-endpoints` and keep the secret in `mindos.llm.provider-keys`; the client will append `?key=...` automatically and mask it in metrics.
 - DingTalk webhook replies are synchronous; `mindos.im.dingtalk.reply-timeout-ms` (default `2500`) caps the wait budget so slow LLM replies degrade to a timeout-friendly message instead of vanishing from the chat window.
 - DingTalk reply length guard `mindos.im.dingtalk.reply-max-chars` (default `1200`) trims oversized webhook replies; in stream mode, MindOS sends long final answers in ordered segments (`<= reply-max-chars` each) to reduce information loss.
@@ -698,6 +746,7 @@ Tips:
   - `mindos.dispatcher.skill.finalize-with-llm.max-output-chars` (default `900`): hard cap for the final postprocessed skill reply.
   - `mindos.dispatcher.skill.finalize-with-llm.provider` (default empty): optional dedicated provider override for `skill-postprocess` stage.
   - `mindos.dispatcher.skill.finalize-with-llm.preset` (default empty in base profile, `cost` in `solo`): optional dedicated preset override for `skill-postprocess` stage.
+    - If your local hardware is limited, keep `mindos.dispatcher.semantic-analysis.force-local=true` and the local routing/memory defaults for interpretation/scheduling, but point `mindos.dispatcher.skill.finalize-with-llm.provider` / `preset` and `mindos.skill.news-search.summary-provider` / `summary-model` to `qwen` so user-facing summaries stay cloud-generated and responsive.
   - `mindos.dispatcher.routing-replay.max-samples` (default `200`): retained sample size for routing replay offline analysis.
 - Optional post-skill summary writeback controls:
   - `mindos.memory.post-skill-summary.enabled` (default `false`): when enabled, successful skill outputs are summarized and written to semantic memory.
@@ -820,7 +869,7 @@ Tips:
   - example: `./mvnw -q -pl assistant-memory -am test -Dtest=MemorySyncServiceTest#shouldMeetBasicSyncPerformanceBaseline -Dsurefire.failIfNoSpecifiedTests=false -Dmindos.memory.sync.perf-baseline-ms=5000 -Dmindos.memory.sync.perf-retries=2`
 - Memory NLU synonyms for style/compress intents are configurable via JVM system properties (`-Dmindos.memory.nlu.*`); values are comma-separated terms and normalize to canonical values used by API/CLI (`focus`: `task|learning|review`, `style`: `action|coach|story|concise`, `tone`: `warm|direct|neutral`, `format`: `bullet|plain`).
 - `eq.coach` supports optional output controls: `style` (`gentle|direct|workplace|intimate`), `mode` (`analysis|reply|both`), `priorityFocus` (`p1|p2|p3`).
-- `news_search` 聚合 Google News RSS + 36kr，并支持缓存与本地 LLM 摘要。
+- `news_search` 聚合 Google News RSS + 36kr，并支持缓存与云侧 LLM 摘要。
   - 入口示例：`news_search AI 芯片`
   - 参数示例：`news_search AI source=google sort=relevance limit=5`（`source=google|36kr|all`，`sort=latest|relevance`）
   - 也支持自然语言条数：如 `news_search AI 前五条`
@@ -830,7 +879,7 @@ Tips:
     - `mindos.skill.news-search.google-rss-url-template`（默认 `https://ai.2756online.com/google/rss/search?q=%s&hl=zh-CN&gl=CN&ceid=CN:zh-Hans`）
     - `mindos.skill.news-search.kr-feed-url`
     - `mindos.skill.news-search.cache-ttl-seconds`
-    - `mindos.skill.news-search.summary-provider` / `mindos.skill.news-search.summary-model`（默认 `local` + `gemma3:1b-it-q4_K_M`）
+    - `mindos.skill.news-search.summary-provider` / `mindos.skill.news-search.summary-model`（默认 `qwen` + `qwen3.6-plus`）
 - `eq.coach` risk terms are configurable via JVM properties (comma-separated):
   - `mindos.eq.coach.risk.high-terms`
   - `mindos.eq.coach.risk.medium-terms`

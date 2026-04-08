@@ -40,6 +40,7 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Level;
+import com.zhongbo.mindos.assistant.skill.examples.util.TitleCleaner;
 import java.util.logging.Logger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -89,8 +90,8 @@ public class NewsSearchSkill implements Skill {
                            @Value("${mindos.skill.news-search.cache-ttl-seconds:300}") int cacheTtlSeconds,
                            @Value("${mindos.skill.news-search.cache-max-entries:128}") int cacheMaxEntries,
                            @Value("${mindos.skill.news-search.max-items:8}") int maxItems,
-                           @Value("${mindos.skill.news-search.summary-enabled:true}") boolean summaryEnabled,
-                           @Value("${mindos.skill.news-search.summary-provider:local}") String summaryProvider,
+                            @Value("${mindos.skill.news-search.summary-enabled:true}") boolean summaryEnabled,
+                            @Value("${mindos.skill.news-search.summary-provider:}") String summaryProvider,
                            @Value("${mindos.skill.news-search.summary-preset:cost}") String summaryPreset,
                            @Value("${mindos.skill.news-search.summary-model:gemma3:1b-it-q4_K_M}") String summaryModel,
                            @Value("${mindos.skill.news-search.summary-max-tokens:220}") int summaryMaxTokens) {
@@ -136,7 +137,8 @@ public class NewsSearchSkill implements Skill {
         this.cacheMaxEntries = Math.max(16, cacheMaxEntries);
         this.maxItems = Math.max(3, maxItems);
         this.summaryEnabled = summaryEnabled;
-        this.summaryProvider = summaryProvider == null || summaryProvider.isBlank() ? "local" : summaryProvider.trim();
+        // Default to empty so the global LLM provider or explicit env/config can control cloud routing.
+        this.summaryProvider = summaryProvider == null ? "" : summaryProvider.trim();
         this.summaryPreset = summaryPreset == null ? "" : summaryPreset.trim();
         this.summaryModel = summaryModel == null || summaryModel.isBlank() ? "gemma3:1b-it-q4_K_M" : summaryModel.trim();
         this.summaryMaxTokens = Math.max(80, summaryMaxTokens);
@@ -806,7 +808,7 @@ public class NewsSearchSkill implements Skill {
                 continue;
             }
             results.add(new NewsItem(
-                    cleanupText(title),
+                    TitleCleaner.cleanTitle(cleanupText(title)),
                     link.trim(),
                     cleanupText(summary),
                     parseTime(published),
@@ -838,7 +840,7 @@ public class NewsSearchSkill implements Skill {
                 continue;
             }
             results.add(new NewsItem(
-                    cleanupText(title),
+                    TitleCleaner.cleanTitle(cleanupText(title)),
                     link.trim(),
                     cleanupText(summary),
                     parseTime(published),

@@ -16,6 +16,7 @@ import java.util.logging.LogRecord;
 import java.util.logging.Logger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
@@ -516,6 +517,55 @@ class DingtalkStreamMessageDispatcherTest {
 
         assertEquals("已收到，正在处理", sender.messages.get(0));
         assertEquals("服务器网络正常，延迟较低。", sender.messages.get(1));
+    }
+
+    @Test
+    void shouldSanitizeDegradedMarkerInFinalCardReply() throws Exception {
+        ImGatewayService gatewayService = mock(ImGatewayService.class);
+        RecordingConversationSender sender = new RecordingConversationSender(true);
+        DingtalkIntegrationSettings settings = new DingtalkIntegrationSettings(
+                true,
+                true,
+                true,
+                "client-id",
+                "client-secret",
+                DingtalkIntegrationSettings.BOT_MESSAGE_TOPIC,
+                500L,
+                "处理中",
+                false,
+                30000L,
+                true,
+                1000L,
+                60000L,
+                2.0d,
+                0.2d,
+                0,
+                true,
+                "robot-code",
+                "",
+                ""
+        );
+        when(gatewayService.chatAsync("staff-card-safe", "cid-card-safe", "新闻"))
+                .thenReturn(CompletableFuture.completedFuture("[[MINDOS_IM_DEGRADED|provider=local|category=timeout]]"));
+        dispatcher = new DingtalkStreamMessageDispatcher(gatewayService, sender, settings);
+        setPrivateBooleanField(dispatcher, "dingtalkCardEnabled", true);
+        setPrivateBooleanField(dispatcher, "dingtalkMessageUpdateEnabled", false);
+
+        dispatcher.handleIncomingPayload(Map.of(
+                "conversationId", "cid-card-safe",
+                "senderStaffId", "staff-card-safe",
+                "text", Map.of("content", "新闻")
+        ));
+
+        waitUntil(() -> !sender.messages.isEmpty(), 1000);
+
+        assertEquals(1, sender.messages.size());
+        assertTrue(sender.messages.get(0).contains("已完成"));
+        assertTrue(
+                sender.messages.get(0).contains(ImReplySanitizer.TIMEOUT_IM_FALLBACK_REPLY)
+                        || sender.messages.get(0).contains(ImReplySanitizer.FRIENDLY_IM_FALLBACK_REPLY)
+        );
+        assertFalse(sender.messages.get(0).contains("MINDOS_IM_DEGRADED"));
     }
 
     @Test

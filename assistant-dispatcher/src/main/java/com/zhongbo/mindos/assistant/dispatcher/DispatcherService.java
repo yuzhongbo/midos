@@ -2,6 +2,7 @@ package com.zhongbo.mindos.assistant.dispatcher;
 
 import com.zhongbo.mindos.assistant.common.ContextCompressionMetricsReader;
 import com.zhongbo.mindos.assistant.common.DispatcherRoutingMetricsReader;
+import com.zhongbo.mindos.assistant.common.ImDegradedReplyMarker;
 import com.zhongbo.mindos.assistant.common.LlmClient;
 import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.common.SkillDsl;
@@ -99,6 +100,15 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
     private static final Set<String> SMALL_TALK_INPUTS = Set.of(
             "hi", "hello", "hey", "thanks", "thank you", "ok", "okay", "got it", "roger",
             "你好", "您好", "嗨", "谢谢", "多谢", "收到", "好的", "好", "嗯", "嗯嗯", "晚安", "早上好"
+    );
+    private static final Set<String> NEWS_DOMAIN_WHITELIST_TERMS = Set.of(
+            "新闻", "热点", "快讯", "发布", "政策", "监管", "部委", "国务院", "央行",
+            "科技", "ai", "芯片", "大模型", "算力", "机器人", "云计算",
+            "财经", "金融", "经济", "市场", "产业", "融资", "并购", "上市", "财报", "投资", "a股", "港股", "美股"
+    );
+    private static final Set<String> WEATHER_DOMAIN_PENALTY_TERMS = Set.of(
+            "天气", "天气预报", "气温", "降雨", "湿度", "空气质量", "风力", "台风",
+            "accuweather", "weather.com", "weathernews", "中国气象局", "全国天气网"
     );
 
     private final SkillEngine skillEngine;
@@ -406,6 +416,17 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         memoryManager.storeUserConversation(userId, userInput);
         maybeStoreSemanticMemory(userId, userInput);
 
+        // Fast-path: short conversational acknowledgements should avoid expensive routing.
+        String normalizedInputForBypass = normalize(userInput);
+        if (semanticAnalysisSkipShortSimpleEnabled && isConversationalBypassInput(normalizedInputForBypass)) {
+            DispatchResult bypass = handleConversationalBypass(userId, normalizedInputForBypass);
+            return CompletableFuture.completedFuture(bypass);
+        }
+
+        // Fast-path: short conversational acknowledgements (e.g. 谢谢/好的/收到) should avoid
+        // expensive routing and LLM calls. Return a lightweight canned/no-op reply and record
+        // it in conversation history to keep memory consistent.
+
         if (isPromptInjectionAttempt(userInput)) {
             LOGGER.warning("Dispatcher guard=prompt-injection, userId=" + userId + ", input=" + clip(userInput));
             memoryManager.storeAssistantConversation(userId, promptInjectionSafeReply);
@@ -522,6 +543,15 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
 
         memoryManager.storeUserConversation(userId, userInput);
         maybeStoreSemanticMemory(userId, userInput);
+
+        // Fast-path: short conversational acknowledgements should avoid expensive routing
+        // and streaming LLM calls. Mirror the non-streaming `dispatch` behaviour so
+        // short replies like "收到" / "好的" are handled quickly.
+        String normalizedInputForBypass = normalize(userInput);
+        if (semanticAnalysisSkipShortSimpleEnabled && isConversationalBypassInput(normalizedInputForBypass)) {
+            DispatchResult bypass = handleConversationalBypass(userId, normalizedInputForBypass);
+            return CompletableFuture.completedFuture(bypass);
+        }
 
         if (isPromptInjectionAttempt(userInput)) {
             String safeReply = promptInjectionSafeReply;
@@ -642,7 +672,8 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                                             Map<String, Object> llmContext,
                                             boolean realtimeIntentInput) {
         QueryContext queryContext = buildQueryContext(llmContext, userInput, promptMemoryContext);
-        if (!llmDecisionEngine.shouldCallLLM(queryContext)) {
+        boolean realtimeLookup = realtimeIntentInput || isRealtimeIntent(userInput);
+        if (!realtimeLookup && !llmDecisionEngine.shouldCallLLM(queryContext)) {
             return buildMemoryDirectResult(promptMemoryContext, userInput);
         }
         return SkillResult.success("llm", callLlmWithLocalEscalation(
@@ -658,7 +689,8 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                                                      boolean realtimeIntentInput,
                                                      Consumer<String> deltaConsumer) {
         QueryContext queryContext = buildQueryContext(llmContext, userInput, promptMemoryContext);
-        if (!llmDecisionEngine.shouldCallLLM(queryContext)) {
+        boolean realtimeLookup = realtimeIntentInput || isRealtimeIntent(userInput);
+        if (!realtimeLookup && !llmDecisionEngine.shouldCallLLM(queryContext)) {
             SkillResult result = buildMemoryDirectResult(promptMemoryContext, userInput);
             if (deltaConsumer != null) {
                 deltaConsumer.accept(result.output());
@@ -804,17 +836,15 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
     }
 
     private String ensureNewsBriefShape(String optimizedOutput, String rawOutput) {
-        String normalizedOutput = normalizeMultilineText(optimizedOutput);
+        String normalizedOutput = normalizeMultilineText(stripImDegradedMarkers(optimizedOutput));
+        String normalizedRawOutput = normalizeMultilineText(stripImDegradedMarkers(rawOutput));
         if (normalizedOutput.isBlank()) {
             return optimizedOutput == null ? "" : optimizedOutput.trim();
-        }
-        if (normalizedOutput.contains("今日新闻标题：") && normalizedOutput.contains("总结：")) {
-            return normalizedOutput;
         }
 
         List<String> headlines = extractNewsHeadlines(normalizedOutput);
         if (headlines.size() < 2) {
-            headlines = mergeHeadlines(headlines, extractNewsHeadlines(rawOutput));
+            headlines = mergeHeadlines(headlines, extractNewsHeadlines(normalizedRawOutput));
         }
         String summary = extractNewsSummary(normalizedOutput);
         if (summary.isBlank()) {
@@ -852,7 +882,8 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         if (normalized.isBlank()) {
             return List.of();
         }
-        List<String> headlines = new ArrayList<>();
+        List<RankedHeadlineCandidate> rankedCandidates = new ArrayList<>();
+        int sourceOrder = 0;
         for (String line : normalized.split("\n+")) {
             String originalLine = normalizeMultilineText(line);
             String candidate = sanitizeNewsLine(line);
@@ -866,10 +897,16 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
             if (candidate.startsWith("总结：") || candidate.startsWith("总结:")) {
                 continue;
             }
+            if (ImDegradedReplyMarker.parse(candidate).isPresent()) {
+                continue;
+            }
             if (candidate.startsWith("http://") || candidate.startsWith("https://")) {
                 continue;
             }
             if (candidate.startsWith("Brave 搜索（") || candidate.startsWith("Qwen MCP") || candidate.startsWith("搜索结果")) {
+                continue;
+            }
+            if (isLikelyWeatherNoiseLine(candidate)) {
                 continue;
             }
             if (candidate.length() < 4) {
@@ -882,14 +919,27 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
             if (separatorIndex > 0) {
                 candidate = candidate.substring(0, separatorIndex).trim();
             }
-            if (!candidate.isBlank() && headlines.stream().noneMatch(candidate::equals)) {
-                headlines.add(candidate);
+            int domainScore = scoreNewsDomainRelevance(candidate);
+            if (domainScore <= 0) {
+                continue;
             }
-            if (headlines.size() >= 6) {
+            rankedCandidates.add(new RankedHeadlineCandidate(candidate, domainScore, sourceOrder));
+            sourceOrder++;
+        }
+        if (rankedCandidates.isEmpty()) {
+            return List.of();
+        }
+        rankedCandidates.sort(Comparator
+                .comparingInt(RankedHeadlineCandidate::score).reversed()
+                .thenComparingInt(RankedHeadlineCandidate::sourceOrder));
+        LinkedHashSet<String> deduped = new LinkedHashSet<>();
+        for (RankedHeadlineCandidate candidate : rankedCandidates) {
+            deduped.add(candidate.text());
+            if (deduped.size() >= 6) {
                 break;
             }
         }
-        return List.copyOf(headlines);
+        return deduped.isEmpty() ? List.of() : List.copyOf(deduped);
     }
 
     private List<String> mergeHeadlines(List<String> first, List<String> second) {
@@ -911,21 +961,21 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
     }
 
     private String extractNewsSummary(String text) {
-        String normalized = normalizeMultilineText(text);
+        String normalized = normalizeMultilineText(stripImDegradedMarkers(text));
         if (normalized.isBlank()) {
             return "";
         }
         for (String line : normalized.split("\n+")) {
             String candidate = normalizeMultilineText(line);
             if (candidate.startsWith("总结：") || candidate.startsWith("总结:")) {
-                return candidate.substring(candidate.indexOf('：') >= 0 ? candidate.indexOf('：') + 1 : candidate.indexOf(':') + 1).trim();
+                String extracted = candidate.substring(candidate.indexOf('：') >= 0 ? candidate.indexOf('：') + 1 : candidate.indexOf(':') + 1).trim();
+                String sanitized = normalizeMultilineText(stripImDegradedMarkers(extracted));
+                if (!sanitized.isBlank()) {
+                    return sanitized;
+                }
             }
         }
-        String collapsed = normalized.replace('\n', ' ').trim();
-        if (collapsed.length() <= 90) {
-            return collapsed;
-        }
-        return collapsed.substring(0, 90).trim() + "…";
+        return "";
     }
 
     private String synthesizeNewsSummary(List<String> headlines, String fallbackText) {
@@ -935,11 +985,51 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
             }
             return "今天的新闻重点主要集中在“" + headlines.get(0) + "”以及“" + headlines.get(1) + "”等方向，整体仍以持续推进和阶段性进展为主。";
         }
-        String normalized = normalizeMultilineText(fallbackText);
+        String normalized = normalizeMultilineText(stripImDegradedMarkers(fallbackText));
         if (normalized.isBlank()) {
             return "今天的新闻动态以阶段性进展为主，建议结合后续更新持续关注。";
         }
         return normalized.length() <= 90 ? normalized : normalized.substring(0, 90).trim() + "…";
+    }
+
+    private String stripImDegradedMarkers(String text) {
+        String normalized = normalizeMultilineText(text);
+        if (normalized.isBlank()) {
+            return "";
+        }
+        List<String> keptLines = new ArrayList<>();
+        for (String line : normalized.split("\n+")) {
+            String candidate = normalizeMultilineText(line);
+            if (candidate.isBlank()) {
+                continue;
+            }
+            var parsedMarker = ImDegradedReplyMarker.parse(candidate).orElse(null);
+            if (parsedMarker != null) {
+                if (!parsedMarker.remainder().isBlank()) {
+                    keptLines.add(parsedMarker.remainder());
+                }
+                continue;
+            }
+            keptLines.add(candidate);
+        }
+        return keptLines.isEmpty() ? "" : String.join("\n", keptLines);
+    }
+
+
+    private boolean isLikelyWeatherNoiseLine(String line) {
+        String normalized = normalize(line);
+        if (normalized.isBlank()) {
+            return false;
+        }
+        return normalized.contains("天气预报")
+                || normalized.contains("7天天气")
+                || normalized.contains("10天天气")
+                || normalized.contains("15天天气")
+                || normalized.contains("accuweather")
+                || normalized.contains("中国气象局")
+                || normalized.contains("weather.com")
+                || normalized.contains("weathernews")
+                || normalized.contains("全国天气网");
     }
 
     private void logMcpPostprocessTrace(String channel, String rawOutput) {
@@ -1069,21 +1159,21 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         }
         rejectedReasons.add("no explicit SkillDSL detected");
 
-        Map<String, Object> semanticEffectivePayload = buildEffectiveSemanticPayload(userId, semanticAnalysis, userInput);
+        SemanticRoutingPlan semanticPlan = buildSemanticRoutingPlan(userId, semanticAnalysis, userInput);
         Optional<SkillDsl> semanticDsl = isContinuationIntent(normalize(context.input()))
                 ? Optional.empty()
-                : toSemanticSkillDsl(semanticAnalysis, semanticEffectivePayload);
-        if (shouldAskSemanticClarification(semanticAnalysis, context.input(), semanticEffectivePayload)) {
-            String clarifyReply = buildSemanticClarifyReply(semanticAnalysis, semanticEffectivePayload);
+                : toSemanticSkillDsl(semanticPlan);
+        if (shouldAskSemanticClarification(semanticAnalysis, context.input(), semanticPlan)) {
+            String clarifyReply = buildSemanticClarifyReply(semanticAnalysis, semanticPlan);
             LOGGER.info("Dispatcher route=semantic-clarify, userId=" + userId
-                    + ", skill=" + semanticAnalysis.suggestedSkill()
-                    + ", confidence=" + semanticAnalysis.confidence());
+                    + ", skill=" + semanticPlan.skillName()
+                    + ", confidence=" + semanticPlan.confidence());
             return CompletableFuture.completedFuture(new RoutingOutcome(
                     Optional.of(SkillResult.success("semantic.clarify", clarifyReply)),
                     new RoutingDecisionDto(
                             "semantic-clarify",
-                            semanticAnalysis.suggestedSkill() == null ? "" : semanticAnalysis.suggestedSkill(),
-                            semanticAnalysis.confidence(),
+                            semanticPlan.skillName(),
+                            semanticPlan.confidence(),
                             List.of("semantic analysis confidence is low or required parameters are missing, ask for clarification before execution"),
                             List.copyOf(rejectedReasons)
                     )
@@ -1110,7 +1200,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                             .thenApply(result -> new RoutingOutcome(Optional.of(result), new RoutingDecisionDto(
                                     "semantic-analysis",
                                     dsl.skill(),
-                                    Math.max(semanticAnalysisRouteMinConfidence, semanticAnalysis.confidence()),
+                                    Math.max(semanticAnalysisRouteMinConfidence, semanticPlan.confidence()),
                                     List.of("semantic analysis suggested a confident local skill route"),
                                     List.copyOf(rejectedReasons)
                             ))))
@@ -3543,6 +3633,32 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         return isConversationalBypassInput(normalize(userInput));
     }
 
+    private DispatchResult handleConversationalBypass(String userId, String normalizedInput) {
+        String reply = "";
+        if (normalizedInput == null || normalizedInput.isBlank()) {
+            reply = "";
+        } else if (normalizedInput.startsWith("谢谢") || normalizedInput.startsWith("多谢") || normalizedInput.startsWith("thanks")) {
+            reply = "不客气";
+        } else if (normalizedInput.startsWith("收到")) {
+            reply = "已收到";
+        } else if (normalizedInput.startsWith("好的") || normalizedInput.equals("好") || normalizedInput.startsWith("ok") || normalizedInput.startsWith("okay")) {
+            reply = "好的";
+        } else if (normalizedInput.startsWith("hi") || normalizedInput.startsWith("hello") || normalizedInput.startsWith("你好") || normalizedInput.startsWith("嗨") || normalizedInput.startsWith("您好")) {
+            reply = "你好！有什么我可以帮你的吗？";
+        }
+        // Persist assistant reply to conversation history for consistency
+        memoryManager.storeAssistantConversation(userId, reply == null ? "" : reply);
+        RoutingDecisionDto decision = new RoutingDecisionDto(
+                "conversational-bypass",
+                "conversational-bypass",
+                1.0,
+                List.of("short conversational input bypassed routing"),
+                List.of()
+        );
+        ExecutionTraceDto trace = new ExecutionTraceDto("single-pass", 0, null, List.of(), decision);
+        return new DispatchResult(reply == null ? "" : reply, "conversational-bypass", trace);
+    }
+
     private boolean isRealtimeIntent(String userInput) {
         if (!realtimeIntentBypassEnabled || userInput == null || userInput.isBlank()) {
             return false;
@@ -3834,31 +3950,25 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         }
     }
 
-    private Optional<SkillDsl> toSemanticSkillDsl(SemanticAnalysisResult semanticAnalysis,
-                                                  Map<String, Object> effectivePayload) {
-        double suggestedSkillConfidence = resolveSemanticSuggestedSkillConfidence(semanticAnalysis);
-        if (semanticAnalysis == null
-                || !semanticAnalysis.hasSuggestedSkill()
-                || suggestedSkillConfidence < semanticAnalysisRouteMinConfidence
-                // Keep code.generate on the LLM shortlist path so provider/preset stage routing still applies.
-                || "code.generate".equals(semanticAnalysis.suggestedSkill())
-                || !isKnownSkillName(semanticAnalysis.suggestedSkill())) {
+    private Optional<SkillDsl> toSemanticSkillDsl(SemanticRoutingPlan semanticPlan) {
+        if (semanticPlan == null || !semanticPlan.routable() || semanticPlan.skillName().isBlank()) {
             return Optional.empty();
         }
-        Map<String, Object> payload = new LinkedHashMap<>(effectivePayload == null ? Map.of() : effectivePayload);
+        Map<String, Object> payload = new LinkedHashMap<>(semanticPlan.effectivePayload() == null ? Map.of() : semanticPlan.effectivePayload());
         return payload.isEmpty()
-                ? Optional.of(SkillDsl.of(semanticAnalysis.suggestedSkill()))
-                : Optional.of(new SkillDsl(semanticAnalysis.suggestedSkill(), payload));
+                ? Optional.of(SkillDsl.of(semanticPlan.skillName()))
+                : Optional.of(new SkillDsl(semanticPlan.skillName(), payload));
     }
 
     private Map<String, Object> buildEffectiveSemanticPayload(String userId,
                                                               SemanticAnalysisResult semanticAnalysis,
-                                                              String originalInput) {
-        if (semanticAnalysis == null) {
+                                                              String originalInput,
+                                                              String targetSkill) {
+        if (semanticAnalysis == null || targetSkill == null || targetSkill.isBlank()) {
             return Map.of();
         }
         Map<String, Object> payload = new LinkedHashMap<>(semanticAnalysis.payload());
-        switch (semanticAnalysis.suggestedSkill()) {
+        switch (targetSkill) {
             case "code.generate" -> payload.putIfAbsent("task", semanticAnalysis.routingInput(originalInput));
             case "todo.create" -> payload.putIfAbsent("task", semanticAnalysis.routingInput(originalInput));
             case "eq.coach" -> payload.putIfAbsent("query", semanticAnalysis.routingInput(originalInput));
@@ -3870,7 +3980,10 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
             default -> {
             }
         }
-        completeSemanticPayloadFromMemory(userId, semanticAnalysis, payload, originalInput);
+        if (isMcpSearchSkill(targetSkill)) {
+            payload.putIfAbsent("query", semanticAnalysis.routingInput(originalInput));
+        }
+        completeSemanticPayloadFromMemory(userId, targetSkill, semanticAnalysis, payload, originalInput);
         return payload;
     }
 
@@ -3880,7 +3993,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         if (semanticAnalysis == null || semanticAnalysis.summary() == null || semanticAnalysis.summary().isBlank()) {
             return;
         }
-        if (resolveSemanticSuggestedSkillConfidence(semanticAnalysis) < 0.6) {
+        if (resolveSemanticAnalysisConfidence(semanticAnalysis) < 0.6) {
             return;
         }
         String summary = capText(semanticAnalysis.summary(), 220);
@@ -3903,13 +4016,16 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
     }
 
     private void completeSemanticPayloadFromMemory(String userId,
+                                                   String targetSkill,
                                                    SemanticAnalysisResult semanticAnalysis,
                                                    Map<String, Object> payload,
                                                    String originalInput) {
         if (userId == null || userId.isBlank() || payload == null) {
             return;
         }
-        String skill = semanticAnalysis.suggestedSkill();
+        String skill = targetSkill == null || targetSkill.isBlank()
+                ? (semanticAnalysis == null ? "" : semanticAnalysis.suggestedSkill())
+                : targetSkill;
         if (skill == null || skill.isBlank()) {
             return;
         }
@@ -4190,8 +4306,8 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
 
     private boolean shouldAskSemanticClarification(SemanticAnalysisResult semanticAnalysis,
                                                    String input,
-                                                   Map<String, Object> payloadForValidation) {
-        if (semanticAnalysis == null || !semanticAnalysis.hasSuggestedSkill()) {
+                                                   SemanticRoutingPlan semanticPlan) {
+        if (semanticAnalysis == null || semanticPlan == null || semanticPlan.skillName().isBlank()) {
             return false;
         }
         if (isContinuationIntent(normalize(input))) {
@@ -4200,26 +4316,81 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         double threshold = semanticAnalysisClarifyMinConfidence > 0.0
                 ? semanticAnalysisClarifyMinConfidence
                 : SEMANTIC_CLARIFY_CONFIDENCE_THRESHOLD;
-        double unifiedConfidence = resolveSemanticSuggestedSkillConfidence(semanticAnalysis);
-        if (unifiedConfidence > 0.0 && unifiedConfidence < threshold) {
-            return true;
-        }
-        return !missingRequiredParamsForSkill(semanticAnalysis.suggestedSkill(), payloadForValidation).isEmpty();
+        boolean lowConfidence = semanticPlan.confidence() > 0.0 && semanticPlan.confidence() < threshold;
+        boolean missingRequiredParams = !missingRequiredParamsForSkill(semanticPlan.skillName(), semanticPlan.effectivePayload()).isEmpty();
+        return lowConfidence || missingRequiredParams;
     }
 
-    private double resolveSemanticSuggestedSkillConfidence(SemanticAnalysisResult semanticAnalysis) {
+    private SemanticRoutingPlan buildSemanticRoutingPlan(String userId,
+                                                         SemanticAnalysisResult semanticAnalysis,
+                                                         String originalInput) {
+        String skillName = resolveSemanticRoutingSkill(semanticAnalysis);
+        if (skillName.isBlank()) {
+            return SemanticRoutingPlan.empty();
+        }
+        Map<String, Object> effectivePayload = buildEffectiveSemanticPayload(userId, semanticAnalysis, originalInput, skillName);
+        double confidence = resolveSemanticRouteConfidence(semanticAnalysis, skillName);
+        boolean routable = confidence >= semanticAnalysisRouteMinConfidence && isSemanticDirectSkillCandidate(skillName);
+        return new SemanticRoutingPlan(skillName, effectivePayload, confidence, routable);
+    }
+
+    private String resolveSemanticRoutingSkill(SemanticAnalysisResult semanticAnalysis) {
+        if (semanticAnalysis == null) {
+            return "";
+        }
+        List<String> candidates = new ArrayList<>();
+        String suggestedSkill = normalizeOptional(semanticAnalysis.suggestedSkill());
+        if (!suggestedSkill.isBlank()) {
+            candidates.add(suggestedSkill);
+        }
+        semanticAnalysis.candidateIntents().stream()
+                .sorted((left, right) -> Double.compare(right.confidence(), left.confidence()))
+                .map(SemanticAnalysisResult.CandidateIntent::intent)
+                .map(this::normalizeOptional)
+                .filter(candidate -> !candidate.isBlank() && !candidates.contains(candidate))
+                .forEach(candidates::add);
+        return candidates.stream()
+                .filter(this::isSemanticDirectSkillCandidate)
+                .max(java.util.Comparator.comparingDouble(candidate -> resolveSemanticRouteConfidence(semanticAnalysis, candidate)))
+                .orElse("");
+    }
+
+    private boolean isSemanticDirectSkillCandidate(String skillName) {
+        if (skillName == null || skillName.isBlank()) {
+            return false;
+        }
+        if ("semantic.analyze".equals(skillName)) {
+            return false;
+        }
+        // Keep code.generate on the LLM shortlist path so provider/preset stage routing still applies.
+        if ("code.generate".equals(skillName)) {
+            return false;
+        }
+        return isKnownSkillName(skillName);
+    }
+
+    private double resolveSemanticRouteConfidence(SemanticAnalysisResult semanticAnalysis, String skillName) {
+        if (semanticAnalysis == null || skillName == null || skillName.isBlank()) {
+            return 0.0;
+        }
+        return Math.max(semanticAnalysis.confidence(), semanticAnalysis.confidenceForSkill(skillName));
+    }
+
+    private double resolveSemanticAnalysisConfidence(SemanticAnalysisResult semanticAnalysis) {
         if (semanticAnalysis == null) {
             return 0.0;
         }
-        double directConfidence = semanticAnalysis.confidence();
-        double candidateConfidence = semanticAnalysis.confidenceForSkill(semanticAnalysis.suggestedSkill());
-        return Math.max(directConfidence, candidateConfidence);
+        String bestSkill = resolveSemanticRoutingSkill(semanticAnalysis);
+        if (bestSkill.isBlank()) {
+            return semanticAnalysis.confidence();
+        }
+        return resolveSemanticRouteConfidence(semanticAnalysis, bestSkill);
     }
 
     private String buildSemanticClarifyReply(SemanticAnalysisResult semanticAnalysis,
-                                             Map<String, Object> payloadForValidation) {
-        String skill = semanticAnalysis == null ? "" : normalizeOptional(semanticAnalysis.suggestedSkill());
-        List<String> missing = semanticAnalysis == null ? List.of() : missingRequiredParamsForSkill(skill, payloadForValidation);
+                                             SemanticRoutingPlan semanticPlan) {
+        String skill = semanticPlan == null ? "" : normalizeOptional(semanticPlan.skillName());
+        List<String> missing = semanticPlan == null ? List.of() : missingRequiredParamsForSkill(skill, semanticPlan.effectivePayload());
         StringBuilder reply = new StringBuilder("我理解你想执行");
         reply.append(skill.isBlank() ? "相关操作" : " `" + skill + "`");
         if (semanticAnalysis != null && semanticAnalysis.summary() != null && !semanticAnalysis.summary().isBlank()) {
@@ -4268,6 +4439,37 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
     private static final class RoutingReplayProbe {
         private String ruleCandidate = "NONE";
         private String preAnalyzeCandidate = "NOT_RUN";
+    }
+
+    private record SemanticRoutingPlan(String skillName,
+                                       Map<String, Object> effectivePayload,
+                                       double confidence,
+                                       boolean routable) {
+        private static SemanticRoutingPlan empty() {
+            return new SemanticRoutingPlan("", Map.of(), 0.0, false);
+        }
+    }
+
+    private int scoreNewsDomainRelevance(String line) {
+        String normalized = normalize(line);
+        if (normalized.isBlank()) {
+            return 0;
+        }
+        int score = 0;
+        for (String keyword : NEWS_DOMAIN_WHITELIST_TERMS) {
+            if (normalized.contains(keyword)) {
+                score += 2;
+            }
+        }
+        for (String keyword : WEATHER_DOMAIN_PENALTY_TERMS) {
+            if (normalized.contains(keyword)) {
+                score -= 3;
+            }
+        }
+        return score;
+    }
+
+    private record RankedHeadlineCandidate(String text, int score, int sourceOrder) {
     }
 
     private String inferMemoryBucket(String input) {
