@@ -9,6 +9,11 @@ import com.zhongbo.mindos.assistant.memory.model.ProceduralMemoryEntry;
 import com.zhongbo.mindos.assistant.memory.model.SemanticMemoryEntry;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.support.GeneratedKeyHolder;
+import org.springframework.jdbc.support.KeyHolder;
+
+import java.sql.PreparedStatement;
+import java.sql.Statement;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -89,10 +94,19 @@ public class JdbcCentralMemoryRepository implements CentralMemoryRepository {
 
         try {
             String insertSql = "insert into memory_event(user_id, event_type, payload_json, event_id) values (?, ?, ?, ?)";
-            jdbcTemplate.update(insertSql, userId, eventType, payloadJson, effectiveEventId);
+            KeyHolder keyHolder = new GeneratedKeyHolder();
+            jdbcTemplate.update(connection -> {
+                PreparedStatement ps = connection.prepareStatement(insertSql, Statement.RETURN_GENERATED_KEYS);
+                ps.setString(1, userId);
+                ps.setString(2, eventType);
+                ps.setString(3, payloadJson);
+                ps.setString(4, effectiveEventId);
+                return ps;
+            }, keyHolder);
 
-            Long cursor = jdbcTemplate.queryForObject("select last_insert_id()", Long.class);
-            return new MemoryAppendResult(cursor == null ? 0L : cursor, true);
+            Number key = keyHolder.getKey();
+            Long cursor = key == null ? 0L : key.longValue();
+            return new MemoryAppendResult(cursor, true);
         } catch (DuplicateKeyException duplicateKeyException) {
             if (effectiveEventId == null) {
                 throw duplicateKeyException;
