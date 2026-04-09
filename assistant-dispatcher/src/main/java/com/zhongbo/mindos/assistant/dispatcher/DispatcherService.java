@@ -335,10 +335,11 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         this.promptBuilder = new PromptBuilder();
         this.llmDecisionEngine = new LLMDecisionEngine();
         this.decisionParser = new DecisionParser();
-        ParamSchemaRegistry paramSchemaRegistry = new InMemoryParamSchemaRegistry();
+        InMemoryParamSchemaRegistry paramSchemaRegistry = new InMemoryParamSchemaRegistry();
+        paramSchemaRegistry.registerDefaults();
         this.paramValidator = new SimpleParamValidator(paramSchemaRegistry);
         CandidatePlanner candidatePlanner = new SimpleCandidatePlanner();
-        this.decisionOrchestrator = new DefaultDecisionOrchestrator(candidatePlanner, this.paramValidator, new SimpleConversationLoop());
+        this.decisionOrchestrator = new DefaultDecisionOrchestrator(candidatePlanner, this.paramValidator, new SimpleConversationLoop(), new SimpleFallbackPlan());
         this.memoryGateway = new DefaultMemoryGateway(memoryManager);
         this.preferenceReuseEnabled = preferenceReuseEnabled;
         this.habitRoutingEnabled = habitRoutingEnabled;

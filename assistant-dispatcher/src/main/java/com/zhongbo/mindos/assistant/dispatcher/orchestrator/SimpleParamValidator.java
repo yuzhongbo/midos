@@ -22,8 +22,20 @@ public class SimpleParamValidator implements ParamValidator {
         }
         Map<String, Object> safeParams = params == null ? Map.of() : params;
         return registry.find(target)
-                .map(schema -> validateRequired(schema.required(), safeParams))
+                .map(schema -> validateAgainstSchema(schema, safeParams))
                 .orElseGet(ValidationResult::ok);
+    }
+
+    private ValidationResult validateAgainstSchema(ParamSchema schema, Map<String, Object> params) {
+        ValidationResult missingRequired = validateRequired(schema.required(), params);
+        if (!missingRequired.valid()) {
+            return missingRequired;
+        }
+        ValidationResult atLeastOne = validateAtLeastOne(schema.atLeastOne(), params);
+        if (!atLeastOne.valid()) {
+            return atLeastOne;
+        }
+        return ValidationResult.ok();
     }
 
     private ValidationResult validateRequired(Set<String> required, Map<String, Object> params) {
@@ -36,7 +48,18 @@ public class SimpleParamValidator implements ParamValidator {
         if (missing.isEmpty()) {
             return ValidationResult.ok();
         }
-        return ValidationResult.error("missing required params: " + String.join(",", missing));
+        return ValidationResult.error("缺少必填参数: " + String.join(",", missing));
+    }
+
+    private ValidationResult validateAtLeastOne(Set<String> candidates, Map<String, Object> params) {
+        if (candidates == null || candidates.isEmpty()) {
+            return ValidationResult.ok();
+        }
+        boolean present = candidates.stream().anyMatch(key -> params.containsKey(key) && !isBlank(params.get(key)));
+        if (present) {
+            return ValidationResult.ok();
+        }
+        return ValidationResult.error("至少需要提供以下参数之一: " + String.join(",", candidates));
     }
 
     private boolean isBlank(Object value) {
