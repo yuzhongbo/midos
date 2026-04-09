@@ -3,7 +3,6 @@ package com.zhongbo.mindos.assistant.skill;
 import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.common.SkillDsl;
 import com.zhongbo.mindos.assistant.common.SkillResult;
-import com.zhongbo.mindos.assistant.memory.MemoryGateway;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
@@ -31,15 +30,12 @@ public class SkillEngine {
 
     private final SkillRegistry skillRegistry;
     private final SkillDslExecutor dslExecutor;
-    private final MemoryGateway memoryGateway;
     private final ExecutorService skillExecutor = Executors.newFixedThreadPool(4);
 
     public SkillEngine(SkillRegistry skillRegistry,
-                       SkillDslExecutor dslExecutor,
-                       MemoryGateway memoryGateway) {
+                       SkillDslExecutor dslExecutor) {
         this.skillRegistry = skillRegistry;
         this.dslExecutor = dslExecutor;
-        this.memoryGateway = memoryGateway;
     }
 
     public Optional<SkillResult> executeDetectedSkill(SkillContext context) {
@@ -147,8 +143,6 @@ public class SkillEngine {
                 + ", endTime=" + endTime
                 + ", durationMs=" + durationMs
                 + ", success=" + result.success());
-
-        memoryGateway.recordSkillUsage(userId, result.skillName(), input, result.success());
         return result;
     }
 
