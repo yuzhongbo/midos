@@ -163,16 +163,8 @@ public class SemanticAnalysisService {
             return SemanticAnalysisResult.empty();
         }
         SemanticAnalysisResult best = heuristicAnalysis(userInput);
-
-        Optional<SemanticAnalysisResult> delegated = analyzeWithDelegateSkill(userId, userInput, memoryContext, profileContext, availableSkillSummaries);
-        if (delegated.isPresent() && delegated.get().confidence() >= best.confidence()) {
-            best = delegated.get();
-        }
-
-        Optional<SemanticAnalysisResult> llm = analyzeWithLlm(userId, userInput, memoryContext, profileContext, availableSkillSummaries, best);
-        if (llm.isPresent() && llm.get().confidence() >= best.confidence()) {
-            best = llm.get();
-        }
+        best = preferHigherConfidence(best, analyzeWithDelegateSkill(userId, userInput, memoryContext, profileContext, availableSkillSummaries));
+        best = preferHigherConfidence(best, analyzeWithLlm(userId, userInput, memoryContext, profileContext, availableSkillSummaries, best));
         return sanitize(best, userInput);
     }
 
@@ -189,15 +181,11 @@ public class SemanticAnalysisService {
             return Optional.empty();
         }
         try {
-            Map<String, Object> attributes = new LinkedHashMap<>();
-            attributes.put("input", userInput);
-            attributes.put("memoryContext", memoryContext == null ? "" : memoryContext);
-            attributes.put("availableSkills", availableSkillSummaries == null ? List.of() : availableSkillSummaries);
-            attributes.put("responseFormat", "json");
-            if (profileContext != null && !profileContext.isEmpty()) {
-                attributes.put("profile", profileContext);
-            }
-            SkillResult result = delegateSkill.get().run(new SkillContext(userId, userInput, attributes));
+            SkillResult result = delegateSkill.get().run(new SkillContext(
+                    userId,
+                    userInput,
+                    buildDelegateSkillAttributes(userInput, memoryContext, profileContext, availableSkillSummaries)
+            ));
             if (result == null || !result.success()) {
                 return Optional.empty();
             }
@@ -254,7 +242,7 @@ public class SemanticAnalysisService {
                     semanticCloudPreset.isBlank() ? llmPreset : semanticCloudPreset,
                     semanticCloudModel
             );
-            if (cloudResult.isPresent() && (localResult.isEmpty() || cloudResult.get().confidence() >= localResult.get().confidence())) {
+            if (isPreferred(cloudResult, localResult.orElse(null))) {
                 LOGGER.info("semantic.analysis.local.escalate.accepted cloudConfidence=" + cloudResult.get().confidence());
                 return cloudResult;
             }
@@ -337,6 +325,33 @@ public class SemanticAnalysisService {
             context.put("profile", profileContext);
         }
         return context;
+    }
+
+    private SemanticAnalysisResult preferHigherConfidence(SemanticAnalysisResult baseline,
+                                                          Optional<SemanticAnalysisResult> candidate) {
+        if (!isPreferred(candidate, baseline)) {
+            return baseline;
+        }
+        return candidate.orElse(baseline);
+    }
+
+    private boolean isPreferred(Optional<SemanticAnalysisResult> candidate, SemanticAnalysisResult baseline) {
+        return candidate.isPresent() && (baseline == null || candidate.get().confidence() >= baseline.confidence());
+    }
+
+    private Map<String, Object> buildDelegateSkillAttributes(String userInput,
+                                                             String memoryContext,
+                                                             Map<String, Object> profileContext,
+                                                             List<String> availableSkillSummaries) {
+        Map<String, Object> attributes = new LinkedHashMap<>();
+        attributes.put("input", userInput);
+        attributes.put("memoryContext", memoryContext == null ? "" : memoryContext);
+        attributes.put("availableSkills", availableSkillSummaries == null ? List.of() : availableSkillSummaries);
+        attributes.put("responseFormat", "json");
+        if (profileContext != null && !profileContext.isEmpty()) {
+            attributes.put("profile", profileContext);
+        }
+        return attributes;
     }
 
     private Optional<SemanticAnalysisResult> parseResult(String raw, String source) {

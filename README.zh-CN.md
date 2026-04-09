@@ -878,7 +878,7 @@ Tips:
   - example: `./mvnw -q -pl assistant-memory -am test -Dtest=MemorySyncServiceTest#shouldMeetBasicSyncPerformanceBaseline -Dsurefire.failIfNoSpecifiedTests=false -Dmindos.memory.sync.perf-baseline-ms=5000 -Dmindos.memory.sync.perf-retries=2`
 - Memory NLU synonyms for style/compress intents are configurable via JVM system properties (`-Dmindos.memory.nlu.*`); values are comma-separated terms and normalize to canonical values used by API/CLI (`focus`: `task|learning|review`, `style`: `action|coach|story|concise`, `tone`: `warm|direct|neutral`, `format`: `bullet|plain`).
 - `eq.coach` supports optional output controls: `style` (`gentle|direct|workplace|intimate`), `mode` (`analysis|reply|both`), `priorityFocus` (`p1|p2|p3`).
-- `news_search` 默认支持 `36kr` 与统一配置的搜索源；当配置了 `mindos.skills.search-sources` / `mindos.skill.news-search.search-sources` 且用户未显式指定 `source` 时，会优先使用配置搜索源，`source=36kr` 时仍强制走 36kr。
+- `news_search` 默认支持 `36kr` 与统一配置的搜索源；当配置了 `mindos.skills.search-sources` 且用户未显式指定 `source` 时，会优先使用配置搜索源，`source=36kr` 时仍强制走 36kr。
   - 入口示例：`news_search AI 芯片`
   - 参数示例：`news_search AI source=serper sort=relevance limit=5`（`source=<已配置 alias>|36kr|all`，`sort=latest|relevance`）
   - 也支持自然语言条数：如 `news_search AI 前五条`
@@ -886,14 +886,13 @@ Tips:
   - 新闻列表缓存与摘要结果缓存共用 `mindos.skill.news-search.cache-*` TTL
   - 主要配置：
     - `mindos.skill.news-search.kr-feed-url`
-    - `mindos.skill.news-search.search-sources`（推荐，统一配置入口）
-    - `mindos.skills.search-sources`（可复用给 MCP 查询源）
-    - `mindos.skill.news-search.serper.*`（兼容旧配置）
+    - `mindos.skills.search-sources`（唯一推荐入口，news_search 与搜索型 MCP 共用）
+    - `mindos.skill.news-search.serper.*`（仅兼容旧配置）
     - `mindos.skill.news-search.cache-ttl-seconds`
     - `mindos.skill.news-search.summary-provider` / `mindos.skill.news-search.summary-model`（默认 `qwen` + `qwen3.6-plus`）
 - Serper 搜索能力已经内置为可配置项：
   - MCP 快捷搜索可通过 `mindos.skills.mcp.serper.*` 配置地址与 `X-API-KEY`，自动注册为 `mcp.<alias>.webSearch`
-  - 推荐优先使用 `mindos.skills.search-sources` / `mindos.skill.news-search.search-sources` 统一维护多查询源；`mindos.skill.news-search.serper.*` 仍可作为兼容回退
+  - 推荐优先使用 `mindos.skills.search-sources` 统一维护多查询源；旧的 `mindos.skill.news-search.search-sources` / `mindos.skill.news-search.serper.*` 仅保留兼容回退
   - 当前暂不添加 `scholar` 路径；如果后续需要，再按同样模式补一组可配置 URL 即可
 - `eq.coach` risk terms are configurable via JVM properties (comma-separated):
   - `mindos.eq.coach.risk.high-terms`

@@ -28,8 +28,7 @@ class DefaultDecisionOrchestratorTest {
                 skillEngine,
                 noopRecorder(),
                 parallelMcp,
-                500,
-                ""
+                500
         );
     }
 
@@ -53,8 +52,7 @@ class DefaultDecisionOrchestratorTest {
                 simpleSkillEngine(Map.of()),
                 noopRecorder(),
                 false,
-                500,
-                ""
+                500
         );
         Decision decision = new Decision("plan", "teaching.plan", Map.of(), 0.72, false);
 

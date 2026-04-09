@@ -240,8 +240,12 @@ public class McpSkillLoader {
         Map<String, Map<String, String>> headersByAlias = new LinkedHashMap<>(parseHeadersConfig(configuredServerHeaders));
         logConfigPrecedenceHints();
         mergeSearchSources(servers, headersByAlias, configuredSearchSources);
-        mergeBraveConfig(servers, headersByAlias);
-        mergeSerperConfig(servers, headersByAlias);
+        if (hasConfiguredSearchSources()) {
+            logShortcutDeprecationHints();
+        } else {
+            mergeBraveConfig(servers, headersByAlias);
+            mergeSerperConfig(servers, headersByAlias);
+        }
         int total = 0;
         for (Map.Entry<String, String> entry : servers.entrySet()) {
             Map<String, String> headers = headersByAlias.getOrDefault(normalizeAlias(entry.getKey()), Map.of());
@@ -375,16 +379,48 @@ public class McpSkillLoader {
         if (source == null) {
             return;
         }
+        if (!registerSearchSource(servers, headersByAlias, source, true, label)) {
+            LOGGER.warning("McpSkillLoader: " + label + " MCP enabled but no URL configured; skipping " + label + " registration.");
+        }
+    }
+
+
+    private void mergeSearchSources(Map<String, String> servers,
+                                    Map<String, Map<String, String>> headersByAlias,
+                                    String rawSources) {
+        for (SearchSourceConfig source : SearchSourceConfig.parseList(rawSources)) {
+            registerSearchSource(servers, headersByAlias, source, false, "search source");
+        }
+    }
+
+    private boolean registerSearchSource(Map<String, String> servers,
+                                         Map<String, Map<String, String>> headersByAlias,
+                                         SearchSourceConfig source,
+                                         boolean logCollisionAsShortcut,
+                                         String label) {
+        if (source == null) {
+            return false;
+        }
         String alias = normalizeAlias(source.alias());
         String url = source.resolvedMcpUrl();
         if (alias.isBlank() || url.isBlank() || isPlaceholder(url)) {
-            LOGGER.warning("McpSkillLoader: " + label + " MCP enabled but no URL configured; skipping " + label + " registration.");
-            return;
+            return false;
         }
         if (servers.containsKey(alias)) {
-            LOGGER.info("McpSkillLoader: " + label + " shortcut alias='" + alias + "' skipped because an explicit MCP/search-source entry already exists.");
+            if (logCollisionAsShortcut) {
+                LOGGER.info("McpSkillLoader: " + label + " shortcut alias='" + alias + "' skipped because an explicit MCP/search-source entry already exists.");
+            } else {
+                LOGGER.info("McpSkillLoader: search source alias='" + alias + "' skipped because an explicit MCP server entry already exists.");
+            }
         }
         servers.putIfAbsent(alias, url);
+        mergeApiKeyHeader(headersByAlias, alias, source);
+        return true;
+    }
+
+    private void mergeApiKeyHeader(Map<String, Map<String, String>> headersByAlias,
+                                   String alias,
+                                   SearchSourceConfig source) {
         String apiKey = source.apiKey() == null ? "" : source.apiKey().trim();
         if (apiKey.isBlank() || isPlaceholder(apiKey)) {
             return;
@@ -395,44 +431,29 @@ public class McpSkillLoader {
         headersByAlias.put(alias, Map.copyOf(mergedHeaders));
     }
 
-
-    private void mergeSearchSources(Map<String, String> servers,
-                                    Map<String, Map<String, String>> headersByAlias,
-                                    String rawSources) {
-        for (SearchSourceConfig source : SearchSourceConfig.parseList(rawSources)) {
-            String alias = normalizeAlias(source.alias());
-            String url = source.resolvedMcpUrl();
-            if (alias.isBlank() || url.isBlank() || isPlaceholder(url)) {
-                continue;
-            }
-            if (servers.containsKey(alias)) {
-                LOGGER.info("McpSkillLoader: search source alias='" + alias + "' skipped because an explicit MCP server entry already exists.");
-            }
-            servers.putIfAbsent(alias, url);
-            String apiKey = source.apiKey() == null ? "" : source.apiKey().trim();
-            if (apiKey.isBlank() || isPlaceholder(apiKey)) {
-                continue;
-            }
-            String headerName = source.resolvedApiKeyHeader();
-            Map<String, String> mergedHeaders = new LinkedHashMap<>(headersByAlias.getOrDefault(alias, Map.of()));
-            mergedHeaders.putIfAbsent(headerName, apiKey);
-            headersByAlias.put(alias, Map.copyOf(mergedHeaders));
-        }
-    }
-
     private void logConfigPrecedenceHints() {
         boolean hasExplicitServers = configuredServers != null && !configuredServers.isBlank();
         boolean hasExplicitHeaders = configuredServerHeaders != null && !configuredServerHeaders.isBlank();
-        boolean hasSearchSources = configuredSearchSources != null && !configuredSearchSources.isBlank();
+        boolean hasSearchSources = hasConfiguredSearchSources();
         if (hasSearchSources && hasExplicitServers) {
             LOGGER.info("McpSkillLoader: both mindos.skills.mcp-servers and mindos.skills.search-sources are configured; explicit MCP server entries keep precedence on alias collisions.");
-        }
-        if (hasSearchSources && (braveEnabled || serperEnabled)) {
-            LOGGER.info("McpSkillLoader: unified search sources are configured; brave/serper shortcut configs act as fallback only when their alias is not already provided.");
         }
         if (hasExplicitHeaders && !hasExplicitServers) {
             LOGGER.info("McpSkillLoader: mindos.skills.mcp-server-headers is set without explicit mcp-servers; headers will only apply if aliases are supplied by search-source or shortcut configs.");
         }
+    }
+
+    private void logShortcutDeprecationHints() {
+        if (braveEnabled) {
+            LOGGER.info("McpSkillLoader: mindos.skills.search-sources is configured; deprecated brave shortcut config is ignored.");
+        }
+        if (serperEnabled) {
+            LOGGER.info("McpSkillLoader: mindos.skills.search-sources is configured; deprecated serper shortcut config is ignored.");
+        }
+    }
+
+    private boolean hasConfiguredSearchSources() {
+        return configuredSearchSources != null && !configuredSearchSources.isBlank();
     }
 
 

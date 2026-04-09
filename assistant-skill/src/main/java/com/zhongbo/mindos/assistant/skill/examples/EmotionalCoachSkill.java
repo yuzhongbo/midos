@@ -11,14 +11,16 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Pattern;
 
 @Component
 public class EmotionalCoachSkill implements Skill {
 
     private static final String RISK_HIGH_TERMS_PROP = "mindos.eq.coach.risk.high-terms";
     private static final String RISK_MEDIUM_TERMS_PROP = "mindos.eq.coach.risk.medium-terms";
-    private static final Set<String> DEFAULT_RISK_HIGH_TERMS = Set.of("离婚", "分手", "崩溃", "绝望", "威胁");
-    private static final Set<String> DEFAULT_RISK_MEDIUM_TERMS = Set.of("冲突", "冷战", "争执", "焦虑", "拖延");
+    private static final Set<String> DEFAULT_RISK_HIGH_TERMS = Set.of("离婚", "分手", "崩溃", "绝望", "威胁", "不想活", "轻生", "伤害自己", "失控");
+    private static final Set<String> DEFAULT_RISK_MEDIUM_TERMS = Set.of("冲突", "冷战", "争执", "焦虑", "拖延", "委屈", "崩不住");
+    private static final Pattern LEADING_NOISE_PATTERN = Pattern.compile("^(?:请|请帮我|帮我|麻烦你|想让你|我想要|给我)(?:用|来)?");
 
     private static final Map<String, String> STYLE_LABELS = Map.of(
             "gentle", "温和版",
@@ -39,7 +41,7 @@ public class EmotionalCoachSkill implements Skill {
 
     @Override
     public List<String> routingKeywords() {
-        return List.of("情商", "沟通", "怎么说", "高情商", "心理分析", "事情分析", "分析这件事", "道歉", "安慰", "冲突", "拒绝");
+        return List.of("情商", "沟通", "怎么说", "高情商", "心理分析", "事情分析", "分析这件事", "道歉", "安慰", "冲突", "拒绝", "怎么回复", "回什么", "话术");
     }
 
     @Override
@@ -58,7 +60,10 @@ public class EmotionalCoachSkill implements Skill {
                 || normalized.contains("道歉")
                 || normalized.contains("安慰")
                 || normalized.contains("冲突")
-                || normalized.contains("拒绝");
+                || normalized.contains("拒绝")
+                || normalized.contains("怎么回复")
+                || normalized.contains("回什么")
+                || normalized.contains("话术");
     }
 
     @Override
@@ -68,10 +73,10 @@ public class EmotionalCoachSkill implements Skill {
             return SkillResult.failure(name(), "请告诉我一个具体场景，我会给你高情商沟通建议。");
         }
 
-        String style = normalizeStyle(context.attributes().get("style"));
+        String style = normalizeStyle(firstNonBlank(attributeText(context, "style"), inferStyle(context.input(), scenario)));
         String styleLabel = STYLE_LABELS.getOrDefault(style, "温和版");
-        String mode = normalizeMode(context.attributes().get("mode"));
-        String priorityFocus = normalizePriorityFocus(context.attributes().get("priorityFocus"));
+        String mode = normalizeMode(firstNonBlank(attributeText(context, "mode"), inferMode(context.input())));
+        String priorityFocus = normalizePriorityFocus(firstNonBlank(attributeText(context, "priorityFocus"), inferPriorityFocus(context.input())));
         String riskLevel = assessRiskLevel(scenario);
         int confidence = estimateConfidence(scenario);
 
@@ -80,6 +85,9 @@ public class EmotionalCoachSkill implements Skill {
         output.append("模式: ").append(mode).append("\n");
         output.append("风险等级: ").append(riskLevel)
                 .append(" | 置信度: ").append(confidence).append("%\n\n");
+        if ("高".equals(riskLevel)) {
+            output.append("提示：如果已经影响到人身安全，或你担心自己/对方出现明显失控，请优先联系身边可信任的人或当地紧急/心理援助资源。\n\n");
+        }
         if (!"analysis".equals(mode)) {
             output.append(buildReplyByStyle(style, scenario, styleLabel));
         }
@@ -177,14 +185,19 @@ public class EmotionalCoachSkill implements Skill {
     }
 
     private String resolveScenario(SkillContext context) {
-        Object query = context.attributes().get("query");
+        String query = attributeText(context, "query");
         if (query != null && !String.valueOf(query).isBlank()) {
-            return String.valueOf(query).trim();
+            return query.trim();
         }
-        return context.input() == null ? "" : context.input().trim();
+        String input = context == null || context.input() == null ? "" : context.input().trim();
+        String scenario = LEADING_NOISE_PATTERN.matcher(input).replaceFirst("").trim();
+        scenario = scenario.replaceAll("(?i)(高情商|怎么说更好|怎么说|怎么回复|回什么|请分析|分析一下|只分析|只要分析|只要回复|只给我回复|直接版|温和版|职场版|亲密关系版|先看p1|先看p2|先看p3|最重要|先止损|更好)", " ");
+        scenario = scenario.replaceAll("\\s*[,，。；;]\\s*", " ");
+        scenario = scenario.replaceAll("\\s+", " ").trim();
+        return scenario;
     }
 
-    private String normalizeStyle(Object rawStyle) {
+    private String normalizeStyle(String rawStyle) {
         if (rawStyle == null) {
             return "gentle";
         }
@@ -204,7 +217,7 @@ public class EmotionalCoachSkill implements Skill {
         return "gentle";
     }
 
-    private String normalizeMode(Object rawMode) {
+    private String normalizeMode(String rawMode) {
         if (rawMode == null) {
             return "both";
         }
@@ -266,7 +279,7 @@ public class EmotionalCoachSkill implements Skill {
         return Math.min(score, 92);
     }
 
-    private String normalizePriorityFocus(Object rawFocus) {
+    private String normalizePriorityFocus(String rawFocus) {
         if (rawFocus == null) {
             return null;
         }
@@ -323,5 +336,73 @@ public class EmotionalCoachSkill implements Skill {
                 + "4) 同步后复盘一次：哪些表达有效，哪些需要调整。\n"
                 + "5) " + focusedAction + "\n\n";
     }
-}
 
+    private String inferStyle(String input, String scenario) {
+        String normalized = firstNonBlank(input, scenario).toLowerCase(Locale.ROOT);
+        if (normalized.contains("直接版") || normalized.contains("直接一点") || normalized.contains("强硬一点")) {
+            return "direct";
+        }
+        if (normalized.contains("职场版") || normalized.contains("老板") || normalized.contains("同事") || normalized.contains("上级")) {
+            return "workplace";
+        }
+        if (normalized.contains("亲密关系") || normalized.contains("伴侣") || normalized.contains("男朋友") || normalized.contains("女朋友") || normalized.contains("老公") || normalized.contains("老婆")) {
+            return "intimate";
+        }
+        if (normalized.contains("温和") || normalized.contains("委婉")) {
+            return "gentle";
+        }
+        return "";
+    }
+
+    private String inferMode(String input) {
+        String normalized = input == null ? "" : input.toLowerCase(Locale.ROOT);
+        boolean wantsAnalysis = normalized.contains("分析") || normalized.contains("心理分析");
+        boolean wantsReply = normalized.contains("怎么回复")
+                || normalized.contains("回什么")
+                || normalized.contains("只要话术")
+                || normalized.contains("只看话术")
+                || normalized.contains("回复模板")
+                || normalized.contains("直接发");
+        if (normalized.contains("只分析") || (wantsAnalysis && !wantsReply)) {
+            return "analysis";
+        }
+        if (normalized.contains("只要回复") || normalized.contains("只给我回复") || (wantsReply && !wantsAnalysis)) {
+            return "reply";
+        }
+        return "";
+    }
+
+    private String inferPriorityFocus(String input) {
+        String normalized = input == null ? "" : input.toLowerCase(Locale.ROOT);
+        if (normalized.contains("p1") || normalized.contains("最重要") || normalized.contains("先止损")) {
+            return "p1";
+        }
+        if (normalized.contains("p2") || normalized.contains("第二步")) {
+            return "p2";
+        }
+        if (normalized.contains("p3") || normalized.contains("最后再看")) {
+            return "p3";
+        }
+        return "";
+    }
+
+    private String attributeText(SkillContext context, String key) {
+        if (context == null || context.attributes() == null || key == null) {
+            return "";
+        }
+        Object value = context.attributes().get(key);
+        return value == null ? "" : String.valueOf(value).trim();
+    }
+
+    private String firstNonBlank(String... values) {
+        if (values == null) {
+            return "";
+        }
+        for (String value : values) {
+            if (value != null && !value.isBlank()) {
+                return value.trim();
+            }
+        }
+        return "";
+    }
+}

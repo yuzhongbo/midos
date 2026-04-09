@@ -13,7 +13,6 @@ import org.springframework.stereotype.Component;
 
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -21,6 +20,14 @@ import java.util.concurrent.TimeUnit;
 
 @Component
 public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
+    private static final List<String> DEFAULT_PARALLEL_MCP_PRIORITY_ORDER = List.of(
+            "mcp.serper.websearch",
+            "mcp.serpapi.websearch",
+            "mcp.bravesearch.websearch",
+            "mcp.brave.websearch",
+            "mcp.qwensearch.websearch",
+            "mcp.qwen.websearch"
+    );
 
     private final CandidatePlanner candidatePlanner;
     private final ParamValidator paramValidator;
@@ -39,8 +46,7 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
                                        SkillEngine skillEngine,
                                        PostExecutionMemoryRecorder memoryRecorder,
                                        @Value("${mindos.dispatcher.parallel-routing.enabled:false}") boolean mcpParallelEnabled,
-                                       @Value("${mindos.dispatcher.parallel-routing.per-skill-timeout-ms:2500}") long mcpPerSkillTimeoutMs,
-                                       @Value("${mindos.dispatcher.parallel-routing.priority-list:}") String mcpPriorityList) {
+                                       @Value("${mindos.dispatcher.parallel-routing.per-skill-timeout-ms:2500}") long mcpPerSkillTimeoutMs) {
         this.candidatePlanner = candidatePlanner;
         this.paramValidator = paramValidator;
         this.conversationLoop = conversationLoop;
@@ -49,7 +55,7 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
         this.memoryRecorder = memoryRecorder;
         this.mcpParallelEnabled = mcpParallelEnabled;
         this.mcpPerSkillTimeoutMs = Math.max(250, mcpPerSkillTimeoutMs);
-        this.mcpPriorityOrder = parsePriorityList(mcpPriorityList);
+        this.mcpPriorityOrder = DEFAULT_PARALLEL_MCP_PRIORITY_ORDER;
     }
 
     @Override
@@ -266,19 +272,4 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
         return ParamValidator.ValidationResult.ok();
     }
 
-    private List<String> parsePriorityList(String list) {
-        if (list == null || list.isBlank()) {
-            return List.of();
-        }
-        String[] parts = list.split("[,;]");
-        Map<String, String> ordered = new LinkedHashMap<>();
-        for (String part : parts) {
-            if (part == null || part.isBlank()) {
-                continue;
-            }
-            String normalized = part.trim().toLowerCase();
-            ordered.putIfAbsent(normalized, normalized);
-        }
-        return List.copyOf(ordered.values());
-    }
 }

@@ -112,7 +112,7 @@ class DispatcherServiceTest {
     }
 
     @Test
-    void shouldSelectConfiguredPrioritySkillWhenParallelDetectedRoutingIsEnabled() {
+    void shouldSelectBuiltInPreferredSearchSkillWhenParallelDetectedRoutingIsEnabled() {
         MemoryManager memoryManager = createMemoryManager();
         RecordingLlmClient llmClient = new RecordingLlmClient(List.of("不应走到 llm"));
         DispatcherService service = createDispatcherWithParallelDetectedRouting(
@@ -161,8 +161,7 @@ class DispatcherServiceTest {
                                 return input != null && input.contains("新闻") ? 800 : Integer.MIN_VALUE;
                             }
                         }
-                ),
-                "mcp.bravesearch.websearch"
+                )
         );
 
         DispatchResult result = service.dispatch("news-user", "今天新闻");
@@ -1808,8 +1807,7 @@ class DispatcherServiceTest {
 
     private DispatcherService createDispatcherWithParallelDetectedRouting(MemoryManager memoryManager,
                                                                           LlmClient llmClient,
-                                                                          List<Skill> skills,
-                                                                          String priorityList) {
+                                                                          List<Skill> skills) {
         SkillRegistry registry = new SkillRegistry(skills);
         SkillDslExecutor dslExecutor = new SkillDslExecutor(registry);
         SkillEngine skillEngine = new SkillEngine(registry, dslExecutor);
@@ -1869,8 +1867,7 @@ class DispatcherServiceTest {
                 skillEngine,
                 memoryRecorder,
                 true,
-                2500,
-                priorityList == null ? "" : priorityList
+                2500
         );
         return new DispatcherService(
                 skillEngine,
@@ -1936,8 +1933,7 @@ class DispatcherServiceTest {
                 false,
                 true,
                 2,
-                2500,
-                priorityList == null ? "" : priorityList
+                2500
         );
     }
 
@@ -1993,8 +1989,7 @@ class DispatcherServiceTest {
                 skillEngine,
                 memoryRecorder,
                 false,
-                2500,
-                ""
+                2500
         );
         return new DispatcherService(
                 skillEngine,
@@ -2060,8 +2055,7 @@ class DispatcherServiceTest {
                 false,
                 false,
                 2,
-                2500,
-                ""
+                2500
         );
     }
 
@@ -2463,8 +2457,7 @@ class DispatcherServiceTest {
                 skillEngine,
                 memoryRecorder,
                 false,
-                2500,
-                ""
+                2500
         );
         return new DispatcherService(
                 skillEngine,
@@ -2530,8 +2523,7 @@ class DispatcherServiceTest {
                 false,
                 false,
                 2,
-                2500,
-                ""
+                2500
         );
     }
 
@@ -2598,8 +2590,7 @@ class DispatcherServiceTest {
                 skillEngine,
                 memoryRecorder,
                 false,
-                2500,
-                ""
+                2500
         );
         return new DispatcherService(
                 skillEngine,
@@ -2665,8 +2656,7 @@ class DispatcherServiceTest {
                 false,
                 false,
                 2,
-                2500,
-                ""
+                2500
         );
     }
 

@@ -199,6 +199,8 @@ class NewsSearchSkillTest {
         SkillResult result = skill.run(new SkillContext("u1", "news_search 只看36kr最新三条AI融资新闻", Map.of()));
 
         assertTrue(result.success());
+        assertTrue(result.output().contains("关键词: AI融资"));
+        assertFalse(result.output().contains("AI融资 闻"));
         assertTrue(result.output().contains("来源: 36kr"));
         assertTrue(result.output().contains("排序: latest"));
         assertTrue(result.output().contains("36Kr AI 融资周报"));
@@ -223,6 +225,42 @@ class NewsSearchSkillTest {
         );
 
         assertTrue(skill.supports("查看新闻 AI 前五条，并总结"));
+        assertTrue(skill.supports("最近的国际新闻"));
+    }
+
+    @Test
+    void shouldCleanTopicForPlainNewsRequestWithSummaryAction() {
+        NewsSearchSkill skill = new NewsSearchSkill(
+                (prompt, context) -> "{\"theme\":\"国际\",\"summary\":\"摘要\",\"contextBrief\":\"上下文\",\"hotKeywords\":[\"国际\"]}",
+                (url, timeoutMs) -> """
+                        <rss><channel>
+                          <item>
+                            <title>国际市场观察</title>
+                            <link>https://36kr.example/global-market</link>
+                            <description>国际新闻摘要</description>
+                            <pubDate>Fri, 03 Apr 2026 11:00:00 GMT</pubDate>
+                          </item>
+                        </channel></rss>
+                        """,
+                true,
+                "https://36kr.com/feed",
+                3000,
+                300,
+                64,
+                8,
+                true,
+                "local",
+                "cost",
+                "gemma3:1b-it-q4_K_M",
+                220
+        );
+
+        SkillResult result = skill.run(new SkillContext("u1", "帮我看今天的国际新闻并总结一下", Map.of()));
+
+        assertTrue(result.success());
+        assertTrue(result.output().contains("关键词: 国际"));
+        assertFalse(result.output().contains("并总结"));
+        assertFalse(result.output().contains("今天的国际新闻"));
     }
 
     @Test

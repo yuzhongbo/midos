@@ -356,8 +356,7 @@ class HermesDecisionTestSkeleton {
                     skillEngine(scriptedResults),
                     noopRecorder(),
                     false,
-                    500,
-                    ""
+                    500
             );
         }
 

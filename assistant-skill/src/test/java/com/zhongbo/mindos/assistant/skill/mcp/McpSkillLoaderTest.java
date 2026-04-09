@@ -189,6 +189,35 @@ class McpSkillLoaderTest {
     }
 
     @Test
+    void shouldIgnoreShortcutSearchConfigsWhenUnifiedSearchSourcesAreConfigured() {
+        SkillRegistry registry = new SkillRegistry(List.<Skill>of());
+        McpSkillLoader loader = new McpSkillLoader(
+                registry,
+                new McpJsonRpcClient(),
+                "",
+                "",
+                "serper:http://127.0.0.1:18080/search;news-url=http://127.0.0.1:18080/news;api-key=test-key",
+                true,
+                "brave",
+                "http://127.0.0.1:18081/res/v1/web/search",
+                "brave-test-token",
+                "X-Subscription-Token",
+                true,
+                "serper-shortcut",
+                "http://127.0.0.1:18082/search",
+                "serper-shortcut-token",
+                "X-API-KEY"
+        );
+
+        int loaded = loader.loadConfiguredServers();
+
+        assertEquals(1, loaded);
+        assertTrue(registry.getSkill("mcp.serper.webSearch").isPresent());
+        assertTrue(registry.getSkill("mcp.brave.webSearch").isEmpty());
+        assertTrue(registry.getSkill("mcp.serper-shortcut.webSearch").isEmpty());
+    }
+
+    @Test
     void shouldRegisterAndExecuteBraveRestSearchFromConfiguredServers() throws Exception {
         AtomicBoolean braveTokenSeen = new AtomicBoolean(false);
         AtomicBoolean querySeen = new AtomicBoolean(false);

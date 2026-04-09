@@ -65,6 +65,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
+import java.util.function.UnaryOperator;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.regex.Matcher;
@@ -74,6 +75,14 @@ import java.util.regex.Pattern;
 public class DispatcherService implements ContextCompressionMetricsReader, DispatcherRoutingMetricsReader {
 
     private static final Logger LOGGER = Logger.getLogger(DispatcherService.class.getName());
+    private static final List<String> DEFAULT_PARALLEL_SEARCH_PRIORITY_ORDER = List.of(
+            "mcp.serper.websearch",
+            "mcp.serpapi.websearch",
+            "mcp.bravesearch.websearch",
+            "mcp.brave.websearch",
+            "mcp.qwensearch.websearch",
+            "mcp.qwen.websearch"
+    );
 
     private static final int CONTEXT_HISTORY_LIMIT = 6;
     private static final int CONTEXT_KNOWLEDGE_LIMIT = 3;
@@ -211,7 +220,6 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
     private final boolean parallelDetectedSkillRoutingEnabled;
     private final int parallelDetectedSkillRoutingMaxCandidates;
     private final long parallelDetectedSkillRoutingTimeoutMs;
-    private final List<String> parallelDetectedSkillPriorityOrder;
     private final int routingReplayMaxSamples;
     private final Object routingReplayLock = new Object();
     private final Deque<RoutingReplayItemDto> routingReplaySamples = new ArrayDeque<>();
@@ -315,8 +323,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                              boolean semanticAnalysisSkipShortSimpleEnabled,
                              boolean parallelDetectedSkillRoutingEnabled,
                              int parallelDetectedSkillRoutingMaxCandidates,
-                             int parallelDetectedSkillRoutingTimeoutMs,
-                             String parallelDetectedSkillPriorityList) {
+                             int parallelDetectedSkillRoutingTimeoutMs) {
         this(
                 skillEngine,
                 skillDslParser,
@@ -381,8 +388,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                 semanticAnalysisSkipShortSimpleEnabled,
                 parallelDetectedSkillRoutingEnabled,
                 parallelDetectedSkillRoutingMaxCandidates,
-                (long) parallelDetectedSkillRoutingTimeoutMs,
-                parallelDetectedSkillPriorityList
+                (long) parallelDetectedSkillRoutingTimeoutMs
         );
     }
 
@@ -453,8 +459,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                                 @Value("${mindos.dispatcher.semantic-analysis.skip-short-simple.enabled:false}") boolean semanticAnalysisSkipShortSimpleEnabled,
                                   @Value("${mindos.dispatcher.parallel-routing.enabled:false}") boolean parallelDetectedSkillRoutingEnabled,
                                 @Value("${mindos.dispatcher.parallel-routing.max-candidates:2}") int parallelDetectedSkillRoutingMaxCandidates,
-                                @Value("${mindos.dispatcher.parallel-routing.per-skill-timeout-ms:2500}") long parallelDetectedSkillRoutingTimeoutMs,
-                                @Value("${mindos.dispatcher.parallel-routing.priority-list:}") String parallelDetectedSkillPriorityList) {
+                                @Value("${mindos.dispatcher.parallel-routing.per-skill-timeout-ms:2500}") long parallelDetectedSkillRoutingTimeoutMs) {
         this.skillEngine = skillEngine;
         this.skillDslParser = skillDslParser;
         this.intentModelRoutingPolicy = intentModelRoutingPolicy;
@@ -551,7 +556,6 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         this.parallelDetectedSkillRoutingEnabled = parallelDetectedSkillRoutingEnabled;
         this.parallelDetectedSkillRoutingMaxCandidates = Math.max(1, parallelDetectedSkillRoutingMaxCandidates);
         this.parallelDetectedSkillRoutingTimeoutMs = Math.max(100L, parallelDetectedSkillRoutingTimeoutMs);
-        this.parallelDetectedSkillPriorityOrder = parseCsvList(parallelDetectedSkillPriorityList);
     }
 
     public DispatchResult dispatch(String userId, String userInput) {
@@ -1340,36 +1344,76 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                                                                 SemanticAnalysisResult semanticAnalysis,
                                                                 RoutingReplayProbe replayProbe) {
         List<String> rejectedReasons = new java.util.ArrayList<>();
-        Optional<SkillDsl> explicitDsl = skillDslParser.parse(userInput);
-        if (explicitDsl.isPresent()) {
-            if (isSkillPreExecuteGuardBlocked(userId, explicitDsl.get().skill(), userInput)) {
-                LOGGER.info("Dispatcher guard=loop-skip, userId=" + userId + ", skill=" + explicitDsl.get().skill());
-                rejectedReasons.add("explicit skill blocked by loop guard before execution");
-                return CompletableFuture.completedFuture(new RoutingOutcome(Optional.empty(), fallbackRoutingDecision(rejectedReasons)));
-            }
-            Optional<SkillResult> blocked = maybeBlockByCapability(explicitDsl.get().skill());
-            if (blocked.isPresent()) {
-                return CompletableFuture.completedFuture(new RoutingOutcome(blocked, new RoutingDecisionDto(
-                        "security.guard",
-                        explicitDsl.get().skill(),
-                        1.0,
-                        List.of("explicit skill DSL requested but capability guard blocked execution"),
-                        List.copyOf(rejectedReasons)
-                )));
-            }
-            LOGGER.info("Dispatcher route=explicit-dsl, userId=" + userId + ", skill=" + explicitDsl.get().skill());
-            return explicitDsl.map(dsl -> applySkillTimeoutIfNeeded(dsl.skill(), context, skillEngine.executeDslAsync(dsl, context))
-                            .thenApply(result -> new RoutingOutcome(Optional.of(result), new RoutingDecisionDto(
-                                    "explicit-dsl",
-                                    dsl.skill(),
-                                    1.0,
-                                    List.of("input parsed as explicit SkillDSL"),
-                                    List.copyOf(rejectedReasons)
-                            ))))
-                    .orElseGet(() -> CompletableFuture.completedFuture(new RoutingOutcome(Optional.empty(), fallbackRoutingDecision(rejectedReasons))));
+        Optional<CompletableFuture<RoutingOutcome>> explicitRoute = routeExplicitStage(userId, userInput, context, rejectedReasons);
+        if (explicitRoute.isPresent()) {
+            return explicitRoute.get();
         }
-        rejectedReasons.add("no explicit SkillDSL detected");
+        Optional<CompletableFuture<RoutingOutcome>> semanticRoute = routeSemanticStage(userId, userInput, context, semanticAnalysis, rejectedReasons);
+        if (semanticRoute.isPresent()) {
+            return semanticRoute.get();
+        }
+        Optional<CompletableFuture<RoutingOutcome>> ruleRoute = routeRuleStage(userId, userInput, context, replayProbe, rejectedReasons);
+        if (ruleRoute.isPresent()) {
+            return ruleRoute.get();
+        }
+        Optional<CompletableFuture<RoutingOutcome>> metaHelpRoute = routeMetaHelpStage(userId, userInput, rejectedReasons);
+        if (metaHelpRoute.isPresent()) {
+            return metaHelpRoute.get();
+        }
+        Optional<CompletableFuture<RoutingOutcome>> realtimeSearchRoute = routeRealtimeSearchStage(userId, userInput, context, semanticAnalysis, rejectedReasons);
+        if (realtimeSearchRoute.isPresent()) {
+            return realtimeSearchRoute.get();
+        }
+        Optional<CompletableFuture<RoutingOutcome>> detectedOrHabitRoute = routeDetectedOrHabitStage(
+                userId,
+                userInput,
+                context,
+                semanticAnalysis,
+                rejectedReasons
+        );
+        if (detectedOrHabitRoute.isPresent()) {
+            return detectedOrHabitRoute.get();
+        }
+        return routeViaLlmPreAnalyze(userId, userInput, context, memoryContext, semanticAnalysis, replayProbe, rejectedReasons);
+    }
 
+    private Optional<CompletableFuture<RoutingOutcome>> routeExplicitStage(String userId,
+                                                                           String userInput,
+                                                                           SkillContext context,
+                                                                           List<String> rejectedReasons) {
+        Optional<SkillDsl> explicitDsl = skillDslParser.parse(userInput);
+        if (explicitDsl.isEmpty()) {
+            rejectedReasons.add("no explicit SkillDSL detected");
+            return Optional.empty();
+        }
+        if (isSkillPreExecuteGuardBlocked(userId, explicitDsl.get().skill(), userInput)) {
+            return Optional.of(loopBlockedRoute(userId, explicitDsl.get().skill(), "explicit skill blocked by loop guard before execution", rejectedReasons));
+        }
+        Optional<RoutingOutcome> blocked = capabilityBlockedRoute(
+                explicitDsl.get().skill(),
+                1.0,
+                "explicit skill DSL requested but capability guard blocked execution",
+                rejectedReasons
+        );
+        if (blocked.isPresent()) {
+            return Optional.of(CompletableFuture.completedFuture(blocked.get()));
+        }
+        LOGGER.info("Dispatcher route=explicit-dsl, userId=" + userId + ", skill=" + explicitDsl.get().skill());
+        return Optional.of(executeDslRoute(
+                explicitDsl.get(),
+                context,
+                "explicit-dsl",
+                1.0,
+                List.of("input parsed as explicit SkillDSL"),
+                rejectedReasons
+        ));
+    }
+
+    private Optional<CompletableFuture<RoutingOutcome>> routeSemanticStage(String userId,
+                                                                           String userInput,
+                                                                           SkillContext context,
+                                                                           SemanticAnalysisResult semanticAnalysis,
+                                                                           List<String> rejectedReasons) {
         SemanticRoutingPlan semanticPlan = buildSemanticRoutingPlan(userId, semanticAnalysis, userInput);
         Optional<SkillDsl> semanticDsl = isContinuationIntent(normalize(context.input()))
                 ? Optional.empty()
@@ -1379,7 +1423,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
             LOGGER.info("Dispatcher route=semantic-clarify, userId=" + userId
                     + ", skill=" + semanticPlan.skillName()
                     + ", confidence=" + semanticPlan.confidence());
-            return CompletableFuture.completedFuture(new RoutingOutcome(
+            return Optional.of(CompletableFuture.completedFuture(new RoutingOutcome(
                     Optional.of(SkillResult.success("semantic.clarify", clarifyReply)),
                     new RoutingDecisionDto(
                             "semantic-clarify",
@@ -1388,39 +1432,42 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                             List.of("semantic analysis confidence is low or required parameters are missing, ask for clarification before execution"),
                             List.copyOf(rejectedReasons)
                     )
-            ));
+            )));
         }
         if (semanticDsl.isPresent()) {
-            Optional<SkillResult> blocked = maybeBlockByCapability(semanticDsl.get().skill());
+            Optional<RoutingOutcome> blocked = capabilityBlockedRoute(
+                    semanticDsl.get().skill(),
+                    0.95,
+                    "semantic analysis selected a local skill but capability guard blocked execution",
+                    rejectedReasons
+            );
             if (blocked.isPresent()) {
-                return CompletableFuture.completedFuture(new RoutingOutcome(blocked, new RoutingDecisionDto(
-                        "security.guard",
-                        semanticDsl.get().skill(),
-                        0.95,
-                        List.of("semantic analysis selected a local skill but capability guard blocked execution"),
-                        List.copyOf(rejectedReasons)
-                )));
+                return Optional.of(CompletableFuture.completedFuture(blocked.get()));
             }
             if (isSkillLoopGuardBlocked(userId, semanticDsl.get().skill(), context.input())) {
-                LOGGER.info("Dispatcher guard=loop-skip, userId=" + userId + ", skill=" + semanticDsl.get().skill());
-                rejectedReasons.add("semantic analysis route blocked by loop guard");
-                return CompletableFuture.completedFuture(new RoutingOutcome(Optional.empty(), fallbackRoutingDecision(rejectedReasons)));
+                return Optional.of(loopBlockedRoute(userId, semanticDsl.get().skill(), "semantic analysis route blocked by loop guard", rejectedReasons));
             }
             LOGGER.info("Dispatcher route=semantic-analysis, userId=" + userId + ", skill=" + semanticDsl.get().skill());
-            return semanticDsl.map(dsl -> applySkillTimeoutIfNeeded(dsl.skill(), context, skillEngine.executeDslAsync(dsl, context))
-                            .thenApply(result -> new RoutingOutcome(Optional.of(result), new RoutingDecisionDto(
-                                    "semantic-analysis",
-                                    dsl.skill(),
-                                    Math.max(semanticAnalysisRouteMinConfidence, semanticPlan.confidence()),
-                                    List.of("semantic analysis suggested a confident local skill route"),
-                                    List.copyOf(rejectedReasons)
-                            ))))
-                    .orElseGet(() -> CompletableFuture.completedFuture(new RoutingOutcome(Optional.empty(), fallbackRoutingDecision(rejectedReasons))));
+            return Optional.of(executeDslRoute(
+                    semanticDsl.get(),
+                    context,
+                    "semantic-analysis",
+                    Math.max(semanticAnalysisRouteMinConfidence, semanticPlan.confidence()),
+                    List.of("semantic analysis suggested a confident local skill route"),
+                    rejectedReasons
+            ));
         }
         rejectedReasons.add(isContinuationIntent(normalize(context.input()))
                 ? "semantic analysis deferred to continuation or habit routing"
                 : "semantic analysis did not select a confident local skill");
+        return Optional.empty();
+    }
 
+    private Optional<CompletableFuture<RoutingOutcome>> routeRuleStage(String userId,
+                                                                       String userInput,
+                                                                       SkillContext context,
+                                                                       RoutingReplayProbe replayProbe,
+                                                                       List<String> rejectedReasons) {
         Optional<SkillDsl> ruleDsl = detectSkillWithRules(userInput);
         if (ruleDsl.isPresent()
                 && "code.generate".equals(ruleDsl.get().skill())
@@ -1429,59 +1476,148 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
             rejectedReasons.add("rule-based code.generate rejected because input does not look like a code task");
             ruleDsl = Optional.empty();
         }
-        if (ruleDsl.isPresent()) {
-            if (isSkillPreExecuteGuardBlocked(userId, ruleDsl.get().skill(), userInput)) {
-                LOGGER.info("Dispatcher guard=loop-skip, userId=" + userId + ", skill=" + ruleDsl.get().skill());
-                rejectedReasons.add("rule-based skill blocked by loop guard before execution");
-                return CompletableFuture.completedFuture(new RoutingOutcome(Optional.empty(), fallbackRoutingDecision(rejectedReasons)));
-            }
-            replayProbe.ruleCandidate = ruleDsl.get().skill();
-            Optional<SkillResult> blocked = maybeBlockByCapability(ruleDsl.get().skill());
-            if (blocked.isPresent()) {
-                return CompletableFuture.completedFuture(new RoutingOutcome(blocked, new RoutingDecisionDto(
-                        "security.guard",
-                        ruleDsl.get().skill(),
-                        0.99,
-                        List.of("rule-based route matched but capability guard blocked execution"),
-                        List.copyOf(rejectedReasons)
-                )));
-            }
-            LOGGER.info("Dispatcher route=rule, userId=" + userId + ", skill=" + ruleDsl.get().skill());
-            return ruleDsl.map(dsl -> applySkillTimeoutIfNeeded(dsl.skill(), context, skillEngine.executeDslAsync(dsl, context))
-                            .thenApply(result -> new RoutingOutcome(Optional.of(result), new RoutingDecisionDto(
-                                    "rule",
-                                    dsl.skill(),
-                                    0.98,
-                                    List.of("matched deterministic built-in routing rule"),
-                                    List.copyOf(rejectedReasons)
-                            ))))
-                    .orElseGet(() -> CompletableFuture.completedFuture(new RoutingOutcome(Optional.empty(), fallbackRoutingDecision(rejectedReasons))));
+        if (ruleDsl.isEmpty()) {
+            replayProbe.ruleCandidate = "NONE";
+            rejectedReasons.add("no deterministic rule matched");
+            return Optional.empty();
         }
-        replayProbe.ruleCandidate = "NONE";
-        rejectedReasons.add("no deterministic rule matched");
+        if (isSkillPreExecuteGuardBlocked(userId, ruleDsl.get().skill(), userInput)) {
+            return Optional.of(loopBlockedRoute(userId, ruleDsl.get().skill(), "rule-based skill blocked by loop guard before execution", rejectedReasons));
+        }
+        replayProbe.ruleCandidate = ruleDsl.get().skill();
+        Optional<RoutingOutcome> blocked = capabilityBlockedRoute(
+                ruleDsl.get().skill(),
+                0.99,
+                "rule-based route matched but capability guard blocked execution",
+                rejectedReasons
+        );
+        if (blocked.isPresent()) {
+            return Optional.of(CompletableFuture.completedFuture(blocked.get()));
+        }
+        LOGGER.info("Dispatcher route=rule, userId=" + userId + ", skill=" + ruleDsl.get().skill());
+        return Optional.of(executeDslRoute(
+                ruleDsl.get(),
+                context,
+                "rule",
+                0.98,
+                List.of("matched deterministic built-in routing rule"),
+                rejectedReasons
+        ));
+    }
 
+    private Optional<CompletableFuture<RoutingOutcome>> routeMetaHelpStage(String userId,
+                                                                           String userInput,
+                                                                           List<String> rejectedReasons) {
         Optional<SkillResult> metaReply = answerMetaQuestion(userInput);
-        if (metaReply.isPresent()) {
-            LOGGER.info("Dispatcher route=meta-help, userId=" + userId + ", channel=" + SKILL_HELP_CHANNEL);
-            return CompletableFuture.completedFuture(new RoutingOutcome(metaReply, new RoutingDecisionDto(
-                    "meta-help",
-                    SKILL_HELP_CHANNEL,
-                    0.97,
-                    List.of("input matched a built-in meta help question"),
-                    List.copyOf(rejectedReasons)
-            )));
+        if (metaReply.isEmpty()) {
+            rejectedReasons.add("input is not a meta help question");
+            return Optional.empty();
         }
-        rejectedReasons.add("input is not a meta help question");
+        LOGGER.info("Dispatcher route=meta-help, userId=" + userId + ", channel=" + SKILL_HELP_CHANNEL);
+        return Optional.of(CompletableFuture.completedFuture(new RoutingOutcome(metaReply, new RoutingDecisionDto(
+                "meta-help",
+                SKILL_HELP_CHANNEL,
+                0.97,
+                List.of("input matched a built-in meta help question"),
+                List.copyOf(rejectedReasons)
+        ))));
+    }
 
+    private Optional<CompletableFuture<RoutingOutcome>> routeRealtimeSearchStage(String userId,
+                                                                                 String userInput,
+                                                                                 SkillContext context,
+                                                                                 SemanticAnalysisResult semanticAnalysis,
+                                                                                 List<String> rejectedReasons) {
         rejectedReasons.add("brave-first routing is disabled; using normal detected-skill routing");
-
-        if (braveFirstSearchRoutingEnabled && isRealtimeIntent(userInput, semanticAnalysis)) {
-            Optional<CompletableFuture<RoutingOutcome>> braveFirstRouting = routeToBraveSearchFirst(userId, userInput, context, semanticAnalysis, rejectedReasons);
-            if (braveFirstRouting.isPresent()) {
-                return braveFirstRouting.get();
-            }
+        if (!braveFirstSearchRoutingEnabled || !isRealtimeIntent(userInput, semanticAnalysis)) {
+            return Optional.empty();
         }
+        return routeToBraveSearchFirst(userId, userInput, context, semanticAnalysis, rejectedReasons);
+    }
 
+    private RoutingOutcome capabilityBlockedOutcome(SkillResult blocked,
+                                                    String skillName,
+                                                    double confidence,
+                                                    String acceptedReason,
+                                                    List<String> rejectedReasons) {
+        return new RoutingOutcome(
+                Optional.ofNullable(blocked),
+                new RoutingDecisionDto(
+                        "security.guard",
+                        skillName,
+                        confidence,
+                        List.of(acceptedReason),
+                        List.copyOf(rejectedReasons)
+                )
+        );
+    }
+
+    private Optional<RoutingOutcome> capabilityBlockedRoute(String skillName,
+                                                            double confidence,
+                                                            String acceptedReason,
+                                                            List<String> rejectedReasons) {
+        return maybeBlockByCapability(skillName)
+                .map(blocked -> capabilityBlockedOutcome(blocked, skillName, confidence, acceptedReason, rejectedReasons));
+    }
+
+    private CompletableFuture<RoutingOutcome> loopBlockedRoute(String userId,
+                                                               String skillName,
+                                                               String rejectedReason,
+                                                               List<String> rejectedReasons) {
+        return loopBlockedRoute(userId, skillName, rejectedReason, rejectedReasons, false);
+    }
+
+    private CompletableFuture<RoutingOutcome> loopBlockedRoute(String userId,
+                                                               String skillName,
+                                                               String rejectedReason,
+                                                               List<String> rejectedReasons,
+                                                               boolean incrementDetectedLoopMetric) {
+        LOGGER.info("Dispatcher guard=loop-skip, userId=" + userId + ", skill=" + skillName);
+        if (incrementDetectedLoopMetric) {
+            detectedSkillLoopSkipBlockedCount.incrementAndGet();
+        }
+        rejectedReasons.add(rejectedReason);
+        return CompletableFuture.completedFuture(new RoutingOutcome(Optional.empty(), fallbackRoutingDecision(rejectedReasons)));
+    }
+
+    private CompletableFuture<RoutingOutcome> executeDslRoute(SkillDsl dsl,
+                                                              SkillContext context,
+                                                              String routeName,
+                                                              double confidence,
+                                                              List<String> acceptedReasons,
+                                                              List<String> rejectedReasons) {
+        return executeDslRoute(dsl, context, routeName, confidence, acceptedReasons, rejectedReasons, UnaryOperator.identity());
+    }
+
+    private CompletableFuture<RoutingOutcome> executeDslRoute(SkillDsl dsl,
+                                                              SkillContext context,
+                                                              String routeName,
+                                                              double confidence,
+                                                              List<String> acceptedReasons,
+                                                              List<String> rejectedReasons,
+                                                              UnaryOperator<SkillResult> resultTransformer) {
+        if (dsl == null) {
+            return CompletableFuture.completedFuture(new RoutingOutcome(Optional.empty(), fallbackRoutingDecision(rejectedReasons)));
+        }
+        UnaryOperator<SkillResult> transformer = resultTransformer == null ? UnaryOperator.identity() : resultTransformer;
+        return applySkillTimeoutIfNeeded(dsl.skill(), context, skillEngine.executeDslAsync(dsl, context))
+                .thenApply(result -> new RoutingOutcome(
+                        Optional.ofNullable(transformer.apply(result)),
+                        new RoutingDecisionDto(
+                                routeName,
+                                dsl.skill(),
+                                confidence,
+                                List.copyOf(acceptedReasons),
+                                List.copyOf(rejectedReasons)
+                        )
+                ));
+    }
+
+    private Optional<CompletableFuture<RoutingOutcome>> routeDetectedOrHabitStage(String userId,
+                                                                                  String userInput,
+                                                                                  SkillContext context,
+                                                                                  SemanticAnalysisResult semanticAnalysis,
+                                                                                  List<String> rejectedReasons) {
         List<SkillEngine.SkillCandidate> detectedSkillCandidates = parallelDetectedSkillRoutingEnabled
                 ? skillEngine.detectSkillCandidates(context.input(), parallelDetectedSkillRoutingMaxCandidates)
                 : skillEngine.detectSkillName(context.input())
@@ -1490,81 +1626,83 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         if (!detectedSkillCandidates.isEmpty()) {
             if (!parallelDetectedSkillRoutingEnabled || detectedSkillCandidates.size() == 1) {
                 String skillName = detectedSkillCandidates.get(0).skillName();
-                Optional<SkillResult> blocked = maybeBlockByCapability(skillName);
+                Optional<RoutingOutcome> blocked = capabilityBlockedRoute(
+                        skillName,
+                        0.95,
+                        "auto-detected skill matched but capability guard blocked execution",
+                        rejectedReasons
+                );
                 if (blocked.isPresent()) {
-                    return CompletableFuture.completedFuture(new RoutingOutcome(blocked, new RoutingDecisionDto(
-                            "security.guard",
-                            skillName,
-                            0.95,
-                            List.of("auto-detected skill matched but capability guard blocked execution"),
-                            List.copyOf(rejectedReasons)
-                    )));
+                    return Optional.of(CompletableFuture.completedFuture(blocked.get()));
                 }
                 if (isSkillLoopGuardBlocked(userId, skillName, userInput)) {
-                    LOGGER.info("Dispatcher guard=loop-skip, userId=" + userId + ", skill=" + skillName);
-                    detectedSkillLoopSkipBlockedCount.incrementAndGet();
-                    rejectedReasons.add("detected skill blocked by loop guard");
-                    return CompletableFuture.completedFuture(new RoutingOutcome(Optional.empty(), fallbackRoutingDecision(rejectedReasons)));
+                    return Optional.of(loopBlockedRoute(userId, skillName, "detected skill blocked by loop guard", rejectedReasons, true));
                 }
                 LOGGER.info("Dispatcher route=detected-skill, userId=" + userId + ", skill=" + skillName);
-                return applySkillTimeoutForOptionalResult(skillName, context, skillEngine.executeSkillByNameAsync(skillName, context))
+                return Optional.of(applySkillTimeoutForOptionalResult(skillName, context, skillEngine.executeSkillByNameAsync(skillName, context))
                         .thenApply(result -> new RoutingOutcome(result, new RoutingDecisionDto(
                                 "detected-skill",
                                 skillName,
                                 0.92,
                                 List.of("registered skill.supports matched the input"),
                                 List.copyOf(rejectedReasons)
-                        )));
+                        ))));
             }
-            return routeDetectedSkillCandidatesInParallel(userId, userInput, context, detectedSkillCandidates, rejectedReasons);
+            return Optional.of(routeDetectedSkillCandidatesInParallel(userId, userInput, context, detectedSkillCandidates, rejectedReasons));
         }
 
         rejectedReasons.add("no registered skill.supports match");
+        boolean realtimeLikeInput = isRealtimeLikeInput(userInput, semanticAnalysis);
+        Optional<SkillDsl> habitDsl = realtimeLikeInput
+                ? Optional.empty()
+                : detectSkillWithMemoryHabits(userId, userInput, context.attributes());
+        if (realtimeLikeInput) {
+            rejectedReasons.add("realtime-like input skipped memory-habit routing");
+        }
+        if (habitDsl.isPresent()
+                && "code.generate".equals(habitDsl.get().skill())
+                && !isCodeGenerationIntent(userInput)
+                && !isContinuationOnlyInput(userInput)) {
+            rejectedReasons.add("habit-based code.generate rejected because input does not look like a code task");
+            habitDsl = Optional.empty();
+        }
+        if (habitDsl.isPresent()) {
+            if (isSkillPreExecuteGuardBlocked(userId, habitDsl.get().skill(), userInput)) {
+                return Optional.of(loopBlockedRoute(userId, habitDsl.get().skill(), "habit-based skill blocked by loop guard before execution", rejectedReasons));
+            }
+            Optional<RoutingOutcome> blocked = capabilityBlockedRoute(
+                    habitDsl.get().skill(),
+                    0.90,
+                    "habit route selected but capability guard blocked execution",
+                    rejectedReasons
+            );
+            if (blocked.isPresent()) {
+                return Optional.of(CompletableFuture.completedFuture(blocked.get()));
+            }
+            LOGGER.info("Dispatcher route=memory-habit, userId=" + userId + ", skill=" + habitDsl.get().skill());
+            String habitSkillName = habitDsl.get().skill();
+            return Optional.of(executeDslRoute(
+                    habitDsl.get(),
+                    context,
+                    "memory-habit",
+                    0.88,
+                    List.of("recent successful skill history matched continuation intent"),
+                    rejectedReasons,
+                    result -> enrichMemoryHabitResult(result, habitSkillName, context.attributes())
+            ));
+        }
 
-                    Optional<SkillDsl> habitDsl = isRealtimeLikeInput(userInput, semanticAnalysis)
-                            ? Optional.empty()
-                            : detectSkillWithMemoryHabits(userId, userInput, context.attributes());
-                    if (isRealtimeLikeInput(userInput, semanticAnalysis)) {
-                        rejectedReasons.add("realtime-like input skipped memory-habit routing");
-                    }
-                    if (habitDsl.isPresent()
-                            && "code.generate".equals(habitDsl.get().skill())
-                            && !isCodeGenerationIntent(userInput)
-                            && !isContinuationOnlyInput(userInput)) {
-                        rejectedReasons.add("habit-based code.generate rejected because input does not look like a code task");
-                        habitDsl = Optional.empty();
-                    }
-                    if (habitDsl.isPresent()) {
-                        if (isSkillPreExecuteGuardBlocked(userId, habitDsl.get().skill(), userInput)) {
-                            LOGGER.info("Dispatcher guard=loop-skip, userId=" + userId + ", skill=" + habitDsl.get().skill());
-                            rejectedReasons.add("habit-based skill blocked by loop guard before execution");
-                            return CompletableFuture.completedFuture(new RoutingOutcome(Optional.empty(), fallbackRoutingDecision(rejectedReasons)));
-                        }
-                        Optional<SkillResult> blocked = maybeBlockByCapability(habitDsl.get().skill());
-                        if (blocked.isPresent()) {
-                            return CompletableFuture.completedFuture(new RoutingOutcome(blocked, new RoutingDecisionDto(
-                                    "security.guard",
-                                    habitDsl.get().skill(),
-                                    0.90,
-                                    List.of("habit route selected but capability guard blocked execution"),
-                                    List.copyOf(rejectedReasons)
-                            )));
-                        }
-                        LOGGER.info("Dispatcher route=memory-habit, userId=" + userId + ", skill=" + habitDsl.get().skill());
-                        return habitDsl.map(dsl -> applySkillTimeoutIfNeeded(dsl.skill(), context, skillEngine.executeDslAsync(dsl, context))
-                                        .thenApply(result -> new RoutingOutcome(
-                                                Optional.of(enrichMemoryHabitResult(result, dsl.skill(), context.attributes())),
-                                                new RoutingDecisionDto(
-                                                        "memory-habit",
-                                                        dsl.skill(),
-                                                        0.88,
-                                                        List.of("recent successful skill history matched continuation intent"),
-                                                        List.copyOf(rejectedReasons)
-                                                ))))
-                                .orElseGet(() -> CompletableFuture.completedFuture(new RoutingOutcome(Optional.empty(), fallbackRoutingDecision(rejectedReasons))));
-                    }
         rejectedReasons.add("habit route confidence gate not satisfied");
+        return Optional.empty();
+    }
 
+    private CompletableFuture<RoutingOutcome> routeViaLlmPreAnalyze(String userId,
+                                                                    String userInput,
+                                                                    SkillContext context,
+                                                                    String memoryContext,
+                                                                    SemanticAnalysisResult semanticAnalysis,
+                                                                    RoutingReplayProbe replayProbe,
+                                                                    List<String> rejectedReasons) {
         if (isContinuationOnlyInput(userInput)) {
             replayProbe.preAnalyzeCandidate = "SKIPPED_CONTINUATION";
             rejectedReasons.add("continuation-only input skipped skill pre-analyze and used llm fallback");
@@ -1573,108 +1711,100 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         }
 
         skillPreAnalyzeRequestCount.incrementAndGet();
-                    if (isRealtimeIntent(userInput, semanticAnalysis)) {
-                        replayProbe.preAnalyzeCandidate = "SKIPPED_REALTIME";
-                        skillPreAnalyzeSkippedByGateCount.incrementAndGet();
-                        rejectedReasons.add("realtime intent bypassed skill pre-analyze after no registered skill matched");
-                        LOGGER.info("Dispatcher route=llm-fallback, userId=" + userId + ", reason=realtime-intent-bypass");
-                        return CompletableFuture.completedFuture(new RoutingOutcome(Optional.empty(), fallbackRoutingDecision(rejectedReasons)));
-                    }
+        if (isRealtimeIntent(userInput, semanticAnalysis)) {
+            replayProbe.preAnalyzeCandidate = "SKIPPED_REALTIME";
+            skillPreAnalyzeSkippedByGateCount.incrementAndGet();
+            rejectedReasons.add("realtime intent bypassed skill pre-analyze after no registered skill matched");
+            LOGGER.info("Dispatcher route=llm-fallback, userId=" + userId + ", reason=realtime-intent-bypass");
+            return CompletableFuture.completedFuture(new RoutingOutcome(Optional.empty(), fallbackRoutingDecision(rejectedReasons)));
+        }
 
-                    if (!shouldRunSkillPreAnalyze(userId, userInput)) {
-                        replayProbe.preAnalyzeCandidate = "SKIPPED_BY_GATE";
-                        skillPreAnalyzeSkippedByGateCount.incrementAndGet();
-                        rejectedReasons.add("skill pre-analyze skipped by mode/threshold gate");
-                        LOGGER.info("Dispatcher route=llm-fallback, userId=" + userId + ", reason=skill-pre-analyze-gate");
-                        return CompletableFuture.completedFuture(new RoutingOutcome(Optional.empty(), fallbackRoutingDecision(rejectedReasons)));
-                    }
+        if (!shouldRunSkillPreAnalyze(userId, userInput)) {
+            replayProbe.preAnalyzeCandidate = "SKIPPED_BY_GATE";
+            skillPreAnalyzeSkippedByGateCount.incrementAndGet();
+            rejectedReasons.add("skill pre-analyze skipped by mode/threshold gate");
+            LOGGER.info("Dispatcher route=llm-fallback, userId=" + userId + ", reason=skill-pre-analyze-gate");
+            return CompletableFuture.completedFuture(new RoutingOutcome(Optional.empty(), fallbackRoutingDecision(rejectedReasons)));
+        }
 
-                    skillPreAnalyzeExecutedCount.incrementAndGet();
-                    LlmDetectionResult llmDetection = detectSkillWithLlm(userId, userInput, memoryContext, context, context.attributes());
-                    if (llmDetection.directResult().isPresent()) {
-                        SkillResult clarify = llmDetection.directResult().get();
-                        RoutingDecisionDto clarifyDecision = new RoutingDecisionDto(
-                                "llm-dsl-clarify",
-                                "semantic.clarify",
-                                0.4,
-                                List.of("params_missing"),
-                                List.copyOf(rejectedReasons)
-                        );
-                        return CompletableFuture.completedFuture(new RoutingOutcome(Optional.of(clarify), clarifyDecision));
-                    }
-                    if (llmDetection.result().isPresent()) {
-                        SkillResult orchestrated = llmDetection.result().get();
-                        if (isSkillLoopGuardBlocked(userId, orchestrated.skillName(), userInput)) {
-                            LOGGER.info("Dispatcher guard=loop-skip, userId=" + userId + ", skill=" + orchestrated.skillName());
-                            rejectedReasons.add("LLM decision-orchestrated skill blocked by loop guard");
-                            return CompletableFuture.completedFuture(new RoutingOutcome(Optional.empty(), fallbackRoutingDecision(rejectedReasons)));
-                        }
-                        replayProbe.preAnalyzeCandidate = orchestrated.skillName();
-                        skillPreAnalyzeAcceptedCount.incrementAndGet();
-                        RoutingDecisionDto decisionDto = new RoutingDecisionDto(
-                                "llm-dsl",
-                                orchestrated.skillName(),
-                                0.76,
-                                List.of("LLM router executed via decision orchestrator"),
-                                List.copyOf(rejectedReasons)
-                        );
-                        return CompletableFuture.completedFuture(new RoutingOutcome(Optional.of(orchestrated), decisionDto));
-                    }
-                    Optional<SkillDsl> llmDsl = llmDetection.skillDsl();
-                    if (llmDsl.isPresent()
-                            && "code.generate".equals(llmDsl.get().skill())
-                            && !isCodeGenerationIntent(userInput)
-                            && !isContinuationOnlyInput(userInput)) {
-                        rejectedReasons.add("LLM-routed code.generate rejected because input does not look like a code task");
-                        llmDsl = Optional.empty();
-                    }
-                    if (llmDsl.isPresent() && skillPreAnalyzeSkipSkills.contains(llmDsl.get().skill())) {
-                        replayProbe.preAnalyzeCandidate = "SKIPPED_BY_SKILL";
-                        skillPreAnalyzeSkippedBySkillCount.incrementAndGet();
-                        rejectedReasons.add("LLM-routed skill '" + llmDsl.get().skill() + "' is configured to skip pre-analyze routing");
-                        llmDsl = Optional.empty();
-                    }
-                    if (llmDsl.isPresent()) {
-                        replayProbe.preAnalyzeCandidate = llmDsl.get().skill();
-                        skillPreAnalyzeAcceptedCount.incrementAndGet();
-                        if (isSkillPreExecuteGuardBlocked(userId, llmDsl.get().skill(), userInput)) {
-                            LOGGER.info("Dispatcher guard=loop-skip, userId=" + userId + ", skill=" + llmDsl.get().skill());
-                            rejectedReasons.add("LLM-routed skill blocked by loop guard before execution");
-                            return CompletableFuture.completedFuture(new RoutingOutcome(Optional.empty(), fallbackRoutingDecision(rejectedReasons)));
-                        }
-                        Optional<SkillResult> blocked = maybeBlockByCapability(llmDsl.get().skill());
-                        if (blocked.isPresent()) {
-                            return CompletableFuture.completedFuture(new RoutingOutcome(blocked, new RoutingDecisionDto(
-                                    "security.guard",
-                                    llmDsl.get().skill(),
-                                    0.80,
-                                    List.of("LLM routing selected a skill but capability guard blocked execution"),
-                                    List.copyOf(rejectedReasons)
-                            )));
-                        }
-                        if (isSkillLoopGuardBlocked(userId, llmDsl.get().skill(), userInput)) {
-                            LOGGER.info("Dispatcher guard=loop-skip, userId=" + userId + ", skill=" + llmDsl.get().skill());
-                            rejectedReasons.add("LLM-routed skill blocked by loop guard");
-                            return CompletableFuture.completedFuture(new RoutingOutcome(Optional.empty(), fallbackRoutingDecision(rejectedReasons)));
-                        }
-                        LOGGER.info("Dispatcher route=llm-dsl, userId=" + userId + ", skill=" + llmDsl.get().skill());
-                        return llmDsl.map(dsl -> applySkillTimeoutIfNeeded(dsl.skill(), context, skillEngine.executeDslAsync(dsl, context))
-                                        .thenApply(result -> new RoutingOutcome(Optional.of(result), new RoutingDecisionDto(
-                                                "llm-dsl",
-                                                dsl.skill(),
-                                                0.76,
-                                                List.of("LLM router selected one of the shortlisted candidate skills"),
-                                                List.copyOf(rejectedReasons)
-                                        ))))
-                                .orElseGet(() -> CompletableFuture.completedFuture(new RoutingOutcome(Optional.empty(), fallbackRoutingDecision(rejectedReasons))));
-                    }
+        skillPreAnalyzeExecutedCount.incrementAndGet();
+        LlmDetectionResult llmDetection = detectSkillWithLlm(userId, userInput, memoryContext, context, context.attributes());
+        if (llmDetection.directResult().isPresent()) {
+            SkillResult clarify = llmDetection.directResult().get();
+            RoutingDecisionDto clarifyDecision = new RoutingDecisionDto(
+                    "llm-dsl-clarify",
+                    "semantic.clarify",
+                    0.4,
+                    List.of("params_missing"),
+                    List.copyOf(rejectedReasons)
+            );
+            return CompletableFuture.completedFuture(new RoutingOutcome(Optional.of(clarify), clarifyDecision));
+        }
+        if (llmDetection.result().isPresent()) {
+            SkillResult orchestrated = llmDetection.result().get();
+            if (isSkillLoopGuardBlocked(userId, orchestrated.skillName(), userInput)) {
+                return loopBlockedRoute(userId, orchestrated.skillName(), "LLM decision-orchestrated skill blocked by loop guard", rejectedReasons);
+            }
+            replayProbe.preAnalyzeCandidate = orchestrated.skillName();
+            skillPreAnalyzeAcceptedCount.incrementAndGet();
+            RoutingDecisionDto decisionDto = new RoutingDecisionDto(
+                    "llm-dsl",
+                    orchestrated.skillName(),
+                    0.76,
+                    List.of("LLM router executed via decision orchestrator"),
+                    List.copyOf(rejectedReasons)
+            );
+            return CompletableFuture.completedFuture(new RoutingOutcome(Optional.of(orchestrated), decisionDto));
+        }
+        Optional<SkillDsl> llmDsl = llmDetection.skillDsl();
+        if (llmDsl.isPresent()
+                && "code.generate".equals(llmDsl.get().skill())
+                && !isCodeGenerationIntent(userInput)
+                && !isContinuationOnlyInput(userInput)) {
+            rejectedReasons.add("LLM-routed code.generate rejected because input does not look like a code task");
+            llmDsl = Optional.empty();
+        }
+        if (llmDsl.isPresent() && skillPreAnalyzeSkipSkills.contains(llmDsl.get().skill())) {
+            replayProbe.preAnalyzeCandidate = "SKIPPED_BY_SKILL";
+            skillPreAnalyzeSkippedBySkillCount.incrementAndGet();
+            rejectedReasons.add("LLM-routed skill '" + llmDsl.get().skill() + "' is configured to skip pre-analyze routing");
+            llmDsl = Optional.empty();
+        }
+        if (llmDsl.isPresent()) {
+            replayProbe.preAnalyzeCandidate = llmDsl.get().skill();
+            skillPreAnalyzeAcceptedCount.incrementAndGet();
+            if (isSkillPreExecuteGuardBlocked(userId, llmDsl.get().skill(), userInput)) {
+                return loopBlockedRoute(userId, llmDsl.get().skill(), "LLM-routed skill blocked by loop guard before execution", rejectedReasons);
+            }
+            Optional<RoutingOutcome> blocked = capabilityBlockedRoute(
+                    llmDsl.get().skill(),
+                    0.80,
+                    "LLM routing selected a skill but capability guard blocked execution",
+                    rejectedReasons
+            );
+            if (blocked.isPresent()) {
+                return CompletableFuture.completedFuture(blocked.get());
+            }
+            if (isSkillLoopGuardBlocked(userId, llmDsl.get().skill(), userInput)) {
+                return loopBlockedRoute(userId, llmDsl.get().skill(), "LLM-routed skill blocked by loop guard", rejectedReasons);
+            }
+            LOGGER.info("Dispatcher route=llm-dsl, userId=" + userId + ", skill=" + llmDsl.get().skill());
+            return executeDslRoute(
+                    llmDsl.get(),
+                    context,
+                    "llm-dsl",
+                    0.76,
+                    List.of("LLM router selected one of the shortlisted candidate skills"),
+                    rejectedReasons
+            );
+        }
 
-                    if ("NOT_RUN".equals(replayProbe.preAnalyzeCandidate)) {
-                        replayProbe.preAnalyzeCandidate = "NONE";
-                    }
+        if ("NOT_RUN".equals(replayProbe.preAnalyzeCandidate)) {
+            replayProbe.preAnalyzeCandidate = "NONE";
+        }
 
-                    LOGGER.info("Dispatcher route=llm-fallback, userId=" + userId);
-                    rejectedReasons.add("LLM router returned NONE or no shortlist candidate was selected");
+        LOGGER.info("Dispatcher route=llm-fallback, userId=" + userId);
+        rejectedReasons.add("LLM router returned NONE or no shortlist candidate was selected");
         return CompletableFuture.completedFuture(new RoutingOutcome(Optional.empty(), fallbackRoutingDecision(rejectedReasons)));
     }
 
@@ -1774,15 +1904,6 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                                                                                       SkillContext context,
                                                                                       List<SkillEngine.SkillCandidate> candidates,
                                                                                       List<String> rejectedReasons) {
-        return routeDetectedSkillCandidatesInParallel(userId, userInput, context, candidates, rejectedReasons, parallelDetectedSkillPriorityOrder);
-    }
-
-    private CompletableFuture<RoutingOutcome> routeDetectedSkillCandidatesInParallel(String userId,
-                                                                                      String userInput,
-                                                                                      SkillContext context,
-                                                                                      List<SkillEngine.SkillCandidate> candidates,
-                                                                                      List<String> rejectedReasons,
-                                                                                      List<String> priorityOrderOverride) {
         List<ParallelSkillCandidateExecution> executions = new ArrayList<>();
         List<String> localRejected = new ArrayList<>(rejectedReasons);
         for (SkillEngine.SkillCandidate candidate : candidates) {
@@ -1823,8 +1944,8 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                 return new RoutingOutcome(Optional.empty(), fallbackRoutingDecision(localRejected));
             }
             successful.sort((left, right) -> {
-                int leftPriority = priorityRank(left.skillName(), priorityOrderOverride);
-                int rightPriority = priorityRank(right.skillName(), priorityOrderOverride);
+                int leftPriority = priorityRank(left.skillName());
+                int rightPriority = priorityRank(right.skillName());
                 if (leftPriority != rightPriority) {
                     return Integer.compare(leftPriority, rightPriority);
                 }
@@ -1855,16 +1976,12 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
     }
 
     private int priorityRank(String skillName) {
-        return priorityRank(skillName, parallelDetectedSkillPriorityOrder);
-    }
-
-    private int priorityRank(String skillName, List<String> priorityOrder) {
-        if (skillName == null || skillName.isBlank() || priorityOrder == null || priorityOrder.isEmpty()) {
+        if (skillName == null || skillName.isBlank()) {
             return Integer.MAX_VALUE;
         }
         String normalized = normalize(skillName);
-        for (int i = 0; i < priorityOrder.size(); i++) {
-            String configured = priorityOrder.get(i);
+        for (int i = 0; i < DEFAULT_PARALLEL_SEARCH_PRIORITY_ORDER.size(); i++) {
+            String configured = DEFAULT_PARALLEL_SEARCH_PRIORITY_ORDER.get(i);
             if (configured.equals(normalized)) {
                 return i;
             }
@@ -4078,15 +4195,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
             rejectedReasons.add("brave-first routing enabled but no realtime search candidates were detected");
             return Optional.empty();
         }
-        List<String> searchPriority = List.of(
-                "mcp.serper.websearch",
-                "mcp.serpapi.websearch",
-                "mcp.bravesearch.websearch",
-                "mcp.brave.websearch",
-                "mcp.qwensearch.websearch",
-                "mcp.qwen.websearch"
-        );
-        return Optional.of(routeDetectedSkillCandidatesInParallel(userId, userInput, context, candidates, rejectedReasons, searchPriority));
+        return Optional.of(routeDetectedSkillCandidatesInParallel(userId, userInput, context, candidates, rejectedReasons));
     }
 
     private String firstKnownSearchFallbackSkill(String primarySkill) {

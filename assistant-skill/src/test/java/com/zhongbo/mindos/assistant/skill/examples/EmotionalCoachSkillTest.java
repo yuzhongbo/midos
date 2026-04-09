@@ -136,5 +136,32 @@ class EmotionalCoachSkillTest {
         assertFalse(focused.output().contains("- P2:"));
         assertFalse(focused.output().contains("- P3:"));
     }
-}
 
+    @Test
+    void shouldInferStyleModeAndPriorityFromNaturalLanguage() {
+        SkillResult result = skill.run(new SkillContext(
+                "u1",
+                "请给我职场版，只分析，先看最重要的：我和老板沟通越来越僵",
+                java.util.Map.of()
+        ));
+
+        assertTrue(result.success());
+        assertTrue(result.output().contains("职场版"));
+        assertTrue(result.output().contains("模式: analysis"));
+        assertTrue(result.output().contains("建议优先级（已聚焦 P1）"));
+        assertFalse(result.output().contains("建议话术"));
+    }
+
+    @Test
+    void shouldAddSafetyHintForHighRiskScenario() {
+        SkillResult result = skill.run(new SkillContext(
+                "u1",
+                "我最近因为关系问题快崩溃了，甚至有点不想活",
+                java.util.Map.of("mode", "analysis")
+        ));
+
+        assertTrue(result.success());
+        assertTrue(result.output().contains("风险等级: 高"));
+        assertTrue(result.output().contains("可信任的人"));
+    }
+}

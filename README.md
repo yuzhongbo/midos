@@ -64,7 +64,7 @@ chmod +x ./scripts/unix/local/run-local.sh
 
 `dist/mindos-windows-server/mindos-secrets.properties` uses a three-part layout:
 - `1) 建议默认`: safe defaults that usually stay enabled in packaged dist, e.g. `MINDOS_LLM_PROFILE=OPENROUTER_INTENT` and an OpenRouter-first cloud default.
-- `2) 可选填`: the dist now prefers one main search entry `MINDOS_SKILLS_SEARCH_SOURCES` and enables the Serper shortcut by default; `MINDOS_SKILL_NEWS_SEARCH_SEARCH_SOURCES` is only needed when `news_search` should override the global list; `MINDOS_SKILLS_MCP_SERVERS` / `MINDOS_SKILLS_MCP_SERVER_HEADERS` remain available for generic MCP tools; DingTalk stream/outbound credentials stay optional.
+- `2) 可选填`: the dist now uses one main search entry `MINDOS_SKILLS_SEARCH_SOURCES`; `MINDOS_SKILLS_MCP_SERVERS` / `MINDOS_SKILLS_MCP_SERVER_HEADERS` remain available for generic non-search MCP tools; DingTalk stream/outbound credentials stay optional.
 - `3) 必须填`: release placeholders that strict prechecks will reject until replaced, currently centered on `MINDOS_OPENROUTER_KEY`, `MINDOS_QWEN_KEY`, and `MINDOS_LLM_PROVIDER_KEYS`.
 
 For multi-provider setups, these variables are comma-separated provider maps:
@@ -89,10 +89,9 @@ Validation rules:
 
 Search / MCP config simplification:
 - In most cases, fill only `MINDOS_SKILLS_SEARCH_SOURCES`.
-- Use `MINDOS_SKILL_NEWS_SEARCH_SEARCH_SOURCES` only if `news_search` must use a different source list.
 - Keep `MINDOS_SKILLS_MCP_SERVERS` / `MINDOS_SKILLS_MCP_SERVER_HEADERS` for non-search MCP tools such as docs, GitHub, or custom JSON-RPC MCP services.
-- Precedence for `news_search`: `MINDOS_SKILL_NEWS_SEARCH_SEARCH_SOURCES` > `MINDOS_SKILLS_SEARCH_SOURCES` > legacy `MINDOS_SKILL_NEWS_SEARCH_SERPER_*`.
-- Serper-first default: prefer `mcp.serper.webSearch` before `mcp.bravesearch.webSearch` / `mcp.brave.webSearch` when Brave is unstable; the packaged dist enables Serper via shortcut config.
+- `news_search` and search-style MCP skills both read the same source map; the old `MINDOS_SKILL_NEWS_SEARCH_SEARCH_SOURCES` / `MINDOS_SKILL_NEWS_SEARCH_SERPER_*` envs are compatibility-only fallbacks.
+- When `MINDOS_SKILLS_SEARCH_SOURCES` is present, deprecated Serper/Brave shortcut configs are ignored to avoid ambiguous source registration.
 - Precision-search alternative: `SerpApi` is also supported as an optional fallback for very exact keywords and structured result pages.
 - If both `MINDOS_SKILLS_MCP_SERVERS` and `MINDOS_SKILLS_SEARCH_SOURCES` define the same alias, explicit MCP server entries win.
 

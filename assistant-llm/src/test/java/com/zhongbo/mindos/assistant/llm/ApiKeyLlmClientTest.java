@@ -448,6 +448,45 @@ class ApiKeyLlmClientTest {
     }
 
     @Test
+    void shouldUseBuiltInOpenRouterEndpointWhenConfiguredAsProvider() {
+        ApiKeyLlmClient client = newClient(
+                "openrouter",
+                "fixed",
+                "llm-dsl:openrouter,llm-fallback:openrouter",
+                "cost:openrouter,quality:openrouter",
+                "openrouter:key-openrouter",
+                "openrouter:openai/gpt-4o-mini",
+                false,
+                60,
+                false,
+                ""
+        );
+
+        String output = client.generateResponse("hello", Map.of("userId", "u-openrouter", "llmProvider", "openrouter"));
+
+        assertTrue(output.contains("https://openrouter.ai/api/v1/chat/completions"));
+        assertTrue(output.startsWith("[LLM openrouter] fallback mode active."));
+        assertFalse(output.contains("hello"));
+    }
+
+    @Test
+    void shouldRequireExplicitModelForOpenRouter() {
+        ApiKeyLlmClient client = newClient(
+                "openrouter",
+                "fixed",
+                "llm-dsl:openrouter,llm-fallback:openrouter",
+                "cost:openrouter,quality:openrouter",
+                "openrouter:key-openrouter",
+                false,
+                60
+        );
+
+        String output = client.generateResponse("hello", Map.of("userId", "u-openrouter", "llmProvider", "openrouter"));
+
+        assertEquals("[LLM openrouter] unavailable: missing model. Configure mindos.llm.provider-models=openrouter:<provider/model> or pass context.model.", output);
+    }
+
+    @Test
     void shouldPreferStableProviderFromLlmProfile() {
         ApiKeyLlmClient client = newClientWithProfile(
                 "gpt",
@@ -1415,4 +1454,3 @@ class ApiKeyLlmClientTest {
         }
     }
 }
-

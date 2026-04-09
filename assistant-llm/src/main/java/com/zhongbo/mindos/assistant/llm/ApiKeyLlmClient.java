@@ -66,6 +66,7 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
     );
 
     private static final Map<String, String> BUILTIN_PROVIDER_ENDPOINTS = Map.ofEntries(
+            Map.entry("openrouter", "https://openrouter.ai/api/v1/chat/completions"),
             Map.entry("qwen", "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"),
             Map.entry("deepseek", "https://api.deepseek.com/v1/chat/completions"),
             Map.entry("kimi", "https://api.moonshot.cn/v1/chat/completions"),
@@ -265,44 +266,47 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
             return output;
         }
 
-        String selectedProvider = resolveProvider(safeContext);
-        String selectedEndpoint = resolveEndpoint(selectedProvider);
-        String selectedModel = resolveModel(safeContext, normalizeProvider(selectedProvider));
-        logRoutingSample(safeContext, selectedProvider, selectedModel, false);
-        String apiKey = resolveApiKey(safeContext, selectedProvider);
-        boolean apiKeyRequired = requiresApiKey(selectedProvider, selectedEndpoint);
-        if (apiKeyRequired && (apiKey == null || apiKey.isBlank())) {
-            logLlmPrecheckFailure(safeContext, selectedProvider, selectedEndpoint, selectedModel, apiKey,
-                    "missing_api_key", false);
-            String output = buildMissingApiKeyReply(safeContext, selectedProvider);
-            recordMetric(startedAt, safeContext, selectedProvider, selectedEndpoint, false, false, prompt, output, "missing_api_key");
-            return output;
-        }
-        if (selectedModel == null || selectedModel.isBlank()) {
-            logLlmPrecheckFailure(safeContext, selectedProvider, selectedEndpoint, selectedModel, apiKey,
-                    "missing_model", false);
-            String output = buildMissingModelReply(safeContext, selectedProvider);
-            recordMetric(startedAt, safeContext, selectedProvider, selectedEndpoint, false, false, prompt, output, "missing_model");
-            return output;
+        ResolvedCall resolved = resolveCall(safeContext, false);
+        String precheckFailure = resolvePrecheckFailureReply(safeContext, resolved, false);
+        if (precheckFailure != null) {
+            recordMetric(startedAt,
+                    safeContext,
+                    resolved.provider(),
+                    resolved.endpoint(),
+                    false,
+                    false,
+                    prompt,
+                    precheckFailure,
+                    missingApiKey(resolved) ? "missing_api_key" : "missing_model");
+            return precheckFailure;
         }
 
-        String cacheKey = buildCacheKey(prompt, safeContext, selectedProvider, selectedEndpoint, selectedModel);
+        String cacheKey = buildCacheKey(prompt, safeContext, resolved.provider(), resolved.endpoint(), resolved.model());
         String cached = getCachedResponse(cacheKey);
         if (cached != null) {
-            recordMetric(startedAt, safeContext, selectedProvider, selectedEndpoint, true, false, prompt, cached, null);
+            recordMetric(startedAt, safeContext, resolved.provider(), resolved.endpoint(), true, false, prompt, cached, null);
             return cached;
         }
 
         RuntimeException lastError = null;
         for (int attempt = 1; attempt <= maxRetries; attempt++) {
             try {
-                String output = callProvider(selectedProvider, selectedEndpoint, selectedModel, prompt, safeContext, apiKey, null, null);
+                String output = callProvider(
+                        resolved.provider(),
+                        resolved.endpoint(),
+                        resolved.model(),
+                        prompt,
+                        safeContext,
+                        resolved.apiKey(),
+                        null,
+                        null
+                );
                 putCachedResponse(cacheKey, output);
-                recordMetric(startedAt, safeContext, selectedProvider, selectedEndpoint, true, attempt > 1, prompt, output, null);
+                recordMetric(startedAt, safeContext, resolved.provider(), resolved.endpoint(), true, attempt > 1, prompt, output, null);
                 return output;
             } catch (RuntimeException ex) {
                 lastError = ex;
-                logLlmAttemptFailure(safeContext, selectedProvider, selectedEndpoint, selectedModel, apiKey,
+                logLlmAttemptFailure(safeContext, resolved.provider(), resolved.endpoint(), resolved.model(), resolved.apiKey(),
                         attempt, maxRetries, ex, false);
                 if (attempt < maxRetries) {
                     sleepBeforeRetry();
@@ -310,11 +314,11 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
             }
         }
 
-        logLlmFinalFailure(safeContext, selectedProvider, selectedEndpoint, selectedModel, apiKey,
+        logLlmFinalFailure(safeContext, resolved.provider(), resolved.endpoint(), resolved.model(), resolved.apiKey(),
                 maxRetries, lastError, false);
 
-        String output = buildRequestFailureReply(safeContext, selectedProvider, maxRetries, lastError);
-        recordMetric(startedAt, safeContext, selectedProvider, selectedEndpoint, false, maxRetries > 1, prompt, output,
+        String output = buildRequestFailureReply(safeContext, resolved.provider(), maxRetries, lastError);
+        recordMetric(startedAt, safeContext, resolved.provider(), resolved.endpoint(), false, maxRetries > 1, prompt, output,
                 lastError == null ? "runtime_error" : simplifyErrorType(lastError));
         return output;
     }
@@ -328,25 +332,11 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
             }
             return;
         }
-        String selectedProvider = resolveProvider(safeContext);
-        String selectedEndpoint = resolveEndpoint(selectedProvider);
-        String selectedModel = resolveModel(safeContext, normalizeProvider(selectedProvider));
-        logRoutingSample(safeContext, selectedProvider, selectedModel, true);
-        String apiKey = resolveApiKey(safeContext, selectedProvider);
-        boolean apiKeyRequired = requiresApiKey(selectedProvider, selectedEndpoint);
-        if (apiKeyRequired && (apiKey == null || apiKey.isBlank())) {
-            logLlmPrecheckFailure(safeContext, selectedProvider, selectedEndpoint, selectedModel, apiKey,
-                    "missing_api_key", true);
+        ResolvedCall resolved = resolveCall(safeContext, true);
+        String precheckFailure = resolvePrecheckFailureReply(safeContext, resolved, true);
+        if (precheckFailure != null) {
             if (onDelta != null) {
-                onDelta.accept(buildMissingApiKeyReply(safeContext, selectedProvider));
-            }
-            return;
-        }
-        if (selectedModel == null || selectedModel.isBlank()) {
-            logLlmPrecheckFailure(safeContext, selectedProvider, selectedEndpoint, selectedModel, apiKey,
-                    "missing_model", true);
-            if (onDelta != null) {
-                onDelta.accept(buildMissingModelReply(safeContext, selectedProvider));
+                onDelta.accept(precheckFailure);
             }
             return;
         }
@@ -356,12 +346,12 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
         for (int attempt = 1; attempt <= maxRetries; attempt++) {
             try {
                 String output = callProvider(
-                        selectedProvider,
-                        selectedEndpoint,
-                        selectedModel,
+                        resolved.provider(),
+                        resolved.endpoint(),
+                        resolved.model(),
                         prompt,
                         safeContext,
-                        apiKey,
+                        resolved.apiKey(),
                         onDelta,
                         streamed
                 );
@@ -371,18 +361,53 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
                 return;
             } catch (RuntimeException ex) {
                 lastError = ex;
-                logLlmAttemptFailure(safeContext, selectedProvider, selectedEndpoint, selectedModel, apiKey,
+                logLlmAttemptFailure(safeContext, resolved.provider(), resolved.endpoint(), resolved.model(), resolved.apiKey(),
                         attempt, maxRetries, ex, true);
                 if (attempt < maxRetries) {
                     sleepBeforeRetry();
                 }
             }
         }
-        logLlmFinalFailure(safeContext, selectedProvider, selectedEndpoint, selectedModel, apiKey,
+        logLlmFinalFailure(safeContext, resolved.provider(), resolved.endpoint(), resolved.model(), resolved.apiKey(),
                 maxRetries, lastError, true);
         if (onDelta != null) {
-            onDelta.accept(buildRequestFailureReply(safeContext, selectedProvider, maxRetries, lastError));
+            onDelta.accept(buildRequestFailureReply(safeContext, resolved.provider(), maxRetries, lastError));
         }
+    }
+
+    private ResolvedCall resolveCall(Map<String, Object> safeContext, boolean streamMode) {
+        String selectedProvider = resolveProvider(safeContext);
+        String selectedEndpoint = resolveEndpoint(selectedProvider);
+        String selectedModel = resolveModel(safeContext, normalizeProvider(selectedProvider));
+        logRoutingSample(safeContext, selectedProvider, selectedModel, streamMode);
+        String apiKey = resolveApiKey(safeContext, selectedProvider);
+        return new ResolvedCall(selectedProvider, selectedEndpoint, selectedModel, apiKey);
+    }
+
+    private String resolvePrecheckFailureReply(Map<String, Object> safeContext, ResolvedCall resolved, boolean streamMode) {
+        if (missingApiKey(resolved)) {
+            logLlmPrecheckFailure(safeContext, resolved.provider(), resolved.endpoint(), resolved.model(), resolved.apiKey(),
+                    "missing_api_key", streamMode);
+            return buildMissingApiKeyReply(safeContext, resolved.provider());
+        }
+        if (missingModel(resolved)) {
+            logLlmPrecheckFailure(safeContext, resolved.provider(), resolved.endpoint(), resolved.model(), resolved.apiKey(),
+                    "missing_model", streamMode);
+            return buildMissingModelReply(safeContext, resolved.provider());
+        }
+        return null;
+    }
+
+    private boolean missingApiKey(ResolvedCall resolved) {
+        return requiresApiKey(resolved.provider(), resolved.endpoint())
+                && (resolved.apiKey() == null || resolved.apiKey().isBlank());
+    }
+
+    private boolean missingModel(ResolvedCall resolved) {
+        return resolved.model() == null || resolved.model().isBlank();
+    }
+
+    private record ResolvedCall(String provider, String endpoint, String model, String apiKey) {
     }
 
     @Override
@@ -564,48 +589,23 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
                                                 String apiKey,
                                                 Consumer<String> deltaConsumer,
                                                 AtomicBoolean streamEmitted) {
-        String endpointText = endpointValue == null ? "" : endpointValue.trim();
-        if (endpointText.isBlank()) {
-            throw new RuntimeException("empty endpoint");
-        }
+        String endpointText = requireEndpointText(endpointValue);
         try {
             boolean responsesEndpoint = isResponsesEndpoint(endpointText);
             Map<String, Object> requestPayload = responsesEndpoint
                     ? buildResponsesRequestPayload(model, prompt, context)
                     : buildChatCompletionsRequestPayload(model, prompt, context);
-
-            Double temperature = resolveTemperature(context);
-            if (temperature != null) {
-                requestPayload.put("temperature", temperature);
-            }
-            Integer maxTokens = resolveMaxTokens(context);
-            if (maxTokens != null) {
-                requestPayload.put("max_tokens", maxTokens);
-            }
-
-            String requestBody = objectMapper.writeValueAsString(requestPayload);
-            HttpRequest request = HttpRequest.newBuilder(URI.create(endpointText))
-                    .timeout(HTTP_TIMEOUT)
-                    .header("Content-Type", "application/json")
-                    .header("Accept", "text/event-stream")
-                    .header("Authorization", "Bearer " + apiKey)
-                    .POST(HttpRequest.BodyPublishers.ofString(requestBody))
-                    .build();
-
-            HttpResponse<InputStream> response = httpClient.send(request, HttpResponse.BodyHandlers.ofInputStream());
-            int status = response.statusCode();
-            String body = readResponseBody(response.body());
-            if (status < 200 || status >= 300) {
-                throw new RuntimeException("http_" + status + ": " + abbreviate(body, 300));
-            }
-
+            applyOpenAiCompatibleOverrides(requestPayload, context);
+            String body = sendJsonRequest(
+                    endpointText,
+                    requestPayload,
+                    "text/event-stream",
+                    apiKey == null || apiKey.isBlank() ? null : "Bearer " + apiKey
+            );
             String content = responsesEndpoint
                     ? extractResponsesText(body, deltaConsumer, streamEmitted)
                     : extractAssistantText(body, deltaConsumer, streamEmitted);
-            if (content == null || content.isBlank()) {
-                throw new RuntimeException("empty_response_content");
-            }
-            return content;
+            return requireResponseContent(content);
         } catch (IOException | InterruptedException ex) {
             if (ex instanceof InterruptedException) {
                 Thread.currentThread().interrupt();
@@ -620,47 +620,16 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
                                             String apiKey,
                                             Consumer<String> deltaConsumer,
                                             AtomicBoolean streamEmitted) {
-        String endpointText = endpointValue == null ? "" : endpointValue.trim();
-        if (endpointText.isBlank()) {
-            throw new RuntimeException("empty endpoint");
-        }
+        String endpointText = requireEndpointText(endpointValue);
         try {
-            Map<String, Object> requestPayload = new LinkedHashMap<>();
-            requestPayload.put("contents", List.of(Map.of("parts", List.of(Map.of("text", prompt)))));
-
-            Map<String, Object> generationConfig = new LinkedHashMap<>();
-            Double temperature = resolveTemperature(context);
-            if (temperature != null) {
-                generationConfig.put("temperature", temperature);
-            }
-            Integer maxTokens = resolveMaxTokens(context);
-            if (maxTokens != null) {
-                generationConfig.put("maxOutputTokens", maxTokens);
-            }
-            if (!generationConfig.isEmpty()) {
-                requestPayload.put("generationConfig", generationConfig);
-            }
-
-            String requestBody = objectMapper.writeValueAsString(requestPayload);
-            HttpRequest request = HttpRequest.newBuilder(URI.create(buildNativeGeminiStreamRequestUrl(endpointText, apiKey)))
-                    .timeout(HTTP_TIMEOUT)
-                    .header("Content-Type", "application/json")
-                    .header("Accept", "text/event-stream")
-                    .POST(HttpRequest.BodyPublishers.ofString(requestBody))
-                    .build();
-
-            HttpResponse<InputStream> response = httpClient.send(request, HttpResponse.BodyHandlers.ofInputStream());
-            int status = response.statusCode();
-            String body = readResponseBody(response.body());
-            if (status < 200 || status >= 300) {
-                throw new RuntimeException("http_" + status + ": " + abbreviate(body, 300));
-            }
-
+            String body = sendJsonRequest(
+                    buildNativeGeminiStreamRequestUrl(endpointText, apiKey),
+                    buildNativeGeminiRequestPayload(prompt, context),
+                    "text/event-stream",
+                    null
+            );
             String content = extractGeminiText(body, deltaConsumer, streamEmitted);
-            if (content == null || content.isBlank()) {
-                throw new RuntimeException("empty_response_content");
-            }
-            return content;
+            return requireResponseContent(content);
         } catch (IOException | InterruptedException ex) {
             if (ex instanceof InterruptedException) {
                 Thread.currentThread().interrupt();
@@ -675,62 +644,13 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
                                               Map<String, Object> context,
                                               Consumer<String> deltaConsumer,
                                               AtomicBoolean streamEmitted) {
-        String endpointText = endpointValue == null ? "" : endpointValue.trim();
-        if (endpointText.isBlank()) {
-            throw new RuntimeException("empty endpoint");
-        }
-        logOllamaRequest("generate", endpointText, model, context);
-        Instant startedAt = Instant.now();
-        try {
-            Map<String, Object> requestPayload = new LinkedHashMap<>();
-            requestPayload.put("model", model);
-            requestPayload.put("prompt", prompt);
-            requestPayload.put("stream", true);
-
-            Map<String, Object> options = new LinkedHashMap<>();
-            Double temperature = resolveTemperature(context);
-            if (temperature != null) {
-                options.put("temperature", temperature);
-            }
-            Integer maxTokens = resolveMaxTokens(context);
-            if (maxTokens != null) {
-                options.put("num_predict", maxTokens);
-            }
-            if (!options.isEmpty()) {
-                requestPayload.put("options", options);
-            }
-
-            String requestBody = objectMapper.writeValueAsString(requestPayload);
-            HttpRequest request = HttpRequest.newBuilder(URI.create(endpointText))
-                    .timeout(HTTP_TIMEOUT)
-                    .header("Content-Type", "application/json")
-                    .header("Accept", "application/x-ndjson")
-                    .POST(HttpRequest.BodyPublishers.ofString(requestBody))
-                    .build();
-
-            HttpResponse<InputStream> response = httpClient.send(request, HttpResponse.BodyHandlers.ofInputStream());
-            int status = response.statusCode();
-            if (status < 200 || status >= 300) {
-                String body = readResponseBody(response.body());
-                throw new RuntimeException("http_" + status + ": " + abbreviate(body, 300));
-            }
-
-            String content = readOllamaNdjsonStream(response.body(), deltaConsumer, streamEmitted);
-            if (content == null || content.isBlank()) {
-                throw new RuntimeException("empty_response_content");
-            }
-            logOllamaResult("generate", endpointText, content, startedAt, null);
-            return content;
-        } catch (IOException | InterruptedException ex) {
-            if (ex instanceof InterruptedException) {
-                Thread.currentThread().interrupt();
-            }
-            logOllamaResult("generate", endpointText, null, startedAt, ex);
-            throw new RuntimeException("http_call_failed: " + ex.getMessage(), ex);
-        } catch (RuntimeException ex) {
-            logOllamaResult("generate", endpointText, null, startedAt, ex);
-            throw ex;
-        }
+        return callOllamaProvider("generate",
+                endpointValue,
+                model,
+                buildOllamaGeneratePayload(model, prompt, context),
+                context,
+                deltaConsumer,
+                streamEmitted);
     }
 
     private String callOllamaChatProvider(String endpointValue,
@@ -739,62 +659,153 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
                                           Map<String, Object> context,
                                           Consumer<String> deltaConsumer,
                                           AtomicBoolean streamEmitted) {
-        String endpointText = endpointValue == null ? "" : endpointValue.trim();
-        if (endpointText.isBlank()) {
-            throw new RuntimeException("empty endpoint");
-        }
-        logOllamaRequest("chat", endpointText, model, context);
+        return callOllamaProvider("chat",
+                endpointValue,
+                model,
+                buildOllamaChatPayload(model, prompt, context),
+                context,
+                deltaConsumer,
+                streamEmitted);
+    }
+
+    private String callOllamaProvider(String apiType,
+                                      String endpointValue,
+                                      String model,
+                                      Map<String, Object> requestPayload,
+                                      Map<String, Object> context,
+                                      Consumer<String> deltaConsumer,
+                                      AtomicBoolean streamEmitted) {
+        String endpointText = requireEndpointText(endpointValue);
+        logOllamaRequest(apiType, endpointText, model, context);
         Instant startedAt = Instant.now();
         try {
-            Map<String, Object> requestPayload = new LinkedHashMap<>();
-            requestPayload.put("model", model);
-            requestPayload.put("messages", List.of(Map.of("role", "user", "content", prompt)));
-            requestPayload.put("stream", true);
-
-            Map<String, Object> options = new LinkedHashMap<>();
-            Double temperature = resolveTemperature(context);
-            if (temperature != null) {
-                options.put("temperature", temperature);
-            }
-            Integer maxTokens = resolveMaxTokens(context);
-            if (maxTokens != null) {
-                options.put("num_predict", maxTokens);
-            }
-            if (!options.isEmpty()) {
-                requestPayload.put("options", options);
-            }
-
-            String requestBody = objectMapper.writeValueAsString(requestPayload);
-            HttpRequest request = HttpRequest.newBuilder(URI.create(endpointText))
-                    .timeout(HTTP_TIMEOUT)
-                    .header("Content-Type", "application/json")
-                    .header("Accept", "application/x-ndjson")
-                    .POST(HttpRequest.BodyPublishers.ofString(requestBody))
-                    .build();
-
-            HttpResponse<InputStream> response = httpClient.send(request, HttpResponse.BodyHandlers.ofInputStream());
-            int status = response.statusCode();
-            if (status < 200 || status >= 300) {
-                String body = readResponseBody(response.body());
-                throw new RuntimeException("http_" + status + ": " + abbreviate(body, 300));
-            }
-
-            String content = readOllamaNdjsonStream(response.body(), deltaConsumer, streamEmitted);
-            if (content == null || content.isBlank()) {
-                throw new RuntimeException("empty_response_content");
-            }
-            logOllamaResult("chat", endpointText, content, startedAt, null);
+            HttpRequest request = buildJsonPostRequest(endpointText, requestPayload, "application/x-ndjson", null);
+            HttpResponse<InputStream> response = sendInputStreamRequest(request);
+            ensureSuccessStatus(response.statusCode(), response.body());
+            String content = requireResponseContent(readOllamaNdjsonStream(response.body(), deltaConsumer, streamEmitted));
+            logOllamaResult(apiType, endpointText, content, startedAt, null);
             return content;
         } catch (IOException | InterruptedException ex) {
             if (ex instanceof InterruptedException) {
                 Thread.currentThread().interrupt();
             }
-            logOllamaResult("chat", endpointText, null, startedAt, ex);
+            logOllamaResult(apiType, endpointText, null, startedAt, ex);
             throw new RuntimeException("http_call_failed: " + ex.getMessage(), ex);
         } catch (RuntimeException ex) {
-            logOllamaResult("chat", endpointText, null, startedAt, ex);
+            logOllamaResult(apiType, endpointText, null, startedAt, ex);
             throw ex;
         }
+    }
+
+    private String requireEndpointText(String endpointValue) {
+        String endpointText = endpointValue == null ? "" : endpointValue.trim();
+        if (endpointText.isBlank()) {
+            throw new RuntimeException("empty endpoint");
+        }
+        return endpointText;
+    }
+
+    private void applyOpenAiCompatibleOverrides(Map<String, Object> requestPayload, Map<String, Object> context) {
+        Double temperature = resolveTemperature(context);
+        if (temperature != null) {
+            requestPayload.put("temperature", temperature);
+        }
+        Integer maxTokens = resolveMaxTokens(context);
+        if (maxTokens != null) {
+            requestPayload.put("max_tokens", maxTokens);
+        }
+    }
+
+    private Map<String, Object> buildNativeGeminiRequestPayload(String prompt, Map<String, Object> context) {
+        Map<String, Object> requestPayload = new LinkedHashMap<>();
+        requestPayload.put("contents", List.of(Map.of("parts", List.of(Map.of("text", prompt)))));
+        Map<String, Object> generationConfig = buildSamplingOptions(context, "maxOutputTokens");
+        if (!generationConfig.isEmpty()) {
+            requestPayload.put("generationConfig", generationConfig);
+        }
+        return requestPayload;
+    }
+
+    private Map<String, Object> buildOllamaGeneratePayload(String model, String prompt, Map<String, Object> context) {
+        Map<String, Object> requestPayload = new LinkedHashMap<>();
+        requestPayload.put("model", model);
+        requestPayload.put("prompt", prompt);
+        requestPayload.put("stream", true);
+        Map<String, Object> options = buildSamplingOptions(context, "num_predict");
+        if (!options.isEmpty()) {
+            requestPayload.put("options", options);
+        }
+        return requestPayload;
+    }
+
+    private Map<String, Object> buildOllamaChatPayload(String model, String prompt, Map<String, Object> context) {
+        Map<String, Object> requestPayload = new LinkedHashMap<>();
+        requestPayload.put("model", model);
+        requestPayload.put("messages", List.of(Map.of("role", "user", "content", prompt)));
+        requestPayload.put("stream", true);
+        Map<String, Object> options = buildSamplingOptions(context, "num_predict");
+        if (!options.isEmpty()) {
+            requestPayload.put("options", options);
+        }
+        return requestPayload;
+    }
+
+    private Map<String, Object> buildSamplingOptions(Map<String, Object> context, String maxTokensKey) {
+        Map<String, Object> options = new LinkedHashMap<>();
+        Double temperature = resolveTemperature(context);
+        if (temperature != null) {
+            options.put("temperature", temperature);
+        }
+        Integer maxTokens = resolveMaxTokens(context);
+        if (maxTokens != null && maxTokensKey != null && !maxTokensKey.isBlank()) {
+            options.put(maxTokensKey, maxTokens);
+        }
+        return options;
+    }
+
+    private String sendJsonRequest(String endpointText,
+                                   Map<String, Object> requestPayload,
+                                   String acceptHeader,
+                                   String authorizationHeader) throws IOException, InterruptedException {
+        HttpRequest request = buildJsonPostRequest(endpointText, requestPayload, acceptHeader, authorizationHeader);
+        HttpResponse<InputStream> response = sendInputStreamRequest(request);
+        ensureSuccessStatus(response.statusCode(), response.body());
+        return readResponseBody(response.body());
+    }
+
+    private HttpRequest buildJsonPostRequest(String endpointText,
+                                             Map<String, Object> requestPayload,
+                                             String acceptHeader,
+                                             String authorizationHeader) throws JsonProcessingException {
+        HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(endpointText))
+                .timeout(HTTP_TIMEOUT)
+                .header("Content-Type", "application/json");
+        if (acceptHeader != null && !acceptHeader.isBlank()) {
+            builder.header("Accept", acceptHeader);
+        }
+        if (authorizationHeader != null && !authorizationHeader.isBlank()) {
+            builder.header("Authorization", authorizationHeader);
+        }
+        return builder.POST(HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(requestPayload))).build();
+    }
+
+    private HttpResponse<InputStream> sendInputStreamRequest(HttpRequest request) throws IOException, InterruptedException {
+        return httpClient.send(request, HttpResponse.BodyHandlers.ofInputStream());
+    }
+
+    private void ensureSuccessStatus(int status, InputStream bodyStream) throws IOException {
+        if (status >= 200 && status < 300) {
+            return;
+        }
+        String body = readResponseBody(bodyStream);
+        throw new RuntimeException("http_" + status + ": " + abbreviate(body, 300));
+    }
+
+    private String requireResponseContent(String content) {
+        if (content == null || content.isBlank()) {
+            throw new RuntimeException("empty_response_content");
+        }
+        return content;
     }
 
     private void logOllamaRequest(String apiType, String endpointText, String model, Map<String, Object> context) {
@@ -1306,6 +1317,9 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
         if ("doubao".equals(normalizedProvider)) {
             return null;
         }
+        if ("openrouter".equals(normalizedProvider)) {
+            return null;
+        }
         if ("local".equals(normalizedProvider) || "ollama".equals(normalizedProvider)) {
             return "gemma3:1b-it-q4_K_M";
         }
@@ -1392,6 +1406,9 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
         String normalizedProvider = normalizeProvider(providerName);
         if ("doubao".equals(normalizedProvider)) {
             return "[LLM doubao] unavailable: missing Model ID / Endpoint ID. Configure mindos.llm.provider-models=doubao:<endpoint-or-model-id> or pass context.model.";
+        }
+        if ("openrouter".equals(normalizedProvider)) {
+            return "[LLM openrouter] unavailable: missing model. Configure mindos.llm.provider-models=openrouter:<provider/model> or pass context.model.";
         }
         return "[LLM " + normalizedProvider + "] unavailable: missing model.";
     }
