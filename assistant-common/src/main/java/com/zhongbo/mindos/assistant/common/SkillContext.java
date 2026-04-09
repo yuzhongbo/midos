@@ -7,11 +7,11 @@ import java.util.Map;
 public record SkillContext(String userId, String input, Map<String, Object> attributes) {
 
     public SkillContext {
-        attributes = Collections.unmodifiableMap(new LinkedHashMap<>(attributes));
+        Map<String, Object> safeAttributes = attributes == null ? Map.of() : attributes;
+        attributes = Collections.unmodifiableMap(new LinkedHashMap<>(safeAttributes));
     }
 
     public static SkillContext of(String userId, String input) {
         return new SkillContext(userId, input, Map.of());
     }
 }
-

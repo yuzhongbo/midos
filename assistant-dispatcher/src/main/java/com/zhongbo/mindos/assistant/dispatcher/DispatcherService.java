@@ -27,6 +27,8 @@ import com.zhongbo.mindos.assistant.memory.model.SkillUsageStats;
 import com.zhongbo.mindos.assistant.skill.SkillEngine;
 import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalysisResult;
 import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalysisService;
+import com.zhongbo.mindos.assistant.dispatcher.decision.Decision;
+import com.zhongbo.mindos.assistant.dispatcher.decision.DecisionParser;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -235,6 +237,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
     private final AtomicLong activeDispatchCount = new AtomicLong();
     private final PromptBuilder promptBuilder;
     private final LLMDecisionEngine llmDecisionEngine;
+    private final DecisionParser decisionParser;
 
     // Backwards-compatible constructor for tests and callers that do not provide
     // the new preferSuggestedSkill configuration parameters. Delegates to the
@@ -316,6 +319,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         this.semanticAnalysisService = semanticAnalysisService;
         this.promptBuilder = new PromptBuilder();
         this.llmDecisionEngine = new LLMDecisionEngine();
+        this.decisionParser = new DecisionParser();
         this.preferenceReuseEnabled = preferenceReuseEnabled;
         this.habitRoutingEnabled = habitRoutingEnabled;
         this.habitRoutingMinTotalCount = Math.max(1, habitRoutingMinTotalCount);
@@ -2454,6 +2458,18 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         }
         String llmReply = callLlmWithLocalEscalation(prompt, Map.copyOf(llmContext));
         if (llmReply == null || llmReply.isBlank() || "NONE".equalsIgnoreCase(llmReply.trim())) {
+            return Optional.empty();
+        }
+        Optional<Decision> decision = decisionParser.parse(llmReply);
+        if (decision.isPresent()) {
+            Decision parsed = decision.get();
+            if (parsed.requiresClarify()) {
+                return Optional.empty();
+            }
+            Map<String, Object> params = parsed.params() == null ? Map.of() : parsed.params();
+            return Optional.of(new SkillDsl(parsed.target(), params));
+        }
+        if (!llmReply.trim().startsWith("{")) {
             return Optional.empty();
         }
         return skillDslParser.parseSkillDslJson(llmReply);
