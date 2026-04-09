@@ -597,7 +597,10 @@ public class SemanticAnalysisService {
         if (containsAny(normalized, SEMANTIC_META_HINTS.toArray(String[]::new))) {
             return null;
         }
-        if (matchesSkill(userInput, normalized, "news_search", "新闻", "资讯", "快讯", "头条", "热搜", "最新新闻", "今日新闻", "国际新闻", "news")) {
+        boolean explicitNewsIntent = containsAny(normalized,
+                "新闻", "资讯", "快讯", "头条", "热搜", "最新新闻", "今日新闻", "国际新闻", "news");
+        if (explicitNewsIntent
+                && matchesSkill(userInput, normalized, "news_search", "新闻", "资讯", "快讯", "头条", "热搜", "最新新闻", "今日新闻", "国际新闻", "news")) {
             return buildRealtimeSemanticAnalysis(
                     userInput,
                     "获取最新新闻资讯",
@@ -609,7 +612,10 @@ public class SemanticAnalysisService {
                     List.of(new SemanticAnalysisResult.CandidateIntent("news_search", 0.94), new SemanticAnalysisResult.CandidateIntent("mcp.bravesearch.webSearch", 0.80))
             );
         }
-        if (matchesSkill(userInput, normalized, "mcp.bravesearch.webSearch", "天气", "气温", "空气质量", "pm2.5", "天气预报", "weather", "forecast")) {
+        boolean explicitWeatherIntent = containsAny(normalized,
+                "天气", "气温", "空气质量", "pm2.5", "天气预报", "weather", "forecast");
+        if (explicitWeatherIntent
+                && matchesSkill(userInput, normalized, "mcp.bravesearch.webSearch", "天气", "气温", "空气质量", "pm2.5", "天气预报", "weather", "forecast")) {
             return buildRealtimeSemanticAnalysis(
                     userInput,
                     "查询实时天气信息",
@@ -621,7 +627,10 @@ public class SemanticAnalysisService {
                     List.of(new SemanticAnalysisResult.CandidateIntent("mcp.bravesearch.webSearch", 0.93))
             );
         }
-        if (matchesSkill(userInput, normalized, "mcp.bravesearch.webSearch", "航班", "列车", "高铁", "火车", "机票", "车票", "延误", "出发", "到达", "路况", "交通", "出行", "旅行", "行程", "flight", "train", "traffic", "travel")) {
+        boolean explicitTravelIntent = containsAny(normalized,
+                "航班", "列车", "高铁", "火车", "机票", "车票", "延误", "出发", "到达", "路况", "交通", "出行", "旅行", "行程", "flight", "train", "traffic", "travel");
+        if (explicitTravelIntent
+                && matchesSkill(userInput, normalized, "mcp.bravesearch.webSearch", "航班", "列车", "高铁", "火车", "机票", "车票", "延误", "出发", "到达", "路况", "交通", "出行", "旅行", "行程", "flight", "train", "traffic", "travel")) {
             return buildRealtimeSemanticAnalysis(
                     userInput,
                     "查询实时出行信息",
@@ -633,7 +642,10 @@ public class SemanticAnalysisService {
                     List.of(new SemanticAnalysisResult.CandidateIntent("mcp.bravesearch.webSearch", 0.91))
             );
         }
-        if (matchesSkill(userInput, normalized, "mcp.bravesearch.webSearch", "股价", "股票", "基金", "汇率", "行情", "指数", "大盘", "市场", "stock", "market", "exchange")) {
+        boolean explicitMarketIntent = containsAny(normalized,
+                "股价", "股票", "基金", "汇率", "行情", "指数", "大盘", "市场", "stock", "market", "exchange");
+        if (explicitMarketIntent
+                && matchesSkill(userInput, normalized, "mcp.bravesearch.webSearch", "股价", "股票", "基金", "汇率", "行情", "指数", "大盘", "市场", "stock", "market", "exchange")) {
             return buildRealtimeSemanticAnalysis(
                     userInput,
                     "查询实时行情信息",

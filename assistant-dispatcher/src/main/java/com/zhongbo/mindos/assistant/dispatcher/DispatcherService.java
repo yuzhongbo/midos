@@ -1604,6 +1604,11 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                     }
                     if (llmDetection.result().isPresent()) {
                         SkillResult orchestrated = llmDetection.result().get();
+                        if (isSkillLoopGuardBlocked(userId, orchestrated.skillName(), userInput)) {
+                            LOGGER.info("Dispatcher guard=loop-skip, userId=" + userId + ", skill=" + orchestrated.skillName());
+                            rejectedReasons.add("LLM decision-orchestrated skill blocked by loop guard");
+                            return CompletableFuture.completedFuture(new RoutingOutcome(Optional.empty(), fallbackRoutingDecision(rejectedReasons)));
+                        }
                         replayProbe.preAnalyzeCandidate = orchestrated.skillName();
                         skillPreAnalyzeAcceptedCount.incrementAndGet();
                         RoutingDecisionDto decisionDto = new RoutingDecisionDto(

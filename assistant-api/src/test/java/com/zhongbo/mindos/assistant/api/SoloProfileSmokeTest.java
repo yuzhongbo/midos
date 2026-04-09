@@ -8,6 +8,8 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
+import java.util.UUID;
+
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -33,9 +35,10 @@ class SoloProfileSmokeTest {
 
     @Test
     void shouldKeepChatEndpointAvailableInSoloProfile() throws Exception {
+        String userId = "solo-smoke-user-" + UUID.randomUUID();
         mockMvc.perform(post("/chat")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"userId\":\"solo-smoke-user\",\"message\":\"echo hello\"}"))
+                        .content("{\"userId\":\"" + userId + "\",\"message\":\"echo hello\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.channel").value("echo"));
     }

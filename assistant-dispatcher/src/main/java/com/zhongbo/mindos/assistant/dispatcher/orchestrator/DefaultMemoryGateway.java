@@ -5,6 +5,7 @@ import com.zhongbo.mindos.assistant.memory.MemoryManager;
 import com.zhongbo.mindos.assistant.memory.model.ConversationTurn;
 import com.zhongbo.mindos.assistant.memory.model.ProceduralMemoryEntry;
 import com.zhongbo.mindos.assistant.memory.model.SemanticMemoryEntry;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -20,6 +21,7 @@ public class DefaultMemoryGateway implements MemoryGateway {
         this(memoryManager, 12);
     }
 
+    @Autowired
     public DefaultMemoryGateway(MemoryManager memoryManager,
                                 @Value("${mindos.dispatcher.memory.history.recent-turns:12}") int historyWindow) {
         this.memoryManager = memoryManager;
