@@ -41,6 +41,7 @@ import com.zhongbo.mindos.assistant.dispatcher.orchestrator.SimpleFallbackPlan;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.SimpleParamValidator;
 import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalysisResult;
 import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalysisService;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -207,6 +208,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
     private final boolean behaviorLearningEnabled;
     private final int behaviorLearningWindowSize;
     private final double behaviorLearningDefaultParamThreshold;
+    private final boolean proceduralLoggingEnabled;
     private final boolean semanticAnalysisSkipShortSimpleEnabled;
     private final boolean preferSuggestedSkillEnabled;
     private final double preferSuggestedSkillMinConfidence;
@@ -257,6 +259,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
     // Backwards-compatible constructor for tests and callers that do not provide
     // the new preferSuggestedSkill configuration parameters. Delegates to the
     // primary constructor with safe defaults (disabled).
+    @Autowired
     public DispatcherService(SkillEngine skillEngine,
                              SkillDslParser skillDslParser,
                              IntentModelRoutingPolicy intentModelRoutingPolicy,
@@ -419,6 +422,9 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         this.behaviorLearningEnabled = behaviorLearningEnabled;
         this.behaviorLearningWindowSize = Math.max(10, behaviorLearningWindowSize);
         this.behaviorLearningDefaultParamThreshold = Math.max(0.5, Math.min(0.95, behaviorLearningDefaultParamThreshold));
+        this.proceduralLoggingEnabled = Boolean.parseBoolean(
+                System.getProperty("mindos.dispatcher.procedural-logging.enabled", "false")
+        );
         this.semanticAnalysisSkipShortSimpleEnabled = semanticAnalysisSkipShortSimpleEnabled;
         this.preferSuggestedSkillEnabled = false;
         this.preferSuggestedSkillMinConfidence = 0.0;
@@ -558,6 +564,13 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                     );
                     ExecutionTraceDto trace = enrichTraceWithRouting(orchestration.trace(), routingWithObservability);
                     finalResultSuccessRef.set(result.success());
+                    if (proceduralLoggingEnabled && !shouldSkipProceduralLogging(result.skillName())) {
+                        memoryGateway.writeProcedural(userId, ProceduralMemoryEntry.of(
+                                result.skillName(),
+                                userInput,
+                                result.success()
+                        ));
+                    }
                     memoryManager.storeAssistantConversation(userId, result.output());
                     maybeStorePostSkillSummary(userId, userInput, result);
                     maybeStoreBehaviorProfile(userId, result);
@@ -1245,6 +1258,26 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
             return "brave";
         }
         return "";
+    }
+
+    private boolean shouldSkipProceduralLogging(String skillName) {
+        String normalized = normalize(skillName);
+        if (normalized.isEmpty()) {
+            return true;
+        }
+        if ("llm".equals(normalized)) {
+            return true;
+        }
+        if (normalized.startsWith("memory.")) {
+            return true;
+        }
+        if (normalized.startsWith("semantic.")) {
+            return true;
+        }
+        if (normalized.startsWith("security.")) {
+            return true;
+        }
+        return false;
     }
 
     private CompletableFuture<RoutingOutcome> routeToSkillAsync(String userId,
