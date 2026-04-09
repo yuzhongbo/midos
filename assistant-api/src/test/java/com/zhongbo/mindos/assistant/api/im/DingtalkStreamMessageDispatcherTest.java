@@ -77,7 +77,7 @@ class DingtalkStreamMessageDispatcherTest {
                     "text", Map.of("content", "帮我总结今天安排")
             ));
 
-            waitUntil(() -> !sender.messages.isEmpty(), 1000);
+            waitUntil(() -> !sender.messages.isEmpty(), 1500);
             replyFuture.complete("这是最终答复");
             waitUntil(() -> sender.messages.size() >= 2, 1000);
         } finally {
@@ -91,6 +91,53 @@ class DingtalkStreamMessageDispatcherTest {
         assertTrue(logs.contains("\"event\":\"dingtalk.stream.received\""));
         assertTrue(logs.contains("\"event\":\"dingtalk.stream.waiting.sent\""));
         assertTrue(logs.contains("\"event\":\"dingtalk.stream.final.sent\""));
+    }
+
+    @Test
+    void shouldDelayWaitingStatusLongerForNewsLikeInput() throws Exception {
+        ImGatewayService gatewayService = mock(ImGatewayService.class);
+        RecordingConversationSender sender = new RecordingConversationSender(true);
+        DingtalkIntegrationSettings settings = new DingtalkIntegrationSettings(
+                true,
+                true,
+                true,
+                "client-id",
+                "client-secret",
+                DingtalkIntegrationSettings.BOT_MESSAGE_TOPIC,
+                100L,
+                "处理中",
+                false,
+                30000L,
+                true,
+                1000L,
+                60000L,
+                2.0d,
+                0.2d,
+                0,
+                true,
+                "robot-code",
+                "",
+                ""
+        );
+        CompletableFuture<String> replyFuture = new CompletableFuture<>();
+        when(gatewayService.chatAsync("staff-news-delay", "cid-news-delay", "查看最新国际新闻"))
+                .thenReturn(replyFuture);
+        dispatcher = new DingtalkStreamMessageDispatcher(gatewayService, sender, settings);
+
+        dispatcher.handleIncomingPayload(Map.of(
+                "conversationId", "cid-news-delay",
+                "senderStaffId", "staff-news-delay",
+                "text", Map.of("content", "查看最新国际新闻")
+        ));
+
+        TimeUnit.MILLISECONDS.sleep(150L);
+        assertEquals(0, sender.messages.size(), "news-like input should not trigger the reminder too early");
+
+        replyFuture.complete("这是最新国际新闻整理结果");
+        waitUntil(() -> sender.messages.size() >= 1, 1000);
+
+        assertEquals(1, sender.messages.size());
+        assertEquals("这是最新国际新闻整理结果", sender.messages.get(0));
     }
 
     @Test

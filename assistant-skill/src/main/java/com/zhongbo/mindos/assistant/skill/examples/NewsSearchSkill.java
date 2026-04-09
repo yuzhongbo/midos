@@ -5,6 +5,11 @@ import com.zhongbo.mindos.assistant.common.LlmClient;
 import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.skill.Skill;
+import com.zhongbo.mindos.assistant.skill.mcp.SearchRequestStyle;
+import com.zhongbo.mindos.assistant.skill.mcp.SearchToolAdapterChain;
+import com.zhongbo.mindos.assistant.skill.mcp.SearchToolBinding;
+import com.zhongbo.mindos.assistant.skill.mcp.SearchToolAdapterRegistry;
+import com.zhongbo.mindos.assistant.skill.search.SearchSourceConfig;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -18,7 +23,6 @@ import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
 import java.io.StringReader;
 import java.net.URI;
-import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
@@ -51,12 +55,12 @@ public class NewsSearchSkill implements Skill {
     private static final Logger LOGGER = Logger.getLogger(NewsSearchSkill.class.getName());
     private static final DateTimeFormatter RFC1123 = DateTimeFormatter.RFC_1123_DATE_TIME;
     private static final Pattern JSON_BLOCK_PATTERN = Pattern.compile("\\{.*}", Pattern.DOTALL);
-    private static final Pattern SOURCE_PATTERN = Pattern.compile("(?i)(?:^|\\s)source\\s*=\\s*(google|36kr|all)(?:\\s|$)");
+    private static final Pattern SOURCE_PATTERN = Pattern.compile("(?i)(?:^|\\s)source\\s*=\\s*([\\p{L}\\p{N}._-]+)(?:\\s|$)");
     private static final Pattern SORT_PATTERN = Pattern.compile("(?i)(?:^|\\s)sort\\s*=\\s*(latest|relevance)(?:\\s|$)");
     private static final Pattern LIMIT_PARAM_PATTERN = Pattern.compile("(?i)(?:^|\\s)limit\\s*=\\s*([0-9一二两三四五六七八九十百千万]+)(?:\\s|$)");
     private static final Pattern COUNT_LIMIT_PATTERN = Pattern.compile("(?:前|看|来|给我看|给我|帮我看)?\\s*([0-9一二两三四五六七八九十百千万]+)\\s*(?:条|篇|个)");
     private static final Pattern PARAMETER_TOKEN_PATTERN = Pattern.compile("(?i)\\b(source|sort|limit)\\s*=\\s*[^\\s]+");
-    private static final Pattern SOURCE_TOKEN_PATTERN = Pattern.compile("(?i)(?:\\b36kr\\b|36氪|\\bgoogle(?:\\s+news)?\\b|谷歌(?:新闻)?)");
+    private static final Pattern SOURCE_TOKEN_PATTERN = Pattern.compile("(?i)(?:\\b36kr\\b|36氪|\\bserper\\b)");
     private static final Pattern LEADING_QUERY_NOISE_PATTERN = Pattern.compile("^(?:只看|仅看|只要|仅限|帮我看|给我看|看|查|搜|搜索|查询|请|请帮我)?\\s*");
     private static final Pattern TRAILING_NEWS_NOISE_PATTERN = Pattern.compile("(?:新闻|资讯|消息|头条|热点|热搜)+$");
     private static final Pattern NATURAL_NEWS_TRIGGER_PATTERN = Pattern.compile("(?:查看|看|查询|查|搜索|搜).{0,12}(?:新闻|资讯|头条)|(?:新闻|资讯|头条).{0,12}(?:查看|看|查询|查|搜索|搜)");
@@ -68,7 +72,6 @@ public class NewsSearchSkill implements Skill {
     private final NewsFeedFetcher newsFeedFetcher;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final boolean enabled;
-    private final String googleRssUrlTemplate;
     private final String krFeedUrl;
     private final int httpTimeoutMs;
     private final int cacheTtlSeconds;
@@ -79,12 +82,18 @@ public class NewsSearchSkill implements Skill {
     private final String summaryPreset;
     private final String summaryModel;
     private final int summaryMaxTokens;
+    private final List<SearchSourceConfig> searchSources;
+    private final SearchToolAdapterChain searchToolAdapterChain;
+    private final boolean serperEnabled;
+    private final String serperNewsUrl;
+    private final String serperSearchUrl;
+    private final String serperApiKey;
+    private final java.net.http.HttpClient shortHttpClient = java.net.http.HttpClient.newBuilder().connectTimeout(java.time.Duration.ofSeconds(3)).build();
     private final ConcurrentHashMap<String, CacheEntry> cache = new ConcurrentHashMap<>();
 
     @Autowired
     public NewsSearchSkill(LlmClient llmClient,
                            @Value("${mindos.skill.news-search.enabled:true}") boolean enabled,
-                           @Value("${mindos.skill.news-search.google-rss-url-template:https://ai.2756online.com/google/rss/search?q=%s&hl=zh-CN&gl=CN&ceid=CN:zh-Hans}") String googleRssUrlTemplate,
                            @Value("${mindos.skill.news-search.kr-feed-url:https://36kr.com/feed}") String krFeedUrl,
                            @Value("${mindos.skill.news-search.http-timeout-ms:5000}") int httpTimeoutMs,
                            @Value("${mindos.skill.news-search.cache-ttl-seconds:300}") int cacheTtlSeconds,
@@ -94,11 +103,15 @@ public class NewsSearchSkill implements Skill {
                             @Value("${mindos.skill.news-search.summary-provider:}") String summaryProvider,
                            @Value("${mindos.skill.news-search.summary-preset:cost}") String summaryPreset,
                            @Value("${mindos.skill.news-search.summary-model:gemma3:1b-it-q4_K_M}") String summaryModel,
-                           @Value("${mindos.skill.news-search.summary-max-tokens:220}") int summaryMaxTokens) {
+                            @Value("${mindos.skill.news-search.summary-max-tokens:220}") int summaryMaxTokens,
+                             @Value("${mindos.skill.news-search.search-sources:}") String searchSources,
+                            @Value("${mindos.skill.news-search.serper.enabled:false}") boolean serperEnabled,
+                            @Value("${mindos.skill.news-search.serper.news-url:https://google.serper.dev/news}") String serperNewsUrl,
+                            @Value("${mindos.skill.news-search.serper.search-url:https://google.serper.dev/search}") String serperSearchUrl,
+                            @Value("${mindos.skill.news-search.serper.api-key:}") String serperApiKey) {
         this(llmClient,
                 new DefaultNewsFeedFetcher(),
                 enabled,
-                googleRssUrlTemplate,
                 krFeedUrl,
                 httpTimeoutMs,
                 cacheTtlSeconds,
@@ -108,13 +121,17 @@ public class NewsSearchSkill implements Skill {
                 summaryProvider,
                 summaryPreset,
                 summaryModel,
-                summaryMaxTokens);
+                summaryMaxTokens,
+                searchSources,
+                serperEnabled,
+                serperNewsUrl,
+                serperSearchUrl,
+                serperApiKey);
     }
 
     NewsSearchSkill(LlmClient llmClient,
                     NewsFeedFetcher newsFeedFetcher,
                     boolean enabled,
-                    String googleRssUrlTemplate,
                     String krFeedUrl,
                     int httpTimeoutMs,
                     int cacheTtlSeconds,
@@ -125,12 +142,84 @@ public class NewsSearchSkill implements Skill {
                     String summaryPreset,
                     String summaryModel,
                     int summaryMaxTokens) {
+        this(llmClient,
+                newsFeedFetcher,
+                enabled,
+                krFeedUrl,
+                httpTimeoutMs,
+                cacheTtlSeconds,
+                cacheMaxEntries,
+                maxItems,
+                summaryEnabled,
+                summaryProvider,
+                summaryPreset,
+                summaryModel,
+                summaryMaxTokens,
+                "",
+                false,
+                "",
+                "",
+                "");
+    }
+
+    NewsSearchSkill(LlmClient llmClient,
+                    NewsFeedFetcher newsFeedFetcher,
+                    boolean enabled,
+                    String krFeedUrl,
+                    int httpTimeoutMs,
+                    int cacheTtlSeconds,
+                    int cacheMaxEntries,
+                    int maxItems,
+                    boolean summaryEnabled,
+                    String summaryProvider,
+                    String summaryPreset,
+                    String summaryModel,
+                    int summaryMaxTokens,
+                    boolean serperEnabled,
+                    String serperNewsUrl,
+                    String serperSearchUrl,
+                    String serperApiKey) {
+        this(llmClient,
+                newsFeedFetcher,
+                enabled,
+                krFeedUrl,
+                httpTimeoutMs,
+                cacheTtlSeconds,
+                cacheMaxEntries,
+                maxItems,
+                summaryEnabled,
+                summaryProvider,
+                summaryPreset,
+                summaryModel,
+                summaryMaxTokens,
+                "",
+                serperEnabled,
+                serperNewsUrl,
+                serperSearchUrl,
+                serperApiKey);
+    }
+
+    NewsSearchSkill(LlmClient llmClient,
+                    NewsFeedFetcher newsFeedFetcher,
+                    boolean enabled,
+                    String krFeedUrl,
+                    int httpTimeoutMs,
+                    int cacheTtlSeconds,
+                    int cacheMaxEntries,
+                    int maxItems,
+                    boolean summaryEnabled,
+                    String summaryProvider,
+                    String summaryPreset,
+                    String summaryModel,
+                    int summaryMaxTokens,
+                    String searchSources,
+                    boolean serperEnabled,
+                    String serperNewsUrl,
+                    String serperSearchUrl,
+                    String serperApiKey) {
         this.llmClient = llmClient;
         this.newsFeedFetcher = newsFeedFetcher;
         this.enabled = enabled;
-        this.googleRssUrlTemplate = googleRssUrlTemplate == null || googleRssUrlTemplate.isBlank()
-                ? "https://ai.2756online.com/google/rss/search?q=%s&hl=zh-CN&gl=CN&ceid=CN:zh-Hans"
-                : googleRssUrlTemplate.trim();
         this.krFeedUrl = krFeedUrl == null || krFeedUrl.isBlank() ? "https://36kr.com/feed" : krFeedUrl.trim();
         this.httpTimeoutMs = Math.max(1000, httpTimeoutMs);
         this.cacheTtlSeconds = Math.max(10, cacheTtlSeconds);
@@ -142,6 +231,12 @@ public class NewsSearchSkill implements Skill {
         this.summaryPreset = summaryPreset == null ? "" : summaryPreset.trim();
         this.summaryModel = summaryModel == null || summaryModel.isBlank() ? "gemma3:1b-it-q4_K_M" : summaryModel.trim();
         this.summaryMaxTokens = Math.max(80, summaryMaxTokens);
+        this.searchSources = SearchSourceConfig.parseList(searchSources);
+        this.searchToolAdapterChain = SearchToolAdapterRegistry.standard();
+        this.serperEnabled = serperEnabled;
+        this.serperNewsUrl = serperNewsUrl == null ? "" : serperNewsUrl.trim();
+        this.serperSearchUrl = serperSearchUrl == null ? "" : serperSearchUrl.trim();
+        this.serperApiKey = serperApiKey == null ? "" : serperApiKey.trim();
     }
 
     @Override
@@ -151,12 +246,12 @@ public class NewsSearchSkill implements Skill {
 
     @Override
     public String description() {
-        return "聚合 Google News RSS 与 36kr 新闻，并生成简要摘要。";
+        return "聚合 36kr 新闻，并在失败时回退到 Serper / SerpApi 搜索后生成简要摘要。";
     }
 
     @Override
     public List<String> routingKeywords() {
-        return List.of("news_search", "news search", "google news", "36kr", "新闻检索", "新闻搜索", "查看新闻", "看新闻", "新闻");
+        return List.of("news_search", "news search", "36kr", "serper", "serpapi", "新闻检索", "新闻搜索", "查看新闻", "看新闻", "新闻");
     }
 
     @Override
@@ -167,8 +262,9 @@ public class NewsSearchSkill implements Skill {
         String normalized = input.trim().toLowerCase(Locale.ROOT);
         return normalized.startsWith("news_search")
                 || normalized.startsWith("news search")
-                || normalized.contains("google news")
                 || normalized.contains("36kr")
+                || normalized.contains("serper")
+                || normalized.contains("serpapi")
                 || normalized.contains("新闻检索")
                 || normalized.contains("新闻搜索")
                 || normalized.contains("查看新闻")
@@ -185,12 +281,12 @@ public class NewsSearchSkill implements Skill {
         if (query.isBlank()) {
             return SkillResult.failure(name(), "请提供新闻关键词，例如：news_search AI 芯片");
         }
-        SourceMode sourceMode = resolveSource(context);
+        SourceSelection sourceSelection = resolveSource(context);
         SortMode sortMode = resolveSort(context);
         int requestedLimit = resolveLimit(context);
         int effectiveLimit = Math.min(requestedLimit, maxItems);
-        String cacheKey = normalize(query) + "|" + sourceMode.cacheKey() + "|" + sortMode.cacheKey() + "|" + effectiveLimit;
-        CacheEntry cacheEntry = loadWithCache(cacheKey, query, effectiveLimit, sourceMode, sortMode);
+        String cacheKey = normalize(query) + "|" + sourceSelection.cacheKey() + "|" + sortMode.cacheKey() + "|" + effectiveLimit;
+        CacheEntry cacheEntry = loadWithCache(cacheKey, query, effectiveLimit, sourceSelection, sortMode);
         List<NewsItem> items = cacheEntry.items();
         if (items.isEmpty()) {
             return SkillResult.success(name(), "[news_search]\n未获取到相关新闻，请稍后重试。关键词：" + query);
@@ -216,7 +312,7 @@ public class NewsSearchSkill implements Skill {
         if (summaryBundle.contextBrief() != null && !summaryBundle.contextBrief().isBlank()) {
             output.append("上下文总结: ").append(summaryBundle.contextBrief().trim()).append("\n");
         }
-        output.append("来源: ").append(describeSource(sourceMode)).append("\n");
+        output.append("来源: ").append(describeSource(sourceSelection, items)).append("\n");
         output.append("排序: ").append(sortMode.displayName()).append("\n\n");
         for (int i = 0; i < items.size(); i++) {
             NewsItem item = items.get(i);
@@ -233,35 +329,104 @@ public class NewsSearchSkill implements Skill {
         return SkillResult.success(name(), output.toString().trim());
     }
 
-    private CacheEntry loadWithCache(String cacheKey, String query, int limit, SourceMode sourceMode, SortMode sortMode) {
+    private CacheEntry loadWithCache(String cacheKey, String query, int limit, SourceSelection sourceSelection, SortMode sortMode) {
         long now = System.currentTimeMillis();
         CacheEntry cached = cache.get(cacheKey);
         if (cached != null && cached.expiresAtMs() > now) {
             return cached;
         }
-        List<NewsItem> fetched = fetchNews(query, limit, sourceMode, sortMode);
+        List<NewsItem> fetched = fetchNews(query, limit, sourceSelection, sortMode);
         CacheEntry entry = new CacheEntry(fetched, null, now + cacheTtlSeconds * 1000L);
         cache.put(cacheKey, entry);
         cleanupExpiredCache(now);
         return entry;
     }
 
-    private List<NewsItem> fetchNews(String query, int limit, SourceMode sourceMode, SortMode sortMode) {
+    private List<NewsItem> fetchNews(String query, int limit, SourceSelection sourceSelection, SortMode sortMode) {
         List<NewsItem> merged = new ArrayList<>();
-        if (sourceMode.includesGoogle()) {
+        boolean krAttempted = false;
+        boolean krFailed = false;
+        String selectedAlias = sourceSelection == null ? "" : sourceSelection.alias();
+        boolean customSelected = selectedAlias != null && !selectedAlias.isBlank();
+        boolean preferConfiguredSources = !customSelected
+                && sourceSelection != null
+                && !sourceSelection.explicitlySpecified()
+                && !searchSources.isEmpty();
+
+        logSourceDecision("select",
+                "query=" + clipForLog(query)
+                        + ", mode=" + (sourceSelection == null || sourceSelection.mode() == null ? "all" : sourceSelection.mode().cacheKey())
+                        + ", alias=" + (selectedAlias == null || selectedAlias.isBlank() ? "-" : selectedAlias)
+                        + ", explicit=" + (sourceSelection != null && sourceSelection.explicitlySpecified())
+                        + ", preferConfigured=" + preferConfiguredSources
+                        + ", configuredSources=" + searchSources.size());
+
+        if (preferConfiguredSources) {
             try {
-                String googleUrl = googleFeedUrl(query);
-                merged.addAll(parseFeed(newsFeedFetcher.fetch(googleUrl, httpTimeoutMs), "Google"));
+                for (SearchSourceConfig source : configuredSearchSources(selectedAlias)) {
+                    List<NewsItem> sourceItems = fetchSearchProvider(source, query);
+                    if (!sourceItems.isEmpty()) {
+                        merged.addAll(sourceItems);
+                        logSourceDecision("configured-primary-hit",
+                                "query=" + clipForLog(query)
+                                        + ", source=" + source.alias()
+                                        + ", items=" + sourceItems.size());
+                    }
+                    if (!merged.isEmpty()) {
+                        break;
+                    }
+                    logSourceDecision("configured-primary-empty",
+                            "query=" + clipForLog(query)
+                                    + ", source=" + source.alias());
+                }
             } catch (Exception ex) {
-                LOGGER.log(Level.WARNING, "Google News RSS fetch failed", ex);
+                LOGGER.log(Level.WARNING, "news_search.source-decision stage=configured-primary-error query="
+                        + clipForLog(query) + ", fallback=36kr", ex);
             }
         }
-        if (sourceMode.includes36Kr()) {
+
+        if (merged.isEmpty() && !customSelected && sourceSelection != null && sourceSelection.mode().includes36Kr()) {
+            krAttempted = true;
             try {
                 List<NewsItem> krItems = parseFeed(newsFeedFetcher.fetch(krFeedUrl, httpTimeoutMs), "36kr");
                 merged.addAll(filterItemsByQuery(krItems, query));
+                if (!merged.isEmpty()) {
+                    logSourceDecision("36kr-hit",
+                            "query=" + clipForLog(query)
+                                    + ", items=" + merged.size());
+                } else {
+                    logSourceDecision("36kr-empty",
+                            "query=" + clipForLog(query));
+                }
             } catch (Exception ex) {
+                krFailed = true;
                 LOGGER.log(Level.WARNING, "36kr feed fetch failed", ex);
+            }
+        }
+
+        if (merged.isEmpty() && (customSelected || (sourceSelection != null && sourceSelection.mode().includesSerper()) || serperEnabled || !searchSources.isEmpty())) {
+            if (krAttempted && krFailed) {
+                LOGGER.log(Level.INFO, "36kr failed, switching to Serper fallback for query: " + query);
+            }
+            try {
+                for (SearchSourceConfig source : configuredSearchSources(selectedAlias)) {
+                    List<NewsItem> sourceItems = fetchSearchProvider(source, query);
+                    if (!sourceItems.isEmpty()) {
+                        merged.addAll(sourceItems);
+                        logSourceDecision("configured-fallback-hit",
+                                "query=" + clipForLog(query)
+                                        + ", source=" + source.alias()
+                                        + ", items=" + sourceItems.size());
+                    }
+                    if (!merged.isEmpty()) {
+                        break;
+                    }
+                    logSourceDecision("configured-fallback-empty",
+                            "query=" + clipForLog(query)
+                                    + ", source=" + source.alias());
+                }
+            } catch (Exception ex) {
+                LOGGER.log(Level.WARNING, "Search fallback failed", ex);
             }
         }
 
@@ -272,10 +437,46 @@ public class NewsSearchSkill implements Skill {
                 .forEach(item -> dedup.putIfAbsent(normalize(item.title()) + "|" + normalize(item.link()), item));
 
         List<NewsItem> result = new ArrayList<>(dedup.values());
+        logSourceDecision("final",
+                "query=" + clipForLog(query)
+                        + ", items=" + result.size()
+                        + ", topSources=" + summarizeSources(result));
         if (result.size() > limit) {
             return List.copyOf(result.subList(0, limit));
         }
         return List.copyOf(result);
+    }
+
+    private void logSourceDecision(String stage, String details) {
+        LOGGER.info("news_search.source-decision stage=" + stage + " " + details);
+    }
+
+    private String clipForLog(String value) {
+        if (value == null) {
+            return "";
+        }
+        String normalized = value.replace('\n', ' ').trim();
+        if (normalized.length() <= 80) {
+            return normalized;
+        }
+        return normalized.substring(0, 80) + "...";
+    }
+
+    private String summarizeSources(List<NewsItem> items) {
+        if (items == null || items.isEmpty()) {
+            return "-";
+        }
+        LinkedHashSet<String> sources = new LinkedHashSet<>();
+        for (NewsItem item : items) {
+            if (item == null || item.source() == null || item.source().isBlank()) {
+                continue;
+            }
+            sources.add(item.source().trim());
+            if (sources.size() >= 3) {
+                break;
+            }
+        }
+        return sources.isEmpty() ? "-" : String.join("+", sources);
     }
 
     private Comparator<NewsItem> buildSortComparator(SortMode sortMode, List<String> terms) {
@@ -304,11 +505,27 @@ public class NewsSearchSkill implements Skill {
         return score;
     }
 
-    private String describeSource(SourceMode sourceMode) {
-        return switch (sourceMode) {
-            case GOOGLE -> "RSS 源";
+    private String describeSource(SourceSelection sourceSelection, List<NewsItem> items) {
+        LinkedHashSet<String> sources = new LinkedHashSet<>();
+        if (items != null) {
+            for (NewsItem item : items) {
+                String source = item.source() == null ? "" : item.source().trim();
+                if (!source.isBlank()) {
+                    sources.add(source);
+                }
+            }
+        }
+        if (!sources.isEmpty()) {
+            return String.join(" + ", sources);
+        }
+        if (sourceSelection != null && sourceSelection.alias() != null && !sourceSelection.alias().isBlank()) {
+            return sourceSelection.alias();
+        }
+        return switch (sourceSelection == null ? SourceMode.ALL : sourceSelection.mode()) {
             case KR36 -> "36kr";
-            case ALL -> "RSS 源 + 36kr";
+            case SERPER -> "Serper";
+            case SERPAPI -> "SerpApi";
+            case ALL -> "36kr + Serper";
         };
     }
 
@@ -346,6 +563,136 @@ public class NewsSearchSkill implements Skill {
         return List.copyOf(terms);
     }
 
+    private List<SearchSourceConfig> configuredSearchSources(String selectedAlias) {
+        if (!searchSources.isEmpty()) {
+            if (selectedAlias == null || selectedAlias.isBlank()) {
+                return searchSources;
+            }
+            List<SearchSourceConfig> filtered = searchSources.stream()
+                    .filter(source -> selectedAlias.equalsIgnoreCase(source.alias()))
+                    .toList();
+            return filtered.isEmpty() ? searchSources : filtered;
+        }
+        if (!serperEnabled && serperApiKey.isBlank() && serperNewsUrl.isBlank() && serperSearchUrl.isBlank()) {
+            return List.of();
+        }
+        SearchSourceConfig fallback = SearchSourceConfig.serper(serperSearchUrl, serperNewsUrl, serperApiKey);
+        return fallback.resolvedMcpUrl().isBlank() ? List.of() : List.of(fallback);
+    }
+
+    private List<NewsItem> fetchSearchProvider(SearchSourceConfig source, String query) throws Exception {
+        if (source == null) {
+            return List.of();
+        }
+        SearchToolBinding binding = searchToolAdapterChain.resolve(source, Map.of()).orElse(null);
+        if (binding == null) {
+            return List.of();
+        }
+        String apiKey = firstNonBlank(source.apiKey(), firstHeaderValue(binding.definition().headers(), "api_key", "api-key"));
+        boolean apiKeyInUrl = containsQueryParameter(binding.definition().serverUrl(), "api_key");
+        if (apiKey.isBlank() && !apiKeyInUrl) {
+            return List.of();
+        }
+        return fetchSearchEndpoint(binding, source.alias(), query);
+    }
+
+    private List<NewsItem> fetchSearchEndpoint(SearchToolBinding binding, String source, String query) throws Exception {
+        java.net.http.HttpRequest request = buildSearchRequest(binding, query);
+        java.net.http.HttpResponse<String> response = shortHttpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        if (response.statusCode() < 200 || response.statusCode() >= 300) {
+            throw new RuntimeException("search_http_" + response.statusCode());
+        }
+        List<NewsItem> items = parseSearchResponse(response.body(), binding.responseLabel());
+        if (items.isEmpty()) {
+            return List.of();
+        }
+        List<NewsItem> labeled = new ArrayList<>();
+        for (NewsItem item : items) {
+            labeled.add(new NewsItem(item.title(), item.link(), item.summary(), item.publishedAt(), source));
+        }
+        return labeled;
+    }
+
+    private java.net.http.HttpRequest buildSearchRequest(SearchToolBinding binding, String query) {
+        String url = firstNonBlank(binding.newsUrl(), binding.definition().serverUrl());
+        if (binding.requestStyle() == SearchRequestStyle.GET_QUERY) {
+            String requestUrl = appendSearchQueryParameter(url, "q", query);
+            String apiKey = firstHeaderValue(binding.definition().headers(), "api_key", "api-key");
+            if (!apiKey.isBlank() && !containsQueryParameter(requestUrl, binding.apiKeyQueryParameterName())) {
+                requestUrl = appendSearchQueryParameter(requestUrl, binding.apiKeyQueryParameterName(), apiKey);
+            }
+            return java.net.http.HttpRequest.newBuilder()
+                    .uri(URI.create(requestUrl))
+                    .timeout(Duration.ofMillis(Math.max(1000, httpTimeoutMs)))
+                    .header("Accept", "application/json")
+                    .GET()
+                    .build();
+        }
+        java.net.http.HttpRequest.Builder builder = java.net.http.HttpRequest.newBuilder()
+                .uri(URI.create(url))
+                .timeout(Duration.ofMillis(Math.max(1000, httpTimeoutMs)))
+                .header("Content-Type", "application/json");
+        for (Map.Entry<String, String> header : binding.definition().headers().entrySet()) {
+            String key = header.getKey() == null ? "" : header.getKey().trim();
+            String value = header.getValue() == null ? "" : header.getValue().trim();
+            if (key.isBlank() || value.isBlank()) {
+                continue;
+            }
+            switch (key.toLowerCase(Locale.ROOT)) {
+                case "authorization" -> builder.header("Authorization", value);
+                case "x-api-key" -> builder.header("X-API-KEY", value);
+                case "x-subscription-token" -> builder.header("X-Subscription-Token", value);
+                default -> {
+                    // Ignore unsupported headers in the generic news-search fallback path.
+                }
+            }
+        }
+        try {
+            return builder.POST(java.net.http.HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(Map.of("q", query)))).build();
+        } catch (com.fasterxml.jackson.core.JsonProcessingException ex) {
+            throw new IllegalStateException("Failed to serialize search request body", ex);
+        }
+    }
+
+    private String appendSearchQueryParameter(String url, String name, String value) {
+        if (url == null || url.isBlank() || name == null || name.isBlank() || value == null || value.isBlank()) {
+            return url;
+        }
+        return url + (url.contains("?") ? "&" : "?") + name + "=" + java.net.URLEncoder.encode(value.trim(), StandardCharsets.UTF_8);
+    }
+
+    private String firstNonBlank(String... values) {
+        if (values == null) {
+            return "";
+        }
+        for (String value : values) {
+            if (value != null && !value.isBlank()) {
+                return value.trim();
+            }
+        }
+        return "";
+    }
+
+    private String firstHeaderValue(Map<String, String> headers, String... keys) {
+        if (headers == null || headers.isEmpty() || keys == null) {
+            return "";
+        }
+        for (String key : keys) {
+            if (key == null || key.isBlank()) {
+                continue;
+            }
+            for (Map.Entry<String, String> entry : headers.entrySet()) {
+                if (entry.getKey() != null && entry.getKey().trim().equalsIgnoreCase(key)) {
+                    String value = entry.getValue() == null ? "" : entry.getValue().trim();
+                    if (!value.isBlank()) {
+                        return value;
+                    }
+                }
+            }
+        }
+        return "";
+    }
+
     private SummaryBundle summarize(String query, List<NewsItem> items, SkillContext context) {
         if (!summaryEnabled || llmClient == null) {
             return fallbackSummaryBundle(query, items, context);
@@ -353,7 +700,7 @@ public class NewsSearchSkill implements Skill {
         StringBuilder prompt = new StringBuilder();
         prompt.append("你是新闻摘要助手，请结合用户上下文和新闻列表，用中文输出严格 JSON。")
                 .append("JSON schema: {\"theme\":\"...\",\"summary\":\"...\",\"contextBrief\":\"...\",\"hotKeywords\":[\"...\"]}. ")
-                .append("要求：summary 控制在 2-3 句；contextBrief 用 1 句说明当前关注点；hotKeywords 返回 3-6 个热点词；不要输出 JSON 以外内容。\n")
+                .append("要求：summary 控制在 2-3 句；contextBrief 用 1 句说明当前关注点；hotKeywords 返回 3-6 个热点词；不要输出 JSON 以外内容；不要写任何开场白、寒暄、致歉、确认、等待或“我正在搜索/已收到/请稍等”类句子。\n")
                 .append("关键词: ").append(query).append("\n");
         String contextHint = summarizeContextInput(context);
         if (!contextHint.isBlank()) {
@@ -395,18 +742,18 @@ public class NewsSearchSkill implements Skill {
     }
 
     private SummaryBundle fallbackSummaryBundle(String query, List<NewsItem> items, SkillContext context) {
-        AtomicInteger googleCount = new AtomicInteger();
         AtomicInteger krCount = new AtomicInteger();
+        AtomicInteger serperCount = new AtomicInteger();
         items.forEach(item -> {
-            if ("Google".equals(item.source())) {
-                googleCount.incrementAndGet();
-            }
             if ("36kr".equals(item.source())) {
                 krCount.incrementAndGet();
             }
+            if ("Serper".equalsIgnoreCase(item.source()) || "serper".equalsIgnoreCase(item.source())) {
+                serperCount.incrementAndGet();
+            }
         });
         return new SummaryBundle(
-                query + " 相关新闻共 " + items.size() + " 条，Google " + googleCount.get() + " 条，36kr " + krCount.get() + " 条。",
+                query + " 相关新闻共 " + items.size() + " 条，36kr " + krCount.get() + " 条，Serper " + serperCount.get() + " 条。",
                 buildFallbackContextBrief(query, context, items),
                 extractHotKeywords(query, items),
                 buildFallbackTheme(query, items)
@@ -586,20 +933,47 @@ public class NewsSearchSkill implements Skill {
         return candidate.replaceAll("\\s+", " ").trim();
     }
 
-    private SourceMode resolveSource(SkillContext context) {
+    private SourceSelection resolveSource(SkillContext context) {
         String source = contextAttributeText(context, "source");
+        boolean explicitlySpecified = source != null && !source.isBlank();
         if (source == null || source.isBlank()) {
             source = extractFromInput(context, SOURCE_PATTERN);
+            explicitlySpecified = source != null && !source.isBlank();
         }
         if (source == null || source.isBlank()) {
             String normalizedInput = normalize(context.input());
             if (containsAny(normalizedInput, "36kr", "36氪")) {
                 source = "36kr";
-            } else if (containsAny(normalizedInput, "google", "google news", "谷歌", "谷歌新闻")) {
-                source = "google";
+                explicitlySpecified = true;
+            } else if (containsAny(normalizedInput, "serper")) {
+                source = "serper";
+                explicitlySpecified = true;
             }
         }
-        return SourceMode.fromValue(source);
+        String normalized = source == null ? "" : source.trim().toLowerCase(Locale.ROOT);
+        SourceMode mode = SourceMode.fromValue(normalized);
+        String alias = resolveConfiguredSourceAlias(normalized);
+        logSourceDecision("resolve",
+                "requested=" + (normalized.isBlank() ? "-" : normalized)
+                        + ", resolvedMode=" + mode.cacheKey()
+                        + ", resolvedAlias=" + (alias.isBlank() ? "-" : alias)
+                        + ", explicit=" + explicitlySpecified);
+        if (!alias.isBlank()) {
+            return new SourceSelection(mode, alias, explicitlySpecified);
+        }
+        return new SourceSelection(mode, "", explicitlySpecified);
+    }
+
+    private String resolveConfiguredSourceAlias(String source) {
+        if (source == null || source.isBlank() || searchSources.isEmpty()) {
+            return "";
+        }
+        for (SearchSourceConfig config : searchSources) {
+            if (config != null && source.equalsIgnoreCase(config.alias())) {
+                return config.alias();
+            }
+        }
+        return "";
     }
 
     private SortMode resolveSort(SkillContext context) {
@@ -753,23 +1127,82 @@ public class NewsSearchSkill implements Skill {
         };
     }
 
-    private String googleFeedUrl(String query) {
-        String template = googleRssUrlTemplate == null ? "" : googleRssUrlTemplate.trim();
-        if (template.isBlank()) {
-            return "";
+    private List<NewsItem> fetchSerperNews(String query) throws Exception {
+        if (serperNewsUrl.isBlank()) return List.of();
+        java.net.http.HttpRequest request = java.net.http.HttpRequest.newBuilder()
+                .uri(URI.create(serperNewsUrl))
+                .timeout(Duration.ofMillis(Math.max(1000, httpTimeoutMs)))
+                .header("Content-Type", "application/json")
+                .header("X-API-KEY", serperApiKey)
+                .POST(java.net.http.HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(Map.of("q", query))))
+                .build();
+        java.net.http.HttpResponse<String> response = shortHttpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        if (response.statusCode() < 200 || response.statusCode() >= 300) {
+            throw new RuntimeException("serper_news_http_" + response.statusCode());
         }
-        String encoded = URLEncoder.encode(query, StandardCharsets.UTF_8);
-        if (template.contains("%s")) {
-            return String.format(template, encoded);
+        return parseSerperResponse(response.body());
+    }
+
+    private List<NewsItem> fetchSerperSearch(String query) throws Exception {
+        if (serperSearchUrl.isBlank()) return List.of();
+        java.net.http.HttpRequest request = java.net.http.HttpRequest.newBuilder()
+                .uri(URI.create(serperSearchUrl))
+                .timeout(Duration.ofMillis(Math.max(1000, httpTimeoutMs)))
+                .header("Content-Type", "application/json")
+                .header("X-API-KEY", serperApiKey)
+                .POST(java.net.http.HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(Map.of("q", query))))
+                .build();
+        java.net.http.HttpResponse<String> response = shortHttpClient.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        if (response.statusCode() < 200 || response.statusCode() >= 300) {
+            throw new RuntimeException("serper_search_http_" + response.statusCode());
         }
-        if (template.contains("{query}")) {
-            return template.replace("{query}", encoded);
+        return parseSerperResponse(response.body());
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<NewsItem> parseSerperResponse(String body) {
+        return parseSearchResponse(body, "Serper");
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<NewsItem> parseSearchResponse(String body, String sourceLabel) {
+        if (body == null || body.isBlank()) return List.of();
+        try {
+            Map<String, Object> payload = objectMapper.readValue(body, Map.class);
+            // try common keys that may contain lists
+            String[] candidates = new String[]{"organic_results", "news_results", "top_stories", "inline_news_results", "news", "organic", "articles", "items", "results"};
+            for (String key : candidates) {
+                Object val = payload.get(key);
+                if (val instanceof List<?> list && !list.isEmpty()) {
+                    List<NewsItem> out = new ArrayList<>();
+                    for (Object entry : list) {
+                        if (!(entry instanceof Map<?, ?> m)) continue;
+                        Map<String, Object> map = (Map<String, Object>) m;
+                        String title = asTrimmedText(map.getOrDefault("title", map.get("headline")));
+                        if (title.isBlank()) title = asTrimmedText(map.getOrDefault("name", ""));
+                        String link = asTrimmedText(map.getOrDefault("link", map.get("url")));
+                        String summary = asTrimmedText(map.getOrDefault("snippet", map.get("description")));
+                        String source = asTrimmedText(map.getOrDefault("source", sourceLabel == null || sourceLabel.isBlank() ? "Serper" : sourceLabel));
+                        String published = asTrimmedText(map.getOrDefault("publishedAt", map.get("published")));
+                        Instant publishedAt = parseTime(published);
+                        if (!title.isBlank()) {
+                            out.add(new NewsItem(TitleCleaner.cleanTitle(title), link, summary, publishedAt, source));
+                        }
+                    }
+                    return out;
+                }
+            }
+            // fallback: try to parse top-level 'news' object if it's a map
+            if (payload.get("news") instanceof Map<?, ?> m) {
+                Object list = ((Map<?, ?>) payload.get("news")).get("value");
+                if (list instanceof List<?> l) {
+                    return parseSearchResponse(objectMapper.writeValueAsString(Map.of("items", l)), sourceLabel);
+                }
+            }
+        } catch (Exception ex) {
+            LOGGER.log(Level.FINE, "parseSearchResponse failed", ex);
         }
-        // Fixed RSS endpoints (for example reddit .rss) should be used as-is.
-        if (template.endsWith("=") || template.endsWith("/")) {
-            return template + encoded;
-        }
-        return template;
+        return List.of();
     }
 
     private List<NewsItem> parseFeed(String xml, String source) throws Exception {
@@ -956,8 +1389,9 @@ public class NewsSearchSkill implements Skill {
 
     private enum SourceMode {
         ALL,
-        GOOGLE,
-        KR36;
+        KR36,
+        SERPER,
+        SERPAPI;
 
         static SourceMode fromValue(String raw) {
             if (raw == null || raw.isBlank()) {
@@ -965,26 +1399,60 @@ public class NewsSearchSkill implements Skill {
             }
             String normalized = raw.trim().toLowerCase(Locale.ROOT);
             return switch (normalized) {
-                case "google" -> GOOGLE;
                 case "36kr", "kr", "kr36" -> KR36;
+                case "serper" -> SERPER;
+                case "serpapi" -> SERPAPI;
                 default -> ALL;
             };
-        }
-
-        boolean includesGoogle() {
-            return this == ALL || this == GOOGLE;
         }
 
         boolean includes36Kr() {
             return this == ALL || this == KR36;
         }
 
+        boolean includesSerper() {
+            return this == ALL || this == SERPER || this == SERPAPI;
+        }
+
         String cacheKey() {
             return switch (this) {
-                case GOOGLE -> "google";
                 case KR36 -> "36kr";
+                case SERPER -> "serper";
+                case SERPAPI -> "serpapi";
                 case ALL -> "all";
             };
+        }
+    }
+
+
+    private boolean containsQueryParameter(String url, String name) {
+        if (url == null || url.isBlank() || name == null || name.isBlank()) {
+            return false;
+        }
+        try {
+            String query = URI.create(url.trim()).getRawQuery();
+            if (query == null || query.isBlank()) {
+                return false;
+            }
+            for (String part : query.split("&")) {
+                int eq = part.indexOf('=');
+                String key = eq >= 0 ? part.substring(0, eq) : part;
+                if (name.equalsIgnoreCase(key.trim())) {
+                    return true;
+                }
+            }
+        } catch (IllegalArgumentException ex) {
+            return url.toLowerCase(Locale.ROOT).contains(name.toLowerCase(Locale.ROOT) + "=");
+        }
+        return false;
+    }
+
+    private record SourceSelection(SourceMode mode, String alias, boolean explicitlySpecified) {
+        private String cacheKey() {
+            if (alias != null && !alias.isBlank()) {
+                return alias.trim().toLowerCase(Locale.ROOT);
+            }
+            return mode == null ? "all" : mode.cacheKey();
         }
     }
 

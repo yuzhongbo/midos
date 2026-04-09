@@ -57,6 +57,21 @@ mindos_count_csv_entries() {
   echo "$count"
 }
 
+mindos_effective_news_search_sources() {
+  if [[ -n "${MINDOS_SKILL_NEWS_SEARCH_SEARCH_SOURCES:-}" ]]; then
+    printf '%s' "${MINDOS_SKILL_NEWS_SEARCH_SEARCH_SOURCES}"
+    return 0
+  fi
+  printf '%s' "${MINDOS_SKILLS_SEARCH_SOURCES:-}"
+}
+
+mindos_has_legacy_news_search_serper_config() {
+  [[ -n "${MINDOS_SKILL_NEWS_SEARCH_SERPER_ENABLED:-}" \
+    || -n "${MINDOS_SKILL_NEWS_SEARCH_SERPER_NEWS_URL:-}" \
+    || -n "${MINDOS_SKILL_NEWS_SEARCH_SERPER_SEARCH_URL:-}" \
+    || -n "${MINDOS_SKILL_NEWS_SEARCH_SERPER_API_KEY:-}" ]]
+}
+
 mindos_collect_placeholder_warnings() {
   local warnings=()
 
@@ -70,6 +85,10 @@ mindos_collect_placeholder_warnings() {
 
   if [[ "${MINDOS_SKILLS_MCP_SERVERS:-}" == *REPLACE_WITH_* || "${MINDOS_SKILLS_MCP_SERVER_HEADERS:-}" == *REPLACE_WITH_* ]]; then
     warnings+=("MCP server config contains placeholder values.")
+  fi
+
+  if [[ "${MINDOS_SKILLS_SEARCH_SOURCES:-}" == *REPLACE_WITH_* || "${MINDOS_SKILL_NEWS_SEARCH_SEARCH_SOURCES:-}" == *REPLACE_WITH_* ]]; then
+    warnings+=("Unified search source config contains placeholder values.")
   fi
 
   if [[ -n "${warnings[*]-}" ]]; then
@@ -147,6 +166,8 @@ mindos_validate_runtime_maps() {
   mindos_validate_kv_map_format "MINDOS_LLM_ROUTING_PRESET_MAP" "${MINDOS_LLM_ROUTING_PRESET_MAP:-}" || return 1
   mindos_validate_kv_map_format "MINDOS_SKILLS_MCP_SERVERS" "${MINDOS_SKILLS_MCP_SERVERS:-}" || return 1
   mindos_validate_kv_map_format "MINDOS_SKILLS_MCP_SERVER_HEADERS" "${MINDOS_SKILLS_MCP_SERVER_HEADERS:-}" || return 1
+  mindos_validate_kv_map_format "MINDOS_SKILLS_SEARCH_SOURCES" "${MINDOS_SKILLS_SEARCH_SOURCES:-}" || return 1
+  mindos_validate_kv_map_format "MINDOS_SKILL_NEWS_SEARCH_SEARCH_SOURCES" "${MINDOS_SKILL_NEWS_SEARCH_SEARCH_SOURCES:-}" || return 1
   return 0
 }
 
@@ -166,6 +187,19 @@ mindos_collect_drift_warnings() {
   fi
   if [[ "${MINDOS_LLM_ROUTING_STAGE_MAP:-}" == *"llm-fallback:gpt"* ]]; then
     warnings+=("Stage map routes llm-fallback to gpt; check whether this matches your local-first expectation.")
+  fi
+  if mindos_has_legacy_news_search_serper_config; then
+    if [[ -n "$(mindos_effective_news_search_sources)" ]]; then
+      warnings+=("Legacy MINDOS_SKILL_NEWS_SEARCH_SERPER_* is set together with unified search-source config; news_search will prefer MINDOS_SKILL_NEWS_SEARCH_SEARCH_SOURCES, then MINDOS_SKILLS_SEARCH_SOURCES.")
+    else
+      warnings+=("Legacy MINDOS_SKILL_NEWS_SEARCH_SERPER_* is still in use; migrate to MINDOS_SKILLS_SEARCH_SOURCES (or MINDOS_SKILL_NEWS_SEARCH_SEARCH_SOURCES for a news_search-only override).")
+    fi
+  fi
+  if [[ -n "${MINDOS_SKILLS_MCP_SERVERS:-}" && -n "${MINDOS_SKILLS_SEARCH_SOURCES:-}" ]]; then
+    warnings+=("Both MINDOS_SKILLS_MCP_SERVERS and MINDOS_SKILLS_SEARCH_SOURCES are set. Keep MCP_SERVERS for generic MCP tools; search sources are loaded in parallel and alias collisions favor explicit MCP server entries.")
+  fi
+  if [[ -n "${MINDOS_SKILL_NEWS_SEARCH_SEARCH_SOURCES:-}" && -n "${MINDOS_SKILLS_SEARCH_SOURCES:-}" ]]; then
+    warnings+=("Both global and news_search-specific search sources are set; news_search will prefer MINDOS_SKILL_NEWS_SEARCH_SEARCH_SOURCES.")
   fi
 
   if [[ -n "${warnings[*]-}" ]]; then
@@ -193,4 +227,6 @@ mindos_print_effective_summary() {
   echo "[INFO]   ProviderModelEntries=$(mindos_count_csv_entries "${MINDOS_LLM_PROVIDER_MODELS:-}")"
   echo "[INFO]   ProviderKeyEntries=$(mindos_count_csv_entries "${MINDOS_LLM_PROVIDER_KEYS:-}")"
   echo "[INFO]   McpServerEntries=$(mindos_count_csv_entries "${MINDOS_SKILLS_MCP_SERVERS:-}")"
+  echo "[INFO]   SearchSourceEntries=$(mindos_count_csv_entries "${MINDOS_SKILLS_SEARCH_SOURCES:-}")"
+  echo "[INFO]   NewsSearchSourceEntries=$(mindos_count_csv_entries "$(mindos_effective_news_search_sources)")"
 }

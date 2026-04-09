@@ -94,13 +94,22 @@ chmod +x ./scripts/unix/local/run-local.sh ./scripts/unix/local/run-release.sh .
 
 `dist/mindos-windows-server/mindos-secrets.properties` 采用三段式布局：
 - `1) 建议默认`：适合分发包直接保留的安全默认值，例如 `MINDOS_LLM_PROFILE=OPENROUTER_INTENT`、`MINDOS_LLM_PROVIDER=gpt` 与 OpenRouter-first 的默认配置。
-- `2) 可选填`：分发包里默认留空的项目，例如 `MINDOS_SKILLS_MCP_SERVERS`、`MINDOS_SKILLS_MCP_SERVER_HEADERS`、钉钉 stream / outbound 凭据等。
+- `2) 可选填`：分发包里优先暴露一个主入口 `MINDOS_SKILLS_SEARCH_SOURCES`，同时默认启用 Serper shortcut；`MINDOS_SKILL_NEWS_SEARCH_SEARCH_SOURCES` 仅在 `news_search` 需要单独覆盖时使用；`MINDOS_SKILLS_MCP_SERVERS` / `MINDOS_SKILLS_MCP_SERVER_HEADERS` 保留给通用 MCP 工具；钉钉 stream / outbound 凭据按需填写。
 - `3) 必须填`：发布前严格预检会拦截的占位项，当前主要是 `MINDOS_OPENROUTER_KEY`、`MINDOS_QWEN_KEY` 与 `MINDOS_LLM_PROVIDER_KEYS`。
 
 多 provider 场景下，这几个变量都使用逗号分隔的 `provider:value` 映射：
 - `MINDOS_LLM_PROVIDER_ENDPOINTS`
 - `MINDOS_LLM_PROVIDER_KEYS`
 - `MINDOS_LLM_PROVIDER_MODELS`
+
+MCP / 搜索源建议：
+- `MINDOS_SKILLS_MCP_SERVERS` / `MINDOS_SKILLS_MCP_SERVER_HEADERS` 仍需保留，用于通用 MCP 工具（不限于搜索）。
+- `MINDOS_SKILLS_SEARCH_SOURCES` / `MINDOS_SKILL_NEWS_SEARCH_SEARCH_SOURCES` 用于统一管理搜索类源；只做搜索时可优先使用它们并保持 MCP servers 为空。
+- 简化建议：大多数场景只需要填写 `MINDOS_SKILLS_SEARCH_SOURCES` 一行；只有当 `news_search` 想用不同源时，再额外填写 `MINDOS_SKILL_NEWS_SEARCH_SEARCH_SOURCES`。
+- `news_search` 优先级：`MINDOS_SKILL_NEWS_SEARCH_SEARCH_SOURCES` > `MINDOS_SKILLS_SEARCH_SOURCES` > 旧的 `MINDOS_SKILL_NEWS_SEARCH_SERPER_*`。
+- 搜索候选优先级建议：`mcp.serper.webSearch` 放在 `mcp.bravesearch.webSearch` / `mcp.brave.webSearch` 之前，避免 Brave 不稳定时影响检索结果；分发包默认已启用 Serper shortcut，便于直接切换。
+- 精准搜索替代方案：`SerpApi` 也已支持，适合特别精准关键词和结构化结果页的场景；可通过 `serpapi:` 配置到 `MINDOS_SKILLS_SEARCH_SOURCES` 或 `MINDOS_SKILL_NEWS_SEARCH_SEARCH_SOURCES`。
+- 如果 `MINDOS_SKILLS_MCP_SERVERS` 与 `MINDOS_SKILLS_SEARCH_SOURCES` 使用了相同 alias，则显式 MCP server 配置优先。
 
 典型写法：
 - 本地优先省 token：`local:http://localhost:11434/api/chat,qwen:https://dashscope.aliyuncs.com/...`
@@ -869,17 +878,23 @@ Tips:
   - example: `./mvnw -q -pl assistant-memory -am test -Dtest=MemorySyncServiceTest#shouldMeetBasicSyncPerformanceBaseline -Dsurefire.failIfNoSpecifiedTests=false -Dmindos.memory.sync.perf-baseline-ms=5000 -Dmindos.memory.sync.perf-retries=2`
 - Memory NLU synonyms for style/compress intents are configurable via JVM system properties (`-Dmindos.memory.nlu.*`); values are comma-separated terms and normalize to canonical values used by API/CLI (`focus`: `task|learning|review`, `style`: `action|coach|story|concise`, `tone`: `warm|direct|neutral`, `format`: `bullet|plain`).
 - `eq.coach` supports optional output controls: `style` (`gentle|direct|workplace|intimate`), `mode` (`analysis|reply|both`), `priorityFocus` (`p1|p2|p3`).
-- `news_search` 聚合 Google News RSS + 36kr，并支持缓存与云侧 LLM 摘要。
+- `news_search` 默认支持 `36kr` 与统一配置的搜索源；当配置了 `mindos.skills.search-sources` / `mindos.skill.news-search.search-sources` 且用户未显式指定 `source` 时，会优先使用配置搜索源，`source=36kr` 时仍强制走 36kr。
   - 入口示例：`news_search AI 芯片`
-  - 参数示例：`news_search AI source=google sort=relevance limit=5`（`source=google|36kr|all`，`sort=latest|relevance`）
+  - 参数示例：`news_search AI source=serper sort=relevance limit=5`（`source=<已配置 alias>|36kr|all`，`sort=latest|relevance`）
   - 也支持自然语言条数：如 `news_search AI 前五条`
   - 输出默认包含：`主题`、`热点关键词`、`摘要`、`上下文总结`
   - 新闻列表缓存与摘要结果缓存共用 `mindos.skill.news-search.cache-*` TTL
   - 主要配置：
-    - `mindos.skill.news-search.google-rss-url-template`（默认 `https://ai.2756online.com/google/rss/search?q=%s&hl=zh-CN&gl=CN&ceid=CN:zh-Hans`）
     - `mindos.skill.news-search.kr-feed-url`
+    - `mindos.skill.news-search.search-sources`（推荐，统一配置入口）
+    - `mindos.skills.search-sources`（可复用给 MCP 查询源）
+    - `mindos.skill.news-search.serper.*`（兼容旧配置）
     - `mindos.skill.news-search.cache-ttl-seconds`
     - `mindos.skill.news-search.summary-provider` / `mindos.skill.news-search.summary-model`（默认 `qwen` + `qwen3.6-plus`）
+- Serper 搜索能力已经内置为可配置项：
+  - MCP 快捷搜索可通过 `mindos.skills.mcp.serper.*` 配置地址与 `X-API-KEY`，自动注册为 `mcp.<alias>.webSearch`
+  - 推荐优先使用 `mindos.skills.search-sources` / `mindos.skill.news-search.search-sources` 统一维护多查询源；`mindos.skill.news-search.serper.*` 仍可作为兼容回退
+  - 当前暂不添加 `scholar` 路径；如果后续需要，再按同样模式补一组可配置 URL 即可
 - `eq.coach` risk terms are configurable via JVM properties (comma-separated):
   - `mindos.eq.coach.risk.high-terms`
   - `mindos.eq.coach.risk.medium-terms`

@@ -9,9 +9,19 @@ import com.zhongbo.mindos.assistant.memory.model.ProceduralMemoryEntry;
 import com.zhongbo.mindos.assistant.memory.model.SemanticMemoryEntry;
 import org.springframework.stereotype.Service;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.time.Instant;
+import java.util.stream.Stream;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+
 @Service
 public class MemorySyncService {
 
+    private static final Logger LOGGER = Logger.getLogger(MemorySyncService.class.getName());
     private final CentralMemoryRepository centralMemoryRepository;
     private final EpisodicMemoryService episodicMemoryService;
     private final SemanticMemoryService semanticMemoryService;
@@ -31,6 +41,101 @@ public class MemorySyncService {
         this.proceduralMemoryService = proceduralMemoryService;
         this.memoryConsolidationService = memoryConsolidationService;
         this.semanticWriteGatePolicy = semanticWriteGatePolicy;
+    }
+
+    /**
+     * Export central repository files to the given target directory.
+     * Currently only supports file-backed CentralMemoryRepository implementations (FileCentralMemoryRepository).
+     */
+    public void exportSnapshot(Path targetDirectory) {
+        try {
+            if (centralMemoryRepository instanceof com.zhongbo.mindos.assistant.memory.FileCentralMemoryRepository fileRepo) {
+                // reflectively access baseDirectory since it's not exposed on the interface
+                try {
+                    java.lang.reflect.Field baseDirField = com.zhongbo.mindos.assistant.memory.FileCentralMemoryRepository.class.getDeclaredField("baseDirectory");
+                    baseDirField.setAccessible(true);
+                    Path baseDir = (Path) baseDirField.get(fileRepo);
+                    if (baseDir == null || !Files.exists(baseDir)) {
+                        LOGGER.info("No file-backed memory directory found to export: " + baseDir);
+                        return;
+                    }
+                    Files.createDirectories(targetDirectory);
+                    try (Stream<Path> stream = Files.walk(baseDir)) {
+                        stream.forEach(source -> {
+                            try {
+                                Path relative = baseDir.relativize(source);
+                                Path dest = targetDirectory.resolve(relative.toString());
+                                if (Files.isDirectory(source)) {
+                                    Files.createDirectories(dest);
+                                } else {
+                                    Files.createDirectories(dest.getParent());
+                                    Files.copy(source, dest, StandardCopyOption.REPLACE_EXISTING);
+                                }
+                            } catch (IOException e) {
+                                throw new RuntimeException(e);
+                            }
+                        });
+                    }
+                    LOGGER.info("Memory snapshot exported to: " + targetDirectory + " at " + Instant.now());
+                    return;
+                } catch (NoSuchFieldException | IllegalAccessException ex) {
+                    LOGGER.log(Level.WARNING, "Failed to reflect FileCentralMemoryRepository.baseDirectory", ex);
+                }
+            }
+            throw new UnsupportedOperationException("exportSnapshot is only supported for file-backed central memory repository in this release");
+        } catch (RuntimeException ex) {
+            throw ex;
+        } catch (Exception ex) {
+            throw new IllegalStateException("Failed to export memory snapshot", ex);
+        }
+    }
+
+    /**
+     * Import (restore) central repository files from the provided source directory into the active file-backed repository.
+     */
+    public void importSnapshot(Path sourceDirectory) {
+        try {
+            if (centralMemoryRepository instanceof com.zhongbo.mindos.assistant.memory.FileCentralMemoryRepository fileRepo) {
+                try {
+                    java.lang.reflect.Field baseDirField = com.zhongbo.mindos.assistant.memory.FileCentralMemoryRepository.class.getDeclaredField("baseDirectory");
+                    baseDirField.setAccessible(true);
+                    Path baseDir = (Path) baseDirField.get(fileRepo);
+                    if (baseDir == null) {
+                        throw new IllegalStateException("FileCentralMemoryRepository.baseDirectory is null");
+                    }
+                    if (!Files.exists(sourceDirectory)) {
+                        LOGGER.info("Snapshot source does not exist, skipping import: " + sourceDirectory);
+                        return;
+                    }
+                    Files.createDirectories(baseDir);
+                    try (Stream<Path> stream = Files.walk(sourceDirectory)) {
+                        stream.forEach(source -> {
+                            try {
+                                Path relative = sourceDirectory.relativize(source);
+                                Path dest = baseDir.resolve(relative.toString());
+                                if (Files.isDirectory(source)) {
+                                    Files.createDirectories(dest);
+                                } else {
+                                    Files.createDirectories(dest.getParent());
+                                    Files.copy(source, dest, StandardCopyOption.REPLACE_EXISTING);
+                                }
+                            } catch (IOException e) {
+                                throw new RuntimeException(e);
+                            }
+                        });
+                    }
+                    LOGGER.info("Memory snapshot imported from: " + sourceDirectory + " at " + Instant.now());
+                    return;
+                } catch (NoSuchFieldException | IllegalAccessException ex) {
+                    LOGGER.log(Level.WARNING, "Failed to reflect FileCentralMemoryRepository.baseDirectory", ex);
+                }
+            }
+            throw new UnsupportedOperationException("importSnapshot is only supported for file-backed central memory repository in this release");
+        } catch (RuntimeException ex) {
+            throw ex;
+        } catch (Exception ex) {
+            throw new IllegalStateException("Failed to import memory snapshot", ex);
+        }
     }
 
     public MemorySyncSnapshot fetchUpdates(String userId, long sinceCursorExclusive, int limit) {

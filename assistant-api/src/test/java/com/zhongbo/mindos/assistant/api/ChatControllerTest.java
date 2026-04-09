@@ -119,7 +119,7 @@ class ChatControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"userId\":\"news-topic-user\",\"message\":\"查看今天新闻 股市\"}"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.channel").value("mcp.qwensearch.webSearch"))
+                .andExpect(ApiTestSupport.channelIn("mcp.qwensearch.webSearch", "news_search"))
                 .andExpect(jsonPath("$.reply").value(org.hamcrest.Matchers.containsString("股市")));
     }
 

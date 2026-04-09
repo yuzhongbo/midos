@@ -274,7 +274,146 @@ class McpSkillLoaderTest {
         assertTrue(parsed.isEmpty());
     }
 
+    @Test
+    void shouldRegisterAndExecuteSerperRestSearchFromDedicatedProperties() throws Exception {
+        AtomicBoolean apiKeySeen = new AtomicBoolean(false);
+        AtomicBoolean bodySeen = new AtomicBoolean(false);
+        server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/search", exchange -> {
+            if ("serper-test-token".equals(exchange.getRequestHeaders().getFirst("X-API-KEY"))) {
+                apiKeySeen.set(true);
+            }
+            String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+            if (body.contains("artificial intelligence")) {
+                bodySeen.set(true);
+            }
+            byte[] response = json(Map.of(
+                    "organic", List.of(
+                            Map.of(
+                                    "title", "AI news headline",
+                                    "snippet", "Latest artificial intelligence update",
+                                    "link", "https://example.com/ai"
+                            )
+                    )
+            ));
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+        server.start();
+
+        String url = "http://127.0.0.1:" + server.getAddress().getPort() + "/search";
+        SkillRegistry registry = new SkillRegistry(List.<Skill>of());
+        McpSkillLoader loader = new McpSkillLoader(
+                registry,
+                new McpJsonRpcClient(),
+                "",
+                "",
+                false,
+                "brave",
+                "",
+                "",
+                "X-Subscription-Token",
+                true,
+                "serper",
+                url,
+                "serper-test-token",
+                "X-API-KEY"
+        );
+
+        int loaded = loader.loadConfiguredServers();
+        SkillResult result = registry.getSkill("mcp.serper.webSearch")
+                .orElseThrow()
+                .run(new SkillContext("u1", "搜索 artificial intelligence", Map.of("query", "artificial intelligence")));
+
+        assertEquals(1, loaded);
+        assertTrue(registry.getSkill("mcp.serper.webSearch").isPresent());
+        assertTrue(apiKeySeen.get());
+        assertTrue(bodySeen.get());
+        assertTrue(result.success());
+        assertTrue(result.output().contains("AI news headline"));
+    }
+
+    @Test
+    void shouldRegisterAndExecuteSerpApiRestSearchFromSearchSources() throws Exception {
+        AtomicBoolean apiKeySeen = new AtomicBoolean(false);
+        AtomicBoolean querySeen = new AtomicBoolean(false);
+        server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/search.json", exchange -> {
+            Map<String, String> params = parseQuery(exchange.getRequestURI().getRawQuery());
+            if ("serpapi-test-key".equals(params.get("api_key"))) {
+                apiKeySeen.set(true);
+            }
+            if ("artificial intelligence".equals(params.get("q"))) {
+                querySeen.set(true);
+            }
+            byte[] response = json(Map.of(
+                    "organic_results", List.of(
+                            Map.of(
+                                    "title", "SerpApi AI headline",
+                                    "snippet", "SerpApi precise result",
+                                    "link", "https://example.com/serpapi-ai",
+                                    "source", "SerpApi"
+                            )
+                    )
+            ));
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+        server.start();
+
+        String url = "http://127.0.0.1:" + server.getAddress().getPort() + "/search.json?engine=google";
+        SkillRegistry registry = new SkillRegistry(List.<Skill>of());
+        McpSkillLoader loader = new McpSkillLoader(
+                registry,
+                new McpJsonRpcClient(),
+                "",
+                "",
+                "serpapi:" + url + ";api-key=serpapi-test-key",
+                false,
+                "brave",
+                "",
+                "",
+                "X-Subscription-Token",
+                false,
+                "serper",
+                "",
+                "",
+                "X-API-KEY"
+        );
+
+        int loaded = loader.loadConfiguredServers();
+        SkillResult result = registry.getSkill("mcp.serpapi.webSearch")
+                .orElseThrow()
+                .run(new SkillContext("u1", "搜索 artificial intelligence", Map.of("query", "artificial intelligence")));
+
+        assertEquals(1, loaded);
+        assertTrue(registry.getSkill("mcp.serpapi.webSearch").isPresent());
+        assertTrue(apiKeySeen.get());
+        assertTrue(querySeen.get());
+        assertTrue(result.success());
+        assertTrue(result.output().contains("SerpApi AI headline"));
+    }
+
     private byte[] json(Map<String, Object> value) throws IOException {
         return objectMapper.writeValueAsString(value).getBytes(StandardCharsets.UTF_8);
+    }
+
+    private Map<String, String> parseQuery(String rawQuery) {
+        if (rawQuery == null || rawQuery.isBlank()) {
+            return Map.of();
+        }
+        return java.util.Arrays.stream(rawQuery.split("&"))
+                .map(part -> part.split("=", 2))
+                .filter(parts -> parts.length > 0 && !parts[0].isBlank())
+                .collect(java.util.stream.Collectors.toMap(
+                        parts -> URLDecoder.decode(parts[0], StandardCharsets.UTF_8),
+                        parts -> parts.length > 1 ? URLDecoder.decode(parts[1], StandardCharsets.UTF_8) : "",
+                        (left, right) -> left,
+                        java.util.LinkedHashMap::new
+                ));
     }
 }

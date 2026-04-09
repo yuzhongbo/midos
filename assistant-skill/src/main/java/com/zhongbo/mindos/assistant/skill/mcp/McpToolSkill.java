@@ -91,9 +91,14 @@ public class McpToolSkill implements Skill {
 
         String normalizedInput = normalizePhrase(input);
         String normalizedSkillName = normalizePhrase(name());
+        String normalizedToolName = normalizePhrase(toolDefinition.name());
         if (normalizedInput.equals(normalizedSkillName)
                 || normalizedInput.startsWith(normalizedSkillName + " ")) {
             return 1000;
+        }
+        if (!normalizedToolName.isBlank() && (normalizedInput.equals(normalizedToolName)
+                || normalizedInput.startsWith(normalizedToolName + " "))) {
+            return 950;
         }
 
         List<String> phrases = new ArrayList<>(routingKeywords());

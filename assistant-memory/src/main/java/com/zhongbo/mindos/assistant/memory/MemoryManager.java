@@ -14,18 +14,26 @@ import com.zhongbo.mindos.assistant.memory.model.PreferenceProfileExplain;
 import com.zhongbo.mindos.assistant.memory.model.ProceduralMemoryEntry;
 import com.zhongbo.mindos.assistant.memory.model.SemanticMemoryEntry;
 import com.zhongbo.mindos.assistant.memory.model.SkillUsageStats;
+import org.springframework.beans.factory.DisposableBean;
+import org.springframework.beans.factory.InitializingBean;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
-
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.time.Instant;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 @Service
-public class MemoryManager {
+public class MemoryManager implements InitializingBean, DisposableBean {
+    private static final Logger LOGGER = Logger.getLogger(MemoryManager.class.getName());
     private final EpisodicMemoryService episodicMemoryService;
     private final SemanticMemoryService semanticMemoryService;
     private final ProceduralMemoryService proceduralMemoryService;
@@ -82,6 +90,62 @@ public class MemoryManager {
                 Integer.getInteger("mindos.memory.conversation-rollup.min-turns", 6),
                 Integer.getInteger("mindos.memory.hydration.batch-size", 512)
         );
+    }
+
+    @Override
+    public void afterPropertiesSet() {
+        try {
+            String configured = System.getProperty("mindos.memory.snapshot.dir", "data/memory-snapshots");
+            Path snapshotRoot = Paths.get(configured);
+            if (Files.exists(snapshotRoot) && Files.isDirectory(snapshotRoot)) {
+                try (java.util.stream.Stream<Path> s = Files.list(snapshotRoot)) {
+                    s.filter(path -> !path.getFileName().toString().startsWith("."))
+                            .max(java.util.Comparator.comparingLong(p -> p.toFile().lastModified()))
+                            .ifPresent(path -> {
+                                try {
+                                    LOGGER.info("Restoring memory snapshot from: " + path);
+                                    memorySyncService.importSnapshot(path);
+                                } catch (Exception ex) {
+                                    LOGGER.log(Level.WARNING, "Failed to import memory snapshot from " + path, ex);
+                                }
+                            });
+                }
+            }
+        } catch (IOException ex) {
+            LOGGER.log(Level.WARNING, "Failed to scan snapshot directory on startup", ex);
+        } catch (Exception ex) {
+            LOGGER.log(Level.WARNING, "Unexpected error while restoring snapshot on startup", ex);
+        }
+    }
+
+    @Override
+    public void destroy() {
+        try {
+            String configured = System.getProperty("mindos.memory.snapshot.dir", "data/memory-snapshots");
+            Path snapshotRoot = Paths.get(configured);
+            Files.createDirectories(snapshotRoot);
+            Path dest = snapshotRoot.resolve("snapshot-" + Instant.now().toEpochMilli());
+            LOGGER.info("Persisting memory snapshot to: " + dest);
+            memorySyncService.exportSnapshot(dest);
+        } catch (Exception ex) {
+            LOGGER.log(Level.WARNING, "Failed to export memory snapshot during graceful shutdown", ex);
+        }
+    }
+
+    /**
+     * Public helper for admin/drain to persist pending memory to disk.
+     */
+    public void persistPending() {
+        try {
+            String configured = System.getProperty("mindos.memory.snapshot.dir", "data/memory-snapshots");
+            Path snapshotRoot = Paths.get(configured);
+            Files.createDirectories(snapshotRoot);
+            Path dest = snapshotRoot.resolve("manual-" + Instant.now().toEpochMilli());
+            memorySyncService.exportSnapshot(dest);
+        } catch (Exception ex) {
+            LOGGER.log(Level.WARNING, "persistPending failed", ex);
+            throw new IllegalStateException("Failed to persist pending memory", ex);
+        }
     }
 
     @Autowired

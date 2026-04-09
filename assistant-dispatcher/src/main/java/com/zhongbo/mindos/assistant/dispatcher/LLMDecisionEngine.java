@@ -14,7 +14,8 @@ public class LLMDecisionEngine {
     // Keep dispatcher fallback memory-first and warn when the rolling ratio exceeds the 20% cost target.
     private static final double TARGET_USAGE_RATE = 0.20d;
     // Only skip the LLM when semantic/procedural memory is clearly relevant instead of marginally related.
-    private static final double RELEVANT_MEMORY_THRESHOLD = 0.55d;
+    // Allow runtime override via system property `mindos.dispatcher.llm.relevant-memory-threshold`
+    private static final double DEFAULT_RELEVANT_MEMORY_THRESHOLD = 0.55d;
     // Realtime and volatile queries should avoid stale memory answers unless the memory is very fresh.
     private static final double FRESH_MEMORY_MIN_RECENCY = 0.35d;
     private static final List<String> EXPLICIT_REQUEST_TERMS = List.of(
@@ -27,13 +28,25 @@ public class LLMDecisionEngine {
             "天气", "气温", "预报", "空气质量", "pm2.5", "雨", "雪", "温度", "新闻", "资讯", "快讯", "头条",
             "最新", "实时", "今天", "本周", "本月", "刚刚", "现在", "holiday", "weather", "forecast", "news", "latest", "today"
     );
-    private static final List<String> REALTIME_LOOKUP_HINTS = List.of(
-            "查", "查询", "搜索", "找", "看看", "获取", "看看", "帮我查", "帮我找"
-    );
 
     private final AtomicLong decisions = new AtomicLong();
     private final AtomicLong llmCalls = new AtomicLong();
     private final AtomicLong lastWarningDecision = new AtomicLong();
+
+    private final double relevantMemoryThreshold;
+
+    public LLMDecisionEngine() {
+        double configured = DEFAULT_RELEVANT_MEMORY_THRESHOLD;
+        try {
+            String raw = System.getProperty("mindos.dispatcher.llm.relevant-memory-threshold");
+            if (raw != null && !raw.isBlank()) {
+                configured = Double.parseDouble(raw.trim());
+            }
+        } catch (Exception e) {
+            // ignore and fall back to default
+        }
+        this.relevantMemoryThreshold = Math.max(0.0, Math.min(1.0, configured));
+    }
 
     public boolean shouldCallLLM(QueryContext context) {
         QueryContext safeContext = context == null ? new QueryContext("", "", null, false, false) : context;
@@ -98,7 +111,7 @@ public class LLMDecisionEngine {
         if (preferFresh && item.recencyScore() < FRESH_MEMORY_MIN_RECENCY) {
             return false;
         }
-        return item.finalScore() >= RELEVANT_MEMORY_THRESHOLD;
+        return item.finalScore() >= this.relevantMemoryThreshold;
     }
 
     private boolean containsAny(String text, List<String> terms) {
@@ -115,12 +128,7 @@ public class LLMDecisionEngine {
     }
 
     private boolean requiresRealtimeAnswer(String userQuery) {
-        if (userQuery == null || userQuery.isBlank()) {
-            return false;
-        }
-        boolean hasRealtimeTerm = containsAny(userQuery, REALTIME_TERMS);
-        boolean hasLookupIntent = containsAny(userQuery, REALTIME_LOOKUP_HINTS);
-        return hasRealtimeTerm && (hasLookupIntent || userQuery.contains("？") || userQuery.contains("?"));
+        return RealtimeIntentHeuristics.isRealtimeIntent(userQuery, REALTIME_TERMS);
     }
 
     private boolean shouldEmitTargetWarning(long decisionCount) {

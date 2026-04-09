@@ -47,6 +47,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 import java.util.logging.Level;
@@ -193,6 +194,8 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
     private final int behaviorLearningWindowSize;
     private final double behaviorLearningDefaultParamThreshold;
     private final boolean semanticAnalysisSkipShortSimpleEnabled;
+    private final boolean preferSuggestedSkillEnabled;
+    private final double preferSuggestedSkillMinConfidence;
     private final boolean parallelDetectedSkillRoutingEnabled;
     private final int parallelDetectedSkillRoutingMaxCandidates;
     private final long parallelDetectedSkillRoutingTimeoutMs;
@@ -228,9 +231,14 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
     private final AtomicLong fallbackChainHitCount = new AtomicLong();
     private final Map<String, AtomicLong> escalationReasonCounters = new java.util.concurrent.ConcurrentHashMap<>();
     private final AtomicLong routingReplayTotalCapturedCount = new AtomicLong();
+    private final AtomicBoolean acceptingRequests = new AtomicBoolean(true);
+    private final AtomicLong activeDispatchCount = new AtomicLong();
     private final PromptBuilder promptBuilder;
     private final LLMDecisionEngine llmDecisionEngine;
 
+    // Backwards-compatible constructor for tests and callers that do not provide
+    // the new preferSuggestedSkill configuration parameters. Delegates to the
+    // primary constructor with safe defaults (disabled).
     public DispatcherService(SkillEngine skillEngine,
                              SkillDslParser skillDslParser,
                              IntentModelRoutingPolicy intentModelRoutingPolicy,
@@ -292,11 +300,11 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                                @Value("${mindos.dispatcher.behavior-learning.enabled:true}") boolean behaviorLearningEnabled,
                                @Value("${mindos.dispatcher.behavior-learning.window-size:50}") int behaviorLearningWindowSize,
                                @Value("${mindos.dispatcher.behavior-learning.default-param-threshold:0.6}") double behaviorLearningDefaultParamThreshold,
-                               @Value("${mindos.dispatcher.semantic-analysis.skip-short-simple.enabled:false}") boolean semanticAnalysisSkipShortSimpleEnabled,
-                               @Value("${mindos.dispatcher.parallel-routing.enabled:false}") boolean parallelDetectedSkillRoutingEnabled,
-                               @Value("${mindos.dispatcher.parallel-routing.max-candidates:2}") int parallelDetectedSkillRoutingMaxCandidates,
-                               @Value("${mindos.dispatcher.parallel-routing.per-skill-timeout-ms:2500}") long parallelDetectedSkillRoutingTimeoutMs,
-                               @Value("${mindos.dispatcher.parallel-routing.priority-list:}") String parallelDetectedSkillPriorityList) {
+                                @Value("${mindos.dispatcher.semantic-analysis.skip-short-simple.enabled:false}") boolean semanticAnalysisSkipShortSimpleEnabled,
+                                  @Value("${mindos.dispatcher.parallel-routing.enabled:false}") boolean parallelDetectedSkillRoutingEnabled,
+                                @Value("${mindos.dispatcher.parallel-routing.max-candidates:2}") int parallelDetectedSkillRoutingMaxCandidates,
+                                @Value("${mindos.dispatcher.parallel-routing.per-skill-timeout-ms:2500}") long parallelDetectedSkillRoutingTimeoutMs,
+                                @Value("${mindos.dispatcher.parallel-routing.priority-list:}") String parallelDetectedSkillPriorityList) {
         this.skillEngine = skillEngine;
         this.skillDslParser = skillDslParser;
         this.intentModelRoutingPolicy = intentModelRoutingPolicy;
@@ -387,6 +395,8 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         this.behaviorLearningWindowSize = Math.max(10, behaviorLearningWindowSize);
         this.behaviorLearningDefaultParamThreshold = Math.max(0.5, Math.min(0.95, behaviorLearningDefaultParamThreshold));
         this.semanticAnalysisSkipShortSimpleEnabled = semanticAnalysisSkipShortSimpleEnabled;
+        this.preferSuggestedSkillEnabled = false;
+        this.preferSuggestedSkillMinConfidence = 0.0;
         this.parallelDetectedSkillRoutingEnabled = parallelDetectedSkillRoutingEnabled;
         this.parallelDetectedSkillRoutingMaxCandidates = Math.max(1, parallelDetectedSkillRoutingMaxCandidates);
         this.parallelDetectedSkillRoutingTimeoutMs = Math.max(100L, parallelDetectedSkillRoutingTimeoutMs);
@@ -406,22 +416,28 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
     }
 
     public CompletableFuture<DispatchResult> dispatchAsync(String userId, String userInput, Map<String, Object> profileContext) {
-        Instant startTime = Instant.now();
-        LOGGER.info("Dispatcher input: userId=" + userId + ", input=" + clip(userInput));
-        java.util.concurrent.atomic.AtomicReference<RoutingDecisionDto> routingDecisionRef = new java.util.concurrent.atomic.AtomicReference<>();
-        java.util.concurrent.atomic.AtomicBoolean skillPostprocessSentRef = new java.util.concurrent.atomic.AtomicBoolean(false);
-        java.util.concurrent.atomic.AtomicBoolean finalResultSuccessRef = new java.util.concurrent.atomic.AtomicBoolean(false);
-        RoutingReplayProbe replayProbe = new RoutingReplayProbe();
-
-        memoryManager.storeUserConversation(userId, userInput);
-        maybeStoreSemanticMemory(userId, userInput);
-
-        // Fast-path: short conversational acknowledgements should avoid expensive routing.
-        String normalizedInputForBypass = normalize(userInput);
-        if (semanticAnalysisSkipShortSimpleEnabled && isConversationalBypassInput(normalizedInputForBypass)) {
-            DispatchResult bypass = handleConversationalBypass(userId, normalizedInputForBypass);
-            return CompletableFuture.completedFuture(bypass);
+        if (!acceptingRequests.get()) {
+            return CompletableFuture.completedFuture(buildDrainingResult(userInput));
         }
+        try {
+            Instant startTime = Instant.now();
+            LOGGER.info("Dispatcher input: userId=" + userId + ", input=" + clip(userInput));
+            java.util.concurrent.atomic.AtomicReference<RoutingDecisionDto> routingDecisionRef = new java.util.concurrent.atomic.AtomicReference<>();
+            java.util.concurrent.atomic.AtomicBoolean skillPostprocessSentRef = new java.util.concurrent.atomic.AtomicBoolean(false);
+            java.util.concurrent.atomic.AtomicBoolean finalResultSuccessRef = new java.util.concurrent.atomic.AtomicBoolean(false);
+            java.util.concurrent.atomic.AtomicBoolean realtimeLookupRef = new java.util.concurrent.atomic.AtomicBoolean(false);
+            java.util.concurrent.atomic.AtomicBoolean memoryDirectBypassedRef = new java.util.concurrent.atomic.AtomicBoolean(false);
+            RoutingReplayProbe replayProbe = new RoutingReplayProbe();
+
+            memoryManager.storeUserConversation(userId, userInput);
+            maybeStoreSemanticMemory(userId, userInput);
+
+            // Fast-path: short conversational acknowledgements should avoid expensive routing.
+            String normalizedInputForBypass = normalize(userInput);
+            if (semanticAnalysisSkipShortSimpleEnabled && isConversationalBypassInput(normalizedInputForBypass)) {
+                DispatchResult bypass = handleConversationalBypass(userId, normalizedInputForBypass);
+                return CompletableFuture.completedFuture(bypass);
+            }
 
         // Fast-path: short conversational acknowledgements (e.g. 谢谢/好的/收到) should avoid
         // expensive routing and LLM calls. Return a lightweight canned/no-op reply and record
@@ -448,6 +464,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                 userId,
                 profileContext == null ? Map.of() : profileContext
         );
+        activeDispatchCount.incrementAndGet();
         String memoryContext = buildMemoryContext(userId, userInput);
         PromptMemoryContextDto promptMemoryContext = memoryManager.buildPromptMemoryContext(
                 userId,
@@ -455,7 +472,6 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                 memoryContextMaxChars,
                 resolvedProfileContext
         );
-        boolean realtimeIntentInput = isRealtimeIntent(userInput);
         SemanticAnalysisResult semanticAnalysis = shouldSkipSemanticAnalysis(userInput)
                 ? SemanticAnalysisResult.empty()
                 : semanticAnalysisService.analyze(
@@ -466,6 +482,8 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                         skillEngine.listAvailableSkillSummaries()
                 );
         maybeStoreSemanticSummary(userId, userInput, semanticAnalysis);
+        boolean realtimeIntentInput = isRealtimeIntent(userInput, semanticAnalysis);
+        realtimeLookupRef.set(realtimeIntentInput || isRealtimeLikeInput(userInput, semanticAnalysis));
         String routingInput = semanticAnalysis.routingInput(userInput);
         String effectiveMemoryContext = enrichMemoryContextWithSemanticAnalysis(memoryContext, semanticAnalysis);
         List<Map<String, Object>> chatHistory = buildChatHistory(userId);
@@ -492,7 +510,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
             llmContext.put("chatHistory", chatHistory);
         }
 
-        return metaOrchestratorService.orchestrate(
+            return metaOrchestratorService.orchestrate(
                         () -> executeSinglePass(userId, userInput, context, effectiveMemoryContext, promptMemoryContext, llmContext, realtimeIntentInput, routingDecisionRef, semanticAnalysis, replayProbe),
                         () -> CompletableFuture.completedFuture(buildFallbackResult(effectiveMemoryContext, promptMemoryContext, routingInput, llmContext, realtimeIntentInput))
                 )
@@ -504,7 +522,16 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                     if ("llm".equals(result.skillName())) {
                         result = SkillResult.success("llm", capText(result.output(), llmReplyMaxChars));
                     }
-                    ExecutionTraceDto trace = enrichTraceWithRouting(orchestration.trace(), routingDecisionRef.get());
+                    memoryDirectBypassedRef.set(realtimeLookupRef.get() && !"memory.direct".equalsIgnoreCase(result.skillName()));
+                    String actualSearchSource = classifyMcpSearchSource(result.skillName());
+                    RoutingDecisionDto routingWithObservability = enrichRoutingDecisionWithFinalObservability(
+                            routingDecisionRef.get(),
+                            result.skillName(),
+                            realtimeLookupRef.get(),
+                            memoryDirectBypassedRef.get(),
+                            actualSearchSource
+                    );
+                    ExecutionTraceDto trace = enrichTraceWithRouting(orchestration.trace(), routingWithObservability);
                     finalResultSuccessRef.set(result.success());
                     memoryManager.storeAssistantConversation(userId, result.output());
                     maybeStorePostSkillSummary(userId, userInput, result);
@@ -515,6 +542,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                     return new DispatchResult(result.output(), result.skillName(), trace);
                 })
                 .whenComplete((result, error) -> {
+                    activeDispatchCount.decrementAndGet();
                     long durationMs = Duration.between(startTime, Instant.now()).toMillis();
                     if (error != null) {
                         LOGGER.log(Level.SEVERE,
@@ -526,23 +554,41 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                             + ", channel=" + result.channel()
                             + ", output=" + clip(result.reply())
                             + ", durationMs=" + durationMs);
-                    logFinalAggregateTrace(userId, result.channel(), result.executionTrace(), skillPostprocessSentRef.get(), finalResultSuccessRef.get());
+                    logFinalAggregateTrace(
+                            userId,
+                            result.channel(),
+                            result.executionTrace(),
+                            skillPostprocessSentRef.get(),
+                            finalResultSuccessRef.get(),
+                            realtimeLookupRef.get(),
+                            memoryDirectBypassedRef.get()
+                    );
                 });
+        } catch (RuntimeException | Error ex) {
+            activeDispatchCount.decrementAndGet();
+            throw ex;
+        }
     }
 
     public CompletableFuture<DispatchResult> dispatchStream(String userId,
                                                             String userInput,
                                                             Map<String, Object> profileContext,
                                                             Consumer<String> deltaConsumer) {
-        Instant startTime = Instant.now();
-        LOGGER.info("Dispatcher(stream) input: userId=" + userId + ", input=" + clip(userInput));
-        java.util.concurrent.atomic.AtomicReference<RoutingDecisionDto> routingDecisionRef = new java.util.concurrent.atomic.AtomicReference<>();
-        java.util.concurrent.atomic.AtomicBoolean skillPostprocessSentRef = new java.util.concurrent.atomic.AtomicBoolean(false);
-        java.util.concurrent.atomic.AtomicBoolean finalResultSuccessRef = new java.util.concurrent.atomic.AtomicBoolean(false);
-        RoutingReplayProbe replayProbe = new RoutingReplayProbe();
+        if (!acceptingRequests.get()) {
+            return CompletableFuture.completedFuture(buildDrainingResult(userInput));
+        }
+        try {
+            Instant startTime = Instant.now();
+            LOGGER.info("Dispatcher(stream) input: userId=" + userId + ", input=" + clip(userInput));
+            java.util.concurrent.atomic.AtomicReference<RoutingDecisionDto> routingDecisionRef = new java.util.concurrent.atomic.AtomicReference<>();
+            java.util.concurrent.atomic.AtomicBoolean skillPostprocessSentRef = new java.util.concurrent.atomic.AtomicBoolean(false);
+            java.util.concurrent.atomic.AtomicBoolean finalResultSuccessRef = new java.util.concurrent.atomic.AtomicBoolean(false);
+            java.util.concurrent.atomic.AtomicBoolean realtimeLookupRef = new java.util.concurrent.atomic.AtomicBoolean(false);
+            java.util.concurrent.atomic.AtomicBoolean memoryDirectBypassedRef = new java.util.concurrent.atomic.AtomicBoolean(false);
+            RoutingReplayProbe replayProbe = new RoutingReplayProbe();
 
-        memoryManager.storeUserConversation(userId, userInput);
-        maybeStoreSemanticMemory(userId, userInput);
+            memoryManager.storeUserConversation(userId, userInput);
+            maybeStoreSemanticMemory(userId, userInput);
 
         // Fast-path: short conversational acknowledgements should avoid expensive routing
         // and streaming LLM calls. Mirror the non-streaming `dispatch` behaviour so
@@ -571,6 +617,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                 userId,
                 profileContext == null ? Map.of() : profileContext
         );
+        activeDispatchCount.incrementAndGet();
         String memoryContext = buildMemoryContext(userId, userInput);
         PromptMemoryContextDto promptMemoryContext = memoryManager.buildPromptMemoryContext(
                 userId,
@@ -578,7 +625,6 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                 memoryContextMaxChars,
                 resolvedProfileContext
         );
-        boolean realtimeIntentInput = isRealtimeIntent(userInput);
         SemanticAnalysisResult semanticAnalysis = shouldSkipSemanticAnalysis(userInput)
                 ? SemanticAnalysisResult.empty()
                 : semanticAnalysisService.analyze(
@@ -589,6 +635,8 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                         skillEngine.listAvailableSkillSummaries()
                 );
         maybeStoreSemanticSummary(userId, userInput, semanticAnalysis);
+        boolean realtimeIntentInput = isRealtimeIntent(userInput, semanticAnalysis);
+        realtimeLookupRef.set(realtimeIntentInput || isRealtimeLikeInput(userInput, semanticAnalysis));
         String routingInput = semanticAnalysis.routingInput(userInput);
         String effectiveMemoryContext = enrichMemoryContextWithSemanticAnalysis(memoryContext, semanticAnalysis);
         Map<String, Object> contextAttributes = new LinkedHashMap<>(resolvedProfileContext);
@@ -609,7 +657,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         applyStageLlmRoute("llm-fallback", resolvedProfileContext, llmContext);
         intentModelRoutingPolicy.applyForFallback(userInput, promptMemoryContext, realtimeIntentInput, resolvedProfileContext, llmContext);
 
-        return routeToSkillAsync(userId, userInput, context, effectiveMemoryContext, semanticAnalysis, replayProbe)
+            return routeToSkillAsync(userId, userInput, context, effectiveMemoryContext, semanticAnalysis, replayProbe)
                 .thenApply(routingOutcome -> {
                     routingDecisionRef.set(routingOutcome.routingDecision());
                     return routingOutcome.result().orElseGet(() ->
@@ -623,7 +671,16 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                     if ("llm".equals(normalized.skillName())) {
                         normalized = SkillResult.success("llm", capText(normalized.output(), llmReplyMaxChars));
                     }
-                    ExecutionTraceDto trace = new ExecutionTraceDto("stream-single-pass", 0, null, List.of(), routingDecisionRef.get());
+                    memoryDirectBypassedRef.set(realtimeLookupRef.get() && !"memory.direct".equalsIgnoreCase(normalized.skillName()));
+                    String actualSearchSource = classifyMcpSearchSource(normalized.skillName());
+                    RoutingDecisionDto routingWithObservability = enrichRoutingDecisionWithFinalObservability(
+                            routingDecisionRef.get(),
+                            normalized.skillName(),
+                            realtimeLookupRef.get(),
+                            memoryDirectBypassedRef.get(),
+                            actualSearchSource
+                    );
+                    ExecutionTraceDto trace = new ExecutionTraceDto("stream-single-pass", 0, null, List.of(), routingWithObservability);
                     finalResultSuccessRef.set(normalized.success());
                     memoryManager.storeAssistantConversation(userId, normalized.output());
                     maybeStorePostSkillSummary(userId, userInput, normalized);
@@ -633,6 +690,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                     return new DispatchResult(normalized.output(), normalized.skillName(), trace);
                 })
                 .whenComplete((result, error) -> {
+                    activeDispatchCount.decrementAndGet();
                     long durationMs = Duration.between(startTime, Instant.now()).toMillis();
                     if (error != null) {
                         LOGGER.log(Level.SEVERE,
@@ -644,8 +702,20 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                             + ", channel=" + result.channel()
                             + ", output=" + clip(result.reply())
                             + ", durationMs=" + durationMs);
-                    logFinalAggregateTrace(userId, result.channel(), result.executionTrace(), skillPostprocessSentRef.get(), finalResultSuccessRef.get());
+                    logFinalAggregateTrace(
+                            userId,
+                            result.channel(),
+                            result.executionTrace(),
+                            skillPostprocessSentRef.get(),
+                            finalResultSuccessRef.get(),
+                            realtimeLookupRef.get(),
+                            memoryDirectBypassedRef.get()
+                    );
                 });
+        } catch (RuntimeException | Error ex) {
+            activeDispatchCount.decrementAndGet();
+            throw ex;
+        }
     }
 
     private CompletableFuture<SkillResult> executeSinglePass(String userId,
@@ -672,7 +742,17 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                                             Map<String, Object> llmContext,
                                             boolean realtimeIntentInput) {
         QueryContext queryContext = buildQueryContext(llmContext, userInput, promptMemoryContext);
-        boolean realtimeLookup = realtimeIntentInput || isRealtimeIntent(userInput);
+        boolean realtimeLookup = realtimeIntentInput || isRealtimeLikeInput(userInput);
+        try {
+            LOGGER.info(() -> "dispatcher.llm.debug userQuery=" + clip(userInput)
+                    + ", explicit=" + queryContext.explicitLlmRequest()
+                    + ", complex=" + queryContext.complexReasoningRequired()
+                    + ", realtimeLookup=" + realtimeLookup
+                    + ", memoryDebug=" + promptMemoryDebugSummary(promptMemoryContext)
+            );
+        } catch (Exception e) {
+            // best-effort debug logging
+        }
         if (!realtimeLookup && !llmDecisionEngine.shouldCallLLM(queryContext)) {
             return buildMemoryDirectResult(promptMemoryContext, userInput);
         }
@@ -689,7 +769,17 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                                                      boolean realtimeIntentInput,
                                                      Consumer<String> deltaConsumer) {
         QueryContext queryContext = buildQueryContext(llmContext, userInput, promptMemoryContext);
-        boolean realtimeLookup = realtimeIntentInput || isRealtimeIntent(userInput);
+        boolean realtimeLookup = realtimeIntentInput || isRealtimeLikeInput(userInput);
+        try {
+            LOGGER.info(() -> "dispatcher.llm.stream.debug userQuery=" + clip(userInput)
+                    + ", explicit=" + queryContext.explicitLlmRequest()
+                    + ", complex=" + queryContext.complexReasoningRequired()
+                    + ", realtimeLookup=" + realtimeLookup
+                    + ", memoryDebug=" + promptMemoryDebugSummary(promptMemoryContext)
+            );
+        } catch (Exception e) {
+            // best-effort debug logging
+        }
         if (!realtimeLookup && !llmDecisionEngine.shouldCallLLM(queryContext)) {
             SkillResult result = buildMemoryDirectResult(promptMemoryContext, userInput);
             if (deltaConsumer != null) {
@@ -813,17 +903,18 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                     + "2. ...\n"
                     + "3. ...\n"
                     + "总结：...\n"
-                    + "2. ‘今日新闻标题：’下面列出 3-6 条新闻标题或核心要点，每条单独一行，优先保留原始标题信息；\n"
-                    + "3. 标题要尽量贴近原始结果，不要凭空编造；\n"
-                    + "4. 最后必须单独输出“总结：”，概括今天的整体动态、趋势或值得关注点；\n"
-                    + "5. 如果原始结果不足，就按实际数量输出，不要凑数；\n"
-                    + "6. 语言自然、信息清晰，不要泄露内部字段名；控制在 8-12 行中文。\n"
+                    + "2. 直接输出结果，不要写任何开场白、寒暄、致歉、确认、等待或自我说明；不要出现“好的”“请稍等”“我正在搜索”“已收到”“稍后给你”等话术；\n"
+                    + "3. ‘今日新闻标题：’下面列出 3-6 条新闻标题或核心要点，每条单独一行，优先保留原始标题信息；\n"
+                    + "4. 标题要尽量贴近原始结果，不要凭空编造；\n"
+                    + "5. 最后必须单独输出“总结：”，概括今天的整体动态、趋势或值得关注点；\n"
+                    + "6. 如果原始结果不足，就按实际数量输出，不要凑数；\n"
+                    + "7. 语言自然、信息清晰，不要泄露内部字段名；控制在 8-12 行中文。\n"
                     + summary;
             return capText(prompt, promptMaxChars);
         }
 
         String prompt = "你是回复优化助手。给你一个技能结构化执行结果，请输出面向用户的最终答复。"
-                + "要求：自然、简洁、可执行，避免模板化列表；不要泄露内部字段名；控制在 6-10 行中文。\n"
+                + "要求：自然、简洁、可执行，避免模板化列表；不要泄露内部字段名；不要写任何开场白、寒暄、致歉、确认、等待或“我正在…”类句子；控制在 6-10 行中文。\n"
                 + summary;
         return capText(prompt, promptMaxChars);
     }
@@ -1050,10 +1141,13 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                                         String finalChannel,
                                         ExecutionTraceDto trace,
                                         boolean skillPostprocessSent,
-                                        boolean finalResultSuccess) {
+                                        boolean finalResultSuccess,
+                                        boolean realtimeLookup,
+                                        boolean memoryDirectBypassed) {
         RoutingDecisionDto routing = trace == null ? null : trace.routing();
         String selectedSkill = routing == null ? "" : normalizeOptional(routing.selectedSkill());
         String searchSource = classifyMcpSearchSource(!selectedSkill.isBlank() ? selectedSkill : finalChannel);
+        String actualSearchSource = searchSource;
         boolean searchAttempted = !searchSource.isBlank();
         String searchStatus = resolveSearchStatus(searchAttempted, selectedSkill, finalChannel, trace, finalResultSuccess);
         boolean fallbackUsed = trace != null && trace.replanCount() > 0;
@@ -1061,6 +1155,8 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                 + (userId == null ? "" : userId)
                 + "\",\"searchSource\":\""
                 + searchSource
+                + "\",\"actualSearchSource\":\""
+                + actualSearchSource
                 + "\",\"searchAttempted\":"
                 + searchAttempted
                 + ",\"searchStatus\":\""
@@ -1069,6 +1165,10 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                 + selectedSkill
                 + "\",\"postprocessSent\":"
                 + skillPostprocessSent
+                + ",\"realtimeLookup\":"
+                + realtimeLookup
+                + ",\"memoryDirectBypassed\":"
+                + memoryDirectBypassed
                 + ",\"fallbackUsed\":"
                 + fallbackUsed
                 + ",\"finalChannel\":\""
@@ -1262,9 +1362,13 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         }
         rejectedReasons.add("input is not a meta help question");
 
-        Optional<CompletableFuture<RoutingOutcome>> braveFirstRouting = routeToBraveSearchFirst(userId, userInput, context, rejectedReasons);
-        if (braveFirstRouting.isPresent()) {
-            return braveFirstRouting.get();
+        rejectedReasons.add("brave-first routing is disabled; using normal detected-skill routing");
+
+        if (braveFirstSearchRoutingEnabled && isRealtimeIntent(userInput, semanticAnalysis)) {
+            Optional<CompletableFuture<RoutingOutcome>> braveFirstRouting = routeToBraveSearchFirst(userId, userInput, context, semanticAnalysis, rejectedReasons);
+            if (braveFirstRouting.isPresent()) {
+                return braveFirstRouting.get();
+            }
         }
 
         List<SkillEngine.SkillCandidate> detectedSkillCandidates = parallelDetectedSkillRoutingEnabled
@@ -1306,7 +1410,12 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
 
         rejectedReasons.add("no registered skill.supports match");
 
-                    Optional<SkillDsl> habitDsl = detectSkillWithMemoryHabits(userId, userInput, context.attributes());
+                    Optional<SkillDsl> habitDsl = isRealtimeLikeInput(userInput, semanticAnalysis)
+                            ? Optional.empty()
+                            : detectSkillWithMemoryHabits(userId, userInput, context.attributes());
+                    if (isRealtimeLikeInput(userInput, semanticAnalysis)) {
+                        rejectedReasons.add("realtime-like input skipped memory-habit routing");
+                    }
                     if (habitDsl.isPresent()
                             && "code.generate".equals(habitDsl.get().skill())
                             && !isCodeGenerationIntent(userInput)
@@ -1353,7 +1462,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         }
 
         skillPreAnalyzeRequestCount.incrementAndGet();
-                    if (isRealtimeIntent(userInput)) {
+                    if (isRealtimeIntent(userInput, semanticAnalysis)) {
                         replayProbe.preAnalyzeCandidate = "SKIPPED_REALTIME";
                         skillPreAnalyzeSkippedByGateCount.incrementAndGet();
                         rejectedReasons.add("realtime intent bypassed skill pre-analyze after no registered skill matched");
@@ -1428,6 +1537,51 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         return CompletableFuture.completedFuture(new RoutingOutcome(Optional.empty(), fallbackRoutingDecision(rejectedReasons)));
     }
 
+    public void beginDrain() {
+        acceptingRequests.set(false);
+    }
+
+    public void resumeAcceptingRequests() {
+        acceptingRequests.set(true);
+    }
+
+    public boolean isAcceptingRequests() {
+        return acceptingRequests.get();
+    }
+
+    public long getActiveDispatchCount() {
+        return Math.max(0L, activeDispatchCount.get());
+    }
+
+    public boolean waitForActiveDispatches(long timeoutMs) {
+        long deadline = System.currentTimeMillis() + Math.max(0L, timeoutMs);
+        while (System.currentTimeMillis() < deadline) {
+            if (activeDispatchCount.get() <= 0L) {
+                return true;
+            }
+            try {
+                TimeUnit.MILLISECONDS.sleep(100);
+            } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
+                return false;
+            }
+        }
+        return activeDispatchCount.get() <= 0L;
+    }
+
+    private DispatchResult buildDrainingResult(String userInput) {
+        String reply = "系统正在升级维护，请稍后重试。";
+        RoutingDecisionDto decision = new RoutingDecisionDto(
+                "system.draining",
+                "system.draining",
+                1.0,
+                List.of("dispatcher is currently draining and rejecting new requests"),
+                List.of(normalizeOptional(userInput))
+        );
+        ExecutionTraceDto trace = new ExecutionTraceDto("single-pass", 0, null, List.of(), decision);
+        return new DispatchResult(reply, "system.draining", trace);
+    }
+
     private CompletableFuture<SkillResult> applySkillTimeoutIfNeeded(String skillName,
                                                                       SkillContext context,
                                                                       CompletableFuture<SkillResult> executionFuture) {
@@ -1479,6 +1633,15 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                                                                                       SkillContext context,
                                                                                       List<SkillEngine.SkillCandidate> candidates,
                                                                                       List<String> rejectedReasons) {
+        return routeDetectedSkillCandidatesInParallel(userId, userInput, context, candidates, rejectedReasons, parallelDetectedSkillPriorityOrder);
+    }
+
+    private CompletableFuture<RoutingOutcome> routeDetectedSkillCandidatesInParallel(String userId,
+                                                                                      String userInput,
+                                                                                      SkillContext context,
+                                                                                      List<SkillEngine.SkillCandidate> candidates,
+                                                                                      List<String> rejectedReasons,
+                                                                                      List<String> priorityOrderOverride) {
         List<ParallelSkillCandidateExecution> executions = new ArrayList<>();
         List<String> localRejected = new ArrayList<>(rejectedReasons);
         for (SkillEngine.SkillCandidate candidate : candidates) {
@@ -1519,8 +1682,8 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                 return new RoutingOutcome(Optional.empty(), fallbackRoutingDecision(localRejected));
             }
             successful.sort((left, right) -> {
-                int leftPriority = priorityRank(left.skillName());
-                int rightPriority = priorityRank(right.skillName());
+                int leftPriority = priorityRank(left.skillName(), priorityOrderOverride);
+                int rightPriority = priorityRank(right.skillName(), priorityOrderOverride);
                 if (leftPriority != rightPriority) {
                     return Integer.compare(leftPriority, rightPriority);
                 }
@@ -1529,7 +1692,11 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                 }
                 return left.skillName().compareToIgnoreCase(right.skillName());
             });
-            ParallelSkillCandidateResult selected = successful.get(0);
+            ParallelSkillCandidateResult selected = successful.stream()
+                    .filter(candidate -> !isSearchLikeSkill(candidate.skillName())
+                            || isSearchResultUsable(userInput, candidate.result()))
+                    .findFirst()
+                    .orElse(successful.get(0));
             LOGGER.info("Dispatcher route=detected-skill-parallel, userId=" + userId + ", skill=" + selected.skillName());
             return new RoutingOutcome(selected.result(), new RoutingDecisionDto(
                     "detected-skill-parallel",
@@ -1541,13 +1708,22 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         });
     }
 
+    private boolean isSearchLikeSkill(String skillName) {
+        String normalized = normalize(skillName);
+        return normalized.contains("search");
+    }
+
     private int priorityRank(String skillName) {
-        if (skillName == null || skillName.isBlank() || parallelDetectedSkillPriorityOrder.isEmpty()) {
+        return priorityRank(skillName, parallelDetectedSkillPriorityOrder);
+    }
+
+    private int priorityRank(String skillName, List<String> priorityOrder) {
+        if (skillName == null || skillName.isBlank() || priorityOrder == null || priorityOrder.isEmpty()) {
             return Integer.MAX_VALUE;
         }
         String normalized = normalize(skillName);
-        for (int i = 0; i < parallelDetectedSkillPriorityOrder.size(); i++) {
-            String configured = parallelDetectedSkillPriorityOrder.get(i);
+        for (int i = 0; i < priorityOrder.size(); i++) {
+            String configured = priorityOrder.get(i);
             if (configured.equals(normalized)) {
                 return i;
             }
@@ -2480,6 +2656,26 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         return SkillResult.success("memory.direct", capText(reply.toString(), llmReplyMaxChars));
     }
 
+    private String promptMemoryDebugSummary(PromptMemoryContextDto ctx) {
+        if (ctx == null || ctx.debugTopItems() == null) {
+            return "promptMemoryDebug=empty";
+        }
+        StringBuilder sb = new StringBuilder();
+        sb.append("promptMemory.items=").append(ctx.debugTopItems().size());
+        int i = 0;
+        for (com.zhongbo.mindos.assistant.common.dto.RetrievedMemoryItemDto item : ctx.debugTopItems()) {
+            if (item == null) continue;
+            i++;
+            sb.append(" |").append(i).append(":type=").append(item.type() == null ? "" : item.type())
+                    .append(",final=").append(String.format(Locale.ROOT, "%.3f", item.finalScore()))
+                    .append(",recency=").append(String.format(Locale.ROOT, "%.3f", item.recencyScore()))
+                    .append(",text=")
+                    .append(item.text() == null ? "" : item.text().replace('\n', ' ').trim());
+            if (i >= 5) break;
+        }
+        return sb.toString();
+    }
+
     private QueryContext buildQueryContext(Map<String, Object> llmContext,
                                            String userInput,
                                            PromptMemoryContextDto promptMemoryContext) {
@@ -2593,6 +2789,11 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
 
     private boolean isSkillLoopGuardBlocked(String userId, String skillName, String userInput) {
         if (skillName == null || skillName.isBlank()) {
+            return false;
+        }
+        // Read-only search skills are expected to be repeated for fresh results, so do not
+        // treat them as loop candidates. This keeps news / web search requests routable.
+        if (isSearchLikeSkill(skillName)) {
             return false;
         }
         List<ProceduralMemoryEntry> history = memoryManager.getSkillUsageHistory(userId);
@@ -3660,139 +3861,55 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
     }
 
     private boolean isRealtimeIntent(String userInput) {
-        if (!realtimeIntentBypassEnabled || userInput == null || userInput.isBlank()) {
-            return false;
-        }
-        String normalizedInput = normalize(userInput);
-        if (normalizedInput.isBlank()) {
-            return false;
-        }
-        for (String term : realtimeIntentTerms) {
-            if (normalizedInput.contains(term)) {
-                return true;
-            }
-        }
-        return containsAny(normalizedInput,
-                "今天天气",
-                "明天天气",
-                "后天天气",
-                "天气怎么样",
-                "天气如何",
-                "天气预报",
-                "今日新闻",
-                "最新新闻",
-                "热点新闻",
-                "实时新闻");
+        return isRealtimeIntent(userInput, SemanticAnalysisResult.empty());
+    }
+
+    private boolean isRealtimeIntent(String userInput, SemanticAnalysisResult semanticAnalysis) {
+        return realtimeIntentBypassEnabled && RealtimeIntentHeuristics.isRealtimeIntent(userInput, realtimeIntentTerms, semanticAnalysis);
+    }
+
+    /**
+     * Realtime-like intent detector that is not gated by realtimeIntentBypassEnabled.
+     * Used for safe fallback guards to avoid memory.direct responses for weather/news lookups.
+     */
+    private boolean isRealtimeLikeInput(String userInput) {
+        return isRealtimeLikeInput(userInput, SemanticAnalysisResult.empty());
+    }
+
+    private boolean isRealtimeLikeInput(String userInput, SemanticAnalysisResult semanticAnalysis) {
+        return RealtimeIntentHeuristics.isRealtimeLikeInput(userInput, realtimeIntentTerms, semanticAnalysis);
     }
 
     private Optional<CompletableFuture<RoutingOutcome>> routeToBraveSearchFirst(String userId,
                                                                                 String userInput,
                                                                                 SkillContext context,
+                                                                                SemanticAnalysisResult semanticAnalysis,
                                                                                 List<String> rejectedReasons) {
         if (!braveFirstSearchRoutingEnabled) {
             return Optional.empty();
         }
-        if (!isRealtimeIntent(userInput)) {
+        if (!isRealtimeIntent(userInput, semanticAnalysis)) {
             rejectedReasons.add("brave-first routing skipped because input is not realtime intent");
             return Optional.empty();
         }
-        for (String candidate : List.of("mcp.bravesearch.webSearch", "mcp.brave.webSearch")) {
-            if (!isKnownSkillName(candidate)) {
-                continue;
-            }
-            if (isSkillLoopGuardBlocked(userId, candidate, userInput)) {
-                rejectedReasons.add("brave-first routing candidate blocked by loop guard: " + candidate);
-                return Optional.of(CompletableFuture.completedFuture(new RoutingOutcome(Optional.empty(), fallbackRoutingDecision(rejectedReasons))));
-            }
-            Optional<SkillResult> blocked = maybeBlockByCapability(candidate);
-            if (blocked.isPresent()) {
-                return Optional.of(CompletableFuture.completedFuture(new RoutingOutcome(blocked, new RoutingDecisionDto(
-                        "security.guard",
-                        candidate,
-                        0.99,
-                        List.of("brave-first realtime routing selected a search skill but capability guard blocked execution"),
-                        List.copyOf(rejectedReasons)
-                ))));
-            }
-            LOGGER.info("Dispatcher route=brave-first-search, userId=" + userId + ", skill=" + candidate);
-            CompletableFuture<Optional<SkillResult>> primaryFuture = applySkillTimeoutForOptionalResult(
-                    candidate,
-                    context,
-                    skillEngine.executeSkillByNameAsync(candidate, context)
-            );
-            return Optional.of(primaryFuture.thenCompose(primaryResult -> {
-                if (isSearchResultUsable(userInput, primaryResult)) {
-                    return CompletableFuture.completedFuture(new RoutingOutcome(primaryResult, new RoutingDecisionDto(
-                            "brave-first-search",
-                            candidate,
-                            0.96,
-                            List.of("realtime intent matched and brave-first search routing is enabled"),
-                            List.copyOf(rejectedReasons)
-                    )));
-                }
-
-                String fallbackSkill = firstKnownSearchFallbackSkill(candidate);
-                if (fallbackSkill == null) {
-                    return CompletableFuture.completedFuture(new RoutingOutcome(primaryResult, new RoutingDecisionDto(
-                            "brave-first-search",
-                            candidate,
-                            0.96,
-                            List.of("realtime intent matched and brave-first search routing is enabled"),
-                            List.copyOf(rejectedReasons)
-                    )));
-                }
-
-                if (isSkillLoopGuardBlocked(userId, fallbackSkill, userInput)) {
-                    rejectedReasons.add("search fallback candidate blocked by loop guard: " + fallbackSkill);
-                    return CompletableFuture.completedFuture(new RoutingOutcome(primaryResult, new RoutingDecisionDto(
-                            "brave-first-search",
-                            candidate,
-                            0.96,
-                            List.of("primary search returned low-relevance output, fallback blocked by loop guard"),
-                            List.copyOf(rejectedReasons)
-                    )));
-                }
-
-                Optional<SkillResult> fallbackBlocked = maybeBlockByCapability(fallbackSkill);
-                if (fallbackBlocked.isPresent()) {
-                    return CompletableFuture.completedFuture(new RoutingOutcome(fallbackBlocked, new RoutingDecisionDto(
-                            "security.guard",
-                            fallbackSkill,
-                            0.99,
-                            List.of("search fallback candidate was selected but capability guard blocked execution"),
-                            List.copyOf(rejectedReasons)
-                    )));
-                }
-
-                LOGGER.info("Dispatcher route=brave-first-search-fallback, userId=" + userId
-                        + ", primarySkill=" + candidate + ", fallbackSkill=" + fallbackSkill);
-                return applySkillTimeoutForOptionalResult(fallbackSkill, context, skillEngine.executeSkillByNameAsync(fallbackSkill, context))
-                        .thenApply(fallbackResult -> {
-                            if (isSearchResultUsable(userInput, fallbackResult)) {
-                                return new RoutingOutcome(fallbackResult, new RoutingDecisionDto(
-                                        "brave-first-search-fallback",
-                                        fallbackSkill,
-                                        0.95,
-                                        List.of("primary search result looked low-relevance; fallback search candidate returned usable output"),
-                                        List.copyOf(rejectedReasons)
-                                ));
-                            }
-                            return new RoutingOutcome(primaryResult, new RoutingDecisionDto(
-                                    "brave-first-search",
-                                    candidate,
-                                    0.96,
-                                    List.of("fallback search did not improve relevance; keeping primary search result"),
-                                    List.copyOf(rejectedReasons)
-                            ));
-                        });
-            }));
+        List<SkillEngine.SkillCandidate> candidates = skillEngine.detectSkillCandidates(context.input(), Math.max(2, parallelDetectedSkillRoutingMaxCandidates));
+        if (candidates.isEmpty()) {
+            rejectedReasons.add("brave-first routing enabled but no realtime search candidates were detected");
+            return Optional.empty();
         }
-        rejectedReasons.add("brave-first routing enabled but no brave MCP webSearch skill was loaded");
-        return Optional.empty();
+        List<String> searchPriority = List.of(
+                "mcp.serper.websearch",
+                "mcp.serpapi.websearch",
+                "mcp.bravesearch.websearch",
+                "mcp.brave.websearch",
+                "mcp.qwensearch.websearch",
+                "mcp.qwen.websearch"
+        );
+        return Optional.of(routeDetectedSkillCandidatesInParallel(userId, userInput, context, candidates, rejectedReasons, searchPriority));
     }
 
     private String firstKnownSearchFallbackSkill(String primarySkill) {
-        for (String candidate : List.of("mcp.qwensearch.webSearch", "mcp.qwen.webSearch")) {
+        for (String candidate : List.of("mcp.serper.webSearch", "mcp.serpapi.webSearch", "mcp.qwensearch.webSearch", "mcp.qwen.webSearch")) {
             if (candidate.equals(primarySkill)) {
                 continue;
             }
@@ -3922,6 +4039,35 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                 trace.steps(),
                 routingDecision
         );
+    }
+
+    private RoutingDecisionDto enrichRoutingDecisionWithFinalObservability(RoutingDecisionDto routingDecision,
+                                                                           String finalChannel,
+                                                                           boolean realtimeLookup,
+                                                                           boolean memoryDirectBypassed,
+                                                                           String actualSearchSource) {
+        RoutingDecisionDto base = routingDecision == null
+                ? new RoutingDecisionDto("llm-fallback", normalizeOptional(finalChannel), 0.0, List.of(), List.of())
+                : routingDecision;
+        List<String> reasons = new ArrayList<>(base.reasons());
+        upsertTraceReason(reasons, "realtimeLookup", String.valueOf(realtimeLookup));
+        upsertTraceReason(reasons, "memoryDirectBypassed", String.valueOf(memoryDirectBypassed));
+        upsertTraceReason(reasons, "actualSearchSource", normalizeOptional(actualSearchSource));
+        return new RoutingDecisionDto(
+                base.route(),
+                base.selectedSkill(),
+                base.confidence(),
+                reasons,
+                base.rejectedReasons()
+        );
+    }
+
+    private void upsertTraceReason(List<String> reasons, String key, String value) {
+        if (reasons == null || key == null || key.isBlank()) {
+            return;
+        }
+        reasons.removeIf(reason -> reason != null && reason.startsWith(key + "="));
+        reasons.add(key + "=" + (value == null ? "" : value));
     }
 
     private record SkillRoutingCandidate(String summary, int score) {
@@ -4331,6 +4477,25 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         Map<String, Object> effectivePayload = buildEffectiveSemanticPayload(userId, semanticAnalysis, originalInput, skillName);
         double confidence = resolveSemanticRouteConfidence(semanticAnalysis, skillName);
         boolean routable = confidence >= semanticAnalysisRouteMinConfidence && isSemanticDirectSkillCandidate(skillName);
+
+        // If configured, allow accepting semanticAnalysis.suggestedSkill even when the main
+        // candidate does not meet the normal route threshold. This is opt-in and gated
+        // by preferSuggestedSkillEnabled and a configurable minimum confidence.
+        if (!routable && preferSuggestedSkillEnabled && semanticAnalysis != null) {
+            String suggested = normalizeOptional(semanticAnalysis.suggestedSkill());
+            if (!suggested.isBlank() && isKnownSkillName(suggested)) {
+                double suggestedConf = resolveSemanticRouteConfidence(semanticAnalysis, suggested);
+                if (suggestedConf >= preferSuggestedSkillMinConfidence) {
+                    // use suggested skill as routable override
+                    skillName = suggested;
+                    effectivePayload = buildEffectiveSemanticPayload(userId, semanticAnalysis, originalInput, skillName);
+                    confidence = suggestedConf;
+                    routable = true;
+                    LOGGER.fine("Dispatcher: accepting suggestedSkill override=" + skillName + ", conf=" + confidence);
+                }
+            }
+        }
+
         return new SemanticRoutingPlan(skillName, effectivePayload, confidence, routable);
     }
 

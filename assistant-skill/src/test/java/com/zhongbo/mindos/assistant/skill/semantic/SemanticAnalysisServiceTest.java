@@ -44,6 +44,78 @@ class SemanticAnalysisServiceTest {
     }
 
     @Test
+    void shouldInferWeatherRealtimeSkillWithHeuristics() {
+        SemanticAnalysisService service = new SemanticAnalysisService((prompt, context) -> "stub", realtimeRegistry(), true, false, true, "", "local", "cost", 120);
+
+        SemanticAnalysisResult result = service.analyze(
+                "u1",
+                "帮我看看成都今天的天气和空气质量",
+                "",
+                Map.of(),
+                List.of("mcp.bravesearch.webSearch - search latest web info")
+        );
+
+        assertEquals("mcp.bravesearch.webSearch", result.suggestedSkill());
+        assertEquals("weather", result.payload().get("domain"));
+        assertTrue(result.keywords().contains("天气"));
+        assertTrue(result.confidence() >= 0.88);
+    }
+
+    @Test
+    void shouldInferNewsRealtimeSkillWithHeuristics() {
+        SemanticAnalysisService service = new SemanticAnalysisService((prompt, context) -> "stub", realtimeRegistry(), true, false, true, "", "local", "cost", 120);
+
+        SemanticAnalysisResult result = service.analyze(
+                "u1",
+                "帮我看今天有哪些最新新闻",
+                "",
+                Map.of(),
+                List.of("news_search - news summary")
+        );
+
+        assertEquals("news_search", result.suggestedSkill());
+        assertEquals("news", result.payload().get("domain"));
+        assertTrue(result.keywords().contains("新闻"));
+        assertTrue(result.confidence() >= 0.89);
+    }
+
+    @Test
+    void shouldInferMarketRealtimeSkillWithHeuristics() {
+        SemanticAnalysisService service = new SemanticAnalysisService((prompt, context) -> "stub", realtimeRegistry(), true, false, true, "", "local", "cost", 120);
+
+        SemanticAnalysisResult result = service.analyze(
+                "u1",
+                "帮我查一下今天的A股行情",
+                "",
+                Map.of(),
+                List.of("mcp.bravesearch.webSearch - search latest web info")
+        );
+
+        assertEquals("mcp.bravesearch.webSearch", result.suggestedSkill());
+        assertEquals("market", result.payload().get("domain"));
+        assertTrue(result.keywords().contains("行情"));
+        assertTrue(result.confidence() >= 0.87);
+    }
+
+    @Test
+    void shouldInferTravelRealtimeSkillWithHeuristics() {
+        SemanticAnalysisService service = new SemanticAnalysisService((prompt, context) -> "stub", realtimeRegistry(), true, false, true, "", "local", "cost", 120);
+
+        SemanticAnalysisResult result = service.analyze(
+                "u1",
+                "帮我看看上海到北京的高铁出行情况",
+                "",
+                Map.of(),
+                List.of("mcp.bravesearch.webSearch - search latest web info")
+        );
+
+        assertEquals("mcp.bravesearch.webSearch", result.suggestedSkill());
+        assertEquals("travel", result.payload().get("domain"));
+        assertTrue(result.keywords().contains("高铁"));
+        assertTrue(result.confidence() >= 0.86);
+    }
+
+    @Test
     void shouldAcceptDelegateSkillOutputLikeMcpRouter() {
         Skill delegateSkill = new Skill() {
             @Override
@@ -501,5 +573,12 @@ class SemanticAnalysisServiceTest {
         public SkillResult run(SkillContext context) {
             return SkillResult.success(name, name);
         }
+    }
+
+    private static SkillRegistry realtimeRegistry() {
+        return new SkillRegistry(List.of(
+                new FixedSkill("mcp.bravesearch.webSearch"),
+                new FixedSkill("news_search")
+        ));
     }
 }

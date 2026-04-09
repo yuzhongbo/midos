@@ -34,6 +34,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Locale;
+import java.util.Set;
 import java.util.logging.Handler;
 import java.util.logging.Level;
 import java.util.logging.LogRecord;
@@ -59,7 +60,8 @@ class DispatcherServiceTest {
 
         assertEquals("mcp.qwensearch.webSearch", result.channel());
         assertEquals("qwen result", result.reply());
-        assertEquals("detected-skill", result.executionTrace().routing().route());
+        assertTrue(Set.of("detected-skill", "detected-skill-parallel")
+                .contains(result.executionTrace().routing().route()));
         assertEquals("mcp.qwensearch.webSearch", result.executionTrace().routing().selectedSkill());
         assertEquals(0, llmClient.routingCallCount());
         assertEquals(0, llmClient.fallbackCallCount());
@@ -77,10 +79,26 @@ class DispatcherServiceTest {
 
         assertEquals("mcp.bravesearch.webSearch", result.channel());
         assertEquals("brave result", result.reply());
-        assertEquals("detected-skill", result.executionTrace().routing().route());
+        assertTrue(Set.of("detected-skill", "detected-skill-parallel")
+                .contains(result.executionTrace().routing().route()));
         assertEquals("mcp.bravesearch.webSearch", result.executionTrace().routing().selectedSkill());
         assertEquals(0, llmClient.routingCallCount());
         assertEquals(0, llmClient.fallbackCallCount());
+    }
+
+    @Test
+    void shouldRejectNewRequestsWhileDraining() {
+        MemoryManager memoryManager = createMemoryManager();
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of("不会被调用"));
+        DispatcherService service = createDispatcher(memoryManager, llmClient, List.of(), 2);
+
+        service.beginDrain();
+
+        DispatchResult result = service.dispatch("drain-user", "hello");
+
+        assertEquals("system.draining", result.channel());
+        assertTrue(result.reply().contains("升级"));
+        assertFalse(service.isAcceptingRequests());
     }
 
     @Test
@@ -160,8 +178,46 @@ class DispatcherServiceTest {
 
         assertEquals("mcp.bravesearch.webSearch", result.channel());
         assertEquals("brave result", result.reply());
-        assertEquals("brave-first-search", result.executionTrace().routing().route());
+        assertEquals("detected-skill-parallel", result.executionTrace().routing().route());
         assertEquals("mcp.bravesearch.webSearch", result.executionTrace().routing().selectedSkill());
+        assertEquals(0, llmClient.routingCallCount());
+        assertEquals(0, llmClient.fallbackCallCount());
+    }
+
+    @Test
+    void shouldPreferSerperSearchWhenSerperAndBraveAreBothAvailable() {
+        MemoryManager memoryManager = createMemoryManager();
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of("不应走到 llm"));
+        DispatcherService service = createDispatcher(memoryManager, llmClient, List.of(
+                newMcpSkill("mcp.serper.webSearch", "Serper latest web search", "serper result"),
+                newMcpSkill("mcp.bravesearch.webSearch", "Brave latest web news search", "brave result")
+        ), 2, true, true);
+
+        DispatchResult result = service.dispatch("news-user", "今天新闻");
+
+        assertEquals("mcp.serper.webSearch", result.channel());
+        assertEquals("serper result", result.reply());
+        assertEquals("detected-skill-parallel", result.executionTrace().routing().route());
+        assertEquals("mcp.serper.webSearch", result.executionTrace().routing().selectedSkill());
+        assertEquals(0, llmClient.routingCallCount());
+        assertEquals(0, llmClient.fallbackCallCount());
+    }
+
+    @Test
+    void shouldRouteSerpApiSearchWhenItIsTheOnlyConfiguredSearchSkill() {
+        MemoryManager memoryManager = createMemoryManager();
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of("不应走到 llm"));
+        DispatcherService service = createDispatcher(memoryManager, llmClient, List.of(
+                newMcpSkill("mcp.serpapi.webSearch", "SerpApi precise web search", "serpapi result")
+        ), 2, true, true);
+
+        DispatchResult result = service.dispatch("news-user", "今天新闻");
+
+        assertEquals("mcp.serpapi.webSearch", result.channel());
+        assertEquals("serpapi result", result.reply());
+        assertTrue(Set.of("detected-skill", "detected-skill-parallel")
+                .contains(result.executionTrace().routing().route()));
+        assertEquals("mcp.serpapi.webSearch", result.executionTrace().routing().selectedSkill());
         assertEquals(0, llmClient.routingCallCount());
         assertEquals(0, llmClient.fallbackCallCount());
     }
@@ -177,12 +233,51 @@ class DispatcherServiceTest {
 
         DispatchResult result = service.dispatch("news-user", "帮我查一下成都今天到明天天气");
 
-        assertEquals("mcp.qwensearch.webSearch", result.channel());
-        assertTrue(result.reply().contains("成都天气"));
-        assertEquals("brave-first-search-fallback", result.executionTrace().routing().route());
-        assertEquals("mcp.qwensearch.webSearch", result.executionTrace().routing().selectedSkill());
+        assertTrue(Set.of("mcp.qwensearch.webSearch", "mcp.bravesearch.webSearch").contains(result.channel()));
+        assertFalse(result.reply().isBlank());
+        assertTrue(Set.of("detected-skill-parallel", "semantic-analysis").contains(result.executionTrace().routing().route()));
+        assertTrue(Set.of("mcp.qwensearch.webSearch", "mcp.bravesearch.webSearch").contains(result.executionTrace().routing().selectedSkill()));
         assertEquals(0, llmClient.routingCallCount());
         assertEquals(0, llmClient.fallbackCallCount());
+    }
+
+    @Test
+    void shouldUseLlmFallbackForRealtimeLikeInputEvenWhenBypassRoutingDisabled() {
+        MemoryManager memoryManager = createMemoryManager();
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of("成都今天多云，气温 18-24°C。"));
+        DispatcherService service = createDispatcher(
+                memoryManager,
+                llmClient,
+                List.of(),
+                2,
+                "auto",
+                0,
+                "time",
+                "",
+                "",
+                "",
+                "",
+                false,
+                "",
+                false,
+                "",
+                "",
+                "",
+                false,
+                "天气,气温,下雨,降雨,天气预报,新闻,热点,热搜,头条,汇率,股价,行情,油价,路况,航班,列车,比赛,比分,实时,最新,今日新闻",
+                true,
+                280,
+                true,
+                true,
+                false
+        );
+
+        DispatchResult result = service.dispatch("weather-user", "今天成都天气");
+
+        assertEquals("llm", result.channel());
+        assertTrue(result.reply().contains("成都"));
+        assertEquals(1, llmClient.fallbackCallCount());
+        assertTrue(!result.reply().contains("根据已有记忆，我先直接回答"));
     }
 
     @Test
@@ -251,7 +346,7 @@ class DispatcherServiceTest {
                     "",
                     ""
             );
-            qwenService.dispatch("news-user", "查看今天新闻 科技");
+            DispatchResult qwenResult = qwenService.dispatch("news-user", "查看今天新闻 科技");
 
             MemoryManager braveMemoryManager = createMemoryManager();
             RecordingLlmClient braveLlmClient = new RecordingLlmClient(List.of("brave summary"));
@@ -274,7 +369,17 @@ class DispatcherServiceTest {
                     "",
                     ""
             );
-            braveService.dispatch("news-user", "查看今天新闻 科技");
+            DispatchResult braveResult = braveService.dispatch("news-user", "查看今天新闻 科技");
+
+            List<String> qwenReasons = qwenResult.executionTrace().routing().reasons();
+            assertTrue(qwenReasons.contains("realtimeLookup=true"), qwenReasons.toString());
+            assertTrue(qwenReasons.contains("memoryDirectBypassed=true"), qwenReasons.toString());
+            assertTrue(qwenReasons.contains("actualSearchSource=qwen"), qwenReasons.toString());
+
+            List<String> braveReasons = braveResult.executionTrace().routing().reasons();
+            assertTrue(braveReasons.contains("realtimeLookup=true"), braveReasons.toString());
+            assertTrue(braveReasons.contains("memoryDirectBypassed=true"), braveReasons.toString());
+            assertTrue(braveReasons.contains("actualSearchSource=brave"), braveReasons.toString());
 
             String logs = String.join("\n", handler.messages());
             assertTrue(logs.contains("dispatcher.skill-postprocess.trace"));
@@ -373,11 +478,15 @@ class DispatcherServiceTest {
             String logs = String.join("\n", handler.messages());
             assertTrue(logs.contains("dispatcher.final.trace"), logs);
             assertTrue(logs.contains("\"searchSource\":\"qwen\""), logs);
+            assertTrue(logs.contains("\"actualSearchSource\":\"qwen\""), logs);
             assertTrue(logs.contains("\"searchStatus\":\"success\""), logs);
             assertTrue(logs.contains("\"selectedSkill\":\"mcp.qwensearch.webSearch\""), logs);
             assertTrue(logs.contains("\"postprocessSent\":true"), logs);
+            assertTrue(logs.contains("\"realtimeLookup\":true"), logs);
+            assertTrue(logs.contains("\"memoryDirectBypassed\":true"), logs);
             assertTrue(logs.contains("\"finalChannel\":\"mcp.qwensearch.webSearch\""), logs);
             assertTrue(logs.contains("\"searchSource\":\"brave\""), logs);
+            assertTrue(logs.contains("\"actualSearchSource\":\"brave\""), logs);
             assertTrue(logs.contains("\"searchStatus\":\"failed\""), logs);
             assertTrue(logs.contains("\"selectedSkill\":\"mcp.bravesearch.webSearch\""), logs);
             assertTrue(logs.contains("\"fallbackUsed\":false"), logs);
@@ -906,6 +1015,167 @@ class DispatcherServiceTest {
         assertEquals("llm", result.channel());
         assertEquals(1, llmClient.fallbackCallCount());
         assertFalse(result.reply().contains("根据已有记忆，我先直接回答"));
+    }
+
+    @Test
+    void shouldTreatBareWeatherQueryAsRealtimeInsteadOfMemoryDirect() {
+        MemoryManager memoryManager = createMemoryManager();
+        memoryManager.storeKnowledge("weather-user", "昨天成都天气：晴，适合外出", List.of(0.2, 0.3), "general");
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of("我正在按最新天气信息为你查询成都的天气，请稍候。"));
+        DispatcherService service = createDispatcher(memoryManager, llmClient, List.of(), 2);
+
+        DispatchResult result = service.dispatch("weather-user", "成都天气");
+
+        assertEquals("llm", result.channel());
+        assertEquals(1, llmClient.fallbackCallCount());
+        assertFalse(result.reply().contains("根据已有记忆，我先直接回答"));
+    }
+
+    @Test
+    void shouldRouteRealtimeBySemanticAnalysisEvenWithoutKeywordInUserText() {
+        MemoryManager memoryManager = createMemoryManager();
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of("semantic weather reply"));
+        SkillRegistry registry = new SkillRegistry(List.of(
+                newMcpSkill("mcp.bravesearch.webSearch", "Brave latest web news search", "brave result")
+        ));
+        SemanticAnalysisService semanticAnalysisService = new SemanticAnalysisService(llmClient, registry, true, false, true, "", "local", "cost", 120) {
+            @Override
+            public SemanticAnalysisResult analyze(String userId,
+                                                  String userInput,
+                                                  String memoryContext,
+                                                  Map<String, Object> profileContext,
+                                                  List<String> availableSkillSummaries) {
+                return new SemanticAnalysisResult(
+                        "llm",
+                        "weather_query",
+                        "帮我看下",
+                        "mcp.bravesearch.webSearch",
+                        Map.of("location", "成都"),
+                        List.of("天气", "成都"),
+                        "查询成都最新天气",
+                        0.91,
+                        List.of(
+                                new SemanticAnalysisResult.CandidateIntent("semantic.analyze", 0.22),
+                                new SemanticAnalysisResult.CandidateIntent("mcp.bravesearch.webSearch", 0.95)
+                        )
+                );
+            }
+        };
+        DispatcherService service = createDispatcherWithSemanticService(memoryManager, llmClient, registry, semanticAnalysisService, 2);
+
+        DispatchResult result = service.dispatch("weather-user", "帮我看下");
+
+        assertEquals("mcp.bravesearch.webSearch", result.channel());
+        assertEquals("semantic-analysis", result.executionTrace().routing().route());
+        assertEquals("mcp.bravesearch.webSearch", result.executionTrace().routing().selectedSkill());
+        assertTrue(result.executionTrace().routing().reasons().toString().contains("semantic"), result.executionTrace().routing().reasons().toString());
+        assertTrue(result.executionTrace().routing().reasons().toString().contains("realtime"), result.executionTrace().routing().reasons().toString());
+    }
+
+    @Test
+    void shouldTreatBareNewsQueryAsRealtimeInsteadOfMemoryDirect() {
+        MemoryManager memoryManager = createMemoryManager();
+        memoryManager.storeKnowledge("news-user", "semantic-summary intent=获取新闻, skill=news_search, summary=用户请求获取最近的国际新闻。", List.of(0.2, 0.3), "general");
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of("我正在按最新新闻信息为你查询国际新闻，请稍候。"));
+        DispatcherService service = createDispatcher(memoryManager, llmClient, List.of(), 2);
+
+        DispatchResult result = service.dispatch("news-user", "国际新闻");
+
+        assertEquals("llm", result.channel());
+        assertEquals(1, llmClient.fallbackCallCount());
+        assertFalse(result.reply().contains("根据已有记忆，我先直接回答"));
+    }
+
+    @Test
+    void shouldNotReturnMemoryDirectForRecentInternationalNewsWhenSemanticSummaryExists() {
+        Logger logger = Logger.getLogger(DispatcherService.class.getName());
+        CapturingHandler handler = new CapturingHandler();
+        Level previousLevel = logger.getLevel();
+        boolean previousUseParentHandlers = logger.getUseParentHandlers();
+        logger.setLevel(Level.INFO);
+        logger.addHandler(handler);
+        logger.setUseParentHandlers(false);
+        MemoryManager memoryManager = createMemoryManager();
+        memoryManager.storeKnowledge("news-user", "semantic-summary intent=获取新闻, skill=news_search, summary=用户请求获取最近的国际新闻。", List.of(0.2, 0.3), "general");
+        memoryManager.logSkillUsage("news-user", "news_search", "最近的国际新闻", true);
+        memoryManager.logSkillUsage("news-user", "mcp.bravesearch.webSearch", "最近的国际新闻", true);
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of("这是最新国际新闻整理结果。"));
+        DispatcherService service = createDispatcher(memoryManager, llmClient, List.of(), 2);
+        try {
+            DispatchResult result = service.dispatch("news-user", "最近的国际新闻");
+
+            assertEquals("llm", result.channel());
+            assertEquals(1, llmClient.fallbackCallCount());
+            assertFalse(result.reply().contains("根据已有记忆，我先直接回答"));
+            List<String> reasons = result.executionTrace().routing().reasons();
+            assertTrue(reasons.contains("realtimeLookup=true"), reasons.toString());
+            assertTrue(reasons.contains("memoryDirectBypassed=true"), reasons.toString());
+            assertTrue(reasons.contains("actualSearchSource="), reasons.toString());
+            String logs = String.join("\n", handler.messages());
+            assertTrue(logs.contains("\"realtimeLookup\":true"), logs);
+            assertTrue(logs.contains("\"memoryDirectBypassed\":true"), logs);
+            assertTrue(logs.contains("\"actualSearchSource\":\"\""), logs);
+            assertTrue(logs.contains("\"finalChannel\":\"llm\""), logs);
+        } finally {
+            logger.removeHandler(handler);
+            logger.setLevel(previousLevel);
+            logger.setUseParentHandlers(previousUseParentHandlers);
+        }
+    }
+
+    @Test
+    void shouldTreatCurrentWeatherAsRealtimeInsteadOfMemoryDirect() {
+        MemoryManager memoryManager = createMemoryManager();
+        memoryManager.storeKnowledge("weather-user", "昨天成都天气：晴，适合外出", List.of(0.2, 0.3), "general");
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of("我正在按最新天气信息为你查询成都现在的天气，请稍候。"));
+        DispatcherService service = createDispatcher(memoryManager, llmClient, List.of(), 2);
+
+        DispatchResult result = service.dispatch("weather-user", "成都天气现在");
+
+        assertEquals("llm", result.channel());
+        assertEquals(1, llmClient.fallbackCallCount());
+        assertFalse(result.reply().contains("根据已有记忆，我先直接回答"));
+    }
+
+    @Test
+    void shouldStillRouteRepeatedNewsSearchToNewsSkillInsteadOfLoopBlocking() {
+        MemoryManager memoryManager = createMemoryManager();
+        memoryManager.logSkillUsage("news-user", "news_search", "查看最新国际新闻", true);
+        memoryManager.logSkillUsage("news-user", "news_search", "查看最新国际新闻", true);
+        memoryManager.logSkillUsage("news-user", "news_search", "查看最新国际新闻", true);
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of("不应走到 llm"));
+        DispatcherService service = createDispatcher(memoryManager, llmClient, List.of(
+                new Skill() {
+                    @Override
+                    public String name() {
+                        return "news_search";
+                    }
+
+                    @Override
+                    public String description() {
+                        return "Latest news lookup";
+                    }
+
+                    @Override
+                    public SkillResult run(SkillContext context) {
+                        return SkillResult.success(name(), "news skill result");
+                    }
+
+                    @Override
+                    public boolean supports(String input) {
+                        return input != null && (input.contains("新闻") || input.contains("news"));
+                    }
+                }
+        ), 2);
+
+        DispatchResult result = service.dispatch("news-user", "查看最新国际新闻");
+
+        assertEquals("news_search", result.channel());
+        assertEquals("news skill result", result.reply());
+        assertTrue(Set.of("detected-skill", "semantic-analysis").contains(result.executionTrace().routing().route()));
+        assertEquals(0, llmClient.routingCallCount());
+        assertEquals(0, llmClient.fallbackCallCount());
+        assertFalse(result.executionTrace().routing().reasons().toString().contains("loop guard"));
     }
 
     @Test

@@ -34,6 +34,7 @@ public class SemanticAnalysisService {
             Pattern.CASE_INSENSITIVE);
     private static final String SEMANTIC_LOCAL_PROVIDER = "local";
     private static final List<String> INTERNAL_SEMANTIC_ROUTE_SKILLS = List.of("semantic.analyze");
+    private static final List<String> SEMANTIC_META_HINTS = List.of("语义", "分析", "路由", "结构化", "意图", "候选", "semantic", "解析");
     private static final int DEFAULT_LLM_COMPLEXITY_MIN_INPUT_CHARS = 10;
     private static final String DEFAULT_LLM_COMPLEXITY_TRIGGER_TERMS = "新闻,搜索,实时,分析,规划,计划,代码,排查,debug,search,latest,news,plan,report";
 
@@ -507,6 +508,10 @@ public class SemanticAnalysisService {
                     0.92
             );
         }
+        SemanticAnalysisResult realtimeAnalysis = heuristicRealtimeAnalysis(userInput, normalized);
+        if (realtimeAnalysis != null) {
+            return realtimeAnalysis;
+        }
         if (matchesSkill(userInput, normalized, "teaching.plan", "学习计划", "教学规划", "复习计划", "课程规划", "study plan", "teaching plan")) {
             return new SemanticAnalysisResult(
                     "heuristic",
@@ -582,6 +587,85 @@ public class SemanticAnalysisService {
                 extractKeywords(userInput),
                 capText(userInput, 80),
                 0.35
+        );
+    }
+
+    private SemanticAnalysisResult heuristicRealtimeAnalysis(String userInput, String normalized) {
+        if (normalized == null || normalized.length() < 6) {
+            return null;
+        }
+        if (containsAny(normalized, SEMANTIC_META_HINTS.toArray(String[]::new))) {
+            return null;
+        }
+        if (matchesSkill(userInput, normalized, "news_search", "新闻", "资讯", "快讯", "头条", "热搜", "最新新闻", "今日新闻", "国际新闻", "news")) {
+            return buildRealtimeSemanticAnalysis(
+                    userInput,
+                    "获取最新新闻资讯",
+                    "news_search",
+                    "用户请求获取实时新闻资讯",
+                    0.89,
+                    Map.of("query", userInput.trim(), "domain", "news"),
+                    routingKeywordHints(userInput, "news_search", "新闻", "资讯", "头条", "快讯", "热搜"),
+                    List.of(new SemanticAnalysisResult.CandidateIntent("news_search", 0.94), new SemanticAnalysisResult.CandidateIntent("mcp.bravesearch.webSearch", 0.80))
+            );
+        }
+        if (matchesSkill(userInput, normalized, "mcp.bravesearch.webSearch", "天气", "气温", "空气质量", "pm2.5", "天气预报", "weather", "forecast")) {
+            return buildRealtimeSemanticAnalysis(
+                    userInput,
+                    "查询实时天气信息",
+                    "mcp.bravesearch.webSearch",
+                    "用户请求查询最新天气或空气质量信息",
+                    0.88,
+                    Map.of("query", userInput.trim(), "domain", "weather"),
+                    routingKeywordHints(userInput, "mcp.bravesearch.webSearch", "天气", "气温", "空气质量", "天气预报"),
+                    List.of(new SemanticAnalysisResult.CandidateIntent("mcp.bravesearch.webSearch", 0.93))
+            );
+        }
+        if (matchesSkill(userInput, normalized, "mcp.bravesearch.webSearch", "航班", "列车", "高铁", "火车", "机票", "车票", "延误", "出发", "到达", "路况", "交通", "出行", "旅行", "行程", "flight", "train", "traffic", "travel")) {
+            return buildRealtimeSemanticAnalysis(
+                    userInput,
+                    "查询实时出行信息",
+                    "mcp.bravesearch.webSearch",
+                    "用户请求查询实时出行或路况信息",
+                    0.86,
+                    Map.of("query", userInput.trim(), "domain", "travel"),
+                    routingKeywordHints(userInput, "mcp.bravesearch.webSearch", "航班", "列车", "高铁", "火车", "路况", "交通", "出行"),
+                    List.of(new SemanticAnalysisResult.CandidateIntent("mcp.bravesearch.webSearch", 0.91))
+            );
+        }
+        if (matchesSkill(userInput, normalized, "mcp.bravesearch.webSearch", "股价", "股票", "基金", "汇率", "行情", "指数", "大盘", "市场", "stock", "market", "exchange")) {
+            return buildRealtimeSemanticAnalysis(
+                    userInput,
+                    "查询实时行情信息",
+                    "mcp.bravesearch.webSearch",
+                    "用户请求查询最新行情或汇率信息",
+                    0.87,
+                    Map.of("query", userInput.trim(), "domain", "market"),
+                    routingKeywordHints(userInput, "mcp.bravesearch.webSearch", "股价", "股票", "基金", "汇率", "行情", "指数"),
+                    List.of(new SemanticAnalysisResult.CandidateIntent("mcp.bravesearch.webSearch", 0.92))
+            );
+        }
+        return null;
+    }
+
+    private SemanticAnalysisResult buildRealtimeSemanticAnalysis(String userInput,
+                                                                 String intent,
+                                                                 String suggestedSkill,
+                                                                 String summary,
+                                                                 double confidence,
+                                                                 Map<String, Object> payload,
+                                                                 List<String> keywords,
+                                                                 List<SemanticAnalysisResult.CandidateIntent> candidateIntents) {
+        return new SemanticAnalysisResult(
+                "heuristic",
+                intent,
+                userInput == null ? "" : userInput.trim(),
+                suggestedSkill,
+                payload == null ? Map.of() : payload,
+                keywords == null ? List.of() : keywords,
+                summary,
+                confidence,
+                candidateIntents == null ? List.of() : candidateIntents
         );
     }
 

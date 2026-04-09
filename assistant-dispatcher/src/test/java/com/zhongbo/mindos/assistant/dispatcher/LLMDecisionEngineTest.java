@@ -63,4 +63,88 @@ class LLMDecisionEngineTest {
 
         assertTrue(shouldCall, "Realtime/weather queries should not rely on stale memory");
     }
+
+    @Test
+    void shouldCallLlmForCurrentWeatherRequestEvenWithMemoryHit() {
+        LLMDecisionEngine engine = new LLMDecisionEngine();
+
+        boolean shouldCall = engine.shouldCallLLM(new QueryContext(
+                "u-weather-now",
+                "成都天气现在",
+                new PromptMemoryContextDto(
+                        "",
+                        "昨天成都天气：晴，适合外出",
+                        "",
+                        Map.of(),
+                        List.of(new RetrievedMemoryItemDto("semantic", "昨天成都天气：晴，适合外出", 0.92, 0.10, 0.9, 0.92, 1L))
+                ),
+                false,
+                false
+        ));
+
+        assertTrue(shouldCall, "Current weather queries should be treated as realtime and not answered from stale memory");
+    }
+
+    @Test
+    void shouldCallLlmForBareWeatherQueryEvenWithoutLookupVerb() {
+        LLMDecisionEngine engine = new LLMDecisionEngine();
+
+        boolean shouldCall = engine.shouldCallLLM(new QueryContext(
+                "u-weather-bare",
+                "成都天气",
+                new PromptMemoryContextDto(
+                        "",
+                        "昨天成都天气：晴，适合外出",
+                        "",
+                        Map.of(),
+                        List.of(new RetrievedMemoryItemDto("semantic", "昨天成都天气：晴，适合外出", 0.92, 0.10, 0.9, 0.92, 1L))
+                ),
+                false,
+                false
+        ));
+
+        assertTrue(shouldCall, "Bare weather queries should still be treated as realtime lookups");
+    }
+
+    @Test
+    void shouldNotTreatHistoricalWeatherAsRealtimeQuery() {
+        LLMDecisionEngine engine = new LLMDecisionEngine();
+
+        boolean shouldCall = engine.shouldCallLLM(new QueryContext(
+                "u-weather-history",
+                "昨天成都天气",
+                new PromptMemoryContextDto(
+                        "",
+                        "昨天成都天气：晴，适合外出",
+                        "",
+                        Map.of(),
+                        List.of(new RetrievedMemoryItemDto("semantic", "昨天成都天气：晴，适合外出", 0.92, 0.10, 0.9, 0.92, 1L))
+                ),
+                false,
+                false
+        ));
+
+        assertFalse(shouldCall, "Historical weather queries should not be forced into realtime mode");
+    }
+
+    @Test
+    void shouldCallLlmForRecentNewsRequestWithoutExplicitLookupVerb() {
+        LLMDecisionEngine engine = new LLMDecisionEngine();
+
+        boolean shouldCall = engine.shouldCallLLM(new QueryContext(
+                "u-news",
+                "最近的国际新闻",
+                new PromptMemoryContextDto(
+                        "",
+                        "semantic-summary intent=获取新闻, skill=news_search, summary=用户请求获取最近的国际新闻。",
+                        "",
+                        Map.of(),
+                        List.of(new RetrievedMemoryItemDto("semantic", "semantic-summary intent=获取新闻, skill=news_search, summary=用户请求获取最近的国际新闻。", 0.95, 0.9, 0.9, 0.95, 1L))
+                ),
+                false,
+                false
+        ));
+
+        assertTrue(shouldCall, "Recent news requests should not degrade to memory.direct just because a semantic summary exists");
+    }
 }

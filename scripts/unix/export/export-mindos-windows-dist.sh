@@ -115,14 +115,46 @@ MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_LOCAL_ESCALATION_ENABLED=false
 MINDOS_DISPATCHER_LOCAL_ESCALATION_ENABLED=false
 
 ######################### 2) 可选填 (optional / recommended-to-leave-empty) ################
-# MCP (tool) servers/headers: leave empty by default to avoid accidental credentials in dist.
-# To enable, set these in your target machine's release secrets or via CI secrets.
-MINDOS_SKILLS_MCP_SERVERS=
-MINDOS_SKILLS_MCP_SERVER_HEADERS=
+# Preferred: use one unified search-source map for search/news providers.
+# Serper is the default primary search source; Brave remains available as a fallback if explicitly configured.
+MINDOS_SKILLS_SEARCH_SOURCES=
 
-# Example (commented):
-# MINDOS_SKILLS_MCP_SERVERS=bravesearch:https://api.search.brave.com/res/v1/web/search
-# MINDOS_SKILLS_MCP_SERVER_HEADERS=bravesearch:X-Subscription-Token=xxxx
+# Optional: only when news_search needs a dedicated source list different from the global one.
+# MINDOS_SKILL_NEWS_SEARCH_SEARCH_SOURCES=
+
+# Advanced: generic MCP tools (non-search MCP endpoints still use these two maps).
+# If both MCP_SERVERS and SEARCH_SOURCES define the same alias, explicit MCP server entries win.
+# MINDOS_SKILLS_MCP_SERVERS=
+# MINDOS_SKILLS_MCP_SERVER_HEADERS=
+
+# Advanced MCP shortcuts (same runtime properties as application.*):
+# MINDOS_SKILLS_MCP_BRAVE_ENABLED=
+# MINDOS_SKILLS_MCP_BRAVE_ALIAS=brave
+# MINDOS_SKILLS_MCP_BRAVE_URL=
+# MINDOS_SKILLS_MCP_BRAVE_API_KEY=
+# MINDOS_SKILLS_MCP_BRAVE_API_KEY_HEADER=X-Subscription-Token
+MINDOS_SKILLS_MCP_SERPER_ENABLED=true
+MINDOS_SKILLS_MCP_SERPER_ALIAS=serper
+MINDOS_SKILLS_MCP_SERPER_URL=https://google.serper.dev/search
+MINDOS_SKILLS_MCP_SERPER_API_KEY=
+MINDOS_SKILLS_MCP_SERPER_API_KEY_HEADER=X-API-KEY
+
+# Unified query source example (single map string, avoids per-source key sprawl):
+# MINDOS_SKILLS_SEARCH_SOURCES=serper:https://google.serper.dev/search;news-url=https://google.serper.dev/news;api-key=xxxx,serpapi:https://serpapi.com/search.json?engine=google_news;api-key=yyyy,brave:https://api.search.brave.com/res/v1/web/search;api-key=zzzz;api-key-header=X-Subscription-Token
+# SerpApi is useful for precise keyword searches and structured result pages.
+# Optional: scope only news_search to a dedicated source list.
+# MINDOS_SKILL_NEWS_SEARCH_SEARCH_SOURCES=serpapi:https://serpapi.com/search.json?engine=google_news;api-key=yyyy
+
+# Generic MCP example (only for non-search MCP tools):
+# MINDOS_SKILLS_MCP_SERVERS=docs:http://localhost:8081/mcp
+# MINDOS_SKILLS_MCP_SERVER_HEADERS=docs:Authorization=Bearer%20xxxx
+
+# Legacy Serper-only keys remain supported, but prefer the unified search-sources map above.
+# Migration tip: move legacy Serper settings into MINDOS_SKILLS_SEARCH_SOURCES unless news_search truly needs its own dedicated override.
+# MINDOS_SKILL_NEWS_SEARCH_SERPER_ENABLED=true
+# MINDOS_SKILL_NEWS_SEARCH_SERPER_NEWS_URL=https://google.serper.dev/news
+# MINDOS_SKILL_NEWS_SEARCH_SERPER_SEARCH_URL=https://google.serper.dev/search
+# MINDOS_SKILL_NEWS_SEARCH_SERPER_API_KEY=xxxx
 
 # DingTalk stream examples (optional; left blank in dist):
 MINDOS_IM_DINGTALK_STREAM_CLIENT_ID=
@@ -159,6 +191,7 @@ MINDOS_LLM_PROVIDER_KEYS=gpt:REPLACE_WITH_OPENROUTER_KEY,grok:REPLACE_WITH_OPENR
 
 # Non-sensitive runtime tuning and feature flags (example defaults; safe to change on host):
 MINDOS_DISPATCHER_SEARCH_ROUTING_BRAVE_FIRST_ENABLED=true
+MINDOS_DISPATCHER_PARALLEL_ROUTING_PRIORITY_LIST=mcp.serper.webSearch,mcp.bravesearch.webSearch,mcp.brave.webSearch,mcp.qwensearch.webSearch,mcp.qwen.webSearch
 MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_LLM_ENABLED=true
 MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_FORCE_LOCAL=true
 MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_LLM_PROVIDER=local
@@ -326,22 +359,22 @@ set "MINDOS_IM_DINGTALK_OUTBOUND_ROBOT_CODE=REPLACE_WITH_YOUR_ROBOT_CODE"
 
 REM Slow-model experience preset (choose one)
 REM chat (fast feel)
-REM set "MINDOS_IM_DINGTALK_STREAM_WAITING_DELAY_MS=200"
-REM set "MINDOS_IM_DINGTALK_STREAM_WAITING_TEXT=已收到，正在处理，稍后给你完整回复。"
+REM set "MINDOS_IM_DINGTALK_STREAM_WAITING_DELAY_MS=1200"
+REM set "MINDOS_IM_DINGTALK_STREAM_WAITING_TEXT=处理中，请稍候。"
 REM set "MINDOS_DISPATCHER_LLM_REPLY_MAX_CHARS=700"
 REM set "MINDOS_DISPATCHER_PROMPT_MAX_CHARS=2000"
 REM set "MINDOS_DISPATCHER_MEMORY_CONTEXT_MAX_CHARS=1200"
 
 REM speed-first preset (recommended when model feels slow)
-set "MINDOS_IM_DINGTALK_STREAM_WAITING_DELAY_MS=200"
-set "MINDOS_IM_DINGTALK_STREAM_WAITING_TEXT=已收到，正在处理，稍后给你完整回复。"
+set "MINDOS_IM_DINGTALK_STREAM_WAITING_DELAY_MS=1200"
+set "MINDOS_IM_DINGTALK_STREAM_WAITING_TEXT=处理中，请稍候。"
 set "MINDOS_DISPATCHER_LLM_REPLY_MAX_CHARS=700"
 set "MINDOS_DISPATCHER_PROMPT_MAX_CHARS=2000"
 set "MINDOS_DISPATCHER_MEMORY_CONTEXT_MAX_CHARS=1200"
 set "MINDOS_DISPATCHER_MEMORY_CONTEXT_KEEP_RECENT_TURNS=1"
 
 REM writing (quality)
-REM set "MINDOS_IM_DINGTALK_STREAM_WAITING_DELAY_MS=500"
+REM set "MINDOS_IM_DINGTALK_STREAM_WAITING_DELAY_MS=1800"
 REM set "MINDOS_IM_DINGTALK_STREAM_WAITING_TEXT=我正在准备更完整的回复，请再给我一点时间。"
 REM set "MINDOS_DISPATCHER_LLM_REPLY_MAX_CHARS=1200"
 REM set "MINDOS_DISPATCHER_PROMPT_MAX_CHARS=3000"
