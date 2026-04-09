@@ -55,12 +55,17 @@ public class DefaultMemoryGateway implements MemoryGateway {
 
     @Override
     public void writeSemantic(String userId, SemanticMemoryEntry entry) {
-        if (userId == null || userId.isBlank() || entry == null) {
+        writeSemantic(userId, entry == null ? null : entry.text(), entry == null ? null : entry.embedding(), null);
+    }
+
+    @Override
+    public void writeSemantic(String userId, String text, List<Double> embedding, String bucket) {
+        if (userId == null || userId.isBlank()) {
             return;
         }
-        if (entry.text() == null || entry.text().isBlank()) {
+        if (text == null || text.isBlank()) {
             return;
         }
-        memoryManager.storeKnowledge(userId, entry.text(), entry.embedding(), null);
+        memoryManager.storeKnowledge(userId, text, embedding, bucket);
     }
 }

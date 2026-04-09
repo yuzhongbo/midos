@@ -841,7 +841,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                 (double) summary.length(),
                 Math.abs(summary.hashCode() % 1000) / 1000.0
         );
-        memoryManager.storeKnowledge(userId, summary, embedding, "meta");
+        memoryGateway.writeSemantic(userId, summary, embedding, "meta");
     }
 
     private void maybeStorePostSkillSummary(String userId, String userInput, SkillResult result) {
@@ -866,7 +866,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                 (double) summary.length(),
                 Math.abs(summary.hashCode() % 1000) / 1000.0
         );
-        memoryManager.storeKnowledge(userId, summary, embedding, inferMemoryBucket(userInput));
+        memoryGateway.writeSemantic(userId, summary, embedding, inferMemoryBucket(userInput));
     }
 
     private SkillFinalizeOutcome maybeFinalizeSkillResultWithLlm(String userInput,
@@ -3441,7 +3441,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                 (double) ((Integer) embeddingSeed.get("length")),
                 ((Integer) embeddingSeed.get("hash")) / 1000.0
         );
-        memoryManager.storeKnowledge(userId, knowledge, embedding, memoryBucket);
+        memoryGateway.writeSemantic(userId, knowledge, embedding, memoryBucket);
     }
 
     private String buildConversationContext(String userId,
@@ -4214,7 +4214,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                 (double) memoryText.length(),
                 Math.abs(memoryText.hashCode() % 1000) / 1000.0
         );
-        memoryManager.storeKnowledge(userId, memoryText, embedding, inferMemoryBucket(userInput));
+        memoryGateway.writeSemantic(userId, memoryText, embedding, inferMemoryBucket(userInput));
     }
 
     private void completeSemanticPayloadFromMemory(String userId,
@@ -4398,7 +4398,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         // Log that we are storing an updated behavior profile for observability
         LOGGER.info(() -> "behavior-learning.store userId=" + userId + ", bucket=" + bucket + ", profileSummary=" + capText(profile, 200));
         List<Double> embedding = List.of((double) profile.length(), Math.abs(profile.hashCode() % 1000) / 1000.0);
-        memoryManager.storeKnowledge(userId, profile, embedding, bucket);
+        memoryGateway.writeSemantic(userId, profile, embedding, bucket);
     }
 
     private String buildBehaviorProfileSummary(String userId) {

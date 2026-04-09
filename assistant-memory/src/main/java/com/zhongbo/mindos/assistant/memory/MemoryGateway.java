@@ -15,4 +15,6 @@ public interface MemoryGateway {
     void writeProcedural(String userId, ProceduralMemoryEntry entry);
 
     void writeSemantic(String userId, SemanticMemoryEntry entry);
+
+    void writeSemantic(String userId, String text, List<Double> embedding, String bucket);
 }
