@@ -96,7 +96,7 @@ class DefaultDecisionOrchestratorTest {
                 "mcp.b.tool", SkillResult.success("mcp.b.tool", "b")
         ));
         DefaultDecisionOrchestrator orchestrator = orchestrator(skillEngine, true);
-        Decision decision = new Decision("tool", "mcp.a.tool", Map.of(), 0.9, false);
+        Decision decision = new Decision("tool", "mcp.a.tool", Map.of("input", "demo"), 0.9, false);
 
         DecisionOrchestrator.OrchestrationOutcome outcome = orchestrator.orchestrate(decision, request());
 

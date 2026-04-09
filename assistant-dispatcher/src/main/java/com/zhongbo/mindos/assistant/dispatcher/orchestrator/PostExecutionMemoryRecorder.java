@@ -22,7 +22,7 @@ public class PostExecutionMemoryRecorder {
     private final int postSkillSummaryMaxReplyChars;
 
     public PostExecutionMemoryRecorder(MemoryGateway memoryGateway,
-                                       @Value("${mindos.dispatcher.procedural-logging.enabled:false}") boolean proceduralLoggingEnabled,
+                                       @Value("${mindos.dispatcher.procedural-logging.enabled:true}") boolean proceduralLoggingEnabled,
                                        @Value("${mindos.memory.post-skill-summary.enabled:false}") boolean postSkillSummaryEnabled,
                                        @Value("${mindos.memory.post-skill-summary.skills:teaching.plan,todo.create,eq.coach,code.generate,file.search}") String postSkillSummarySkills,
                                        @Value("${mindos.memory.post-skill-summary.max-reply-chars:280}") int postSkillSummaryMaxReplyChars) {

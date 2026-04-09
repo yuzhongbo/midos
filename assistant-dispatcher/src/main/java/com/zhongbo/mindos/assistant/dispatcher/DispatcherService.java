@@ -2603,9 +2603,15 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                 return new LlmDetectionResult(Optional.empty(), Optional.empty(), Optional.of(outcome.clarification()), Optional.ofNullable(outcome.trace()), outcome.usedFallback());
             }
             if (outcome.hasResult()) {
+                if (shouldRejectCodeGenerate(userInput, outcome.result().skillName())) {
+                    return new LlmDetectionResult(Optional.empty(), Optional.empty(), Optional.empty(), Optional.ofNullable(outcome.trace()), outcome.usedFallback());
+                }
                 return new LlmDetectionResult(Optional.of(outcome.result()), Optional.ofNullable(outcome.skillDsl()), Optional.empty(), Optional.ofNullable(outcome.trace()), outcome.usedFallback());
             }
             if (outcome.hasSkillDsl()) {
+                if (shouldRejectCodeGenerate(userInput, outcome.skillDsl().skill())) {
+                    return new LlmDetectionResult(Optional.empty(), Optional.empty(), Optional.empty(), Optional.ofNullable(outcome.trace()), outcome.usedFallback());
+                }
                 return new LlmDetectionResult(Optional.empty(), Optional.of(outcome.skillDsl()), Optional.empty(), Optional.ofNullable(outcome.trace()), outcome.usedFallback());
             }
         }
@@ -2613,6 +2619,10 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
             return LlmDetectionResult.empty();
         }
         return new LlmDetectionResult(Optional.empty(), skillDslParser.parseSkillDslJson(llmReply), Optional.empty(), Optional.empty(), false);
+    }
+
+    private boolean shouldRejectCodeGenerate(String userInput, String skillName) {
+        return "code.generate".equals(skillName) && !isCodeGenerationIntent(userInput) && !isContinuationOnlyInput(userInput);
     }
 
     private record LlmDetectionResult(Optional<SkillResult> result,

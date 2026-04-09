@@ -1856,7 +1856,7 @@ class DispatcherServiceTest {
         ParamValidator paramValidator = new SimpleParamValidator(paramSchemaRegistry);
         PostExecutionMemoryRecorder memoryRecorder = new PostExecutionMemoryRecorder(
                 new DefaultMemoryGateway(memoryManager),
-                Boolean.parseBoolean(System.getProperty("mindos.dispatcher.procedural-logging.enabled", "false")),
+                Boolean.parseBoolean(System.getProperty("mindos.dispatcher.procedural-logging.enabled", "true")),
                 false,
                 "",
                 280
@@ -1922,9 +1922,6 @@ class DispatcherServiceTest {
                 tuningProperties,
                 false,
                 "",
-                280,
-                false,
-                "",
                 900,
                 "",
                 "",
@@ -1983,7 +1980,7 @@ class DispatcherServiceTest {
         ParamValidator paramValidator = new SimpleParamValidator(paramSchemaRegistry);
         PostExecutionMemoryRecorder memoryRecorder = new PostExecutionMemoryRecorder(
                 new DefaultMemoryGateway(memoryManager),
-                Boolean.parseBoolean(System.getProperty("mindos.dispatcher.procedural-logging.enabled", "false")),
+                Boolean.parseBoolean(System.getProperty("mindos.dispatcher.procedural-logging.enabled", "true")),
                 false,
                 "",
                 280
@@ -2047,9 +2044,6 @@ class DispatcherServiceTest {
                 0,
                 "time",
                 tuningProperties,
-                false,
-                "",
-                280,
                 false,
                 "",
                 900,
@@ -2456,7 +2450,7 @@ class DispatcherServiceTest {
         ParamValidator paramValidator = new SimpleParamValidator(paramSchemaRegistry);
         PostExecutionMemoryRecorder memoryRecorder = new PostExecutionMemoryRecorder(
                 new DefaultMemoryGateway(memoryManager),
-                Boolean.parseBoolean(System.getProperty("mindos.dispatcher.procedural-logging.enabled", "false")),
+                Boolean.parseBoolean(System.getProperty("mindos.dispatcher.procedural-logging.enabled", "true")),
                 postSkillSummaryEnabled,
                 postSkillSummarySkills,
                 280
@@ -2520,9 +2514,6 @@ class DispatcherServiceTest {
                 preAnalyzeThreshold,
                 preAnalyzeSkipSkills,
                 tuningProperties,
-                postSkillSummaryEnabled,
-                postSkillSummarySkills,
-                280,
                 skillFinalizeEnabled,
                 skillFinalizeSkills,
                 900,
@@ -2594,7 +2585,7 @@ class DispatcherServiceTest {
         ParamValidator paramValidator = new SimpleParamValidator(paramSchemaRegistry);
         PostExecutionMemoryRecorder memoryRecorder = new PostExecutionMemoryRecorder(
                 new DefaultMemoryGateway(memoryManager),
-                Boolean.parseBoolean(System.getProperty("mindos.dispatcher.procedural-logging.enabled", "false")),
+                Boolean.parseBoolean(System.getProperty("mindos.dispatcher.procedural-logging.enabled", "true")),
                 false,
                 "",
                 280
@@ -2658,9 +2649,6 @@ class DispatcherServiceTest {
                 0,
                 "time",
                 tuningProperties,
-                false,
-                "",
-                280,
                 false,
                 "",
                 900,
