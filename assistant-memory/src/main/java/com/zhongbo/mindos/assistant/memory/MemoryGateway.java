@@ -1,4 +1,4 @@
-package com.zhongbo.mindos.assistant.dispatcher.orchestrator;
+package com.zhongbo.mindos.assistant.memory;
 
 import com.zhongbo.mindos.assistant.memory.model.ConversationTurn;
 import com.zhongbo.mindos.assistant.memory.model.ProceduralMemoryEntry;
@@ -10,7 +10,9 @@ public interface MemoryGateway {
 
     List<ConversationTurn> recentHistory(String userId);
 
-    void writeProcedural(ProceduralMemoryEntry entry);
+    void recordSkillUsage(String userId, String skillName, String input, boolean success);
 
-    void writeSemantic(SemanticMemoryEntry entry);
+    void writeProcedural(String userId, ProceduralMemoryEntry entry);
+
+    void writeSemantic(String userId, SemanticMemoryEntry entry);
 }

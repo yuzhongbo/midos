@@ -1802,7 +1802,7 @@ class DispatcherServiceTest {
                                                                           String priorityList) {
         SkillRegistry registry = new SkillRegistry(skills);
         SkillDslExecutor dslExecutor = new SkillDslExecutor(registry);
-        SkillEngine skillEngine = new SkillEngine(registry, dslExecutor, memoryManager);
+        SkillEngine skillEngine = new SkillEngine(registry, dslExecutor, new com.zhongbo.mindos.assistant.dispatcher.orchestrator.DefaultMemoryGateway(memoryManager));
         SemanticAnalysisService semanticAnalysisService = new SemanticAnalysisService(
                 llmClient,
                 registry,
@@ -1917,7 +1917,7 @@ class DispatcherServiceTest {
                                                                   SemanticAnalysisService semanticAnalysisService,
                                                                   int llmShortlistMaxSkills) {
         SkillDslExecutor dslExecutor = new SkillDslExecutor(registry);
-        SkillEngine skillEngine = new SkillEngine(registry, dslExecutor, memoryManager);
+        SkillEngine skillEngine = new SkillEngine(registry, dslExecutor, new com.zhongbo.mindos.assistant.dispatcher.orchestrator.DefaultMemoryGateway(memoryManager));
         SkillDslParser parser = new SkillDslParser(new SkillDslValidator());
         IntentModelRoutingPolicy intentModelRoutingPolicy = new IntentModelRoutingPolicy(
                 false,
@@ -2342,7 +2342,7 @@ class DispatcherServiceTest {
                                                int skillFinalizeMaxTokens) {
         SkillRegistry registry = new SkillRegistry(skills);
         SkillDslExecutor dslExecutor = new SkillDslExecutor(registry);
-        SkillEngine skillEngine = new SkillEngine(registry, dslExecutor, memoryManager);
+        SkillEngine skillEngine = new SkillEngine(registry, dslExecutor, new com.zhongbo.mindos.assistant.dispatcher.orchestrator.DefaultMemoryGateway(memoryManager));
         SemanticAnalysisService semanticAnalysisService = new SemanticAnalysisService(
                 llmClient,
                 registry,
@@ -2472,7 +2472,7 @@ class DispatcherServiceTest {
                                                          DispatcherLlmTuningProperties tuningProperties) {
         SkillRegistry registry = new SkillRegistry(skills);
         SkillDslExecutor dslExecutor = new SkillDslExecutor(registry);
-        SkillEngine skillEngine = new SkillEngine(registry, dslExecutor, memoryManager);
+        SkillEngine skillEngine = new SkillEngine(registry, dslExecutor, new com.zhongbo.mindos.assistant.dispatcher.orchestrator.DefaultMemoryGateway(memoryManager));
         SemanticAnalysisService semanticAnalysisService = new SemanticAnalysisService(
                 llmClient,
                 registry,

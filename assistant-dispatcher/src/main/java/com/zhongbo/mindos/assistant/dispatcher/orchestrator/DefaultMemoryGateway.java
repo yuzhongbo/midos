@@ -1,9 +1,11 @@
 package com.zhongbo.mindos.assistant.dispatcher.orchestrator;
 
+import com.zhongbo.mindos.assistant.memory.MemoryGateway;
 import com.zhongbo.mindos.assistant.memory.MemoryManager;
 import com.zhongbo.mindos.assistant.memory.model.ConversationTurn;
 import com.zhongbo.mindos.assistant.memory.model.ProceduralMemoryEntry;
 import com.zhongbo.mindos.assistant.memory.model.SemanticMemoryEntry;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -12,23 +14,53 @@ import java.util.List;
 public class DefaultMemoryGateway implements MemoryGateway {
 
     private final MemoryManager memoryManager;
+    private final int historyWindow;
 
     public DefaultMemoryGateway(MemoryManager memoryManager) {
+        this(memoryManager, 12);
+    }
+
+    public DefaultMemoryGateway(MemoryManager memoryManager,
+                                @Value("${mindos.dispatcher.memory.history.recent-turns:12}") int historyWindow) {
         this.memoryManager = memoryManager;
+        this.historyWindow = Math.max(0, historyWindow);
     }
 
     @Override
     public List<ConversationTurn> recentHistory(String userId) {
-        return List.of();
+        if (userId == null || userId.isBlank() || historyWindow <= 0) {
+            return List.of();
+        }
+        return memoryManager.getRecentConversation(userId, historyWindow);
     }
 
     @Override
-    public void writeProcedural(ProceduralMemoryEntry entry) {
-        // placeholder: centralized writes can be wired here
+    public void recordSkillUsage(String userId, String skillName, String input, boolean success) {
+        if (userId == null || userId.isBlank()) {
+            return;
+        }
+        memoryManager.logSkillUsage(userId, skillName, input, success);
     }
 
     @Override
-    public void writeSemantic(SemanticMemoryEntry entry) {
-        // placeholder: centralized writes can be wired here
+    public void writeProcedural(String userId, ProceduralMemoryEntry entry) {
+        if (userId == null || userId.isBlank() || entry == null) {
+            return;
+        }
+        if (entry.skillName() == null || entry.skillName().isBlank()) {
+            return;
+        }
+        memoryManager.logSkillUsage(userId, entry.skillName(), entry.input(), entry.success());
+    }
+
+    @Override
+    public void writeSemantic(String userId, SemanticMemoryEntry entry) {
+        if (userId == null || userId.isBlank() || entry == null) {
+            return;
+        }
+        if (entry.text() == null || entry.text().isBlank()) {
+            return;
+        }
+        memoryManager.storeKnowledge(userId, entry.text(), entry.embedding(), null);
     }
 }

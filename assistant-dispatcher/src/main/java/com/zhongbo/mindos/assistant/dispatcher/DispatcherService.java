@@ -32,7 +32,7 @@ import com.zhongbo.mindos.assistant.dispatcher.orchestrator.DecisionOrchestrator
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.DefaultDecisionOrchestrator;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.DefaultMemoryGateway;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.InMemoryParamSchemaRegistry;
-import com.zhongbo.mindos.assistant.dispatcher.orchestrator.MemoryGateway;
+import com.zhongbo.mindos.assistant.memory.MemoryGateway;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.ParamSchemaRegistry;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.ParamValidator;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.SimpleCandidatePlanner;
@@ -1503,7 +1503,19 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                     }
 
                     skillPreAnalyzeExecutedCount.incrementAndGet();
-                    Optional<SkillDsl> llmDsl = detectSkillWithLlm(userId, userInput, memoryContext, context.attributes());
+                    LlmDetectionResult llmDetection = detectSkillWithLlm(userId, userInput, memoryContext, context.attributes());
+                    if (llmDetection.directResult().isPresent()) {
+                        SkillResult clarify = llmDetection.directResult().get();
+                        RoutingDecisionDto clarifyDecision = new RoutingDecisionDto(
+                                "llm-dsl-clarify",
+                                "semantic.clarify",
+                                0.4,
+                                List.of("params_missing"),
+                                List.copyOf(rejectedReasons)
+                        );
+                        return CompletableFuture.completedFuture(new RoutingOutcome(Optional.of(clarify), clarifyDecision));
+                    }
+                    Optional<SkillDsl> llmDsl = llmDetection.skillDsl();
                     if (llmDsl.isPresent()
                             && "code.generate".equals(llmDsl.get().skill())
                             && !isCodeGenerationIntent(userInput)
@@ -1535,11 +1547,11 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                                     List.copyOf(rejectedReasons)
                             )));
                         }
-                                if (isSkillLoopGuardBlocked(userId, llmDsl.get().skill(), userInput)) {
-                                    LOGGER.info("Dispatcher guard=loop-skip, userId=" + userId + ", skill=" + llmDsl.get().skill());
-                                    rejectedReasons.add("LLM-routed skill blocked by loop guard");
-                                    return CompletableFuture.completedFuture(new RoutingOutcome(Optional.empty(), fallbackRoutingDecision(rejectedReasons)));
-                                }
+                        if (isSkillLoopGuardBlocked(userId, llmDsl.get().skill(), userInput)) {
+                            LOGGER.info("Dispatcher guard=loop-skip, userId=" + userId + ", skill=" + llmDsl.get().skill());
+                            rejectedReasons.add("LLM-routed skill blocked by loop guard");
+                            return CompletableFuture.completedFuture(new RoutingOutcome(Optional.empty(), fallbackRoutingDecision(rejectedReasons)));
+                        }
                         LOGGER.info("Dispatcher route=llm-dsl, userId=" + userId + ", skill=" + llmDsl.get().skill());
                         return llmDsl.map(dsl -> applySkillTimeoutIfNeeded(dsl.skill(), context, skillEngine.executeDslAsync(dsl, context))
                                         .thenApply(result -> new RoutingOutcome(Optional.of(result), new RoutingDecisionDto(
@@ -2447,17 +2459,17 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         return List.copyOf(values);
     }
 
-    private Optional<SkillDsl> detectSkillWithLlm(String userId,
+    private LlmDetectionResult detectSkillWithLlm(String userId,
                                                   String userInput,
                                                   String memoryContext,
                                                   Map<String, Object> profileContext) {
         String normalizedInput = normalize(userInput);
         if (llmRoutingConversationalBypassEnabled && isConversationalBypassInput(normalizedInput)) {
-            return Optional.empty();
+            return LlmDetectionResult.empty();
         }
         String knownSkills = describeSkillRoutingCandidates(userId, userInput);
         if (knownSkills.isBlank()) {
-            return Optional.empty();
+            return LlmDetectionResult.empty();
         }
         String prompt = "You are a dispatcher. Decide whether a skill is needed. "
                 + "Return ONLY JSON with schema {\"skill\":\"name\",\"input\":{...}} or NONE.\n"
@@ -2478,19 +2490,28 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         }
         String llmReply = callLlmWithLocalEscalation(prompt, Map.copyOf(llmContext));
         if (llmReply == null || llmReply.isBlank() || "NONE".equalsIgnoreCase(llmReply.trim())) {
-            return Optional.empty();
+            return LlmDetectionResult.empty();
         }
         Optional<Decision> decision = decisionParser.parse(llmReply);
         if (decision.isPresent()) {
-            Optional<SkillDsl> dslFromDecision = decisionOrchestrator.toSkillDsl(decision.get(), profileContext);
-            if (dslFromDecision.isPresent()) {
-                return dslFromDecision;
+            DecisionOrchestrator.OrchestrationOutcome outcome = decisionOrchestrator.orchestrate(decision.get(), profileContext);
+            if (outcome.hasClarification()) {
+                return new LlmDetectionResult(Optional.empty(), Optional.of(outcome.clarification()));
+            }
+            if (outcome.hasSkillDsl()) {
+                return new LlmDetectionResult(Optional.of(outcome.skillDsl()), Optional.empty());
             }
         }
         if (!llmReply.trim().startsWith("{")) {
-            return Optional.empty();
+            return LlmDetectionResult.empty();
         }
-        return skillDslParser.parseSkillDslJson(llmReply);
+        return new LlmDetectionResult(skillDslParser.parseSkillDslJson(llmReply), Optional.empty());
+    }
+
+    private record LlmDetectionResult(Optional<SkillDsl> skillDsl, Optional<SkillResult> directResult) {
+        static LlmDetectionResult empty() {
+            return new LlmDetectionResult(Optional.empty(), Optional.empty());
+        }
     }
 
 
