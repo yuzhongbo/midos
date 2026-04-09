@@ -25,10 +25,22 @@ import com.zhongbo.mindos.assistant.memory.model.ProceduralMemoryEntry;
 import com.zhongbo.mindos.assistant.memory.model.SemanticMemoryEntry;
 import com.zhongbo.mindos.assistant.memory.model.SkillUsageStats;
 import com.zhongbo.mindos.assistant.skill.SkillEngine;
-import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalysisResult;
-import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalysisService;
 import com.zhongbo.mindos.assistant.dispatcher.decision.Decision;
 import com.zhongbo.mindos.assistant.dispatcher.decision.DecisionParser;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.CandidatePlanner;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.DecisionOrchestrator;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.DefaultDecisionOrchestrator;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.DefaultMemoryGateway;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.InMemoryParamSchemaRegistry;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.MemoryGateway;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.ParamSchemaRegistry;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.ParamValidator;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.SimpleCandidatePlanner;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.SimpleConversationLoop;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.SimpleFallbackPlan;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.SimpleParamValidator;
+import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalysisResult;
+import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalysisService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -238,6 +250,9 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
     private final PromptBuilder promptBuilder;
     private final LLMDecisionEngine llmDecisionEngine;
     private final DecisionParser decisionParser;
+    private final DecisionOrchestrator decisionOrchestrator;
+    private final ParamValidator paramValidator;
+    private final MemoryGateway memoryGateway;
 
     // Backwards-compatible constructor for tests and callers that do not provide
     // the new preferSuggestedSkill configuration parameters. Delegates to the
@@ -320,6 +335,11 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         this.promptBuilder = new PromptBuilder();
         this.llmDecisionEngine = new LLMDecisionEngine();
         this.decisionParser = new DecisionParser();
+        ParamSchemaRegistry paramSchemaRegistry = new InMemoryParamSchemaRegistry();
+        this.paramValidator = new SimpleParamValidator(paramSchemaRegistry);
+        CandidatePlanner candidatePlanner = new SimpleCandidatePlanner();
+        this.decisionOrchestrator = new DefaultDecisionOrchestrator(candidatePlanner, this.paramValidator, new SimpleConversationLoop());
+        this.memoryGateway = new DefaultMemoryGateway(memoryManager);
         this.preferenceReuseEnabled = preferenceReuseEnabled;
         this.habitRoutingEnabled = habitRoutingEnabled;
         this.habitRoutingMinTotalCount = Math.max(1, habitRoutingMinTotalCount);
@@ -2462,12 +2482,10 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         }
         Optional<Decision> decision = decisionParser.parse(llmReply);
         if (decision.isPresent()) {
-            Decision parsed = decision.get();
-            if (parsed.requiresClarify()) {
-                return Optional.empty();
+            Optional<SkillDsl> dslFromDecision = decisionOrchestrator.toSkillDsl(decision.get(), profileContext);
+            if (dslFromDecision.isPresent()) {
+                return dslFromDecision;
             }
-            Map<String, Object> params = parsed.params() == null ? Map.of() : parsed.params();
-            return Optional.of(new SkillDsl(parsed.target(), params));
         }
         if (!llmReply.trim().startsWith("{")) {
             return Optional.empty();
