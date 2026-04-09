@@ -25,8 +25,23 @@ import com.zhongbo.mindos.assistant.memory.model.ProceduralMemoryEntry;
 import com.zhongbo.mindos.assistant.memory.model.SemanticMemoryEntry;
 import com.zhongbo.mindos.assistant.memory.model.SkillUsageStats;
 import com.zhongbo.mindos.assistant.skill.SkillEngine;
+import com.zhongbo.mindos.assistant.dispatcher.decision.Decision;
+import com.zhongbo.mindos.assistant.dispatcher.decision.DecisionParser;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.CandidatePlanner;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.DecisionOrchestrator;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.DefaultDecisionOrchestrator;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.DefaultMemoryGateway;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.InMemoryParamSchemaRegistry;
+import com.zhongbo.mindos.assistant.memory.MemoryGateway;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.ParamSchemaRegistry;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.ParamValidator;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.SimpleCandidatePlanner;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.SimpleConversationLoop;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.SimpleFallbackPlan;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.SimpleParamValidator;
 import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalysisResult;
 import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalysisService;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -173,9 +188,6 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
     private final int localEscalationQualityMaxReplyChars;
     private final Set<String> localEscalationQualityInputTerms;
     private final Set<String> localEscalationQualityReplyTerms;
-    private final boolean postSkillSummaryEnabled;
-    private final Set<String> postSkillSummarySkills;
-    private final int postSkillSummaryMaxReplyChars;
     private final boolean skillFinalizeWithLlmEnabled;
     private final Set<String> skillFinalizeWithLlmSkills;
     private final int skillFinalizeWithLlmMaxOutputChars;
@@ -235,15 +247,156 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
     private final AtomicLong activeDispatchCount = new AtomicLong();
     private final PromptBuilder promptBuilder;
     private final LLMDecisionEngine llmDecisionEngine;
+    private final DecisionParser decisionParser;
+    private final DecisionOrchestrator decisionOrchestrator;
+    private final ParamValidator paramValidator;
+    private final MemoryGateway memoryGateway;
+
+    public DispatcherService(SkillEngine skillEngine,
+                             SkillDslParser skillDslParser,
+                             ParamValidator paramValidator,
+                             DecisionOrchestrator decisionOrchestrator,
+                             IntentModelRoutingPolicy intentModelRoutingPolicy,
+                             MetaOrchestratorService metaOrchestratorService,
+                             SkillCapabilityPolicy skillCapabilityPolicy,
+                             PersonaCoreService personaCoreService,
+                             MemoryManager memoryManager,
+                             LlmClient llmClient,
+                             SemanticAnalysisService semanticAnalysisService,
+                             boolean preferenceReuseEnabled,
+                             boolean habitRoutingEnabled,
+                             int habitRoutingMinTotalCount,
+                             double habitRoutingMinSuccessRate,
+                             boolean habitExplainHintEnabled,
+                             int habitContinuationInputMaxLength,
+                             int habitRoutingRecentWindowSize,
+                             int habitRoutingRecentMinSuccessCount,
+                             int habitRoutingRecentMaxAgeHours,
+                             int promptMaxChars,
+                             int memoryContextMaxChars,
+                             int llmReplyMaxChars,
+                             int skillGuardMaxConsecutive,
+                             int skillGuardRecentWindowSize,
+                             int skillGuardRepeatInputThreshold,
+                             int skillGuardCooldownSeconds,
+                             boolean preExecuteHeavySkillLoopGuardEnabled,
+                             String preExecuteHeavySkillLoopGuardSkills,
+                             long eqCoachImTimeoutMs,
+                             String eqCoachImTimeoutReply,
+                             boolean promptInjectionGuardEnabled,
+                             String promptInjectionRiskTerms,
+                             String promptInjectionSafeReply,
+                             int llmRoutingShortlistMaxSkills,
+                             int llmDslMemoryContextMaxChars,
+                             boolean llmRoutingConversationalBypassEnabled,
+                             boolean realtimeIntentBypassEnabled,
+                             boolean braveFirstSearchRoutingEnabled,
+                             String realtimeIntentTerms,
+                             boolean realtimeIntentMemoryShrinkEnabled,
+                             int realtimeIntentMemoryShrinkMaxChars,
+                             boolean realtimeIntentMemoryShrinkIncludePersona,
+                             String skillPreAnalyzeMode,
+                             int skillPreAnalyzeConfidenceThreshold,
+                             String skillPreAnalyzeSkipSkills,
+                             DispatcherLlmTuningProperties llmTuningProperties,
+                             boolean skillFinalizeWithLlmEnabled,
+                             String skillFinalizeWithLlmSkills,
+                             int skillFinalizeWithLlmMaxOutputChars,
+                             String skillFinalizeWithLlmProvider,
+                             String skillFinalizeWithLlmPreset,
+                             int routingReplayMaxSamples,
+                             int memoryContextKeepRecentTurns,
+                             int memoryContextHistorySummaryMinTurns,
+                             double semanticAnalysisRouteMinConfidence,
+                             double semanticAnalysisClarifyMinConfidence,
+                             boolean behaviorLearningEnabled,
+                             int behaviorLearningWindowSize,
+                             double behaviorLearningDefaultParamThreshold,
+                             boolean semanticAnalysisSkipShortSimpleEnabled,
+                             boolean parallelDetectedSkillRoutingEnabled,
+                             int parallelDetectedSkillRoutingMaxCandidates,
+                             int parallelDetectedSkillRoutingTimeoutMs,
+                             String parallelDetectedSkillPriorityList) {
+        this(
+                skillEngine,
+                skillDslParser,
+                paramValidator,
+                decisionOrchestrator,
+                intentModelRoutingPolicy,
+                metaOrchestratorService,
+                skillCapabilityPolicy,
+                personaCoreService,
+                memoryManager,
+                llmClient,
+                semanticAnalysisService,
+                preferenceReuseEnabled,
+                habitRoutingEnabled,
+                habitRoutingMinTotalCount,
+                habitRoutingMinSuccessRate,
+                habitExplainHintEnabled,
+                habitContinuationInputMaxLength,
+                habitRoutingRecentWindowSize,
+                habitRoutingRecentMinSuccessCount,
+                habitRoutingRecentMaxAgeHours,
+                promptMaxChars,
+                memoryContextMaxChars,
+                llmReplyMaxChars,
+                skillGuardMaxConsecutive,
+                skillGuardRecentWindowSize,
+                skillGuardRepeatInputThreshold,
+                (long) skillGuardCooldownSeconds,
+                preExecuteHeavySkillLoopGuardEnabled,
+                preExecuteHeavySkillLoopGuardSkills,
+                eqCoachImTimeoutMs,
+                eqCoachImTimeoutReply,
+                promptInjectionGuardEnabled,
+                promptInjectionRiskTerms,
+                promptInjectionSafeReply,
+                llmRoutingShortlistMaxSkills,
+                llmDslMemoryContextMaxChars,
+                llmRoutingConversationalBypassEnabled,
+                realtimeIntentBypassEnabled,
+                braveFirstSearchRoutingEnabled,
+                realtimeIntentTerms,
+                realtimeIntentMemoryShrinkEnabled,
+                realtimeIntentMemoryShrinkMaxChars,
+                realtimeIntentMemoryShrinkIncludePersona,
+                skillPreAnalyzeMode,
+                skillPreAnalyzeConfidenceThreshold,
+                skillPreAnalyzeSkipSkills,
+                llmTuningProperties,
+                skillFinalizeWithLlmEnabled,
+                skillFinalizeWithLlmSkills,
+                skillFinalizeWithLlmMaxOutputChars,
+                skillFinalizeWithLlmProvider,
+                skillFinalizeWithLlmPreset,
+                routingReplayMaxSamples,
+                memoryContextKeepRecentTurns,
+                memoryContextHistorySummaryMinTurns,
+                semanticAnalysisRouteMinConfidence,
+                semanticAnalysisClarifyMinConfidence,
+                behaviorLearningEnabled,
+                behaviorLearningWindowSize,
+                behaviorLearningDefaultParamThreshold,
+                semanticAnalysisSkipShortSimpleEnabled,
+                parallelDetectedSkillRoutingEnabled,
+                parallelDetectedSkillRoutingMaxCandidates,
+                (long) parallelDetectedSkillRoutingTimeoutMs,
+                parallelDetectedSkillPriorityList
+        );
+    }
 
     // Backwards-compatible constructor for tests and callers that do not provide
     // the new preferSuggestedSkill configuration parameters. Delegates to the
     // primary constructor with safe defaults (disabled).
+    @Autowired
     public DispatcherService(SkillEngine skillEngine,
-                             SkillDslParser skillDslParser,
-                             IntentModelRoutingPolicy intentModelRoutingPolicy,
-                             MetaOrchestratorService metaOrchestratorService,
-                             SkillCapabilityPolicy skillCapabilityPolicy,
+                          SkillDslParser skillDslParser,
+                          ParamValidator paramValidator,
+                          DecisionOrchestrator decisionOrchestrator,
+                          IntentModelRoutingPolicy intentModelRoutingPolicy,
+                          MetaOrchestratorService metaOrchestratorService,
+                          SkillCapabilityPolicy skillCapabilityPolicy,
                              PersonaCoreService personaCoreService,
                              MemoryManager memoryManager,
                              LlmClient llmClient,
@@ -284,9 +437,6 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                               @Value("${mindos.dispatcher.skill.pre-analyze.confidence-threshold:0}") int skillPreAnalyzeConfidenceThreshold,
                               @Value("${mindos.dispatcher.skill.pre-analyze.skip-skills:time}") String skillPreAnalyzeSkipSkills,
                               DispatcherLlmTuningProperties llmTuningProperties,
-                              @Value("${mindos.memory.post-skill-summary.enabled:false}") boolean postSkillSummaryEnabled,
-                              @Value("${mindos.memory.post-skill-summary.skills:teaching.plan,todo.create,eq.coach,code.generate,file.search}") String postSkillSummarySkills,
-                              @Value("${mindos.memory.post-skill-summary.max-reply-chars:280}") int postSkillSummaryMaxReplyChars,
                               @Value("${mindos.dispatcher.skill.finalize-with-llm.enabled:false}") boolean skillFinalizeWithLlmEnabled,
                               @Value("${mindos.dispatcher.skill.finalize-with-llm.skills:teaching.plan,todo.create,eq.coach,code.generate,file.search,mcp.*}") String skillFinalizeWithLlmSkills,
                               @Value("${mindos.dispatcher.skill.finalize-with-llm.max-output-chars:900}") int skillFinalizeWithLlmMaxOutputChars,
@@ -316,6 +466,10 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         this.semanticAnalysisService = semanticAnalysisService;
         this.promptBuilder = new PromptBuilder();
         this.llmDecisionEngine = new LLMDecisionEngine();
+        this.decisionParser = new DecisionParser();
+        this.paramValidator = paramValidator;
+        this.decisionOrchestrator = decisionOrchestrator;
+        this.memoryGateway = new DefaultMemoryGateway(memoryManager);
         this.preferenceReuseEnabled = preferenceReuseEnabled;
         this.habitRoutingEnabled = habitRoutingEnabled;
         this.habitRoutingMinTotalCount = Math.max(1, habitRoutingMinTotalCount);
@@ -373,9 +527,6 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         this.localEscalationQualityMaxReplyChars = Math.max(8, effectiveLlmTuning.getLocalEscalation().getQuality().getMaxReplyChars());
         this.localEscalationQualityInputTerms = parseCsvSet(effectiveLlmTuning.getLocalEscalation().getQuality().getInputTerms());
         this.localEscalationQualityReplyTerms = parseCsvSet(effectiveLlmTuning.getLocalEscalation().getQuality().getReplyTerms());
-        this.postSkillSummaryEnabled = postSkillSummaryEnabled;
-        this.postSkillSummarySkills = parseCsvSet(postSkillSummarySkills);
-        this.postSkillSummaryMaxReplyChars = Math.max(80, postSkillSummaryMaxReplyChars);
         this.skillFinalizeWithLlmEnabled = skillFinalizeWithLlmEnabled;
         this.skillFinalizeWithLlmSkills = parseCsvSet(skillFinalizeWithLlmSkills);
         this.skillFinalizeWithLlmMaxOutputChars = Math.max(200, skillFinalizeWithLlmMaxOutputChars);
@@ -533,11 +684,10 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                     );
                     ExecutionTraceDto trace = enrichTraceWithRouting(orchestration.trace(), routingWithObservability);
                     finalResultSuccessRef.set(result.success());
+                    decisionOrchestrator.recordOutcome(userId, userInput, result, trace);
                     memoryManager.storeAssistantConversation(userId, result.output());
-                    maybeStorePostSkillSummary(userId, userInput, result);
                     maybeStoreBehaviorProfile(userId, result);
                     personaCoreService.learnFromTurn(userId, resolvedProfileContext, result);
-                    maybeStoreExecutionTraceMemory(userId, trace);
                     recordRoutingReplaySample(userInput, routingDecisionRef.get(), replayProbe, promptMemoryContext, result.skillName());
                     return new DispatchResult(result.output(), result.skillName(), trace);
                 })
@@ -683,7 +833,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                     ExecutionTraceDto trace = new ExecutionTraceDto("stream-single-pass", 0, null, List.of(), routingWithObservability);
                     finalResultSuccessRef.set(normalized.success());
                     memoryManager.storeAssistantConversation(userId, normalized.output());
-                    maybeStorePostSkillSummary(userId, userInput, normalized);
+                    decisionOrchestrator.recordOutcome(userId, userInput, normalized, trace);
                     maybeStoreBehaviorProfile(userId, normalized);
                     personaCoreService.learnFromTurn(userId, resolvedProfileContext, normalized);
                     recordRoutingReplaySample(userInput, routingDecisionRef.get(), replayProbe, promptMemoryContext, normalized.skillName());
@@ -803,45 +953,6 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
             output = callLlmWithLocalEscalation(prompt, llmContext);
         }
         return SkillResult.success("llm", output);
-    }
-
-    private void maybeStoreExecutionTraceMemory(String userId, ExecutionTraceDto trace) {
-        if (trace == null || trace.replanCount() <= 0) {
-            return;
-        }
-        String summary = "meta-trace strategy=" + trace.strategy()
-                + ", replans=" + trace.replanCount()
-                + ", critique=" + (trace.critique() == null ? "none" : trace.critique().action());
-        List<Double> embedding = List.of(
-                (double) summary.length(),
-                Math.abs(summary.hashCode() % 1000) / 1000.0
-        );
-        memoryManager.storeKnowledge(userId, summary, embedding, "meta");
-    }
-
-    private void maybeStorePostSkillSummary(String userId, String userInput, SkillResult result) {
-        if (!postSkillSummaryEnabled || result == null || !result.success()) {
-            return;
-        }
-        String channel = result.skillName();
-        if (channel == null || channel.isBlank() || "llm".equals(channel) || "security.guard".equals(channel)) {
-            return;
-        }
-        if (!matchesConfiguredSkill(channel, postSkillSummarySkills)) {
-            return;
-        }
-        String output = capText(result.output() == null ? "" : result.output(), postSkillSummaryMaxReplyChars);
-        if (output.isBlank()) {
-            return;
-        }
-        String summary = "post-skill-summary channel=" + channel
-                + ", input=" + capText(userInput == null ? "" : userInput, 120)
-                + ", output=" + output;
-        List<Double> embedding = List.of(
-                (double) summary.length(),
-                Math.abs(summary.hashCode() % 1000) / 1000.0
-        );
-        memoryManager.storeKnowledge(userId, summary, embedding, inferMemoryBucket(userInput));
     }
 
     private SkillFinalizeOutcome maybeFinalizeSkillResultWithLlm(String userInput,
@@ -1479,7 +1590,32 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                     }
 
                     skillPreAnalyzeExecutedCount.incrementAndGet();
-                    Optional<SkillDsl> llmDsl = detectSkillWithLlm(userId, userInput, memoryContext, context.attributes());
+                    LlmDetectionResult llmDetection = detectSkillWithLlm(userId, userInput, memoryContext, context, context.attributes());
+                    if (llmDetection.directResult().isPresent()) {
+                        SkillResult clarify = llmDetection.directResult().get();
+                        RoutingDecisionDto clarifyDecision = new RoutingDecisionDto(
+                                "llm-dsl-clarify",
+                                "semantic.clarify",
+                                0.4,
+                                List.of("params_missing"),
+                                List.copyOf(rejectedReasons)
+                        );
+                        return CompletableFuture.completedFuture(new RoutingOutcome(Optional.of(clarify), clarifyDecision));
+                    }
+                    if (llmDetection.result().isPresent()) {
+                        SkillResult orchestrated = llmDetection.result().get();
+                        replayProbe.preAnalyzeCandidate = orchestrated.skillName();
+                        skillPreAnalyzeAcceptedCount.incrementAndGet();
+                        RoutingDecisionDto decisionDto = new RoutingDecisionDto(
+                                "llm-dsl",
+                                orchestrated.skillName(),
+                                0.76,
+                                List.of("LLM router executed via decision orchestrator"),
+                                List.copyOf(rejectedReasons)
+                        );
+                        return CompletableFuture.completedFuture(new RoutingOutcome(Optional.of(orchestrated), decisionDto));
+                    }
+                    Optional<SkillDsl> llmDsl = llmDetection.skillDsl();
                     if (llmDsl.isPresent()
                             && "code.generate".equals(llmDsl.get().skill())
                             && !isCodeGenerationIntent(userInput)
@@ -1511,11 +1647,11 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                                     List.copyOf(rejectedReasons)
                             )));
                         }
-                                if (isSkillLoopGuardBlocked(userId, llmDsl.get().skill(), userInput)) {
-                                    LOGGER.info("Dispatcher guard=loop-skip, userId=" + userId + ", skill=" + llmDsl.get().skill());
-                                    rejectedReasons.add("LLM-routed skill blocked by loop guard");
-                                    return CompletableFuture.completedFuture(new RoutingOutcome(Optional.empty(), fallbackRoutingDecision(rejectedReasons)));
-                                }
+                        if (isSkillLoopGuardBlocked(userId, llmDsl.get().skill(), userInput)) {
+                            LOGGER.info("Dispatcher guard=loop-skip, userId=" + userId + ", skill=" + llmDsl.get().skill());
+                            rejectedReasons.add("LLM-routed skill blocked by loop guard");
+                            return CompletableFuture.completedFuture(new RoutingOutcome(Optional.empty(), fallbackRoutingDecision(rejectedReasons)));
+                        }
                         LOGGER.info("Dispatcher route=llm-dsl, userId=" + userId + ", skill=" + llmDsl.get().skill());
                         return llmDsl.map(dsl -> applySkillTimeoutIfNeeded(dsl.skill(), context, skillEngine.executeDslAsync(dsl, context))
                                         .thenApply(result -> new RoutingOutcome(Optional.of(result), new RoutingDecisionDto(
@@ -2423,17 +2559,18 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         return List.copyOf(values);
     }
 
-    private Optional<SkillDsl> detectSkillWithLlm(String userId,
+    private LlmDetectionResult detectSkillWithLlm(String userId,
                                                   String userInput,
                                                   String memoryContext,
+                                                  SkillContext skillContext,
                                                   Map<String, Object> profileContext) {
         String normalizedInput = normalize(userInput);
         if (llmRoutingConversationalBypassEnabled && isConversationalBypassInput(normalizedInput)) {
-            return Optional.empty();
+            return LlmDetectionResult.empty();
         }
         String knownSkills = describeSkillRoutingCandidates(userId, userInput);
         if (knownSkills.isBlank()) {
-            return Optional.empty();
+            return LlmDetectionResult.empty();
         }
         String prompt = "You are a dispatcher. Decide whether a skill is needed. "
                 + "Return ONLY JSON with schema {\"skill\":\"name\",\"input\":{...}} or NONE.\n"
@@ -2454,9 +2591,48 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         }
         String llmReply = callLlmWithLocalEscalation(prompt, Map.copyOf(llmContext));
         if (llmReply == null || llmReply.isBlank() || "NONE".equalsIgnoreCase(llmReply.trim())) {
-            return Optional.empty();
+            return LlmDetectionResult.empty();
         }
-        return skillDslParser.parseSkillDslJson(llmReply);
+        Optional<Decision> decision = decisionParser.parse(llmReply);
+        if (decision.isPresent()) {
+            DecisionOrchestrator.OrchestrationOutcome outcome = decisionOrchestrator.orchestrate(
+                    decision.get(),
+                    new DecisionOrchestrator.OrchestrationRequest(userId, userInput, skillContext, profileContext)
+            );
+            if (outcome.hasClarification()) {
+                return new LlmDetectionResult(Optional.empty(), Optional.empty(), Optional.of(outcome.clarification()), Optional.ofNullable(outcome.trace()), outcome.usedFallback());
+            }
+            if (outcome.hasResult()) {
+                if (shouldRejectCodeGenerate(userInput, outcome.result().skillName())) {
+                    return new LlmDetectionResult(Optional.empty(), Optional.empty(), Optional.empty(), Optional.ofNullable(outcome.trace()), outcome.usedFallback());
+                }
+                return new LlmDetectionResult(Optional.of(outcome.result()), Optional.ofNullable(outcome.skillDsl()), Optional.empty(), Optional.ofNullable(outcome.trace()), outcome.usedFallback());
+            }
+            if (outcome.hasSkillDsl()) {
+                if (shouldRejectCodeGenerate(userInput, outcome.skillDsl().skill())) {
+                    return new LlmDetectionResult(Optional.empty(), Optional.empty(), Optional.empty(), Optional.ofNullable(outcome.trace()), outcome.usedFallback());
+                }
+                return new LlmDetectionResult(Optional.empty(), Optional.of(outcome.skillDsl()), Optional.empty(), Optional.ofNullable(outcome.trace()), outcome.usedFallback());
+            }
+        }
+        if (!llmReply.trim().startsWith("{")) {
+            return LlmDetectionResult.empty();
+        }
+        return new LlmDetectionResult(Optional.empty(), skillDslParser.parseSkillDslJson(llmReply), Optional.empty(), Optional.empty(), false);
+    }
+
+    private boolean shouldRejectCodeGenerate(String userInput, String skillName) {
+        return "code.generate".equals(skillName) && !isCodeGenerationIntent(userInput) && !isContinuationOnlyInput(userInput);
+    }
+
+    private record LlmDetectionResult(Optional<SkillResult> result,
+                                      Optional<SkillDsl> skillDsl,
+                                      Optional<SkillResult> directResult,
+                                      Optional<ExecutionTraceDto> trace,
+                                      boolean usedFallback) {
+        static LlmDetectionResult empty() {
+            return new LlmDetectionResult(Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(), false);
+        }
     }
 
 
@@ -3385,7 +3561,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                 (double) ((Integer) embeddingSeed.get("length")),
                 ((Integer) embeddingSeed.get("hash")) / 1000.0
         );
-        memoryManager.storeKnowledge(userId, knowledge, embedding, memoryBucket);
+        memoryGateway.writeSemantic(userId, knowledge, embedding, memoryBucket);
     }
 
     private String buildConversationContext(String userId,
@@ -4158,7 +4334,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                 (double) memoryText.length(),
                 Math.abs(memoryText.hashCode() % 1000) / 1000.0
         );
-        memoryManager.storeKnowledge(userId, memoryText, embedding, inferMemoryBucket(userInput));
+        memoryGateway.writeSemantic(userId, memoryText, embedding, inferMemoryBucket(userInput));
     }
 
     private void completeSemanticPayloadFromMemory(String userId,
@@ -4342,7 +4518,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         // Log that we are storing an updated behavior profile for observability
         LOGGER.info(() -> "behavior-learning.store userId=" + userId + ", bucket=" + bucket + ", profileSummary=" + capText(profile, 200));
         List<Double> embedding = List.of((double) profile.length(), Math.abs(profile.hashCode() % 1000) / 1000.0);
-        memoryManager.storeKnowledge(userId, profile, embedding, bucket);
+        memoryGateway.writeSemantic(userId, profile, embedding, bucket);
     }
 
     private String buildBehaviorProfileSummary(String userId) {

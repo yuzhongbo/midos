@@ -16,6 +16,16 @@ import com.zhongbo.mindos.assistant.memory.ProceduralMemoryService;
 import com.zhongbo.mindos.assistant.memory.SemanticMemoryService;
 import com.zhongbo.mindos.assistant.memory.SemanticWriteGatePolicy;
 import com.zhongbo.mindos.assistant.memory.model.SemanticMemoryEntry;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.DefaultDecisionOrchestrator;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.DefaultMemoryGateway;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.PostExecutionMemoryRecorder;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.SimpleCandidatePlanner;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.SimpleConversationLoop;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.SimpleFallbackPlan;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.DecisionOrchestrator;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.ParamValidator;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.SimpleParamValidator;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.InMemoryParamSchemaRegistry;
 import com.zhongbo.mindos.assistant.common.dto.LocalEscalationMetricsDto;
 import com.zhongbo.mindos.assistant.skill.Skill;
 import com.zhongbo.mindos.assistant.skill.SkillDslExecutor;
@@ -1802,7 +1812,7 @@ class DispatcherServiceTest {
                                                                           String priorityList) {
         SkillRegistry registry = new SkillRegistry(skills);
         SkillDslExecutor dslExecutor = new SkillDslExecutor(registry);
-        SkillEngine skillEngine = new SkillEngine(registry, dslExecutor, memoryManager);
+        SkillEngine skillEngine = new SkillEngine(registry, dslExecutor);
         SemanticAnalysisService semanticAnalysisService = new SemanticAnalysisService(
                 llmClient,
                 registry,
@@ -1841,9 +1851,32 @@ class DispatcherServiceTest {
         SkillCapabilityPolicy capabilityPolicy = new SkillCapabilityPolicy(false, "fs.read,fs.write,exec,net", "");
         PersonaCoreService personaCoreService = new PersonaCoreService(memoryManager, false, 2, "unknown,null,n/a");
         DispatcherLlmTuningProperties tuningProperties = new DispatcherLlmTuningProperties();
+        InMemoryParamSchemaRegistry paramSchemaRegistry = new InMemoryParamSchemaRegistry();
+        paramSchemaRegistry.registerDefaults();
+        ParamValidator paramValidator = new SimpleParamValidator(paramSchemaRegistry);
+        PostExecutionMemoryRecorder memoryRecorder = new PostExecutionMemoryRecorder(
+                new DefaultMemoryGateway(memoryManager),
+                Boolean.parseBoolean(System.getProperty("mindos.dispatcher.procedural-logging.enabled", "true")),
+                false,
+                "",
+                280
+        );
+        DecisionOrchestrator decisionOrchestrator = new DefaultDecisionOrchestrator(
+                new SimpleCandidatePlanner(),
+                paramValidator,
+                new SimpleConversationLoop(),
+                new SimpleFallbackPlan(),
+                skillEngine,
+                memoryRecorder,
+                true,
+                2500,
+                priorityList == null ? "" : priorityList
+        );
         return new DispatcherService(
                 skillEngine,
                 parser,
+                paramValidator,
+                decisionOrchestrator,
                 intentModelRoutingPolicy,
                 metaOrchestratorService,
                 capabilityPolicy,
@@ -1889,9 +1922,6 @@ class DispatcherServiceTest {
                 tuningProperties,
                 false,
                 "",
-                280,
-                false,
-                "",
                 900,
                 "",
                 "",
@@ -1917,7 +1947,7 @@ class DispatcherServiceTest {
                                                                   SemanticAnalysisService semanticAnalysisService,
                                                                   int llmShortlistMaxSkills) {
         SkillDslExecutor dslExecutor = new SkillDslExecutor(registry);
-        SkillEngine skillEngine = new SkillEngine(registry, dslExecutor, memoryManager);
+        SkillEngine skillEngine = new SkillEngine(registry, dslExecutor);
         SkillDslParser parser = new SkillDslParser(new SkillDslValidator());
         IntentModelRoutingPolicy intentModelRoutingPolicy = new IntentModelRoutingPolicy(
                 false,
@@ -1945,9 +1975,32 @@ class DispatcherServiceTest {
         SkillCapabilityPolicy capabilityPolicy = new SkillCapabilityPolicy(false, "fs.read,fs.write,exec,net", "");
         PersonaCoreService personaCoreService = new PersonaCoreService(memoryManager, false, 2, "unknown,null,n/a");
         DispatcherLlmTuningProperties tuningProperties = new DispatcherLlmTuningProperties();
+        InMemoryParamSchemaRegistry paramSchemaRegistry = new InMemoryParamSchemaRegistry();
+        paramSchemaRegistry.registerDefaults();
+        ParamValidator paramValidator = new SimpleParamValidator(paramSchemaRegistry);
+        PostExecutionMemoryRecorder memoryRecorder = new PostExecutionMemoryRecorder(
+                new DefaultMemoryGateway(memoryManager),
+                Boolean.parseBoolean(System.getProperty("mindos.dispatcher.procedural-logging.enabled", "true")),
+                false,
+                "",
+                280
+        );
+        DecisionOrchestrator decisionOrchestrator = new DefaultDecisionOrchestrator(
+                new SimpleCandidatePlanner(),
+                paramValidator,
+                new SimpleConversationLoop(),
+                new SimpleFallbackPlan(),
+                skillEngine,
+                memoryRecorder,
+                false,
+                2500,
+                ""
+        );
         return new DispatcherService(
                 skillEngine,
                 parser,
+                paramValidator,
+                decisionOrchestrator,
                 intentModelRoutingPolicy,
                 metaOrchestratorService,
                 capabilityPolicy,
@@ -1991,9 +2044,6 @@ class DispatcherServiceTest {
                 0,
                 "time",
                 tuningProperties,
-                false,
-                "",
-                280,
                 false,
                 "",
                 900,
@@ -2342,7 +2392,7 @@ class DispatcherServiceTest {
                                                int skillFinalizeMaxTokens) {
         SkillRegistry registry = new SkillRegistry(skills);
         SkillDslExecutor dslExecutor = new SkillDslExecutor(registry);
-        SkillEngine skillEngine = new SkillEngine(registry, dslExecutor, memoryManager);
+        SkillEngine skillEngine = new SkillEngine(registry, dslExecutor);
         SemanticAnalysisService semanticAnalysisService = new SemanticAnalysisService(
                 llmClient,
                 registry,
@@ -2395,9 +2445,32 @@ class DispatcherServiceTest {
         tuningProperties.getLocalEscalation().getQuality().setMaxReplyChars(32);
         tuningProperties.getLocalEscalation().getQuality().setInputTerms("分析,方案,架构,tradeoff,trade-off,对比,设计,复杂,深度,沟通,情绪,关系,计划,why,explain");
         tuningProperties.getLocalEscalation().getQuality().setReplyTerms("好的,收到,已收到,ok,okay,明白,可以,稍后,后面再说");
+        InMemoryParamSchemaRegistry paramSchemaRegistry = new InMemoryParamSchemaRegistry();
+        paramSchemaRegistry.registerDefaults();
+        ParamValidator paramValidator = new SimpleParamValidator(paramSchemaRegistry);
+        PostExecutionMemoryRecorder memoryRecorder = new PostExecutionMemoryRecorder(
+                new DefaultMemoryGateway(memoryManager),
+                Boolean.parseBoolean(System.getProperty("mindos.dispatcher.procedural-logging.enabled", "true")),
+                postSkillSummaryEnabled,
+                postSkillSummarySkills,
+                280
+        );
+        DecisionOrchestrator decisionOrchestrator = new DefaultDecisionOrchestrator(
+                new SimpleCandidatePlanner(),
+                paramValidator,
+                new SimpleConversationLoop(),
+                new SimpleFallbackPlan(),
+                skillEngine,
+                memoryRecorder,
+                false,
+                2500,
+                ""
+        );
         return new DispatcherService(
                 skillEngine,
                 parser,
+                paramValidator,
+                decisionOrchestrator,
                 intentModelRoutingPolicy,
                 metaOrchestratorService,
                 capabilityPolicy,
@@ -2441,9 +2514,6 @@ class DispatcherServiceTest {
                 preAnalyzeThreshold,
                 preAnalyzeSkipSkills,
                 tuningProperties,
-                postSkillSummaryEnabled,
-                postSkillSummarySkills,
-                280,
                 skillFinalizeEnabled,
                 skillFinalizeSkills,
                 900,
@@ -2472,7 +2542,7 @@ class DispatcherServiceTest {
                                                          DispatcherLlmTuningProperties tuningProperties) {
         SkillRegistry registry = new SkillRegistry(skills);
         SkillDslExecutor dslExecutor = new SkillDslExecutor(registry);
-        SkillEngine skillEngine = new SkillEngine(registry, dslExecutor, memoryManager);
+        SkillEngine skillEngine = new SkillEngine(registry, dslExecutor);
         SemanticAnalysisService semanticAnalysisService = new SemanticAnalysisService(
                 llmClient,
                 registry,
@@ -2510,9 +2580,32 @@ class DispatcherServiceTest {
         MetaOrchestratorService metaOrchestratorService = new MetaOrchestratorService(false);
         SkillCapabilityPolicy capabilityPolicy = new SkillCapabilityPolicy(false, "fs.read,fs.write,exec,net", "");
         PersonaCoreService personaCoreService = new PersonaCoreService(memoryManager, false, 2, "unknown,null,n/a");
+        InMemoryParamSchemaRegistry paramSchemaRegistry = new InMemoryParamSchemaRegistry();
+        paramSchemaRegistry.registerDefaults();
+        ParamValidator paramValidator = new SimpleParamValidator(paramSchemaRegistry);
+        PostExecutionMemoryRecorder memoryRecorder = new PostExecutionMemoryRecorder(
+                new DefaultMemoryGateway(memoryManager),
+                Boolean.parseBoolean(System.getProperty("mindos.dispatcher.procedural-logging.enabled", "true")),
+                false,
+                "",
+                280
+        );
+        DecisionOrchestrator decisionOrchestrator = new DefaultDecisionOrchestrator(
+                new SimpleCandidatePlanner(),
+                paramValidator,
+                new SimpleConversationLoop(),
+                new SimpleFallbackPlan(),
+                skillEngine,
+                memoryRecorder,
+                false,
+                2500,
+                ""
+        );
         return new DispatcherService(
                 skillEngine,
                 parser,
+                paramValidator,
+                decisionOrchestrator,
                 intentModelRoutingPolicy,
                 metaOrchestratorService,
                 capabilityPolicy,
@@ -2556,9 +2649,6 @@ class DispatcherServiceTest {
                 0,
                 "time",
                 tuningProperties,
-                false,
-                "",
-                280,
                 false,
                 "",
                 900,
