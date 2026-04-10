@@ -30,6 +30,10 @@ public class GraphMemoryService implements GraphMemoryView, GraphMemoryGateway {
         return upsertEdge(userId, edge);
     }
 
+    public List<MemoryNode> queryRelated(String userId, String nodeId) {
+        return queryRelated(userId, nodeId, "");
+    }
+
     public List<MemoryNode> queryRelated(String userId, String nodeId, String relation) {
         if (nodeId == null || nodeId.isBlank()) {
             return List.of();

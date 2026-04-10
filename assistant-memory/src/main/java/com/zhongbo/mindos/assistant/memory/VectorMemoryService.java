@@ -11,13 +11,15 @@ import java.util.List;
 import java.util.Map;
 
 @Service
-public class VectorMemoryService {
+public class VectorMemoryService implements VectorMemory {
 
     private final VectorMemoryRepository vectorMemoryRepository;
+    private final EmbeddingService embeddingService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    public VectorMemoryService(VectorMemoryRepository vectorMemoryRepository) {
+    public VectorMemoryService(VectorMemoryRepository vectorMemoryRepository, EmbeddingService embeddingService) {
         this.vectorMemoryRepository = vectorMemoryRepository;
+        this.embeddingService = embeddingService;
     }
 
     public void addKnowledgeEmbedding(String userId,
@@ -36,6 +38,24 @@ public class VectorMemoryService {
 
     public List<VectorSearchResult> searchTopK(String userId, List<Double> queryEmbedding, int topK) {
         return vectorMemoryRepository.searchTopK(userId, queryEmbedding, topK);
+    }
+
+    @Override
+    public List<Double> embed(String text) {
+        float[] vector = embeddingService == null ? null : embeddingService.embed(text);
+        if (vector == null || vector.length == 0) {
+            return List.of();
+        }
+        List<Double> embedded = new java.util.ArrayList<>(vector.length);
+        for (float value : vector) {
+            embedded.add((double) value);
+        }
+        return List.copyOf(embedded);
+    }
+
+    @Override
+    public List<VectorSearchResult> search(String userId, String query, int topK) {
+        return searchTopK(userId, embed(query), topK);
     }
 
     public String toMetadataJson(Map<String, Object> metadata) {
@@ -59,4 +79,3 @@ public class VectorMemoryService {
         }
     }
 }
-

@@ -25,6 +25,7 @@ class GraphMemoryServiceTest {
         assertEquals(1, snapshot.edges().size());
         assertFalse(snapshot.edges().isEmpty());
         assertTrue(snapshot.edges().get(0).relation().contains("related"));
+        assertEquals(1, service.queryRelated("u1", "student:1").size());
     }
 
     @Test

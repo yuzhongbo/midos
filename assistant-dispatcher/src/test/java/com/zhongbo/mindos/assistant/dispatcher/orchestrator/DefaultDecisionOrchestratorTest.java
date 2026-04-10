@@ -6,6 +6,7 @@ import com.zhongbo.mindos.assistant.dispatcher.decision.Decision;
 import com.zhongbo.mindos.assistant.dispatcher.agent.procedure.InMemoryProcedureMemoryEngine;
 import com.zhongbo.mindos.assistant.dispatcher.agent.procedure.ProceduralMemory;
 import com.zhongbo.mindos.assistant.memory.MemoryGateway;
+import com.zhongbo.mindos.assistant.memory.graph.GraphMemory;
 import com.zhongbo.mindos.assistant.skill.DefaultSkillExecutionGateway;
 import com.zhongbo.mindos.assistant.skill.Skill;
 import com.zhongbo.mindos.assistant.skill.SkillDslExecutor;
@@ -127,9 +128,15 @@ class DefaultDecisionOrchestratorTest {
         InMemoryParamSchemaRegistry registry = new InMemoryParamSchemaRegistry();
         registry.registerDefaults();
         registry.register("custom.plan", ParamSchema.of(Set.of(), Set.of()));
-        ParamValidator validator = new SimpleParamValidator(registry, gatewayWithHistory(List.of(
-                com.zhongbo.mindos.assistant.memory.model.ConversationTurn.user("student is stu-42")
-        )));
+        GraphMemory graphMemory = new GraphMemory();
+        graphMemory.addNode("u1", new com.zhongbo.mindos.assistant.memory.graph.MemoryNode(
+                "entity:student:42",
+                "entity.student",
+                Map.of("studentId", "stu-42"),
+                null,
+                null
+        ));
+        ParamValidator validator = new SimpleParamValidator(registry, noopGateway(), graphMemory);
         Skill retryingSkill = new Skill() {
             private int calls;
 

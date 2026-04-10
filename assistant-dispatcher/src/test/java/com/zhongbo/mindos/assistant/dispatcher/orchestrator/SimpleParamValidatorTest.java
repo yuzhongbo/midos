@@ -27,10 +27,12 @@ class SimpleParamValidatorTest {
     void shouldAutofillFromMemoryAndCoerceNumericTypes() {
         InMemoryParamSchemaRegistry registry = new InMemoryParamSchemaRegistry();
         registry.registerDefaults();
+        GraphMemory graphMemory = new GraphMemory();
+        graphMemory.addNode("u1", new MemoryNode("entity:student:123", "entity.student", Map.of("studentId", "stu-123", "name", "Alice"), null, null));
         SimpleParamValidator validator = new SimpleParamValidator(
                 registry,
-                gateway(List.of(ConversationTurn.user("给 stu-123 制定数学学习计划，每周 8 小时，持续 6 周"))),
-                new GraphMemory()
+                gateway(List.of()),
+                graphMemory
         );
 
         ParamValidator.ValidationResult result = validator.validate(

@@ -1,6 +1,7 @@
 package com.zhongbo.mindos.assistant.dispatcher.orchestrator;
 
 import com.zhongbo.mindos.assistant.common.SkillResult;
+import com.zhongbo.mindos.assistant.memory.MemoryFacade;
 import com.zhongbo.mindos.assistant.memory.MemoryGateway;
 import com.zhongbo.mindos.assistant.memory.graph.GraphMemory;
 import com.zhongbo.mindos.assistant.memory.model.ConversationTurn;
@@ -31,21 +32,25 @@ public class SimpleParamValidator implements ParamValidator {
 
     private final ParamSchemaRegistry registry;
     private final MemoryGateway memoryGateway;
-    private final GraphMemory graphMemory;
+    private final MemoryFacade memoryFacade;
 
     public SimpleParamValidator(ParamSchemaRegistry registry) {
-        this(registry, null, null);
+        this(registry, null, (MemoryFacade) null);
     }
 
     public SimpleParamValidator(ParamSchemaRegistry registry, MemoryGateway memoryGateway) {
-        this(registry, memoryGateway, null);
+        this(registry, memoryGateway, (MemoryFacade) null);
     }
 
     @Autowired
-    public SimpleParamValidator(ParamSchemaRegistry registry, MemoryGateway memoryGateway, GraphMemory graphMemory) {
+    public SimpleParamValidator(ParamSchemaRegistry registry, MemoryGateway memoryGateway, MemoryFacade memoryFacade) {
         this.registry = registry;
         this.memoryGateway = memoryGateway;
-        this.graphMemory = graphMemory;
+        this.memoryFacade = memoryFacade;
+    }
+
+    public SimpleParamValidator(ParamSchemaRegistry registry, MemoryGateway memoryGateway, GraphMemory graphMemory) {
+        this(registry, memoryGateway, graphMemory == null ? null : new MemoryFacade(graphMemory, null));
     }
 
     @Override
@@ -134,28 +139,17 @@ public class SimpleParamValidator implements ParamValidator {
                                                   Map<String, Object> currentParams,
                                                   DecisionOrchestrator.OrchestrationRequest request,
                                                   Set<String> extraRequired) {
-        if (request == null || request.userId() == null || request.userId().isBlank()) {
+        if (request == null || request.userId() == null || request.userId().isBlank() || memoryFacade == null) {
             return Map.of();
         }
-        List<ConversationTurn> history = memoryGateway == null ? List.of() : memoryGateway.recentHistory(request.userId());
         Map<String, Object> resolved = new LinkedHashMap<>();
         Set<String> candidateKeys = collectCandidateKeys(schema, extraRequired);
         for (String key : candidateKeys) {
             if (hasValue(currentParams, key)) {
                 continue;
             }
-            ParamType type = schema.types().get(key);
-            for (int i = history.size() - 1; i >= 0; i--) {
-                String content = history.get(i).content();
-                Object inferred = inferFromInput(key, type, content);
-                if (!isBlank(inferred)) {
-                    resolved.put(key, inferred);
-                    break;
-                }
-            }
-            if (!resolved.containsKey(key) && graphMemory != null) {
-                graphMemory.infer(request.userId(), key, request.userInput()).ifPresent(value -> resolved.put(key, value));
-            }
+            memoryFacade.infer(request.userId(), key, request.userInput(), () -> Optional.ofNullable(schema.defaults().get(key)))
+                    .ifPresent(value -> resolved.put(key, value));
         }
         return resolved;
     }
