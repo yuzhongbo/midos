@@ -19,6 +19,14 @@ public interface DecisionOrchestrator {
 
     OrchestrationOutcome orchestrate(Decision decision, OrchestrationRequest request);
 
+    default OrchestrationOutcome fastPath(Decision decision, OrchestrationRequest request) {
+        return orchestrate(decision, request);
+    }
+
+    default OrchestrationOutcome slowPath(Decision decision, OrchestrationRequest request) {
+        return orchestrate(decision, request);
+    }
+
     void recordOutcome(String userId, String userInput, SkillResult result, ExecutionTraceDto trace);
 
     void appendUserConversation(String userId, String message);

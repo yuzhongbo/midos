@@ -9,6 +9,7 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class InMemoryProcedureMemoryEngineTest {
 
@@ -25,5 +26,19 @@ class InMemoryProcedureMemoryEngineTest {
 
         assertFalse(matches.isEmpty());
         assertEquals("student.plan", matches.get(0).template().intent());
+    }
+
+    @Test
+    void shouldExposeProcedureForWeatherNotifyFlow() {
+        InMemoryProcedureMemoryEngine engine = new InMemoryProcedureMemoryEngine();
+        TaskGraph graph = new TaskGraph(List.of(
+                new TaskNode("query", "query_weather", Map.of(), List.of(), "weather", false),
+                new TaskNode("notify", "send_dingtalk", Map.of(), List.of("query"), "notify", false)
+        ));
+
+        Procedure procedure = engine.recordSuccessfulGraph("u1", "weather.notify", "查天气并发钉钉", graph, Map.of());
+
+        assertEquals(List.of("query_weather", "send_dingtalk"), procedure.steps());
+        assertTrue(procedure.successRate() > 0.9);
     }
 }

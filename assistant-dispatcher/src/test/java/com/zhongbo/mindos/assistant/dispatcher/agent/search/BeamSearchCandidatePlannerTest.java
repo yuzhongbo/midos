@@ -20,6 +20,7 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class BeamSearchCandidatePlannerTest {
 
@@ -65,7 +66,9 @@ class BeamSearchCandidatePlannerTest {
         List<SearchCandidate> candidates = planner.search(new SearchPlanningRequest("u1", "请先获取学生并分析再生成教学计划", "student.plan", Map.of(), 3, 3));
 
         assertFalse(candidates.isEmpty());
-        assertEquals("student.plan", candidates.get(0).path().get(0));
+        assertTrue(candidates.get(0).path().size() >= 2);
+        assertTrue(candidates.get(0).metadata().containsKey("pathCost"));
+        assertTrue(candidates.get(0).reasons().stream().anyMatch(reason -> reason.contains("keyword") || reason.contains("memory") || reason.contains("success")));
     }
 
     private Skill skill(String name, int score) {

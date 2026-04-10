@@ -3,6 +3,8 @@ package com.zhongbo.mindos.assistant.dispatcher.orchestrator;
 import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.dispatcher.decision.Decision;
+import com.zhongbo.mindos.assistant.dispatcher.agent.procedure.InMemoryProcedureMemoryEngine;
+import com.zhongbo.mindos.assistant.dispatcher.agent.procedure.ProceduralMemory;
 import com.zhongbo.mindos.assistant.memory.MemoryGateway;
 import com.zhongbo.mindos.assistant.skill.DefaultSkillExecutionGateway;
 import com.zhongbo.mindos.assistant.skill.Skill;
@@ -100,6 +102,7 @@ class DefaultDecisionOrchestratorTest {
 
         assertTrue(outcome.hasSkillDsl());
         assertTrue(outcome.hasResult());
+        assertEquals("fast-path", outcome.trace().strategy());
         assertEquals("todo.create", outcome.skillDsl().skill());
         assertEquals("todo.create", outcome.result().skillName());
     }
@@ -321,6 +324,96 @@ class DefaultDecisionOrchestratorTest {
     }
 
     @Test
+    void shouldExecuteDagTaskGraphFromNodesAndEdges() {
+        Skill fetchSkill = new Skill() {
+            @Override
+            public String name() {
+                return "student.get";
+            }
+
+            @Override
+            public String description() {
+                return "student.get";
+            }
+
+            @Override
+            public SkillResult run(SkillContext context) {
+                return SkillResult.success(name(), "student:stu-42");
+            }
+        };
+        Skill analyzeSkill = new Skill() {
+            @Override
+            public String name() {
+                return "student.analyze";
+            }
+
+            @Override
+            public String description() {
+                return "student.analyze";
+            }
+
+            @Override
+            public SkillResult run(SkillContext context) {
+                return SkillResult.success(name(), "analysis:" + context.attributes().get("student"));
+            }
+        };
+        Skill planSkill = new Skill() {
+            @Override
+            public String name() {
+                return "teaching.plan";
+            }
+
+            @Override
+            public String description() {
+                return "teaching.plan";
+            }
+
+            @Override
+            public SkillResult run(SkillContext context) {
+                return SkillResult.success(name(), "plan:" + context.attributes().get("analysis"));
+            }
+        };
+        SkillRegistry registry = new SkillRegistry(List.of(fetchSkill, analyzeSkill, planSkill));
+        SkillDslExecutor dslExecutor = new SkillDslExecutor(registry);
+        SkillEngine skillEngine = new SkillEngine(registry, dslExecutor);
+        DefaultDecisionOrchestrator orchestrator = new DefaultDecisionOrchestrator(
+                new SimpleCandidatePlanner(skillEngine, noopGateway(), 3, 0.40, 0.35, 0.15, 0.10),
+                new SimpleParamValidator(new InMemoryParamSchemaRegistry(), noopGateway()),
+                new SimpleConversationLoop(),
+                new SimpleFallbackPlan(),
+                new DefaultSkillExecutionGateway(registry, dslExecutor),
+                noopGateway(),
+                noopRecorder(),
+                new TaskExecutor(3),
+                false,
+                500,
+                0,
+                "",
+                3
+        );
+
+        Decision decision = new Decision("student.plan", "task.plan", Map.of(
+                "nodes", List.of(
+                        Map.of("id", "fetch", "target", "student.get", "saveAs", "student"),
+                        Map.of("id", "analyze", "target", "student.analyze", "params", Map.of("student", "${task.student.output}"), "saveAs", "analysis"),
+                        Map.of("id", "plan", "target", "teaching.plan", "params", Map.of("analysis", "${task.analysis.output}"), "saveAs", "plan")
+                ),
+                "edges", List.of(
+                        Map.of("from", "fetch", "to", "analyze"),
+                        Map.of("from", "analyze", "to", "plan")
+                )
+        ), 0.55, false);
+
+        DecisionOrchestrator.OrchestrationOutcome outcome = orchestrator.orchestrate(decision, request());
+
+        assertTrue(outcome.hasResult());
+        assertEquals("slow-path", outcome.trace().strategy());
+        assertEquals("teaching.plan", outcome.result().skillName());
+        assertEquals("plan:analysis:student:stu-42", outcome.result().output());
+        assertEquals(3, outcome.trace().steps().size());
+    }
+
+    @Test
     void shouldAutoPromoteLowConfidenceDecisionToTaskPlan() {
         Skill studentGet = new Skill() {
             @Override
@@ -407,9 +500,176 @@ class DefaultDecisionOrchestratorTest {
         );
 
         assertTrue(outcome.hasResult());
+        assertEquals("slow-path", outcome.trace().strategy());
         assertEquals("teaching.plan", outcome.result().skillName());
         assertEquals("plan:analysis:student:stu-42", outcome.result().output());
         assertEquals(3, outcome.trace().steps().size());
+    }
+
+    @Test
+    void shouldFallbackFromFastPathToSlowPathWhenFastPathFails() {
+        Skill primary = new Skill() {
+            @Override
+            public String name() {
+                return "todo.create";
+            }
+
+            @Override
+            public String description() {
+                return "todo.create";
+            }
+
+            @Override
+            public SkillResult run(SkillContext context) {
+                return SkillResult.failure(name(), "primary failed");
+            }
+
+            @Override
+            public int routingScore(String input) {
+                return 950;
+            }
+        };
+        Skill backup = new Skill() {
+            @Override
+            public String name() {
+                return "todo.create.backup";
+            }
+
+            @Override
+            public String description() {
+                return "todo.create.backup";
+            }
+
+            @Override
+            public SkillResult run(SkillContext context) {
+                return SkillResult.success(name(), "backup created:" + context.attributes().get("task"));
+            }
+
+            @Override
+            public int routingScore(String input) {
+                return 900;
+            }
+        };
+        SkillRegistry registry = new SkillRegistry(List.of(primary, backup));
+        SkillDslExecutor dslExecutor = new SkillDslExecutor(registry);
+        DefaultDecisionOrchestrator orchestrator = new DefaultDecisionOrchestrator(
+                new CandidatePlanner() {
+                    @Override
+                    public List<ScoredCandidate> plan(String suggestedTarget, DecisionOrchestrator.OrchestrationRequest request) {
+                        return List.of(
+                                new ScoredCandidate("todo.create", 0.95, 0.9, 0.0, 0.5, List.of("primary")),
+                                new ScoredCandidate("todo.create.backup", 0.85, 0.7, 0.0, 0.5, List.of("backup"))
+                        );
+                    }
+                },
+                new SimpleParamValidator(new InMemoryParamSchemaRegistry(), noopGateway()),
+                new SimpleConversationLoop(),
+                new SimpleFallbackPlan(),
+                new DefaultSkillExecutionGateway(registry, dslExecutor),
+                noopGateway(),
+                noopRecorder(),
+                new TaskExecutor(3),
+                false,
+                500,
+                0,
+                "",
+                3
+        );
+
+        DecisionOrchestrator.OrchestrationOutcome outcome = orchestrator.orchestrate(
+                new Decision("todo", "todo.create", Map.of("task", "demo"), 0.92, false),
+                request()
+        );
+
+        assertTrue(outcome.hasResult());
+        assertTrue(outcome.result().success());
+        assertEquals("slow-path", outcome.trace().strategy());
+        assertEquals("todo.create.backup", outcome.result().skillName());
+        assertEquals("backup created:demo", outcome.result().output());
+    }
+
+    @Test
+    void shouldReuseRecordedProcedureBeforePlanning() {
+        Skill queryWeather = new Skill() {
+            @Override
+            public String name() {
+                return "query_weather";
+            }
+
+            @Override
+            public String description() {
+                return "query_weather";
+            }
+
+            @Override
+            public SkillResult run(SkillContext context) {
+                return SkillResult.success(name(), "weather:sunny");
+            }
+        };
+        Skill sendDingtalk = new Skill() {
+            @Override
+            public String name() {
+                return "send_dingtalk";
+            }
+
+            @Override
+            public String description() {
+                return "send_dingtalk";
+            }
+
+            @Override
+            public SkillResult run(SkillContext context) {
+                return SkillResult.success(name(), "dingtalk:" + context.attributes().get("task.weather.output"));
+            }
+        };
+        SkillRegistry registry = new SkillRegistry(List.of(queryWeather, sendDingtalk));
+        SkillDslExecutor dslExecutor = new SkillDslExecutor(registry);
+        InMemoryProcedureMemoryEngine procedureEngine = new InMemoryProcedureMemoryEngine();
+        ProceduralMemory proceduralMemory = new ProceduralMemory(procedureEngine);
+        DefaultDecisionOrchestrator orchestrator = new DefaultDecisionOrchestrator(
+                new CandidatePlanner() {
+                    @Override
+                    public List<ScoredCandidate> plan(String suggestedTarget, DecisionOrchestrator.OrchestrationRequest request) {
+                        return List.of(new ScoredCandidate("query_weather", 0.9, 0.8, 0.0, 0.5, List.of("candidate")));
+                    }
+                },
+                new SimpleParamValidator(new InMemoryParamSchemaRegistry(), noopGateway()),
+                new SimpleConversationLoop(),
+                new SimpleFallbackPlan(),
+                new DefaultSkillExecutionGateway(registry, dslExecutor),
+                noopGateway(),
+                noopRecorder(),
+                new TaskExecutor(3),
+                false,
+                500,
+                0,
+                "",
+                3
+        );
+        orchestrator.setProceduralMemory(proceduralMemory);
+
+        Decision firstDecision = new Decision("weather.notify", "task.plan", Map.of(
+                "nodes", List.of(
+                        Map.of("id", "query", "target", "query_weather", "saveAs", "weather"),
+                        Map.of("id", "notify", "target", "send_dingtalk", "params", Map.of("content", "${task.weather.output}"), "saveAs", "notify")
+                ),
+                "edges", List.of(Map.of("from", "query", "to", "notify"))
+        ), 0.55, false);
+
+        DecisionOrchestrator.OrchestrationOutcome firstOutcome = orchestrator.orchestrate(firstDecision, request());
+        assertTrue(firstOutcome.hasResult());
+        assertEquals("send_dingtalk", firstOutcome.result().skillName());
+
+        Decision secondDecision = new Decision("weather.notify", "weather.notify", Map.of(), 0.55, false);
+        DecisionOrchestrator.OrchestrationOutcome secondOutcome = orchestrator.orchestrate(
+                secondDecision,
+                new DecisionOrchestrator.OrchestrationRequest("user", "查天气并发钉钉", new SkillContext("user", "查天气并发钉钉", Map.of()), Map.of())
+        );
+
+        assertTrue(secondOutcome.hasResult());
+        assertEquals("procedural-memory", secondOutcome.trace().strategy());
+        assertEquals("send_dingtalk", secondOutcome.result().skillName());
+        assertEquals("dingtalk:weather:sunny", secondOutcome.result().output());
     }
 
     @Test

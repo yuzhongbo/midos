@@ -1,5 +1,13 @@
 package com.zhongbo.mindos.assistant.dispatcher.orchestrator;
 
+import com.zhongbo.mindos.assistant.dispatcher.agent.taskgraph.DAGExecutor;
+import com.zhongbo.mindos.assistant.dispatcher.agent.taskgraph.TaskGraph;
+import com.zhongbo.mindos.assistant.dispatcher.agent.taskgraph.TaskGraphExecutionResult;
+import com.zhongbo.mindos.assistant.dispatcher.agent.taskgraph.TaskNode;
+import com.zhongbo.mindos.assistant.dispatcher.agent.search.SearchCandidate;
+import com.zhongbo.mindos.assistant.dispatcher.agent.search.SearchPlanner;
+import com.zhongbo.mindos.assistant.dispatcher.agent.search.SearchPlanningRequest;
+import com.zhongbo.mindos.assistant.dispatcher.agent.procedure.ProceduralMemory;
 import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.common.SkillDsl;
 import com.zhongbo.mindos.assistant.common.SkillResult;
@@ -52,6 +60,9 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
     private final String eqCoachImTimeoutReply;
     private final List<String> mcpPriorityOrder;
     private final int maxLoops;
+    private final DAGExecutor dagExecutor = new DAGExecutor();
+    private SearchPlanner searchPlanner;
+    private ProceduralMemory proceduralMemory;
 
     @Autowired
     public DefaultDecisionOrchestrator(CandidatePlanner candidatePlanner,
@@ -83,6 +94,16 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
                 : eqCoachImTimeoutReply;
         this.mcpPriorityOrder = DEFAULT_PARALLEL_MCP_PRIORITY_ORDER;
         this.maxLoops = Math.max(1, Math.min(3, maxLoops));
+    }
+
+    @Autowired(required = false)
+    void setSearchPlanner(SearchPlanner searchPlanner) {
+        this.searchPlanner = searchPlanner;
+    }
+
+    @Autowired(required = false)
+    void setProceduralMemory(ProceduralMemory proceduralMemory) {
+        this.proceduralMemory = proceduralMemory;
     }
 
     @Override
@@ -126,13 +147,36 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
         Map<String, Object> effectiveParams = buildEffectiveParams(params, request == null ? null : request.skillContext());
         TaskPlan taskPlan = TaskPlan.from(effectiveParams);
         if ("task.plan".equalsIgnoreCase(decision.target()) || !taskPlan.isEmpty()) {
-            return orchestrateTaskPlan(taskPlan, effectiveParams, request);
+            return slowPath(decision, request);
         }
-        TaskPlan lowConfidenceTaskPlan = buildLowConfidenceTaskPlan(decision, request);
-        if (!lowConfidenceTaskPlan.isEmpty()) {
-            return orchestrateTaskPlan(lowConfidenceTaskPlan, attachTaskPlan(effectiveParams, lowConfidenceTaskPlan), request);
+        if (shouldUseSlowPath(decision)) {
+            return slowPath(decision, request);
         }
-        return orchestrateCandidateChain(decision.target(), effectiveParams, request, maxLoops, true, List.of(), 0);
+        OrchestrationOutcome fastOutcome = fastPath(decision, request);
+        if (fastOutcome.hasClarification()) {
+            return fastOutcome;
+        }
+        if (fastOutcome.hasResult() && fastOutcome.result() != null && fastOutcome.result().success()) {
+            return fastOutcome;
+        }
+        if (shouldEscalateToSlowPath(fastOutcome)) {
+            return slowPath(decision, request, fastOutcome);
+        }
+        return fastOutcome;
+    }
+
+    @Override
+    public OrchestrationOutcome fastPath(Decision decision, OrchestrationRequest request) {
+        if (decision == null || decision.target() == null || decision.target().isBlank()) {
+            return clarificationOutcome("", "missing target");
+        }
+        Map<String, Object> effectiveParams = buildEffectiveParams(decision.params(), request == null ? null : request.skillContext());
+        return orchestrateFastPath(decision.target(), effectiveParams, request, true);
+    }
+
+    @Override
+    public OrchestrationOutcome slowPath(Decision decision, OrchestrationRequest request) {
+        return slowPath(decision, request, null);
     }
 
     @Override
@@ -199,71 +243,155 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
         return memoryGateway == null ? null : memoryGateway.updateLongTaskStatus(userId, taskId, status, note, nextCheckAt);
     }
 
+    private OrchestrationOutcome slowPath(Decision decision,
+                                          OrchestrationRequest request,
+                                          OrchestrationOutcome fastOutcome) {
+        if (decision == null || decision.target() == null || decision.target().isBlank()) {
+            return clarificationOutcome("", "missing target");
+        }
+        Map<String, Object> effectiveParams = buildEffectiveParams(decision.params(), request == null ? null : request.skillContext());
+        if (TaskGraph.fromDsl(effectiveParams).isEmpty()) {
+            java.util.Optional<ProceduralMemory.ReusableProcedure> reusableProcedure = matchReusableProcedure(decision, request, effectiveParams);
+            if (reusableProcedure.isPresent() && !reusableProcedure.get().taskGraph().isEmpty()) {
+                return orchestrateTaskGraph(
+                        reusableProcedure.get().taskGraph(),
+                        attachTaskGraph(effectiveParams, reusableProcedure.get().taskGraph()),
+                        request,
+                        "procedural-memory",
+                        decision.intent(),
+                        request == null ? "" : request.userInput()
+                );
+            }
+        }
+        TaskGraph taskGraph = buildSlowPathTaskGraph(
+                decision,
+                effectiveParams,
+                request,
+                fastOutcome == null ? null : fastOutcome.selectedSkill(),
+                fastOutcome == null
+        );
+        if (taskGraph.isEmpty()) {
+            TaskPlan taskPlan = buildSlowPathTaskPlan(
+                    decision,
+                    effectiveParams,
+                    request,
+                    fastOutcome == null ? null : fastOutcome.selectedSkill(),
+                    fastOutcome == null
+            );
+            if (taskPlan.isEmpty()) {
+                return fastOutcome == null ? clarificationOutcome(decision.target(), "无法生成 task plan") : fastOutcome;
+            }
+            return orchestrateTaskPlan(taskPlan, attachTaskPlan(effectiveParams, taskPlan), request, "slow-path", decision.intent(), request == null ? "" : request.userInput());
+        }
+        return orchestrateTaskGraph(taskGraph, attachTaskGraph(effectiveParams, taskGraph), request, "slow-path", decision.intent(), request == null ? "" : request.userInput());
+    }
+
     private OrchestrationOutcome orchestrateTaskPlan(TaskPlan taskPlan,
                                                      Map<String, Object> effectiveParams,
-                                                     OrchestrationRequest request) {
-        if (taskPlan == null || taskPlan.isEmpty()) {
-            return clarificationOutcome("task.plan", "缺少 task steps");
+                                                     OrchestrationRequest request,
+                                                     String strategy,
+                                                     String intent,
+                                                     String trigger) {
+        return orchestrateTaskGraph(TaskGraph.fromDsl(effectiveParams), effectiveParams, request, strategy, intent, trigger);
+    }
+
+    private OrchestrationOutcome orchestrateTaskGraph(TaskGraph taskGraph,
+                                                      Map<String, Object> effectiveParams,
+                                                      OrchestrationRequest request,
+                                                      String strategy,
+                                                      String intent,
+                                                      String trigger) {
+        if (taskGraph == null || taskGraph.isEmpty()) {
+            return clarificationOutcome("task.graph", "缺少 task graph");
+        }
+        if (taskGraph.nodes().isEmpty()) {
+            return clarificationOutcome("task.graph", "缺少 task nodes");
         }
         SkillContext baseContext = request == null
                 ? new SkillContext("", "", effectiveParams)
                 : new SkillContext(request.userId(), request.userInput(), buildEffectiveParams(effectiveParams, request.skillContext()));
-        TaskExecutor.TaskExecutionResult taskResult = taskExecutor.execute(taskPlan, baseContext, (step, stepContext) -> {
-            if ("task.plan".equalsIgnoreCase(step.target())) {
-                return new TaskExecutor.StepExecutionResult(
+        TaskGraphExecutionResult taskResult = dagExecutor.execute(taskGraph, baseContext, (node, nodeContext) -> {
+            if ("task.plan".equalsIgnoreCase(node.target())) {
+                return new DAGExecutor.NodeExecution(
                         SkillResult.failure("task.plan", "nested task.plan is not supported"),
-                        "task.plan",
                         false
                 );
             }
             OrchestrationRequest nestedRequest = request == null
-                    ? new OrchestrationRequest(stepContext.userId(), stepContext.input(), stepContext, Map.of())
-                    : new OrchestrationRequest(request.userId(), request.userInput(), stepContext, request.safeProfileContext());
-            OrchestrationOutcome outcome = orchestrateCandidateChain(
-                    step.target(),
-                    stepContext.attributes(),
+                    ? new OrchestrationRequest(nodeContext.userId(), nodeContext.input(), nodeContext, Map.of())
+                    : new OrchestrationRequest(request.userId(), request.userInput(), nodeContext, request.safeProfileContext());
+            OrchestrationOutcome outcome = orchestrateFastPath(
+                    node.target(),
+                    nodeContext.attributes(),
                     nestedRequest,
-                    maxLoops,
-                    false,
-                    List.of(),
-                    0
+                    false
             );
             SkillResult stepResult = outcome.hasResult() ? outcome.result() : outcome.clarification();
-            return new TaskExecutor.StepExecutionResult(stepResult, outcome.selectedSkill(), outcome.usedFallback());
+            return new DAGExecutor.NodeExecution(stepResult, outcome.usedFallback());
         });
-        if (taskResult.result() == null) {
-            return clarificationOutcome("task.plan", "未能执行任何 task step");
+        if (taskResult.finalResult() == null) {
+            return clarificationOutcome("task.graph", "未能执行任何 task node");
         }
+        if (taskResult.finalResult().success() && proceduralMemory != null) {
+            proceduralMemory.recordSuccess(
+                    request == null ? "" : request.userId(),
+                    intent == null || intent.isBlank() ? taskResult.finalResult().skillName() : intent,
+                    trigger == null ? "" : trigger,
+                    taskGraph,
+                    taskResult.contextAttributes()
+            );
+        }
+        List<PlanStepDto> steps = taskResult.nodeResults().stream()
+                .map(node -> new PlanStepDto(
+                        node.nodeId(),
+                        node.status(),
+                        node.result() == null ? node.target() : node.result().skillName(),
+                        node.result() == null ? "no result" : node.result().output(),
+                        Instant.now().minusMillis(1),
+                        Instant.now()
+                ))
+                .toList();
         ExecutionTraceDto trace = new ExecutionTraceDto(
-                "task-plan",
-                Math.max(0, taskResult.steps().size() - 1),
-                new CritiqueReportDto(taskResult.result().success(),
-                        taskResult.result().success() ? "task plan success" : taskResult.result().output(),
-                        taskResult.usedFallback() ? "fallback" : "none"),
-                taskResult.steps()
+                strategy == null || strategy.isBlank() ? "task-graph" : strategy,
+                Math.max(0, steps.size() - 1),
+                new CritiqueReportDto(taskResult.finalResult().success(),
+                        taskResult.finalResult().success() ? "task graph success" : taskResult.finalResult().output(),
+                        taskResult.nodeResults().stream().anyMatch(TaskGraphExecutionResult.NodeResult::usedFallback) ? "fallback" : "none"),
+                steps
         );
         return new OrchestrationOutcome(
-                taskResult.result(),
-                new SkillDsl(taskResult.selectedSkill() == null ? "task.plan" : taskResult.selectedSkill(), effectiveParams),
+                taskResult.finalResult(),
+                new SkillDsl(taskResult.finalResult().skillName(), effectiveParams),
                 null,
                 trace,
-                taskResult.selectedSkill(),
-                taskResult.usedFallback()
+                taskResult.finalResult().skillName(),
+                taskResult.nodeResults().stream().anyMatch(TaskGraphExecutionResult.NodeResult::usedFallback)
         );
     }
 
-    private OrchestrationOutcome orchestrateCandidateChain(String suggestedTarget,
-                                                           Map<String, Object> params,
-                                                           OrchestrationRequest request,
-                                                           int loopsRemaining,
-                                                           boolean allowParallelMcp,
-                                                           List<PlanStepDto> inheritedSteps,
-                                                           int inheritedReplans) {
+    private java.util.Optional<ProceduralMemory.ReusableProcedure> matchReusableProcedure(Decision decision,
+                                                                                          OrchestrationRequest request,
+                                                                                          Map<String, Object> effectiveParams) {
+        if (proceduralMemory == null || decision == null) {
+            return java.util.Optional.empty();
+        }
+        return proceduralMemory.matchReusableProcedure(
+                request == null ? "" : request.userId(),
+                request == null ? "" : request.userInput(),
+                decision.intent() == null || decision.intent().isBlank() ? decision.target() : decision.intent(),
+                effectiveParams
+        );
+    }
+
+    private OrchestrationOutcome orchestrateFastPath(String suggestedTarget,
+                                                     Map<String, Object> params,
+                                                     OrchestrationRequest request,
+                                                     boolean allowParallelMcp) {
         List<ScoredCandidate> plannedCandidates = buildCandidateChain(suggestedTarget, request);
         if (plannedCandidates.isEmpty()) {
             plannedCandidates = List.of(new ScoredCandidate(suggestedTarget, 1.0, 0.0, 0.0, 0.5, List.of("explicit-target")));
         }
-        List<PlanStepDto> steps = new ArrayList<>(inheritedSteps == null ? List.of() : inheritedSteps);
+        List<PlanStepDto> steps = new ArrayList<>();
         List<CandidateExecution> executableCandidates = new ArrayList<>();
         String lastFailure = null;
         for (ScoredCandidate candidate : plannedCandidates) {
@@ -287,54 +415,48 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
             return clarificationOutcome(suggestedTarget, lastFailure == null ? "缺少可执行候选" : lastFailure);
         }
         if (allowParallelMcp && shouldRunMcpParallel(executableCandidates)) {
-            return orchestrateMcpInParallel(executableCandidates, request, steps, inheritedReplans);
+            return orchestrateMcpInParallel(executableCandidates, request, steps, 0, "fast-path");
         }
-        int replans = inheritedReplans;
-        SkillResult lastResult = null;
-        String lastCandidate = suggestedTarget;
-        boolean usedFallback = false;
-        int rounds = Math.min(maxLoops, executableCandidates.size());
-        for (int i = 0; i < rounds; i++) {
-            CandidateExecution execution = executableCandidates.get(i);
-            lastCandidate = execution.skillName();
-            usedFallback = usedFallback || execution.usedFallback();
-            SkillResult result = executeSingleAttempt(execution, request, steps, "attempt-" + (steps.size() + 1));
-            lastResult = result;
-            if (result.success()) {
-                return successOutcome(result, execution.params(), steps, replans, execution.skillName(), usedFallback);
-            }
-            if (loopsRemaining > 1) {
-                ParamValidator.ValidationResult repaired = paramValidator.repairAfterFailure(
-                        execution.skillName(),
-                        execution.params(),
-                        result,
-                        request
+        CandidateExecution execution = executableCandidates.get(0);
+        int replans = 0;
+        String lastCandidate = execution.skillName();
+        boolean usedFallback = execution.usedFallback();
+        SkillResult result = executeSingleAttempt(execution, request, steps, "fast-attempt-1");
+        if (result.success()) {
+            return successOutcome(result, execution.params(), steps, replans, execution.skillName(), usedFallback, "fast-path");
+        }
+        lastFailure = result.output();
+        if (maxLoops > 1) {
+            ParamValidator.ValidationResult repaired = paramValidator.repairAfterFailure(
+                    execution.skillName(),
+                    execution.params(),
+                    result,
+                    request
+            );
+            if (repaired.valid() && !Objects.equals(repaired.normalizedParams(), execution.params())) {
+                replans++;
+                CandidateExecution retriedExecution = new CandidateExecution(
+                        execution.candidate(),
+                        repaired.normalizedParams(),
+                        execution.usedFallback()
                 );
-                if (repaired.valid() && !Objects.equals(repaired.normalizedParams(), execution.params())) {
-                    replans++;
-                    CandidateExecution retriedExecution = new CandidateExecution(
-                            execution.candidate(),
-                            repaired.normalizedParams(),
-                            execution.usedFallback()
-                    );
-                    SkillResult retryResult = executeSingleAttempt(retriedExecution, request, steps, "retry-" + replans);
-                    lastResult = retryResult;
-                    if (retryResult.success()) {
-                        return successOutcome(retryResult, retriedExecution.params(), steps, replans, retriedExecution.skillName(), usedFallback);
-                    }
+                SkillResult retryResult = executeSingleAttempt(retriedExecution, request, steps, "fast-retry-" + replans);
+                if (retryResult.success()) {
+                    return successOutcome(retryResult, retriedExecution.params(), steps, replans, retriedExecution.skillName(), usedFallback, "fast-path");
                 }
+                result = retryResult;
+                lastFailure = retryResult.output();
             }
-            lastFailure = result.output();
         }
         ExecutionTraceDto trace = new ExecutionTraceDto(
-                "decision-orchestrator",
+                "fast-path",
                 replans,
                 new CritiqueReportDto(false, lastFailure == null ? "unknown" : lastFailure, "fallback"),
                 steps
         );
-        SkillResult failedResult = lastResult == null
+        SkillResult failedResult = result == null
                 ? SkillResult.failure(lastCandidate == null ? suggestedTarget : lastCandidate, lastFailure == null ? "unknown" : lastFailure)
-                : lastResult;
+                : result;
         return new OrchestrationOutcome(
                 failedResult,
                 lastCandidate == null ? null : new SkillDsl(lastCandidate, params),
@@ -370,7 +492,8 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
     private OrchestrationOutcome orchestrateMcpInParallel(List<CandidateExecution> candidates,
                                                           OrchestrationRequest request,
                                                           List<PlanStepDto> inheritedSteps,
-                                                          int inheritedReplans) {
+                                                          int inheritedReplans,
+                                                          String strategy) {
         List<CompletableFuture<SkillResult>> futures = new ArrayList<>();
         for (CandidateExecution candidate : candidates) {
             SkillContext skillContext = buildExecutionContext(request, candidate.params());
@@ -406,7 +529,7 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
                     ? SkillResult.failure("unknown", "MCP 调用失败或超时")
                     : futures.get(0).join();
             ExecutionTraceDto trace = new ExecutionTraceDto(
-                    "decision-orchestrator",
+                    strategy == null || strategy.isBlank() ? "decision-orchestrator" : strategy,
                     inheritedReplans,
                     new CritiqueReportDto(false, "all mcp candidates failed", "failed"),
                     steps
@@ -425,7 +548,7 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
                 .findFirst()
                 .orElse(successes.get(0));
         ExecutionTraceDto trace = new ExecutionTraceDto(
-                "decision-orchestrator",
+                strategy == null || strategy.isBlank() ? "decision-orchestrator" : strategy,
                 inheritedReplans,
                 new CritiqueReportDto(true, "parallel mcp success", "none"),
                 steps
@@ -438,9 +561,10 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
                                                 List<PlanStepDto> steps,
                                                 int replans,
                                                 String selectedSkill,
-                                                boolean usedFallback) {
+                                                boolean usedFallback,
+                                                String strategy) {
         ExecutionTraceDto trace = new ExecutionTraceDto(
-                "decision-orchestrator",
+                strategy == null || strategy.isBlank() ? "decision-orchestrator" : strategy,
                 replans,
                 new CritiqueReportDto(true, "success", usedFallback ? "fallback" : "none"),
                 steps
@@ -461,9 +585,11 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
 
     private List<ScoredCandidate> buildCandidateChain(String suggestedTarget, OrchestrationRequest request) {
         Map<String, ScoredCandidate> ordered = new LinkedHashMap<>();
-        candidatePlanner.plan(suggestedTarget, request).forEach(candidate -> ordered.put(candidate.skillName(), candidate));
         if (suggestedTarget != null && !suggestedTarget.isBlank()) {
-            ordered.putIfAbsent(suggestedTarget, new ScoredCandidate(suggestedTarget, 1.0, 0.0, 0.0, 0.5, List.of("explicit-target")));
+            ordered.put(suggestedTarget, new ScoredCandidate(suggestedTarget, 1.0, 0.0, 0.0, 0.5, List.of("explicit-target")));
+        }
+        candidatePlanner.plan(suggestedTarget, request).forEach(candidate -> ordered.putIfAbsent(candidate.skillName(), candidate));
+        if (suggestedTarget != null && !suggestedTarget.isBlank()) {
             fallbackPlan.fallbacks(suggestedTarget).forEach(fallback ->
                     ordered.putIfAbsent(fallback, new ScoredCandidate(fallback, 0.35, 0.0, 0.0, 0.5, List.of("configured-fallback"))));
         }
@@ -608,20 +734,39 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
         return intent == null ? "" : intent;
     }
 
-    private TaskPlan buildLowConfidenceTaskPlan(Decision decision, OrchestrationRequest request) {
+    private boolean shouldUseSlowPath(Decision decision) {
+        return decision != null && decision.confidence() < TASK_PLAN_LOW_CONFIDENCE_THRESHOLD;
+    }
+
+    private boolean shouldEscalateToSlowPath(OrchestrationOutcome fastOutcome) {
+        return fastOutcome != null
+                && fastOutcome.hasResult()
+                && fastOutcome.result() != null
+                && !fastOutcome.result().success();
+    }
+
+    private TaskPlan buildSlowPathTaskPlan(Decision decision,
+                                           Map<String, Object> effectiveParams,
+                                           OrchestrationRequest request,
+                                           String excludeSkill,
+                                           boolean requireMultipleSteps) {
+        TaskPlan explicitPlan = TaskPlan.from(effectiveParams);
+        if ("task.plan".equalsIgnoreCase(decision == null ? "" : decision.target()) || !explicitPlan.isEmpty()) {
+            return explicitPlan;
+        }
         if (decision == null
-                || decision.confidence() >= TASK_PLAN_LOW_CONFIDENCE_THRESHOLD
                 || decision.target() == null
                 || decision.target().isBlank()
-                || "task.plan".equalsIgnoreCase(decision.target())
                 || isMcpSkill(decision.target())) {
             return new TaskPlan(List.of());
         }
-        List<ScoredCandidate> candidates = candidatePlanner.plan(decision.target(), request).stream()
+        List<ScoredCandidate> candidates = buildCandidateChain(decision.target(), request).stream()
                 .filter(candidate -> candidate != null && candidate.skillName() != null && !candidate.skillName().isBlank())
                 .filter(candidate -> !isMcpSkill(candidate.skillName()))
+                .filter(candidate -> excludeSkill == null || excludeSkill.isBlank() || !excludeSkill.equals(candidate.skillName()))
+                .filter(candidate -> !requireMultipleSteps || !candidate.skillName().equals(decision.target()))
                 .toList();
-        if (candidates.size() < 2) {
+        if (candidates.isEmpty()) {
             return new TaskPlan(List.of());
         }
         List<TaskStep> steps = new ArrayList<>();
@@ -631,13 +776,122 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
             if (!seen.add(candidate.skillName())) {
                 continue;
             }
-            steps.add(new TaskStep("auto-step-" + index, candidate.skillName(), Map.of(), "auto" + index, false));
+            Map<String, Object> stepParams = steps.isEmpty() ? (effectiveParams == null ? Map.of() : effectiveParams) : Map.of();
+            steps.add(new TaskStep("auto-step-" + index, candidate.skillName(), stepParams, "auto" + index, false));
             index++;
             if (steps.size() >= 3) {
                 break;
             }
         }
-        return steps.size() < 2 ? new TaskPlan(List.of()) : new TaskPlan(steps);
+        if (requireMultipleSteps && steps.size() < 2) {
+            return new TaskPlan(List.of());
+        }
+        return new TaskPlan(steps);
+    }
+
+    private TaskGraph buildSlowPathTaskGraph(Decision decision,
+                                             Map<String, Object> effectiveParams,
+                                             OrchestrationRequest request,
+                                             String excludeSkill,
+                                             boolean requireMultipleSteps) {
+        TaskGraph explicitGraph = TaskGraph.fromDsl(effectiveParams);
+        if (!explicitGraph.isEmpty()) {
+            return explicitGraph;
+        }
+        TaskGraph searchGraph = buildSearchTaskGraph(decision, effectiveParams, request, excludeSkill, requireMultipleSteps);
+        if (!searchGraph.isEmpty()) {
+            return searchGraph;
+        }
+        if (decision == null
+                || decision.target() == null
+                || decision.target().isBlank()
+                || isMcpSkill(decision.target())) {
+            return new TaskGraph(List.of(), List.of());
+        }
+        List<ScoredCandidate> candidates = buildCandidateChain(decision.target(), request).stream()
+                .filter(candidate -> candidate != null && candidate.skillName() != null && !candidate.skillName().isBlank())
+                .filter(candidate -> !isMcpSkill(candidate.skillName()))
+                .filter(candidate -> excludeSkill == null || excludeSkill.isBlank() || !excludeSkill.equals(candidate.skillName()))
+                .filter(candidate -> !requireMultipleSteps || !candidate.skillName().equals(decision.target()))
+                .toList();
+        if (candidates.isEmpty()) {
+            return new TaskGraph(List.of(), List.of());
+        }
+        List<TaskNode> nodes = new ArrayList<>();
+        List<String> path = new ArrayList<>();
+        LinkedHashSet<String> seen = new LinkedHashSet<>();
+        for (ScoredCandidate candidate : candidates) {
+            if (!seen.add(candidate.skillName())) {
+                continue;
+            }
+            path.add(candidate.skillName());
+            if (path.size() >= 3) {
+                break;
+            }
+        }
+        if (requireMultipleSteps && path.size() < 2) {
+            return new TaskGraph(List.of(), List.of());
+        }
+        TaskGraph linearGraph = TaskGraph.linear(path, effectiveParams);
+        nodes.addAll(linearGraph.nodes());
+        return new TaskGraph(nodes, linearGraph.edges());
+    }
+
+    private TaskGraph buildSearchTaskGraph(Decision decision,
+                                           Map<String, Object> effectiveParams,
+                                           OrchestrationRequest request,
+                                           String excludeSkill,
+                                           boolean requireMultipleSteps) {
+        if (searchPlanner == null || decision == null || decision.target() == null || decision.target().isBlank()) {
+            return new TaskGraph(List.of(), List.of());
+        }
+        List<SearchCandidate> candidates = searchPlanner.search(new SearchPlanningRequest(
+                request == null ? "" : request.userId(),
+                request == null ? "" : request.userInput(),
+                decision.target(),
+                effectiveParams,
+                3,
+                3
+        ));
+        if (candidates.isEmpty()) {
+            return new TaskGraph(List.of(), List.of());
+        }
+        List<String> path = candidates.get(0).path().stream()
+                .filter(skill -> excludeSkill == null || excludeSkill.isBlank() || !excludeSkill.equals(skill))
+                .filter(skill -> !requireMultipleSteps || !decision.target().equals(skill))
+                .distinct()
+                .limit(3)
+                .toList();
+        if (path.isEmpty() || (requireMultipleSteps && path.size() < 2)) {
+            return new TaskGraph(List.of(), List.of());
+        }
+        return TaskGraph.linear(path, effectiveParams);
+    }
+
+    private Map<String, Object> attachTaskGraph(Map<String, Object> effectiveParams, TaskGraph taskGraph) {
+        Map<String, Object> enriched = new LinkedHashMap<>(effectiveParams == null ? Map.of() : effectiveParams);
+        enriched.put("nodes", taskGraph.nodes().stream()
+                .map(node -> Map.of(
+                        "id", node.id(),
+                        "target", node.target(),
+                        "params", node.params(),
+                        "saveAs", node.saveAs(),
+                        "optional", node.optional(),
+                        "dependsOn", node.dependsOn()))
+                .toList());
+        enriched.put("edges", taskGraph.edges().stream()
+                .map(edge -> Map.of("from", edge.from(), "to", edge.to()))
+                .toList());
+        enriched.put("tasks", taskGraph.nodes().stream()
+                .map(node -> Map.of(
+                        "id", node.id(),
+                        "target", node.target(),
+                        "params", node.params(),
+                        "saveAs", node.saveAs(),
+                        "optional", node.optional(),
+                        "dependsOn", node.dependsOn()))
+                .toList());
+        return Map.copyOf(enriched);
     }
 
     private Map<String, Object> attachTaskPlan(Map<String, Object> effectiveParams, TaskPlan taskPlan) {

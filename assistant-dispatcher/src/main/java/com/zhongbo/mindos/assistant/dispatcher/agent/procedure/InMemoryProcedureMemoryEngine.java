@@ -13,6 +13,9 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
+import org.springframework.stereotype.Component;
+
+@Component
 public class InMemoryProcedureMemoryEngine implements ProcedureMemoryEngine {
 
     private final Map<String, Map<String, ProcedureTemplate>> templatesByUser = new ConcurrentHashMap<>();
@@ -27,13 +30,13 @@ public class InMemoryProcedureMemoryEngine implements ProcedureMemoryEngine {
     }
 
     @Override
-    public void recordSuccessfulGraph(String userId,
-                                      String intent,
-                                      String trigger,
-                                      TaskGraph graph,
-                                      Map<String, Object> contextAttributes) {
+    public Procedure recordSuccessfulGraph(String userId,
+                                           String intent,
+                                           String trigger,
+                                           TaskGraph graph,
+                                           Map<String, Object> contextAttributes) {
         if (graph == null || graph.isEmpty()) {
-            return;
+            return new Procedure("", safeText(intent), safeText(trigger), List.of(), 0.0, 0);
         }
         String templateId = buildTemplateId(intent, graph);
         Map<String, ProcedureTemplate> userTemplates = templatesByUser.computeIfAbsent(safeUserId(userId), ignored -> new ConcurrentHashMap<>());
@@ -64,6 +67,7 @@ public class InMemoryProcedureMemoryEngine implements ProcedureMemoryEngine {
                     null
             ));
         }
+        return toProcedure(template);
     }
 
     @Override
@@ -97,6 +101,17 @@ public class InMemoryProcedureMemoryEngine implements ProcedureMemoryEngine {
     private String buildTemplateId(String intent, TaskGraph graph) {
         String signature = graph.nodes().stream().map(TaskNode::target).reduce((left, right) -> left + "->" + right).orElse("graph");
         return safeText(intent) + ":" + Math.abs(signature.hashCode());
+    }
+
+    private Procedure toProcedure(ProcedureTemplate template) {
+        return new Procedure(
+                template.id(),
+                template.intent(),
+                template.trigger(),
+                template.steps().stream().map(ProcedureStepTemplate::target).toList(),
+                template.successRate(),
+                template.reuseCount()
+        );
     }
 
     private String normalize(String value) {

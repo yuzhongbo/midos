@@ -15,11 +15,17 @@ class TaskGraphExecutorTest {
 
     @Test
     void shouldExecuteDagInDependencyOrder() {
-        TaskGraph graph = new TaskGraph(List.of(
-                new TaskNode("fetch", "student.get", Map.of(), List.of(), "student", false),
-                new TaskNode("analyze", "student.analyze", Map.of("source", "${task.student.output}"), List.of("fetch"), "analysis", false),
-                new TaskNode("plan", "teaching.plan", Map.of("input", "${task.analysis.output}"), List.of("analyze"), "plan", false)
-        ));
+        TaskGraph graph = new TaskGraph(
+                List.of(
+                        new TaskNode("fetch", "student.get", Map.of(), List.of(), "student", false),
+                        new TaskNode("analyze", "student.analyze", Map.of("source", "${task.student.output}"), List.of("fetch"), "analysis", false),
+                        new TaskNode("plan", "teaching.plan", Map.of("input", "${task.analysis.output}"), List.of("analyze"), "plan", false)
+                ),
+                List.of(
+                        new TaskEdge("fetch", "analyze"),
+                        new TaskEdge("analyze", "plan")
+                )
+        );
 
         TaskGraphExecutionResult result = new TaskGraphExecutor().execute(
                 graph,
@@ -37,10 +43,16 @@ class TaskGraphExecutorTest {
 
     @Test
     void shouldRejectCycle() {
-        TaskGraph graph = new TaskGraph(List.of(
-                new TaskNode("a", "step.a", Map.of(), List.of("b"), "", false),
-                new TaskNode("b", "step.b", Map.of(), List.of("a"), "", false)
-        ));
+        TaskGraph graph = new TaskGraph(
+                List.of(
+                        new TaskNode("a", "step.a", Map.of(), List.of("b"), "", false),
+                        new TaskNode("b", "step.b", Map.of(), List.of("a"), "", false)
+                ),
+                List.of(
+                        new TaskEdge("a", "b"),
+                        new TaskEdge("b", "a")
+                )
+        );
         assertThrows(IllegalArgumentException.class,
                 () -> new TaskGraphExecutor().execute(graph, new SkillContext("u1", "cycle", Map.of()), (node, context) -> null));
     }

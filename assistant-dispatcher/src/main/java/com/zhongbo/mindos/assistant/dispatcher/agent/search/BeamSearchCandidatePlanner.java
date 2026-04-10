@@ -7,16 +7,21 @@ import com.zhongbo.mindos.assistant.memory.graph.GraphMemoryView;
 import com.zhongbo.mindos.assistant.memory.graph.MemoryNode;
 import com.zhongbo.mindos.assistant.memory.model.SkillUsageStats;
 import com.zhongbo.mindos.assistant.skill.SkillEngine;
+import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
-import java.util.Set;
 
+@Component
 public class BeamSearchCandidatePlanner implements SearchPlanner {
+
+    private static final double KEYWORD_WEIGHT = 0.40;
+    private static final double SUCCESS_RATE_WEIGHT = 0.25;
+    private static final double MEMORY_WEIGHT = 0.20;
+    private static final double PATH_COST_WEIGHT = 0.15;
 
     private final SkillEngine skillEngine;
     private final MemoryGateway memoryGateway;
@@ -38,62 +43,122 @@ public class BeamSearchCandidatePlanner implements SearchPlanner {
         if (request == null) {
             return List.of();
         }
-        List<Expansion> expansions = collectExpansions(request);
-        if (expansions.isEmpty()) {
+        List<PlanNode> seedNodes = collectPlanNodes(request);
+        if (seedNodes.isEmpty()) {
             return List.of();
         }
-        List<SearchState> beam = expansions.stream()
-                .map(expansion -> SearchState.seed(expansion.skillName, expansion.score, expansion.reason))
-                .sorted((left, right) -> Double.compare(right.score, left.score))
+        List<PlanPath> beam = seedNodes.stream()
+                .map(PlanPath::seed)
+                .sorted((left, right) -> Double.compare(pathRank(right), pathRank(left)))
                 .limit(request.beamWidth())
                 .toList();
         for (int depth = 1; depth < request.maxDepth(); depth++) {
-            List<SearchState> nextBeam = new ArrayList<>(beam);
-            for (SearchState state : beam) {
-                for (Expansion expansion : expansions) {
-                    if (state.path.contains(expansion.skillName)) {
+            List<PlanPath> nextBeam = new ArrayList<>(beam);
+            for (PlanPath path : beam) {
+                for (PlanNode nextNode : seedNodes) {
+                    if (path.containsSkill(nextNode.skillName())) {
                         continue;
                     }
-                    nextBeam.add(state.extend(expansion.skillName, expansion.score * 0.85, expansion.reason));
+                    nextBeam.add(path.extend(withPathCost(nextNode, path.nodes().size() + 1)));
                 }
             }
-            nextBeam.sort((left, right) -> Double.compare(right.score, left.score));
+            nextBeam.sort((left, right) -> Double.compare(pathRank(right), pathRank(left)));
             beam = nextBeam.stream().limit(request.beamWidth()).toList();
         }
         return beam.stream()
-                .map(state -> new SearchCandidate(state.path, round(state.score), List.copyOf(state.reasons), Map.of("length", state.path.size())))
+                .map(SearchCandidate::from)
                 .toList();
     }
 
-    private List<Expansion> collectExpansions(SearchPlanningRequest request) {
-        Map<String, Expansion> expansions = new LinkedHashMap<>();
+    private List<PlanNode> collectPlanNodes(SearchPlanningRequest request) {
+        Map<String, CandidateSignal> signals = new LinkedHashMap<>();
         if (!request.suggestedTarget().isBlank()) {
-            expansions.put(request.suggestedTarget(), new Expansion(request.suggestedTarget(), 0.95, "explicit-target"));
+            signals.computeIfAbsent(request.suggestedTarget(), CandidateSignal::new).reasons.add("explicit-target");
+            signals.get(request.suggestedTarget()).keywordScore = Math.max(signals.get(request.suggestedTarget()).keywordScore, 0.95);
         }
         if (skillEngine != null && !request.userInput().isBlank()) {
             skillEngine.detectSkillCandidates(request.userInput(), request.beamWidth() * 3).forEach(candidate ->
-                    expansions.putIfAbsent(candidate.skillName(), new Expansion(candidate.skillName(), normalize(candidate.score(), 1000.0), "keyword-score")));
+                    signals.computeIfAbsent(candidate.skillName(), CandidateSignal::new).mergeKeyword(normalize(candidate.score(), 1000.0), "keyword-score"));
         }
         if (memoryGateway != null && !request.userId().isBlank()) {
             for (SkillUsageStats stats : memoryGateway.skillUsageStats(request.userId())) {
-                expansions.putIfAbsent(stats.skillName(), new Expansion(stats.skillName(), normalize(stats.successCount(), Math.max(1.0, stats.totalCount())), "procedural-prior"));
+                CandidateSignal signal = signals.computeIfAbsent(stats.skillName(), CandidateSignal::new);
+                signal.mergeSuccessRate(normalize(stats.successCount(), Math.max(1.0, stats.totalCount())), "success-rate");
+                signal.mergeMemory(normalize(stats.totalCount(), maxUsageCount(request.userId())), "memory-usage");
             }
         }
         if (graphMemoryView != null && !request.userInput().isBlank()) {
             for (MemoryNode node : graphMemoryView.searchNodes(request.userId(), request.userInput(), request.beamWidth() * 2)) {
                 String candidate = extractCandidateFromNode(node);
                 if (!candidate.isBlank()) {
-                    expansions.putIfAbsent(candidate, new Expansion(candidate, 0.72, "graph-memory"));
+                    signals.computeIfAbsent(candidate, CandidateSignal::new).mergeMemory(0.72, "graph-memory");
                 }
             }
         }
         if (procedureMemoryEngine != null) {
             for (ProcedureMatch match : procedureMemoryEngine.matchTemplates(request.userId(), request.userInput(), request.suggestedTarget(), request.beamWidth())) {
                 match.template().steps().stream().map(step -> step.target()).filter(target -> !target.isBlank()).findFirst()
-                        .ifPresent(target -> expansions.putIfAbsent(target, new Expansion(target, Math.min(0.88, match.score()), "procedure-template")));
+                        .ifPresent(target -> signals.computeIfAbsent(target, CandidateSignal::new).mergeMemory(Math.min(0.88, match.score()), "procedure-template"));
             }
         }
-        return List.copyOf(expansions.values());
+        List<PlanNode> planNodes = new ArrayList<>();
+        for (CandidateSignal signal : signals.values()) {
+            double baseScore = KEYWORD_WEIGHT * signal.keywordScore
+                    + SUCCESS_RATE_WEIGHT * defaulted(signal.successRateScore, 0.50)
+                    + MEMORY_WEIGHT * signal.memoryScore
+                    - PATH_COST_WEIGHT * signal.pathCost;
+            planNodes.add(new PlanNode(
+                    signal.skillName,
+                    round(signal.keywordScore),
+                    round(defaulted(signal.successRateScore, 0.50)),
+                    round(signal.memoryScore),
+                    round(signal.pathCost),
+                    round(baseScore),
+                    List.copyOf(signal.reasons)
+            ));
+        }
+        planNodes.sort((left, right) -> Double.compare(right.totalScore(), left.totalScore()));
+        return List.copyOf(planNodes);
+    }
+
+    private PlanNode withPathCost(PlanNode node, int depth) {
+        double pathCost = round((depth - 1) * 0.12);
+        double totalScore = KEYWORD_WEIGHT * node.keywordScore()
+                + SUCCESS_RATE_WEIGHT * node.successRateScore()
+                + MEMORY_WEIGHT * node.memoryScore()
+                - PATH_COST_WEIGHT * pathCost;
+        List<String> reasons = new ArrayList<>(node.reasons());
+        reasons.add("path-cost=" + pathCost);
+        return new PlanNode(
+                node.skillName(),
+                node.keywordScore(),
+                node.successRateScore(),
+                node.memoryScore(),
+                pathCost,
+                round(totalScore),
+                reasons
+        );
+    }
+
+    private double pathRank(PlanPath path) {
+        if (path == null) {
+            return 0.0;
+        }
+        return round(path.score() - path.pathCost() * PATH_COST_WEIGHT);
+    }
+
+    private long maxUsageCount(String userId) {
+        if (memoryGateway == null || userId == null || userId.isBlank()) {
+            return 1L;
+        }
+        return Math.max(1L, memoryGateway.skillUsageStats(userId).stream()
+                .mapToLong(SkillUsageStats::totalCount)
+                .max()
+                .orElse(1L));
+    }
+
+    private double defaulted(double value, double fallback) {
+        return value <= 0.0 ? fallback : value;
     }
 
     private String extractCandidateFromNode(MemoryNode node) {
@@ -116,30 +181,31 @@ public class BeamSearchCandidatePlanner implements SearchPlanner {
         return Math.round(value * 1000.0) / 1000.0;
     }
 
-    private record Expansion(String skillName, double score, String reason) {
-    }
+    private static final class CandidateSignal {
+        private final String skillName;
+        private double keywordScore;
+        private double successRateScore;
+        private double memoryScore;
+        private double pathCost;
+        private final LinkedHashSet<String> reasons = new LinkedHashSet<>();
 
-    private static final class SearchState {
-        private final List<String> path;
-        private final double score;
-        private final Set<String> reasons;
-
-        private SearchState(List<String> path, double score, Set<String> reasons) {
-            this.path = List.copyOf(path);
-            this.score = score;
-            this.reasons = Set.copyOf(reasons);
+        private CandidateSignal(String skillName) {
+            this.skillName = skillName == null ? "" : skillName.trim();
         }
 
-        private static SearchState seed(String skillName, double score, String reason) {
-            return new SearchState(List.of(skillName), score, Set.of(reason));
+        private void mergeKeyword(double score, String reason) {
+            keywordScore = Math.max(keywordScore, score);
+            reasons.add(reason);
         }
 
-        private SearchState extend(String skillName, double increment, String reason) {
-            List<String> nextPath = new ArrayList<>(path);
-            nextPath.add(skillName);
-            Set<String> nextReasons = new LinkedHashSet<>(reasons);
-            nextReasons.add(reason);
-            return new SearchState(nextPath, score + increment, nextReasons);
+        private void mergeSuccessRate(double score, String reason) {
+            successRateScore = Math.max(successRateScore, score);
+            reasons.add(reason);
+        }
+
+        private void mergeMemory(double score, String reason) {
+            memoryScore = Math.max(memoryScore, score);
+            reasons.add(reason);
         }
     }
 }

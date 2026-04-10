@@ -13,4 +13,20 @@ public record SearchCandidate(List<String> path,
         reasons = reasons == null ? List.of() : List.copyOf(reasons);
         metadata = metadata == null ? Map.of() : Map.copyOf(metadata);
     }
+
+    public static SearchCandidate from(PlanPath planPath) {
+        if (planPath == null) {
+            return new SearchCandidate(List.of(), 0.0, List.of(), Map.of());
+        }
+        return new SearchCandidate(
+                planPath.skills(),
+                round(planPath.score()),
+                planPath.reasons(),
+                Map.of("pathCost", round(planPath.pathCost()), "steps", planPath.nodes().size())
+        );
+    }
+
+    private static double round(double value) {
+        return Math.round(value * 1000.0) / 1000.0;
+    }
 }

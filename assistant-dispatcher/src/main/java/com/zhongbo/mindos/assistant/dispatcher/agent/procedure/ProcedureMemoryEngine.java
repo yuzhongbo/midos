@@ -7,11 +7,11 @@ import java.util.Map;
 
 public interface ProcedureMemoryEngine {
 
-    void recordSuccessfulGraph(String userId,
-                               String intent,
-                               String trigger,
-                               TaskGraph graph,
-                               Map<String, Object> contextAttributes);
+    Procedure recordSuccessfulGraph(String userId,
+                                    String intent,
+                                    String trigger,
+                                    TaskGraph graph,
+                                    Map<String, Object> contextAttributes);
 
     List<ProcedureMatch> matchTemplates(String userId,
                                         String userInput,
