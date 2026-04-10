@@ -1046,13 +1046,13 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
         List<String> reasons = List.of("fallback-router", execution.usedFallback() ? "fallback" : "direct");
         String candidateName = execution.skillName();
         if (isMcpSkill(candidateName)) {
-            return AgentRouter.AgentRouteDecision.mcp("", "", "", execution.candidate() == null ? 0.5 : execution.candidate().finalScore(), reasons, Map.of("routeType", "mcp-tool"));
+            return AgentRouter.AgentRouteDecision.mcp("", "", "", execution.candidate() == null ? 0.5 : execution.candidate().finalScore(), reasons, Map.of("routeType", "mcp"));
         }
         double score = execution.candidate() == null ? 0.5 : execution.candidate().finalScore();
         if (decision != null && decision.confidence() >= TASK_PLAN_LOW_CONFIDENCE_THRESHOLD) {
-            return AgentRouter.AgentRouteDecision.local("local", "cost", "", score, reasons, Map.of("routeType", "local-model", "llmProvider", "local", "llmPreset", "cost"));
+            return AgentRouter.AgentRouteDecision.local("local", "cost", "", score, reasons, Map.of("routeType", "local", "llmProvider", "local", "llmPreset", "cost"));
         }
-        return AgentRouter.AgentRouteDecision.remote("", "", "", score, reasons, Map.of("routeType", "remote-model"));
+        return AgentRouter.AgentRouteDecision.remote("", "", "", score, reasons, Map.of("routeType", "remote"));
     }
 
     private Map<String, Object> applyContextPatch(Map<String, Object> baseContext, Map<String, Object> patch) {
