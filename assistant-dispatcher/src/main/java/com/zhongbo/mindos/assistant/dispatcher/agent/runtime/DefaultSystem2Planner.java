@@ -7,11 +7,13 @@ import com.zhongbo.mindos.assistant.dispatcher.agent.search.SearchPlanner;
 import com.zhongbo.mindos.assistant.dispatcher.agent.search.SearchPlanningRequest;
 import com.zhongbo.mindos.assistant.dispatcher.agent.taskgraph.TaskGraph;
 import com.zhongbo.mindos.assistant.dispatcher.agent.taskgraph.TaskNode;
+import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
+@Component
 public class DefaultSystem2Planner implements System2Planner {
 
     private final SearchPlanner searchPlanner;

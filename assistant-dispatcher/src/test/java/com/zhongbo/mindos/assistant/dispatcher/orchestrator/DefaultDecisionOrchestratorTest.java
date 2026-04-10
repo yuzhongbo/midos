@@ -5,6 +5,10 @@ import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.dispatcher.decision.Decision;
 import com.zhongbo.mindos.assistant.dispatcher.agent.procedure.InMemoryProcedureMemoryEngine;
 import com.zhongbo.mindos.assistant.dispatcher.agent.procedure.ProceduralMemory;
+import com.zhongbo.mindos.assistant.dispatcher.agent.taskgraph.TaskGraph;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.step5.RecoveryAction;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.step5.RecoveryManager;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.step5.RecoveryManager.RecoveryReport;
 import com.zhongbo.mindos.assistant.memory.MemoryGateway;
 import com.zhongbo.mindos.assistant.memory.graph.GraphMemory;
 import com.zhongbo.mindos.assistant.skill.DefaultSkillExecutionGateway;
@@ -18,6 +22,7 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -593,6 +598,209 @@ class DefaultDecisionOrchestratorTest {
         assertEquals("slow-path", outcome.trace().strategy());
         assertEquals("todo.create.backup", outcome.result().skillName());
         assertEquals("backup created:demo", outcome.result().output());
+    }
+
+    @Test
+    void shouldRetrySingleSkillAfterRecoveryPlan() {
+        AtomicInteger calls = new AtomicInteger();
+        Skill flaky = new Skill() {
+            @Override
+            public String name() {
+                return "flaky.plan";
+            }
+
+            @Override
+            public String description() {
+                return "flaky.plan";
+            }
+
+            @Override
+            public SkillResult run(SkillContext context) {
+                int call = calls.incrementAndGet();
+                if (call == 1) {
+                    return SkillResult.failure(name(), "transient failure");
+                }
+                return SkillResult.success(name(), "recovered on call " + call);
+            }
+
+            @Override
+            public int routingScore(String input) {
+                return 980;
+            }
+        };
+        SkillRegistry registry = new SkillRegistry(List.of(flaky));
+        SkillDslExecutor dslExecutor = new SkillDslExecutor(registry);
+        DefaultDecisionOrchestrator orchestrator = new DefaultDecisionOrchestrator(
+                new SimpleCandidatePlanner(new SkillEngine(registry, dslExecutor), noopGateway(), 3, 0.40, 0.35, 0.15, 0.10),
+                new SimpleParamValidator(new InMemoryParamSchemaRegistry(), noopGateway()),
+                new SimpleConversationLoop(),
+                new SimpleFallbackPlan(),
+                new DefaultSkillExecutionGateway(registry, dslExecutor),
+                noopGateway(),
+                noopRecorder(),
+                new TaskExecutor(3),
+                false,
+                500,
+                0,
+                "",
+                3
+        );
+        orchestrator.setRecoveryManager(new RecoveryManager() {
+            @Override
+            public RecoveryReport planRetry(String traceId, String skillName, SkillResult failure, Map<String, Object> currentContext, List<com.zhongbo.mindos.assistant.common.dto.PlanStepDto> executedSteps) {
+                RecoveryAction action =
+                        RecoveryAction.retry(
+                                "retry-node",
+                                skillName,
+                                1,
+                                List.of("task.last.output", "task.last.skill", "task.last.success"),
+                                Map.of("recovery.stage", "retry"),
+                                "transient"
+                        );
+                return new RecoveryReport(
+                        traceId,
+                        "retry",
+                        false,
+                        null,
+                        List.of(action),
+                        List.of(action.nodeId()),
+                        List.of(),
+                        List.of(),
+                        action.clearKeys(),
+                        action.contextPatch(),
+                        new TaskGraph(List.of(), List.of()),
+                        "retry " + skillName
+                );
+            }
+
+            @Override
+            public RecoveryReport planRollback(String traceId, TaskGraph graph, com.zhongbo.mindos.assistant.dispatcher.agent.taskgraph.TaskGraphExecutionResult result, Map<String, Object> currentContext) {
+                return RecoveryReport.noop(traceId, "rollback", "not used");
+            }
+        });
+
+        DecisionOrchestrator.OrchestrationOutcome outcome = orchestrator.orchestrate(
+                new Decision("flaky", "flaky.plan", Map.of(), 0.92, false),
+                request()
+        );
+
+        assertTrue(outcome.hasResult());
+        assertTrue(outcome.result().success());
+        assertEquals("flaky.plan", outcome.result().skillName());
+        assertEquals("recovered on call 2", outcome.result().output());
+        assertEquals(2, outcome.trace().steps().size());
+    }
+
+    @Test
+    void shouldFallbackTaskGraphAfterRecoveryPlan() {
+        Skill primary = new Skill() {
+            @Override
+            public String name() {
+                return "primary.fetch";
+            }
+
+            @Override
+            public String description() {
+                return "primary.fetch";
+            }
+
+            @Override
+            public SkillResult run(SkillContext context) {
+                return SkillResult.failure(name(), "primary failed");
+            }
+
+            @Override
+            public int routingScore(String input) {
+                return 990;
+            }
+        };
+        Skill backup = new Skill() {
+            @Override
+            public String name() {
+                return "backup.fetch";
+            }
+
+            @Override
+            public String description() {
+                return "backup.fetch";
+            }
+
+            @Override
+            public SkillResult run(SkillContext context) {
+                return SkillResult.success(name(), "backup recovered");
+            }
+
+            @Override
+            public int routingScore(String input) {
+                return 900;
+            }
+        };
+        SkillRegistry registry = new SkillRegistry(List.of(primary, backup));
+        SkillDslExecutor dslExecutor = new SkillDslExecutor(registry);
+        DefaultDecisionOrchestrator orchestrator = new DefaultDecisionOrchestrator(
+                new SimpleCandidatePlanner(new SkillEngine(registry, dslExecutor), noopGateway(), 3, 0.40, 0.35, 0.15, 0.10),
+                new SimpleParamValidator(new InMemoryParamSchemaRegistry(), noopGateway()),
+                new SimpleConversationLoop(),
+                new SimpleFallbackPlan(),
+                new DefaultSkillExecutionGateway(registry, dslExecutor),
+                noopGateway(),
+                noopRecorder(),
+                new TaskExecutor(3),
+                false,
+                500,
+                0,
+                "",
+                3
+        );
+        orchestrator.setRecoveryManager(new RecoveryManager() {
+            @Override
+            public RecoveryReport planRetry(String traceId, String skillName, SkillResult failure, Map<String, Object> currentContext, List<com.zhongbo.mindos.assistant.common.dto.PlanStepDto> executedSteps) {
+                return RecoveryReport.noop(traceId, "retry", "not used");
+            }
+
+            @Override
+            public RecoveryReport planRollback(String traceId, TaskGraph graph, com.zhongbo.mindos.assistant.dispatcher.agent.taskgraph.TaskGraphExecutionResult result, Map<String, Object> currentContext) {
+                RecoveryAction action =
+                        RecoveryAction.fallback(
+                                "fetch",
+                                "primary.fetch",
+                                "backup.fetch",
+                                "",
+                                List.of("task.fetch.output", "task.fetch.skill", "task.fetch.success"),
+                                Map.of("recovery.stage", "fallback"),
+                                "primary failed"
+                        );
+                return new RecoveryReport(
+                        traceId,
+                        "rollback",
+                        true,
+                        null,
+                        List.of(action),
+                        List.of(),
+                        List.of(action.nodeId()),
+                        List.of(),
+                        action.clearKeys(),
+                        action.contextPatch(),
+                        graph,
+                        "fallback to backup"
+                );
+            }
+        });
+
+        DecisionOrchestrator.OrchestrationOutcome outcome = orchestrator.orchestrate(
+                new Decision("plan", "task.plan", Map.of(
+                        "nodes", List.of(
+                                Map.of("id", "fetch", "target", "primary.fetch")
+                        )
+                ), 0.55, false),
+                request()
+        );
+
+        assertTrue(outcome.hasResult());
+        assertTrue(outcome.result().success());
+        assertEquals("backup.fetch", outcome.result().skillName());
+        assertEquals("backup recovered", outcome.result().output());
+        assertEquals(1, outcome.trace().steps().size());
     }
 
     @Test

@@ -9,6 +9,7 @@ import com.zhongbo.mindos.assistant.dispatcher.agent.search.SearchPlanner;
 import com.zhongbo.mindos.assistant.dispatcher.agent.search.SearchPlanningRequest;
 import com.zhongbo.mindos.assistant.dispatcher.agent.procedure.ProceduralMemory;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.step5.AgentRouter;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.step5.RecoveryAction;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.step5.PlannerLearningStore;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.step5.RecoveryManager;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.step5.TraceLogger;
@@ -360,29 +361,54 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
         SkillContext baseContext = request == null
                 ? new SkillContext("", "", effectiveParams)
                 : new SkillContext(request.userId(), request.userInput(), buildEffectiveParams(effectiveParams, request.skillContext()));
-        TaskGraphExecutionResult taskResult = dagExecutor.execute(taskGraph, baseContext, (node, nodeContext) -> {
-            if ("task.plan".equalsIgnoreCase(node.target())) {
-                return new DAGExecutor.NodeExecution(
-                        SkillResult.failure("task.plan", "nested task.plan is not supported"),
-                        false
-                );
-            }
-            OrchestrationRequest nestedRequest = request == null
-                    ? new OrchestrationRequest(nodeContext.userId(), nodeContext.input(), nodeContext, Map.of())
-                    : new OrchestrationRequest(request.userId(), request.userInput(), nodeContext, request.safeProfileContext());
-            OrchestrationOutcome outcome = orchestrateFastPath(
-                    decision,
-                    node.target(),
-                    nodeContext.attributes(),
-                    nestedRequest,
-                    false,
-                    traceId
-            );
-            SkillResult stepResult = outcome.hasResult() ? outcome.result() : outcome.clarification();
-            return new DAGExecutor.NodeExecution(stepResult, outcome.usedFallback());
-        });
+        TaskGraphExecutionResult taskResult = executeTaskGraphAttempt(
+                decision,
+                taskGraph,
+                baseContext,
+                request,
+                traceId,
+                Map.of(),
+                Map.of()
+        );
         if (taskResult.finalResult() == null) {
             return clarificationOutcome("task.graph", "未能执行任何 task node");
+        }
+        RecoveryManager.RecoveryReport rollbackReport = null;
+        if (!taskResult.finalResult().success()) {
+            rollbackReport = recoveryManager == null
+                    ? RecoveryManager.RecoveryReport.noop(traceId, "rollback", "recovery manager unavailable")
+                    : recoveryManager.planRollback(traceId, taskGraph, taskResult, taskResult.contextAttributes());
+            Map<String, Object> rollbackTrace = new LinkedHashMap<>();
+            if (rollbackReport != null) {
+                rollbackTrace.put("summary", rollbackReport.summary());
+                rollbackTrace.put("clearKeys", rollbackReport.clearKeys());
+                rollbackTrace.put("contextPatch", rollbackReport.contextPatch());
+                rollbackTrace.put("retryNodeIds", rollbackReport.retryNodeIds());
+                rollbackTrace.put("fallbackNodeIds", rollbackReport.fallbackNodeIds());
+                rollbackTrace.put("skippedNodeIds", rollbackReport.skippedNodeIds());
+            }
+            traceEvent(traceId, "recovery", "rollback", rollbackTrace);
+            if (rollbackReport != null && rollbackReport.shouldReexecute()) {
+                Map<String, Object> recoveryAttributes = buildRecoveryContext(taskResult.contextAttributes(), rollbackReport);
+                SkillContext recoveryBaseContext = new SkillContext(baseContext.userId(), baseContext.input(), recoveryAttributes);
+                TaskGraphExecutionResult recoveredResult = executeTaskGraphAttempt(
+                        decision,
+                        rollbackReport.hasRecoveryGraph() ? rollbackReport.recoveryGraph() : taskGraph,
+                        recoveryBaseContext,
+                        request,
+                        traceId,
+                        rollbackReport.actionMap(),
+                        indexNodeResults(taskResult)
+                );
+                traceEvent(traceId, "recovery", "reexecute", Map.of(
+                        "success", recoveredResult.finalResult() != null && recoveredResult.finalResult().success(),
+                        "actions", rollbackReport.actions().size(),
+                        "summary", rollbackReport.summary()
+                ));
+                if (recoveredResult.finalResult() != null) {
+                    taskResult = recoveredResult;
+                }
+            }
         }
         if (taskResult.finalResult().success() && proceduralMemory != null) {
             proceduralMemory.recordSuccess(
@@ -392,17 +418,6 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
                     taskGraph,
                     taskResult.contextAttributes()
             );
-        } else if (!taskResult.finalResult().success()) {
-            RecoveryManager.RecoveryReport rollbackReport = recoveryManager == null
-                    ? RecoveryManager.RecoveryReport.noop(traceId, "rollback", "recovery manager unavailable")
-                    : recoveryManager.planRollback(traceId, taskGraph, taskResult, taskResult.contextAttributes());
-            Map<String, Object> rollbackTrace = new LinkedHashMap<>();
-            if (rollbackReport != null) {
-                rollbackTrace.put("summary", rollbackReport.summary());
-                rollbackTrace.put("clearKeys", rollbackReport.clearKeys());
-                rollbackTrace.put("contextPatch", rollbackReport.contextPatch());
-            }
-            traceEvent(traceId, "recovery", "rollback", rollbackTrace);
         }
         List<PlanStepDto> steps = taskResult.nodeResults().stream()
                 .map(node -> new PlanStepDto(
@@ -559,8 +574,6 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
                 startedAt,
                 finishedAt
         ));
-        long durationMs = Math.max(0L, java.time.Duration.between(startedAt, finishedAt).toMillis());
-        observeLearning(request, execution, prepared.routeDecision(), result, durationMs, traceId);
         if (!result.success()) {
             RecoveryManager.RecoveryReport retryReport = recoveryManager == null
                     ? RecoveryManager.RecoveryReport.noop(traceId, "retry", "recovery manager unavailable")
@@ -572,12 +585,44 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
                 retryTrace.put("contextPatch", retryReport.contextPatch());
             }
             traceEvent(traceId, "recovery", "retry", retryTrace);
+            if (retryReport != null && retryReport.shouldReexecute()) {
+                SkillContext retryContext = new SkillContext(
+                        prepared.context().userId(),
+                        prepared.context().input(),
+                        buildRecoveryContext(prepared.context().attributes(), retryReport)
+                );
+                SkillResult retryResult = executeWithTimeout(
+                        execution.skillName(),
+                        execution.params(),
+                        retryContext
+                );
+                Instant retryFinished = Instant.now();
+                steps.add(new PlanStepDto(
+                        stepName + ".retry",
+                        retryResult.success() ? "success" : "failed",
+                        execution.skillName(),
+                        buildStepNote(execution.candidate(), retryResult),
+                        finishedAt,
+                        retryFinished
+                ));
+                result = retryResult;
+                finishedAt = retryFinished;
+                traceEvent(traceId, "recovery", "retry-result", Map.of(
+                        "skill", execution.skillName(),
+                        "success", retryResult.success(),
+                        "retryCount", 1,
+                        "summary", retryReport.summary()
+                ));
+            }
         }
+        long durationMs = Math.max(0L, java.time.Duration.between(startedAt, finishedAt).toMillis());
+        observeLearning(request, execution, prepared.routeDecision(), result, durationMs, traceId);
         traceEvent(traceId, "execute", "attempt", Map.of(
                 "skill", execution.skillName(),
                 "success", result.success(),
                 "routeType", prepared.routeDecision().routeType().name(),
-                "durationMs", durationMs
+                "durationMs", durationMs,
+                "retried", steps.stream().anyMatch(step -> step.stepName().equals(stepName + ".retry"))
         ));
         return result;
     }
@@ -1014,6 +1059,144 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
                         "optional", step.optional()))
                 .toList());
         return Map.copyOf(enriched);
+    }
+
+    private TaskGraphExecutionResult executeTaskGraphAttempt(Decision decision,
+                                                             TaskGraph taskGraph,
+                                                             SkillContext baseContext,
+                                                             OrchestrationRequest request,
+                                                             String traceId,
+                                                             Map<String, RecoveryAction> recoveryActions,
+                                                             Map<String, TaskGraphExecutionResult.NodeResult> cachedResults) {
+        Map<String, RecoveryAction> safeActions = recoveryActions == null ? Map.of() : recoveryActions;
+        Map<String, TaskGraphExecutionResult.NodeResult> safeCachedResults = cachedResults == null ? Map.of() : cachedResults;
+        return dagExecutor.execute(taskGraph, baseContext, (node, nodeContext) ->
+                executeTaskGraphNode(decision, node, nodeContext, request, traceId, safeActions, safeCachedResults));
+    }
+
+    private DAGExecutor.NodeExecution executeTaskGraphNode(Decision decision,
+                                                           TaskNode node,
+                                                           SkillContext nodeContext,
+                                                           OrchestrationRequest request,
+                                                           String traceId,
+                                                           Map<String, RecoveryAction> recoveryActions,
+                                                           Map<String, TaskGraphExecutionResult.NodeResult> cachedResults) {
+        if (node == null) {
+            return new DAGExecutor.NodeExecution(SkillResult.failure("unknown", "missing task node"), false);
+        }
+        RecoveryAction action = recoveryActions == null ? null : recoveryActions.get(node.id());
+        if (action != null) {
+            return switch (action.type()) {
+                case RETRY_NODE -> executeRecoveredTarget(decision, node.target(), nodeContext, request, traceId, false);
+                case FALLBACK_NODE -> {
+                    if (!action.fallbackTarget().isBlank()) {
+                        yield executeRecoveredTarget(decision, action.fallbackTarget(), nodeContext, request, traceId, true);
+                    }
+                    String syntheticOutput = action.syntheticOutput().isBlank() ? "fallback" : action.syntheticOutput();
+                    yield new DAGExecutor.NodeExecution(SkillResult.success(action.target().isBlank() ? node.target() : action.target(), syntheticOutput), true);
+                }
+                case SKIP_NODE -> {
+                    String syntheticOutput = action.syntheticOutput().isBlank() ? "skipped" : action.syntheticOutput();
+                    yield new DAGExecutor.NodeExecution(SkillResult.success(node.target(), syntheticOutput), true);
+                }
+                case ROLLBACK_STEP, PATCH_CONTEXT -> executeTaskGraphCachedOrNormal(decision, node, nodeContext, request, traceId, cachedResults);
+            };
+        }
+        return executeTaskGraphCachedOrNormal(decision, node, nodeContext, request, traceId, cachedResults);
+    }
+
+    private DAGExecutor.NodeExecution executeTaskGraphCachedOrNormal(Decision decision,
+                                                                     TaskNode node,
+                                                                     SkillContext nodeContext,
+                                                                     OrchestrationRequest request,
+                                                                     String traceId,
+                                                                     Map<String, TaskGraphExecutionResult.NodeResult> cachedResults) {
+        TaskGraphExecutionResult.NodeResult cachedResult = cachedResults == null ? null : cachedResults.get(node.id());
+        if (cachedResult != null && cachedResult.result() != null && cachedResult.result().success()) {
+            return new DAGExecutor.NodeExecution(cachedResult.result(), cachedResult.usedFallback());
+        }
+        if ("task.plan".equalsIgnoreCase(node.target())) {
+            return new DAGExecutor.NodeExecution(
+                    SkillResult.failure("task.plan", "nested task.plan is not supported"),
+                    false
+            );
+        }
+        return executeTaskNode(decision, node.target(), nodeContext, request, traceId, false);
+    }
+
+    private DAGExecutor.NodeExecution executeRecoveredTarget(Decision decision,
+                                                             String target,
+                                                             SkillContext nodeContext,
+                                                             OrchestrationRequest request,
+                                                             String traceId,
+                                                             boolean usedFallback) {
+        if (target == null || target.isBlank()) {
+            return new DAGExecutor.NodeExecution(SkillResult.failure("unknown", "missing recovery target"), usedFallback);
+        }
+        return executeTaskNode(decision, target, nodeContext, request, traceId, usedFallback);
+    }
+
+    private DAGExecutor.NodeExecution executeTaskNode(Decision decision,
+                                                      String target,
+                                                      SkillContext nodeContext,
+                                                      OrchestrationRequest request,
+                                                      String traceId,
+                                                      boolean usedFallback) {
+        if ("task.plan".equalsIgnoreCase(target)) {
+            return new DAGExecutor.NodeExecution(
+                    SkillResult.failure("task.plan", "nested task.plan is not supported"),
+                    usedFallback
+            );
+        }
+        OrchestrationRequest nestedRequest = request == null
+                ? new OrchestrationRequest(nodeContext.userId(), nodeContext.input(), nodeContext, Map.of())
+                : new OrchestrationRequest(request.userId(), request.userInput(), nodeContext, request.safeProfileContext());
+        OrchestrationOutcome outcome = orchestrateFastPath(
+                decision,
+                target,
+                nodeContext.attributes(),
+                nestedRequest,
+                false,
+                traceId
+        );
+        SkillResult stepResult = outcome.hasResult() ? outcome.result() : outcome.clarification();
+        return new DAGExecutor.NodeExecution(stepResult, usedFallback || outcome.usedFallback());
+    }
+
+    private Map<String, Object> buildRecoveryContext(Map<String, Object> baseContext,
+                                                     RecoveryManager.RecoveryReport report) {
+        Map<String, Object> cleared = applyClearKeys(baseContext, report == null ? List.of() : report.clearKeys());
+        return applyContextPatch(cleared, report == null ? Map.of() : report.contextPatch());
+    }
+
+    private Map<String, Object> applyClearKeys(Map<String, Object> baseContext, List<String> clearKeys) {
+        Map<String, Object> merged = new LinkedHashMap<>();
+        if (baseContext != null && !baseContext.isEmpty()) {
+            merged.putAll(baseContext);
+        }
+        if (clearKeys != null) {
+            for (String key : clearKeys) {
+                if (key == null || key.isBlank()) {
+                    continue;
+                }
+                merged.remove(key);
+            }
+        }
+        return merged.isEmpty() ? Map.of() : Map.copyOf(merged);
+    }
+
+    private Map<String, TaskGraphExecutionResult.NodeResult> indexNodeResults(TaskGraphExecutionResult result) {
+        if (result == null || result.nodeResults() == null || result.nodeResults().isEmpty()) {
+            return Map.of();
+        }
+        Map<String, TaskGraphExecutionResult.NodeResult> indexed = new LinkedHashMap<>();
+        for (TaskGraphExecutionResult.NodeResult nodeResult : result.nodeResults()) {
+            if (nodeResult == null || nodeResult.nodeId() == null || nodeResult.nodeId().isBlank()) {
+                continue;
+            }
+            indexed.put(nodeResult.nodeId(), nodeResult);
+        }
+        return indexed.isEmpty() ? Map.of() : Map.copyOf(indexed);
     }
 
     private PreparedExecution prepareExecution(Decision decision,
