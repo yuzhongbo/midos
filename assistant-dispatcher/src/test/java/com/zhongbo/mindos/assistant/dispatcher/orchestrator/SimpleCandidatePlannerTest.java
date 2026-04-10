@@ -1,7 +1,9 @@
 package com.zhongbo.mindos.assistant.dispatcher.orchestrator;
 
 import com.zhongbo.mindos.assistant.common.SkillContext;
+import com.zhongbo.mindos.assistant.common.SkillCostTelemetry;
 import com.zhongbo.mindos.assistant.common.SkillResult;
+import com.zhongbo.mindos.assistant.common.dto.CostModel;
 import com.zhongbo.mindos.assistant.memory.MemoryGateway;
 import com.zhongbo.mindos.assistant.memory.graph.GraphMemory;
 import com.zhongbo.mindos.assistant.memory.graph.MemoryNode;
@@ -64,6 +66,51 @@ class SimpleCandidatePlannerTest {
         assertEquals("mcp.bravesearch.webSearch", candidates.get(0).skillName());
         assertTrue(candidates.get(0).reasons().stream().anyMatch(reason -> reason.contains("successRate")));
         assertTrue(candidates.stream().anyMatch(candidate -> candidate.reasons().stream().anyMatch(reason -> reason.contains("graphScore"))));
+    }
+
+    @Test
+    void shouldPreferLowerCostCandidateWhenCapabilityTies() {
+        SkillEngine skillEngine = new SkillEngine(
+                new SkillRegistry(List.of(
+                        scoredSkill("skill.fast", 900),
+                        scoredSkill("skill.slow", 900)
+                )),
+                new SkillDslExecutor(new SkillRegistry(List.of(
+                        scoredSkill("skill.fast", 900),
+                        scoredSkill("skill.slow", 900)
+                )))
+        );
+        MemoryGateway memoryGateway = gateway(
+                List.of(),
+                List.of(
+                        new SkillUsageStats("skill.fast", 4, 4, 0),
+                        new SkillUsageStats("skill.slow", 4, 4, 0)
+                )
+        );
+        GraphMemory graphMemory = new GraphMemory();
+        SkillCostTelemetry telemetry = new SkillCostTelemetry() {
+            @Override
+            public void record(String userId, String skillName, long latencyMs, int totalTokensEstimate, boolean success) {
+            }
+
+            @Override
+            public Map<String, CostModel> costModels(String userId) {
+                return Map.of(
+                        "skill.fast", new CostModel(0.10, 0.10, 1.0),
+                        "skill.slow", new CostModel(0.90, 0.90, 1.0)
+                );
+            }
+        };
+        SimpleCandidatePlanner planner = new SimpleCandidatePlanner(skillEngine, memoryGateway, graphMemory, telemetry, 3, 0.40, 0.35, 0.15, 0.10);
+
+        List<ScoredCandidate> candidates = planner.plan(
+                "",
+                new DecisionOrchestrator.OrchestrationRequest("u1", "cost sensitive search", new SkillContext("u1", "cost sensitive search", Map.of()), Map.of())
+        );
+
+        assertEquals(2, candidates.size());
+        assertEquals("skill.fast", candidates.get(0).skillName());
+        assertTrue(candidates.get(0).reasons().stream().anyMatch(reason -> reason.contains("cost=")));
     }
 
     private Skill scoredSkill(String name, int routingScore) {

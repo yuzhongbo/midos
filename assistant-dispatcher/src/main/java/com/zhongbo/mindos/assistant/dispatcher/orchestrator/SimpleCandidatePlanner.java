@@ -1,9 +1,12 @@
 package com.zhongbo.mindos.assistant.dispatcher.orchestrator;
 
+import com.zhongbo.mindos.assistant.common.SkillCostTelemetry;
 import com.zhongbo.mindos.assistant.memory.MemoryGateway;
 import com.zhongbo.mindos.assistant.memory.graph.GraphMemory;
+import com.zhongbo.mindos.assistant.common.dto.CostModel;
 import com.zhongbo.mindos.assistant.memory.model.SkillUsageStats;
 import com.zhongbo.mindos.assistant.skill.SkillEngine;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -21,14 +24,14 @@ public class SimpleCandidatePlanner implements CandidatePlanner {
     private final SkillEngine skillEngine;
     private final MemoryGateway memoryGateway;
     private final GraphMemory graphMemory;
+    private final SkillCostTelemetry skillCostTelemetry;
     private final int maxCandidates;
     private final double explicitWeight;
     private final double keywordWeight;
     private final double memoryWeight;
-    private final double successWeight;
 
     public SimpleCandidatePlanner() {
-        this(null, null, null, 3, 0.40, 0.35, 0.15, 0.10);
+        this(null, null, null, (SkillCostTelemetry) null, 3, 0.40, 0.35, 0.15, 0.10);
     }
 
     public SimpleCandidatePlanner(SkillEngine skillEngine,
@@ -38,32 +41,59 @@ public class SimpleCandidatePlanner implements CandidatePlanner {
                                   double keywordWeight,
                                   double memoryWeight,
                                   double successWeight) {
-        this(skillEngine, memoryGateway, null, maxCandidates, explicitWeight, keywordWeight, memoryWeight, successWeight);
+        this(skillEngine, memoryGateway, null, (SkillCostTelemetry) null, maxCandidates, explicitWeight, keywordWeight, memoryWeight, successWeight);
+    }
+
+    public SimpleCandidatePlanner(SkillEngine skillEngine,
+                                  MemoryGateway memoryGateway,
+                                  GraphMemory graphMemory,
+                                  int maxCandidates,
+                                  double explicitWeight,
+                                  double keywordWeight,
+                                  double memoryWeight,
+                                  double successWeight) {
+        this(skillEngine, memoryGateway, graphMemory, (SkillCostTelemetry) null, maxCandidates, explicitWeight, keywordWeight, memoryWeight, successWeight);
+    }
+
+    public SimpleCandidatePlanner(SkillEngine skillEngine,
+                                  MemoryGateway memoryGateway,
+                                  GraphMemory graphMemory,
+                                  SkillCostTelemetry skillCostTelemetry,
+                                  int maxCandidates,
+                                  double explicitWeight,
+                                  double keywordWeight,
+                                  double memoryWeight,
+                                  double successWeight) {
+        this.skillEngine = skillEngine;
+        this.memoryGateway = memoryGateway;
+        this.graphMemory = graphMemory;
+        this.skillCostTelemetry = skillCostTelemetry;
+        this.maxCandidates = Math.max(1, Math.min(3, maxCandidates));
+        this.explicitWeight = explicitWeight;
+        this.keywordWeight = keywordWeight;
+        this.memoryWeight = memoryWeight;
     }
 
     @Autowired
     public SimpleCandidatePlanner(SkillEngine skillEngine,
                                   MemoryGateway memoryGateway,
                                   GraphMemory graphMemory,
+                                  ObjectProvider<SkillCostTelemetry> skillCostTelemetryProvider,
                                   @Value("${mindos.dispatcher.candidate-planner.max-candidates:3}") int maxCandidates,
                                   @Value("${mindos.dispatcher.candidate-planner.explicit-weight:0.40}") double explicitWeight,
                                   @Value("${mindos.dispatcher.candidate-planner.keyword-weight:0.35}") double keywordWeight,
                                   @Value("${mindos.dispatcher.candidate-planner.memory-weight:0.15}") double memoryWeight,
                                   @Value("${mindos.dispatcher.candidate-planner.success-weight:0.10}") double successWeight) {
-        this.skillEngine = skillEngine;
-        this.memoryGateway = memoryGateway;
-        this.graphMemory = graphMemory;
-        this.maxCandidates = Math.max(1, Math.min(3, maxCandidates));
-        this.explicitWeight = explicitWeight;
-        this.keywordWeight = keywordWeight;
-        this.memoryWeight = memoryWeight;
-        this.successWeight = successWeight;
+        this(skillEngine, memoryGateway, graphMemory,
+                skillCostTelemetryProvider == null ? null : skillCostTelemetryProvider.getIfAvailable(),
+                maxCandidates, explicitWeight, keywordWeight, memoryWeight, successWeight);
     }
 
     @Override
     public List<ScoredCandidate> plan(String suggestedTarget, DecisionOrchestrator.OrchestrationRequest request) {
         Map<String, Integer> keywordScores = detectKeywordScores(request == null ? "" : request.userInput());
         Map<String, SkillUsageStats> usageStats = lookupUsageStats(request == null ? "" : request.userId());
+        Map<String, CostModel> costModels = lookupCostModels(request == null ? "" : request.userId());
         Map<String, Double> graphScores = lookupGraphScores(request == null ? "" : request.userId(),
                 request == null ? "" : request.userInput(),
                 suggestedTarget,
@@ -88,13 +118,27 @@ public class SimpleCandidatePlanner implements CandidatePlanner {
             SkillUsageStats stats = usageStats.get(accumulator.skillName);
             double graphScore = graphScores.getOrDefault(accumulator.skillName, 0.0);
             double memoryScore = Math.min(1.0, normalizeMemoryScore(stats, maxUsageCount) + graphScore);
-            double successRate = normalizeSuccessRate(stats);
+            CostModel costModel = costModels.get(accumulator.skillName);
+            double successRate = costModel == null ? normalizeSuccessRate(stats) : costModel.successRate();
+            double cost = costModel == null ? 0.5 : costModel.cost();
             double explicitScore = accumulator.skillName.equals(suggestedTarget) ? 1.0 : 0.0;
-            double finalScore = explicitWeight * explicitScore
+            double capability = clamp01(explicitWeight * explicitScore
                     + keywordWeight * normalizedKeyword
-                    + memoryWeight * memoryScore
-                    + successWeight * successRate;
-            List<String> reasons = buildReasons(accumulator.skillName, suggestedTarget, rawKeywordScore, stats, graphScore, memoryScore, successRate);
+                    + memoryWeight * memoryScore);
+            double finalScore = 0.4 * capability
+                    + 0.3 * successRate
+                    + 0.3 * (1.0 - cost);
+            List<String> reasons = buildReasons(accumulator.skillName,
+                    suggestedTarget,
+                    rawKeywordScore,
+                    stats,
+                    graphMemory != null,
+                    graphScore,
+                    memoryScore,
+                    capability,
+                    successRate,
+                    cost,
+                    costModel);
             scored.add(new ScoredCandidate(accumulator.skillName, round(finalScore), round(normalizedKeyword), round(memoryScore), round(successRate), reasons));
         }
         scored.sort(Comparator
@@ -121,6 +165,15 @@ public class SimpleCandidatePlanner implements CandidatePlanner {
         Map<String, SkillUsageStats> stats = new LinkedHashMap<>();
         memoryGateway.skillUsageStats(userId).forEach(entry -> stats.put(entry.skillName(), entry));
         return Map.copyOf(stats);
+    }
+
+    private Map<String, CostModel> lookupCostModels(String userId) {
+        if (skillCostTelemetry == null || userId == null || userId.isBlank()) {
+            return Map.of();
+        }
+        Map<String, CostModel> models = new LinkedHashMap<>();
+        skillCostTelemetry.costModels(userId).forEach(models::put);
+        return Map.copyOf(models);
     }
 
     private Map<String, Double> lookupGraphScores(String userId,
@@ -162,9 +215,13 @@ public class SimpleCandidatePlanner implements CandidatePlanner {
                                       String suggestedTarget,
                                       int rawKeywordScore,
                                       SkillUsageStats stats,
+                                      boolean graphEnabled,
                                       double graphScore,
                                       double memoryScore,
-                                      double successRate) {
+                                      double capability,
+                                      double successRate,
+                                      double cost,
+                                      CostModel costModel) {
         List<String> reasons = new ArrayList<>();
         if (skillName.equals(suggestedTarget)) {
             reasons.add("explicit-target");
@@ -179,13 +236,25 @@ public class SimpleCandidatePlanner implements CandidatePlanner {
                 reasons.add("habitScore=" + round(memoryScore));
             }
         }
-        if (graphScore > 0.0) {
+        if (graphEnabled) {
             reasons.add("graphScore=" + round(graphScore));
+        }
+        reasons.add("capability=" + round(capability));
+        if (costModel != null) {
+            reasons.add("tokenCost=" + round(costModel.tokenCost()));
+            reasons.add("latency=" + round(costModel.latency()));
+            reasons.add("cost=" + round(cost));
+        } else {
+            reasons.add("cost=default:" + round(cost));
         }
         if (reasons.isEmpty()) {
             reasons.add("fallback-candidate");
         }
         return List.copyOf(reasons);
+    }
+
+    private double clamp01(double value) {
+        return Math.max(0.0, Math.min(1.0, value));
     }
 
     private double round(double value) {

@@ -167,7 +167,7 @@ public class BeamSearchCandidatePlanner implements SearchPlanner {
             return String.valueOf(skillName).trim();
         }
         String name = node.name();
-        return name != null && name.contains(".") ? name.trim() : "";
+        return name.contains(".") ? name.trim() : "";
     }
 
     private double normalize(double numerator, double denominator) {

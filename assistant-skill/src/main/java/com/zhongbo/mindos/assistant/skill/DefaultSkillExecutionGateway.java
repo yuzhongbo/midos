@@ -2,6 +2,7 @@ package com.zhongbo.mindos.assistant.skill;
 
 import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.common.SkillDsl;
+import com.zhongbo.mindos.assistant.common.SkillCostTelemetry;
 import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.skill.mcp.DefaultMcpToolCatalog;
 import com.zhongbo.mindos.assistant.skill.mcp.McpToolCatalog;
@@ -28,20 +29,23 @@ public class DefaultSkillExecutionGateway implements SkillExecutionGateway {
     private final SkillRegistry skillRegistry;
     private final SkillDslExecutor dslExecutor;
     private final McpToolCatalog mcpToolCatalog;
+    private final SkillCostTelemetry skillCostTelemetry;
     private final ExecutorService skillExecutor = Executors.newFixedThreadPool(4);
 
     public DefaultSkillExecutionGateway(SkillRegistry skillRegistry,
                                         SkillDslExecutor dslExecutor) {
-        this(skillRegistry, dslExecutor, new DefaultMcpToolCatalog(new McpToolExecutor()));
+        this(skillRegistry, dslExecutor, new DefaultMcpToolCatalog(new McpToolExecutor()), null);
     }
 
     @Autowired
     public DefaultSkillExecutionGateway(SkillRegistry skillRegistry,
                                         SkillDslExecutor dslExecutor,
-                                        McpToolCatalog mcpToolCatalog) {
+                                        McpToolCatalog mcpToolCatalog,
+                                        SkillCostTelemetry skillCostTelemetry) {
         this.skillRegistry = skillRegistry;
         this.dslExecutor = dslExecutor;
         this.mcpToolCatalog = mcpToolCatalog;
+        this.skillCostTelemetry = skillCostTelemetry;
     }
 
     @Override
@@ -105,7 +109,30 @@ public class DefaultSkillExecutionGateway implements SkillExecutionGateway {
                 + ", endTime=" + endTime
                 + ", durationMs=" + durationMs
                 + ", success=" + result.success());
+        recordCostTelemetry(userId, skillName, input, parameters, result, durationMs);
         return result;
+    }
+
+    private void recordCostTelemetry(String userId,
+                                     String skillName,
+                                     String input,
+                                     Map<String, Object> parameters,
+                                     SkillResult result,
+                                     long durationMs) {
+        if (skillCostTelemetry == null || userId == null || userId.isBlank()) {
+            return;
+        }
+        int tokenEstimate = estimateTokens(input)
+                + estimateTokens(parameters == null ? "" : parameters.toString())
+                + estimateTokens(result == null ? "" : result.output());
+        skillCostTelemetry.record(userId, skillName, durationMs, tokenEstimate, result != null && result.success());
+    }
+
+    private int estimateTokens(String text) {
+        if (text == null || text.isBlank()) {
+            return 0;
+        }
+        return Math.max(1, (text.length() + 3) / 4);
     }
 
     private String clipParameters(Map<String, Object> parameters) {

@@ -54,6 +54,10 @@ public class ProceduralMemory {
         List<TaskNode> nodes = new ArrayList<>();
         int index = 1;
         for (ProcedureStepTemplate step : template.steps()) {
+            List<String> dependsOn = step.dependsOn();
+            if ((dependsOn == null || dependsOn.isEmpty()) && !nodes.isEmpty()) {
+                dependsOn = List.of(nodes.get(nodes.size() - 1).id());
+            }
             Map<String, Object> stepParams = index == 1
                     ? merge(effectiveParams, step.params())
                     : step.params();
@@ -61,7 +65,7 @@ public class ProceduralMemory {
                     "procedure-step-" + index,
                     step.target(),
                     stepParams,
-                    step.dependsOn(),
+                    dependsOn,
                     step.saveAs(),
                     false
             ));
