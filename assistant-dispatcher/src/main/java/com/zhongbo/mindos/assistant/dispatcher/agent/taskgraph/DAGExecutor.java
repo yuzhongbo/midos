@@ -4,6 +4,7 @@ import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.common.SkillResult;
 
 import java.util.ArrayDeque;
+import java.util.concurrent.CompletableFuture;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -34,68 +35,99 @@ public class DAGExecutor {
             throw new IllegalArgumentException("TaskGraph contains a cycle or no executable root node");
         }
 
-        Map<String, Object> contextAttributes = new LinkedHashMap<>(baseContext == null ? Map.of() : baseContext.attributes());
-        List<TaskGraphExecutionResult.NodeResult> nodeResults = new ArrayList<>();
-        List<String> executionOrder = new ArrayList<>();
-        Map<String, TaskGraphExecutionResult.NodeResult> resultsById = new LinkedHashMap<>();
+        // Use concurrent maps/lists for parallel execution
+        Map<String, Object> contextAttributes = new java.util.concurrent.ConcurrentHashMap<>(baseContext == null ? Map.of() : baseContext.attributes());
+        List<TaskGraphExecutionResult.NodeResult> nodeResults = java.util.Collections.synchronizedList(new ArrayList<>());
+        List<String> executionOrder = java.util.Collections.synchronizedList(new ArrayList<>());
+        Map<String, TaskGraphExecutionResult.NodeResult> resultsById = new java.util.concurrent.ConcurrentHashMap<>();
         SkillResult finalResult = null;
 
         while (!ready.isEmpty()) {
-            String nodeId = ready.removeFirst();
-            TaskNode node = byId.get(nodeId);
-            if (node == null) {
-                continue;
+            List<String> batch = new ArrayList<>();
+            while (!ready.isEmpty()) {
+                batch.add(ready.removeFirst());
             }
-            executionOrder.add(nodeId);
-            boolean blocked = graph.dependenciesOf(node.id()).stream().anyMatch(dependency -> {
-                TaskGraphExecutionResult.NodeResult dependencyResult = resultsById.get(dependency);
-                return dependencyResult == null || dependencyResult.result() == null || !dependencyResult.result().success();
-            });
-            TaskGraphExecutionResult.NodeResult nodeResult;
-            if (blocked) {
-                nodeResult = new TaskGraphExecutionResult.NodeResult(
-                        node.id(),
-                        node.target(),
-                        "blocked",
-                        SkillResult.failure(node.target(), "blocked by dependency"),
-                        false
-                );
-            } else {
-                Map<String, Object> resolvedParams = resolveParams(node.params(), contextAttributes);
-                SkillContext nodeContext = new SkillContext(
-                        baseContext == null ? "" : baseContext.userId(),
-                        baseContext == null ? "" : baseContext.input(),
-                        mergeAttributes(contextAttributes, resolvedParams)
-                );
-                NodeExecution execution = runner.run(node, nodeContext);
-                finalResult = execution.result();
-                nodeResult = new TaskGraphExecutionResult.NodeResult(
-                        node.id(),
-                        node.target(),
-                        execution.result() != null && execution.result().success() ? "success" : "failed",
-                        execution.result(),
-                        execution.usedFallback()
-                );
-                if (execution.result() != null) {
-                    contextAttributes.put("task.last.output", execution.result().output());
-                    contextAttributes.put("task.last.skill", execution.result().skillName());
-                    contextAttributes.put("task.last.success", execution.result().success());
-                    contextAttributes.put("task." + node.id() + ".output", execution.result().output());
-                    contextAttributes.put("task." + node.id() + ".skill", execution.result().skillName());
-                    contextAttributes.put("task." + node.id() + ".success", execution.result().success());
-                    if (!node.saveAs().isBlank()) {
-                        contextAttributes.put("task." + node.saveAs() + ".output", execution.result().output());
-                        contextAttributes.put("task." + node.saveAs() + ".skill", execution.result().skillName());
-                        contextAttributes.put("task." + node.saveAs() + ".success", execution.result().success());
+            // Execute all ready nodes in parallel
+            List<CompletableFuture<TaskGraphExecutionResult.NodeResult>> futures = new ArrayList<>();
+            for (String nodeId : batch) {
+                TaskNode node = byId.get(nodeId);
+                if (node == null) {
+                    continue;
+                }
+                CompletableFuture<TaskGraphExecutionResult.NodeResult> future = CompletableFuture.supplyAsync(() -> {
+                    boolean blocked = graph.dependenciesOf(node.id()).stream().anyMatch(dependency -> {
+                        TaskGraphExecutionResult.NodeResult dependencyResult = resultsById.get(dependency);
+                        return dependencyResult == null || dependencyResult.result() == null || !dependencyResult.result().success();
+                    });
+                    if (blocked) {
+                        TaskGraphExecutionResult.NodeResult nr = new TaskGraphExecutionResult.NodeResult(
+                                node.id(), node.target(), "blocked", SkillResult.failure(node.target(), "blocked by dependency"), false
+                        );
+                        resultsById.put(node.id(), nr);
+                        return nr;
                     }
+
+                    // snapshot context attributes to avoid races when resolving params
+                    Map<String, Object> contextSnapshot;
+                    synchronized (contextAttributes) {
+                        contextSnapshot = new java.util.LinkedHashMap<>(contextAttributes);
+                    }
+                    Map<String, Object> resolvedParams = resolveParams(node.params(), contextSnapshot);
+                    SkillContext nodeContext = new SkillContext(
+                            baseContext == null ? "" : baseContext.userId(),
+                            baseContext == null ? "" : baseContext.input(),
+                            mergeAttributes(contextSnapshot, resolvedParams)
+                    );
+                    NodeExecution execution = runner.run(node, nodeContext);
+                    SkillResult sr = execution.result();
+                    TaskGraphExecutionResult.NodeResult nr = new TaskGraphExecutionResult.NodeResult(
+                            node.id(), node.target(), (sr != null && sr.success()) ? "success" : "failed", sr, execution.usedFallback()
+                    );
+
+                    // Update shared context attributes atomically
+                    if (sr != null) {
+                        synchronized (contextAttributes) {
+                            contextAttributes.put("task.last.output", sr.output());
+                            contextAttributes.put("task.last.skill", sr.skillName());
+                            contextAttributes.put("task.last.success", sr.success());
+                            contextAttributes.put("task." + node.id() + ".output", sr.output());
+                            contextAttributes.put("task." + node.id() + ".skill", sr.skillName());
+                            contextAttributes.put("task." + node.id() + ".success", sr.success());
+                            if (!node.saveAs().isBlank()) {
+                                contextAttributes.put("task." + node.saveAs() + ".output", sr.output());
+                                contextAttributes.put("task." + node.saveAs() + ".skill", sr.skillName());
+                                contextAttributes.put("task." + node.saveAs() + ".success", sr.success());
+                            }
+                        }
+                    }
+                    resultsById.put(node.id(), nr);
+                    return nr;
+                });
+                futures.add(future);
+            }
+
+            // Wait for batch completion and collect results
+            CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+            for (CompletableFuture<TaskGraphExecutionResult.NodeResult> f : futures) {
+                try {
+                    TaskGraphExecutionResult.NodeResult nr = f.get();
+                    nodeResults.add(nr);
+                    executionOrder.add(nr.nodeId());
+                    if (nr.result() != null) {
+                        finalResult = nr.result();
+                    }
+                } catch (Exception e) {
+                    throw new RuntimeException("Failed to execute task node", e);
                 }
             }
-            resultsById.put(node.id(), nodeResult);
-            nodeResults.add(nodeResult);
-            for (String dependent : graph.dependentsOf(node.id())) {
-                indegree.computeIfPresent(dependent, (ignored, degree) -> degree - 1);
-                if (indegree.getOrDefault(dependent, 0) == 0) {
-                    ready.addLast(dependent);
+
+            // Decrease indegree for dependents and enqueue newly ready nodes
+            for (String nodeId : batch) {
+                for (String dependent : graph.dependentsOf(nodeId)) {
+                    indegree.computeIfPresent(dependent, (ignored, degree) -> degree - 1);
+                    if (indegree.getOrDefault(dependent, 0) == 0) {
+                        ready.addLast(dependent);
+                    }
                 }
             }
         }

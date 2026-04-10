@@ -83,6 +83,15 @@ public record TaskGraph(List<TaskNode> nodes, List<TaskEdge> edges) {
             for (String dependency : dependsOn) {
                 edges.add(new TaskEdge(dependency, node.id()));
             }
+            // If no explicit dependency provided, chain sequentially by list order
+            // This preserves 'tasks' / 'steps' semantics where later steps implicitly depend on previous step
+            // when dependsOn is empty.
+            if (dependsOn.isEmpty() && !nodes.isEmpty() && nodes.size() > 1) {
+                TaskNode prev = nodes.get(nodes.size() - 2);
+                if (prev != null) {
+                    edges.add(new TaskEdge(prev.id(), node.id()));
+                }
+            }
         }
         return new TaskGraph(nodes, edges);
     }
@@ -134,6 +143,13 @@ public record TaskGraph(List<TaskNode> nodes, List<TaskEdge> edges) {
             nodes.add(node);
             for (String dependency : dependsOn) {
                 edges.add(new TaskEdge(dependency, node.id()));
+            }
+            // Chain sequentially when no explicit dependsOn provided, preserving DSL list order
+            if (dependsOn.isEmpty() && !nodes.isEmpty() && nodes.size() > 1) {
+                TaskNode prev = nodes.get(nodes.size() - 2);
+                if (prev != null) {
+                    edges.add(new TaskEdge(prev.id(), node.id()));
+                }
             }
         }
         if (params.get("edges") instanceof List<?> rawEdges) {
