@@ -8,6 +8,10 @@ import com.zhongbo.mindos.assistant.dispatcher.agent.search.SearchCandidate;
 import com.zhongbo.mindos.assistant.dispatcher.agent.search.SearchPlanner;
 import com.zhongbo.mindos.assistant.dispatcher.agent.search.SearchPlanningRequest;
 import com.zhongbo.mindos.assistant.dispatcher.agent.procedure.ProceduralMemory;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.step5.AgentRouter;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.step5.PlannerLearningStore;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.step5.RecoveryManager;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.step5.TraceLogger;
 import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.common.SkillDsl;
 import com.zhongbo.mindos.assistant.common.SkillResult;
@@ -63,6 +67,10 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
     private final DAGExecutor dagExecutor = new DAGExecutor();
     private SearchPlanner searchPlanner;
     private ProceduralMemory proceduralMemory;
+    private PlannerLearningStore plannerLearningStore;
+    private AgentRouter agentRouter;
+    private RecoveryManager recoveryManager;
+    private TraceLogger traceLogger;
 
     @Autowired
     public DefaultDecisionOrchestrator(CandidatePlanner candidatePlanner,
@@ -106,6 +114,26 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
         this.proceduralMemory = proceduralMemory;
     }
 
+    @Autowired(required = false)
+    void setPlannerLearningStore(PlannerLearningStore plannerLearningStore) {
+        this.plannerLearningStore = plannerLearningStore;
+    }
+
+    @Autowired(required = false)
+    void setAgentRouter(AgentRouter agentRouter) {
+        this.agentRouter = agentRouter;
+    }
+
+    @Autowired(required = false)
+    void setRecoveryManager(RecoveryManager recoveryManager) {
+        this.recoveryManager = recoveryManager;
+    }
+
+    @Autowired(required = false)
+    void setTraceLogger(TraceLogger traceLogger) {
+        this.traceLogger = traceLogger;
+    }
+
     @Override
     public SkillResult execute(String userInput, String intent, Map<String, Object> params) {
         Map<String, Object> safeParams = params == null ? Map.of() : Map.copyOf(params);
@@ -137,46 +165,51 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
 
     @Override
     public OrchestrationOutcome orchestrate(Decision decision, OrchestrationRequest request) {
-        if (decision == null || decision.target() == null || decision.target().isBlank()) {
-            return clarificationOutcome("", "missing target");
+        String traceId = startTrace(decision, request);
+        OrchestrationOutcome outcome = null;
+        try {
+            if (decision == null || decision.target() == null || decision.target().isBlank()) {
+                outcome = clarificationOutcome("", "missing target");
+            } else if ("semantic.clarify".equalsIgnoreCase(decision.target()) || decision.requireClarify()) {
+                outcome = clarificationOutcome(decision.target(), "clarification requested");
+            } else {
+                Map<String, Object> params = decision.params() == null ? Map.of() : decision.params();
+                Map<String, Object> effectiveParams = buildEffectiveParams(params, request == null ? null : request.skillContext());
+                TaskPlan taskPlan = TaskPlan.from(effectiveParams);
+                if ("task.plan".equalsIgnoreCase(decision.target()) || !taskPlan.isEmpty()) {
+                    traceEvent(traceId, "planner", "slow-path", Map.of("reason", "task-plan"));
+                    outcome = slowPath(decision, request, traceId, null);
+                } else if (shouldUseSlowPath(decision)) {
+                    traceEvent(traceId, "planner", "slow-path", Map.of("reason", "decision-confidence"));
+                    outcome = slowPath(decision, request, traceId, null);
+                } else {
+                    OrchestrationOutcome fastOutcome = fastPath(decision, request, traceId);
+                    if (fastOutcome.hasClarification()) {
+                        outcome = fastOutcome;
+                    } else if (fastOutcome.hasResult() && fastOutcome.result() != null && fastOutcome.result().success()) {
+                        outcome = fastOutcome;
+                    } else if (shouldEscalateToSlowPath(fastOutcome)) {
+                        traceEvent(traceId, "planner", "slow-path", Map.of("reason", "fast-path-failed"));
+                        outcome = slowPath(decision, request, traceId, fastOutcome);
+                    } else {
+                        outcome = fastOutcome;
+                    }
+                }
+            }
+        } finally {
+            finishTrace(traceId, decision, request, outcome);
         }
-        if ("semantic.clarify".equalsIgnoreCase(decision.target()) || decision.requireClarify()) {
-            return clarificationOutcome(decision.target(), "clarification requested");
-        }
-        Map<String, Object> params = decision.params() == null ? Map.of() : decision.params();
-        Map<String, Object> effectiveParams = buildEffectiveParams(params, request == null ? null : request.skillContext());
-        TaskPlan taskPlan = TaskPlan.from(effectiveParams);
-        if ("task.plan".equalsIgnoreCase(decision.target()) || !taskPlan.isEmpty()) {
-            return slowPath(decision, request);
-        }
-        if (shouldUseSlowPath(decision)) {
-            return slowPath(decision, request);
-        }
-        OrchestrationOutcome fastOutcome = fastPath(decision, request);
-        if (fastOutcome.hasClarification()) {
-            return fastOutcome;
-        }
-        if (fastOutcome.hasResult() && fastOutcome.result() != null && fastOutcome.result().success()) {
-            return fastOutcome;
-        }
-        if (shouldEscalateToSlowPath(fastOutcome)) {
-            return slowPath(decision, request, fastOutcome);
-        }
-        return fastOutcome;
+        return outcome;
     }
 
     @Override
     public OrchestrationOutcome fastPath(Decision decision, OrchestrationRequest request) {
-        if (decision == null || decision.target() == null || decision.target().isBlank()) {
-            return clarificationOutcome("", "missing target");
-        }
-        Map<String, Object> effectiveParams = buildEffectiveParams(decision.params(), request == null ? null : request.skillContext());
-        return orchestrateFastPath(decision.target(), effectiveParams, request, true);
+        return fastPath(decision, request, null);
     }
 
     @Override
     public OrchestrationOutcome slowPath(Decision decision, OrchestrationRequest request) {
-        return slowPath(decision, request, null);
+        return slowPath(decision, request, null, null);
     }
 
     @Override
@@ -243,8 +276,19 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
         return memoryGateway == null ? null : memoryGateway.updateLongTaskStatus(userId, taskId, status, note, nextCheckAt);
     }
 
+    private OrchestrationOutcome fastPath(Decision decision,
+                                          OrchestrationRequest request,
+                                          String traceId) {
+        if (decision == null || decision.target() == null || decision.target().isBlank()) {
+            return clarificationOutcome("", "missing target");
+        }
+        Map<String, Object> effectiveParams = buildEffectiveParams(decision.params(), request == null ? null : request.skillContext());
+        return orchestrateFastPath(decision, decision.target(), effectiveParams, request, true, traceId);
+    }
+
     private OrchestrationOutcome slowPath(Decision decision,
                                           OrchestrationRequest request,
+                                          String traceId,
                                           OrchestrationOutcome fastOutcome) {
         if (decision == null || decision.target() == null || decision.target().isBlank()) {
             return clarificationOutcome("", "missing target");
@@ -254,9 +298,11 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
             java.util.Optional<ProceduralMemory.ReusableProcedure> reusableProcedure = matchReusableProcedure(decision, request, effectiveParams);
             if (reusableProcedure.isPresent() && !reusableProcedure.get().taskGraph().isEmpty()) {
                 return orchestrateTaskGraph(
+                        decision,
                         reusableProcedure.get().taskGraph(),
                         attachTaskGraph(effectiveParams, reusableProcedure.get().taskGraph()),
                         request,
+                        traceId,
                         "procedural-memory",
                         decision.intent(),
                         request == null ? "" : request.userInput()
@@ -281,23 +327,27 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
             if (taskPlan.isEmpty()) {
                 return fastOutcome == null ? clarificationOutcome(decision.target(), "无法生成 task plan") : fastOutcome;
             }
-            return orchestrateTaskPlan(taskPlan, attachTaskPlan(effectiveParams, taskPlan), request, "slow-path", decision.intent(), request == null ? "" : request.userInput());
+            return orchestrateTaskPlan(decision, taskPlan, attachTaskPlan(effectiveParams, taskPlan), request, traceId, "slow-path", decision.intent(), request == null ? "" : request.userInput());
         }
-        return orchestrateTaskGraph(taskGraph, attachTaskGraph(effectiveParams, taskGraph), request, "slow-path", decision.intent(), request == null ? "" : request.userInput());
+         return orchestrateTaskGraph(decision, taskGraph, attachTaskGraph(effectiveParams, taskGraph), request, traceId, "slow-path", decision.intent(), request == null ? "" : request.userInput());
     }
 
-    private OrchestrationOutcome orchestrateTaskPlan(TaskPlan taskPlan,
+    private OrchestrationOutcome orchestrateTaskPlan(Decision decision,
+                                                     TaskPlan taskPlan,
                                                      Map<String, Object> effectiveParams,
                                                      OrchestrationRequest request,
+                                                     String traceId,
                                                      String strategy,
                                                      String intent,
                                                      String trigger) {
-        return orchestrateTaskGraph(TaskGraph.fromDsl(effectiveParams), effectiveParams, request, strategy, intent, trigger);
+        return orchestrateTaskGraph(decision, TaskGraph.fromDsl(effectiveParams), effectiveParams, request, traceId, strategy, intent, trigger);
     }
 
-    private OrchestrationOutcome orchestrateTaskGraph(TaskGraph taskGraph,
+    private OrchestrationOutcome orchestrateTaskGraph(Decision decision,
+                                                      TaskGraph taskGraph,
                                                       Map<String, Object> effectiveParams,
                                                       OrchestrationRequest request,
+                                                      String traceId,
                                                       String strategy,
                                                       String intent,
                                                       String trigger) {
@@ -321,10 +371,12 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
                     ? new OrchestrationRequest(nodeContext.userId(), nodeContext.input(), nodeContext, Map.of())
                     : new OrchestrationRequest(request.userId(), request.userInput(), nodeContext, request.safeProfileContext());
             OrchestrationOutcome outcome = orchestrateFastPath(
+                    decision,
                     node.target(),
                     nodeContext.attributes(),
                     nestedRequest,
-                    false
+                    false,
+                    traceId
             );
             SkillResult stepResult = outcome.hasResult() ? outcome.result() : outcome.clarification();
             return new DAGExecutor.NodeExecution(stepResult, outcome.usedFallback());
@@ -340,6 +392,17 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
                     taskGraph,
                     taskResult.contextAttributes()
             );
+        } else if (!taskResult.finalResult().success()) {
+            RecoveryManager.RecoveryReport rollbackReport = recoveryManager == null
+                    ? RecoveryManager.RecoveryReport.noop(traceId, "rollback", "recovery manager unavailable")
+                    : recoveryManager.planRollback(traceId, taskGraph, taskResult, taskResult.contextAttributes());
+            Map<String, Object> rollbackTrace = new LinkedHashMap<>();
+            if (rollbackReport != null) {
+                rollbackTrace.put("summary", rollbackReport.summary());
+                rollbackTrace.put("clearKeys", rollbackReport.clearKeys());
+                rollbackTrace.put("contextPatch", rollbackReport.contextPatch());
+            }
+            traceEvent(traceId, "recovery", "rollback", rollbackTrace);
         }
         List<PlanStepDto> steps = taskResult.nodeResults().stream()
                 .map(node -> new PlanStepDto(
@@ -356,10 +419,10 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
                 Math.max(0, steps.size() - 1),
                 new CritiqueReportDto(taskResult.finalResult().success(),
                         taskResult.finalResult().success() ? "task graph success" : taskResult.finalResult().output(),
-                        taskResult.nodeResults().stream().anyMatch(TaskGraphExecutionResult.NodeResult::usedFallback) ? "fallback" : "none"),
+                taskResult.nodeResults().stream().anyMatch(TaskGraphExecutionResult.NodeResult::usedFallback) ? "fallback" : "none"),
                 steps
         );
-        return new OrchestrationOutcome(
+        OrchestrationOutcome outcome = new OrchestrationOutcome(
                 taskResult.finalResult(),
                 new SkillDsl(taskResult.finalResult().skillName(), effectiveParams),
                 null,
@@ -367,6 +430,7 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
                 taskResult.finalResult().skillName(),
                 taskResult.nodeResults().stream().anyMatch(TaskGraphExecutionResult.NodeResult::usedFallback)
         );
+        return outcome;
     }
 
     private java.util.Optional<ProceduralMemory.ReusableProcedure> matchReusableProcedure(Decision decision,
@@ -383,14 +447,20 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
         );
     }
 
-    private OrchestrationOutcome orchestrateFastPath(String suggestedTarget,
+    private OrchestrationOutcome orchestrateFastPath(Decision decision,
+                                                     String suggestedTarget,
                                                      Map<String, Object> params,
                                                      OrchestrationRequest request,
-                                                     boolean allowParallelMcp) {
+                                                     boolean allowParallelMcp,
+                                                     String traceId) {
         List<ScoredCandidate> plannedCandidates = buildCandidateChain(suggestedTarget, request);
         if (plannedCandidates.isEmpty()) {
             plannedCandidates = List.of(new ScoredCandidate(suggestedTarget, 1.0, 0.0, 0.0, 0.5, List.of("explicit-target")));
         }
+        traceEvent(traceId, "planner", "candidate-chain", Map.of(
+                "suggestedTarget", suggestedTarget == null ? "" : suggestedTarget,
+                "candidateCount", plannedCandidates.size()
+        ));
         List<PlanStepDto> steps = new ArrayList<>();
         List<CandidateExecution> executableCandidates = new ArrayList<>();
         String lastFailure = null;
@@ -415,13 +485,13 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
             return clarificationOutcome(suggestedTarget, lastFailure == null ? "缺少可执行候选" : lastFailure);
         }
         if (allowParallelMcp && shouldRunMcpParallel(executableCandidates)) {
-            return orchestrateMcpInParallel(executableCandidates, request, steps, 0, "fast-path");
+            return orchestrateMcpInParallel(decision, executableCandidates, request, steps, 0, "fast-path", traceId);
         }
         CandidateExecution execution = executableCandidates.get(0);
         int replans = 0;
         String lastCandidate = execution.skillName();
         boolean usedFallback = execution.usedFallback();
-        SkillResult result = executeSingleAttempt(execution, request, steps, "fast-attempt-1");
+        SkillResult result = executeSingleAttempt(decision, execution, request, steps, "fast-attempt-1", traceId);
         if (result.success()) {
             return successOutcome(result, execution.params(), steps, replans, execution.skillName(), usedFallback, "fast-path");
         }
@@ -440,7 +510,7 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
                         repaired.normalizedParams(),
                         execution.usedFallback()
                 );
-                SkillResult retryResult = executeSingleAttempt(retriedExecution, request, steps, "fast-retry-" + replans);
+                SkillResult retryResult = executeSingleAttempt(decision, retriedExecution, request, steps, "fast-retry-" + replans, traceId);
                 if (retryResult.success()) {
                     return successOutcome(retryResult, retriedExecution.params(), steps, replans, retriedExecution.skillName(), usedFallback, "fast-path");
                 }
@@ -467,15 +537,18 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
         );
     }
 
-    private SkillResult executeSingleAttempt(CandidateExecution execution,
+    private SkillResult executeSingleAttempt(Decision decision,
+                                             CandidateExecution execution,
                                              OrchestrationRequest request,
                                              List<PlanStepDto> steps,
-                                             String stepName) {
+                                             String stepName,
+                                             String traceId) {
         Instant startedAt = Instant.now();
+        PreparedExecution prepared = prepareExecution(decision, execution, request, traceId);
         SkillResult result = executeWithTimeout(
                 execution.skillName(),
                 execution.params(),
-                buildExecutionContext(request, execution.params())
+                prepared.context()
         );
         Instant finishedAt = Instant.now();
         steps.add(new PlanStepDto(
@@ -486,17 +559,42 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
                 startedAt,
                 finishedAt
         ));
+        long durationMs = Math.max(0L, java.time.Duration.between(startedAt, finishedAt).toMillis());
+        observeLearning(request, execution, prepared.routeDecision(), result, durationMs, traceId);
+        if (!result.success()) {
+            RecoveryManager.RecoveryReport retryReport = recoveryManager == null
+                    ? RecoveryManager.RecoveryReport.noop(traceId, "retry", "recovery manager unavailable")
+                    : recoveryManager.planRetry(traceId, execution.skillName(), result, prepared.context().attributes(), steps);
+            Map<String, Object> retryTrace = new LinkedHashMap<>();
+            if (retryReport != null) {
+                retryTrace.put("summary", retryReport.summary());
+                retryTrace.put("clearKeys", retryReport.clearKeys());
+                retryTrace.put("contextPatch", retryReport.contextPatch());
+            }
+            traceEvent(traceId, "recovery", "retry", retryTrace);
+        }
+        traceEvent(traceId, "execute", "attempt", Map.of(
+                "skill", execution.skillName(),
+                "success", result.success(),
+                "routeType", prepared.routeDecision().routeType().name(),
+                "durationMs", durationMs
+        ));
         return result;
     }
 
-    private OrchestrationOutcome orchestrateMcpInParallel(List<CandidateExecution> candidates,
+    private OrchestrationOutcome orchestrateMcpInParallel(Decision decision,
+                                                          List<CandidateExecution> candidates,
                                                           OrchestrationRequest request,
                                                           List<PlanStepDto> inheritedSteps,
                                                           int inheritedReplans,
-                                                          String strategy) {
+                                                          String strategy,
+                                                          String traceId) {
         List<CompletableFuture<SkillResult>> futures = new ArrayList<>();
+        List<PreparedExecution> preparedExecutions = new ArrayList<>();
+        List<Instant> startedTimes = new ArrayList<>();
         for (CandidateExecution candidate : candidates) {
-            SkillContext skillContext = buildExecutionContext(request, candidate.params());
+            PreparedExecution prepared = prepareExecution(decision, candidate, request, traceId);
+            SkillContext skillContext = prepared.context();
             CompletableFuture<SkillResult> execution = applySkillTimeoutIfNeeded(
                     candidate.skillName(),
                     skillContext,
@@ -505,6 +603,8 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
                     .completeOnTimeout(SkillResult.failure(candidate.skillName(), "timeout"), mcpPerSkillTimeoutMs, TimeUnit.MILLISECONDS)
                     .exceptionally(error -> SkillResult.failure(candidate.skillName(), String.valueOf(error.getMessage())));
             futures.add(execution);
+            preparedExecutions.add(prepared);
+            startedTimes.add(Instant.now());
         }
         CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
         List<PlanStepDto> steps = new ArrayList<>(inheritedSteps == null ? List.of() : inheritedSteps);
@@ -512,6 +612,8 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
         for (int i = 0; i < candidates.size(); i++) {
             SkillResult result = futures.get(i).join();
             CandidateExecution candidate = candidates.get(i);
+            PreparedExecution prepared = preparedExecutions.get(i);
+            long durationMs = Math.max(0L, java.time.Duration.between(startedTimes.get(i), Instant.now()).toMillis());
             steps.add(new PlanStepDto(
                     "parallel-" + (i + 1),
                     result.success() ? "success" : "failed",
@@ -519,6 +621,13 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
                     buildStepNote(candidate.candidate(), result),
                     Instant.now().minusMillis(1),
                     Instant.now()
+            ));
+            observeLearning(request, candidate, prepared.routeDecision(), result, durationMs, traceId);
+            traceEvent(traceId, "execute", "mcp-step", Map.of(
+                    "skill", candidate.skillName(),
+                    "success", result.success(),
+                    "routeType", prepared.routeDecision().routeType().name(),
+                    "durationMs", durationMs
             ));
             if (result.success()) {
                 successes.add(result);
@@ -907,6 +1016,146 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
         return Map.copyOf(enriched);
     }
 
+    private PreparedExecution prepareExecution(Decision decision,
+                                               CandidateExecution execution,
+                                               OrchestrationRequest request,
+                                               String traceId) {
+        SkillContext baseContext = buildExecutionContext(request, execution.params());
+        AgentRouter.AgentRouteDecision routeDecision = resolveRouteDecision(decision, execution, request, baseContext, traceId);
+        Map<String, Object> routedAttributes = applyContextPatch(baseContext.attributes(), routeDecision.contextPatch());
+        SkillContext routedContext = new SkillContext(baseContext.userId(), baseContext.input(), routedAttributes);
+        traceEvent(traceId, "route", "selected", Map.of(
+                "skill", execution.skillName(),
+                "routeType", routeDecision.routeType().name(),
+                "provider", routeDecision.provider(),
+                "preset", routeDecision.preset(),
+                "model", routeDecision.model(),
+                "confidence", routeDecision.confidence()
+        ));
+        return new PreparedExecution(routedContext, routeDecision);
+    }
+
+    private AgentRouter.AgentRouteDecision resolveRouteDecision(Decision decision,
+                                                                CandidateExecution execution,
+                                                                OrchestrationRequest request,
+                                                                SkillContext baseContext,
+                                                                String traceId) {
+        if (agentRouter != null) {
+            return agentRouter.route(decision, request, execution.candidate(), baseContext == null ? Map.of() : baseContext.attributes());
+        }
+        List<String> reasons = List.of("fallback-router", execution.usedFallback() ? "fallback" : "direct");
+        String candidateName = execution.skillName();
+        if (isMcpSkill(candidateName)) {
+            return AgentRouter.AgentRouteDecision.mcp("", "", "", execution.candidate() == null ? 0.5 : execution.candidate().finalScore(), reasons, Map.of("routeType", "mcp-tool"));
+        }
+        double score = execution.candidate() == null ? 0.5 : execution.candidate().finalScore();
+        if (decision != null && decision.confidence() >= TASK_PLAN_LOW_CONFIDENCE_THRESHOLD) {
+            return AgentRouter.AgentRouteDecision.local("local", "cost", "", score, reasons, Map.of("routeType", "local-model", "llmProvider", "local", "llmPreset", "cost"));
+        }
+        return AgentRouter.AgentRouteDecision.remote("", "", "", score, reasons, Map.of("routeType", "remote-model"));
+    }
+
+    private Map<String, Object> applyContextPatch(Map<String, Object> baseContext, Map<String, Object> patch) {
+        Map<String, Object> merged = new LinkedHashMap<>();
+        if (baseContext != null && !baseContext.isEmpty()) {
+            merged.putAll(baseContext);
+        }
+        if (patch != null && !patch.isEmpty()) {
+            for (Map.Entry<String, Object> entry : patch.entrySet()) {
+                if (entry.getKey() == null || entry.getKey().isBlank()) {
+                    continue;
+                }
+                if (entry.getValue() == null) {
+                    merged.remove(entry.getKey());
+                } else {
+                    merged.put(entry.getKey(), entry.getValue());
+                }
+            }
+        }
+        return merged.isEmpty() ? Map.of() : Map.copyOf(merged);
+    }
+
+    private void observeLearning(OrchestrationRequest request,
+                                 CandidateExecution execution,
+                                 AgentRouter.AgentRouteDecision routeDecision,
+                                 SkillResult result,
+                                 long durationMs,
+                                 String traceId) {
+        if (plannerLearningStore == null || request == null || execution == null) {
+            return;
+        }
+        int tokenEstimate = estimateTokens(request.userInput())
+                + estimateTokens(execution.params() == null ? "" : execution.params().toString())
+                + estimateTokens(result == null ? "" : result.output());
+        plannerLearningStore.observe(
+                request.userId(),
+                execution.skillName(),
+                routeDecision == null ? "unknown" : routeDecision.routeType().name(),
+                result != null && result.success(),
+                durationMs,
+                tokenEstimate,
+                execution.usedFallback()
+        );
+        traceEvent(traceId, "learning", "observe", Map.of(
+                "skill", execution.skillName(),
+                "success", result != null && result.success(),
+                "durationMs", durationMs,
+                "tokenEstimate", tokenEstimate,
+                "routeType", routeDecision == null ? "unknown" : routeDecision.routeType().name()
+        ));
+    }
+
+    private int estimateTokens(String text) {
+        if (text == null || text.isBlank()) {
+            return 0;
+        }
+        return Math.max(1, (text.length() + 3) / 4);
+    }
+
+    private String startTrace(Decision decision, OrchestrationRequest request) {
+        String userId = request == null ? "" : request.userId();
+        String intent = decision == null ? "" : decision.intent();
+        String input = request == null ? "" : request.userInput();
+        if (traceLogger == null) {
+            return java.util.UUID.randomUUID().toString();
+        }
+        return traceLogger.start(userId, intent, input);
+    }
+
+    private void traceEvent(String traceId, String phase, String action, Map<String, Object> details) {
+        if (traceLogger == null || traceId == null || traceId.isBlank()) {
+            return;
+        }
+        Map<String, Object> safe = new LinkedHashMap<>();
+        if (details != null) {
+            for (Map.Entry<String, Object> entry : details.entrySet()) {
+                if (entry.getKey() == null || entry.getKey().isBlank()) {
+                    continue;
+                }
+                safe.put(entry.getKey(), entry.getValue() == null ? "" : entry.getValue());
+            }
+        }
+        traceLogger.event(traceId, phase, action, safe);
+    }
+
+    private void finishTrace(String traceId,
+                             Decision decision,
+                             OrchestrationRequest request,
+                             OrchestrationOutcome outcome) {
+        if (traceLogger == null || traceId == null || traceId.isBlank()) {
+            return;
+        }
+        boolean success = outcome != null && outcome.hasResult() && outcome.result() != null && outcome.result().success();
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("intent", decision == null ? "" : decision.intent());
+        details.put("target", decision == null ? "" : decision.target());
+        details.put("userId", request == null ? "" : request.userId());
+        details.put("selectedSkill", outcome == null ? "" : outcome.selectedSkill());
+        details.put("usedFallback", outcome != null && outcome.usedFallback());
+        details.put("strategy", outcome != null && outcome.trace() != null ? outcome.trace().strategy() : "");
+        traceLogger.finish(traceId, success, success ? "success" : "failure", details);
+    }
+
     private SkillContext buildExecutionContext(OrchestrationRequest request, Map<String, Object> params) {
         SkillContext baseContext = request == null ? null : request.skillContext();
         String userId = request == null ? "" : request.userId();
@@ -929,6 +1178,9 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
             note.append(", result=").append(result.output());
         }
         return note.toString();
+    }
+
+    private record PreparedExecution(SkillContext context, AgentRouter.AgentRouteDecision routeDecision) {
     }
 
     private record CandidateExecution(ScoredCandidate candidate, Map<String, Object> params, boolean usedFallback) {

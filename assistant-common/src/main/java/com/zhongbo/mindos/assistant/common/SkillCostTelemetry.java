@@ -9,4 +9,8 @@ public interface SkillCostTelemetry {
     void record(String userId, String skillName, long latencyMs, int totalTokensEstimate, boolean success);
 
     Map<String, CostModel> costModels(String userId);
+
+    default Map<String, Double> averageLatencies(String userId) {
+        return Map.of();
+    }
 }

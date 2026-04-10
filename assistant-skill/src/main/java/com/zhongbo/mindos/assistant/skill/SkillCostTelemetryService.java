@@ -82,8 +82,37 @@ public class SkillCostTelemetryService implements SkillCostTelemetry {
                     double tokenCost = normalize(aggregate.averageTokens(), tokenDivisor);
                     double latency = normalize(aggregate.averageLatency(), latencyDivisor);
                     models.put(entry.getKey(), new CostModel(tokenCost, latency, aggregate.successRate()));
-                });
+        });
         return Map.copyOf(models);
+    }
+
+    @Override
+    public Map<String, Double> averageLatencies(String userId) {
+        if (userId == null || userId.isBlank()) {
+            return Map.of();
+        }
+        ConcurrentLinkedDeque<SkillCostSample> deque = samplesByUser.get(userId.trim());
+        if (deque == null || deque.isEmpty()) {
+            return Map.of();
+        }
+        List<SkillCostSample> snapshot = new ArrayList<>(deque);
+        Map<String, List<SkillCostSample>> grouped = snapshot.stream()
+                .collect(Collectors.groupingBy(
+                        SkillCostSample::skillName,
+                        LinkedHashMap::new,
+                        Collectors.toList()
+                ));
+        if (grouped.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, Double> averages = new LinkedHashMap<>();
+        grouped.entrySet().stream()
+                .sorted(Map.Entry.comparingByKey())
+                .forEach(entry -> averages.put(entry.getKey(), entry.getValue().stream()
+                        .mapToLong(SkillCostSample::latencyMs)
+                        .average()
+                        .orElse(0.0)));
+        return Map.copyOf(averages);
     }
 
     private SkillCostAggregate aggregate(List<SkillCostSample> samples) {
