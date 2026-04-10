@@ -5,15 +5,15 @@ import java.util.Optional;
 
 public interface GraphMemoryRepository {
 
-    GraphMemoryNode saveNode(String userId, GraphMemoryNode node);
+    MemoryNode saveNode(String userId, MemoryNode node);
 
-    GraphMemoryEdge saveEdge(String userId, GraphMemoryEdge edge);
+    MemoryEdge saveEdge(String userId, MemoryEdge edge);
 
-    Optional<GraphMemoryNode> findNode(String userId, String nodeId);
+    Optional<MemoryNode> findNode(String userId, String nodeId);
 
-    List<GraphMemoryNode> listNodes(String userId);
+    List<MemoryNode> listNodes(String userId);
 
-    List<GraphMemoryEdge> listEdges(String userId);
+    List<MemoryEdge> listEdges(String userId);
 
-    List<GraphMemoryEdge> outgoingEdges(String userId, String nodeId);
+    List<MemoryEdge> outgoingEdges(String userId, String nodeId);
 }

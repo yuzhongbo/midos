@@ -3,8 +3,8 @@ package com.zhongbo.mindos.assistant.dispatcher.agent.search;
 import com.zhongbo.mindos.assistant.dispatcher.agent.procedure.ProcedureMatch;
 import com.zhongbo.mindos.assistant.dispatcher.agent.procedure.ProcedureMemoryEngine;
 import com.zhongbo.mindos.assistant.memory.MemoryGateway;
-import com.zhongbo.mindos.assistant.memory.graph.GraphMemoryNode;
 import com.zhongbo.mindos.assistant.memory.graph.GraphMemoryView;
+import com.zhongbo.mindos.assistant.memory.graph.MemoryNode;
 import com.zhongbo.mindos.assistant.memory.model.SkillUsageStats;
 import com.zhongbo.mindos.assistant.skill.SkillEngine;
 
@@ -80,7 +80,7 @@ public class BeamSearchCandidatePlanner implements SearchPlanner {
             }
         }
         if (graphMemoryView != null && !request.userInput().isBlank()) {
-            for (GraphMemoryNode node : graphMemoryView.searchNodes(request.userId(), request.userInput(), request.beamWidth() * 2)) {
+            for (MemoryNode node : graphMemoryView.searchNodes(request.userId(), request.userInput(), request.beamWidth() * 2)) {
                 String candidate = extractCandidateFromNode(node);
                 if (!candidate.isBlank()) {
                     expansions.putIfAbsent(candidate, new Expansion(candidate, 0.72, "graph-memory"));
@@ -96,8 +96,8 @@ public class BeamSearchCandidatePlanner implements SearchPlanner {
         return List.copyOf(expansions.values());
     }
 
-    private String extractCandidateFromNode(GraphMemoryNode node) {
-        Object skillName = node.attributes().get("skillName");
+    private String extractCandidateFromNode(MemoryNode node) {
+        Object skillName = node.data().get("skillName");
         if (skillName != null && !String.valueOf(skillName).isBlank()) {
             return String.valueOf(skillName).trim();
         }

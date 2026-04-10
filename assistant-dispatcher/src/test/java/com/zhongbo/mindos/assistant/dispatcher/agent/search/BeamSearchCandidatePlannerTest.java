@@ -3,8 +3,8 @@ package com.zhongbo.mindos.assistant.dispatcher.agent.search;
 import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.dispatcher.agent.procedure.InMemoryProcedureMemoryEngine;
 import com.zhongbo.mindos.assistant.memory.MemoryGateway;
-import com.zhongbo.mindos.assistant.memory.graph.GraphMemoryNode;
-import com.zhongbo.mindos.assistant.memory.graph.GraphMemoryService;
+import com.zhongbo.mindos.assistant.memory.graph.GraphMemory;
+import com.zhongbo.mindos.assistant.memory.graph.MemoryNode;
 import com.zhongbo.mindos.assistant.memory.model.ConversationTurn;
 import com.zhongbo.mindos.assistant.memory.model.ProceduralMemoryEntry;
 import com.zhongbo.mindos.assistant.memory.model.SkillUsageStats;
@@ -31,8 +31,8 @@ class BeamSearchCandidatePlannerTest {
                 skill("teaching.plan", 820)
         ));
         SkillEngine skillEngine = new SkillEngine(registry, new SkillDslExecutor(registry));
-        GraphMemoryService graphMemory = new GraphMemoryService();
-        graphMemory.upsertNode("u1", new GraphMemoryNode("n1", "skill", "student.analyze", Map.of("skillName", "student.analyze"), null, null));
+        GraphMemory graphMemory = new GraphMemory();
+        graphMemory.addNode("u1", new MemoryNode("n1", "skill", Map.of("name", "student.analyze", "skillName", "student.analyze"), null, null));
 
         BeamSearchCandidatePlanner planner = new BeamSearchCandidatePlanner(
                 skillEngine,

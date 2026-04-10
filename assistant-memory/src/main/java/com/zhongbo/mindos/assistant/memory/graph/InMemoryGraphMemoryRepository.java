@@ -13,25 +13,25 @@ public class InMemoryGraphMemoryRepository implements GraphMemoryRepository {
     private final Map<String, UserGraph> graphs = new ConcurrentHashMap<>();
 
     @Override
-    public GraphMemoryNode saveNode(String userId, GraphMemoryNode node) {
+    public MemoryNode saveNode(String userId, MemoryNode node) {
         UserGraph graph = graphs.computeIfAbsent(safeUserId(userId), ignored -> new UserGraph());
-        GraphMemoryNode existing = graph.nodes.get(node.id());
-        GraphMemoryNode saved = existing == null
-                ? new GraphMemoryNode(node.id(), node.type(), node.name(), node.attributes(), node.createdAt(), node.updatedAt())
-                : existing.touch(merge(existing.attributes(), node.attributes()));
+        MemoryNode existing = graph.nodes.get(node.id());
+        MemoryNode saved = existing == null
+                ? new MemoryNode(node.id(), node.type(), node.data(), node.createdAt(), node.updatedAt())
+                : existing.touch(merge(existing.data(), node.data()));
         graph.nodes.put(saved.id(), saved);
         return saved;
     }
 
     @Override
-    public GraphMemoryEdge saveEdge(String userId, GraphMemoryEdge edge) {
+    public MemoryEdge saveEdge(String userId, MemoryEdge edge) {
         UserGraph graph = graphs.computeIfAbsent(safeUserId(userId), ignored -> new UserGraph());
-        GraphMemoryEdge saved = new GraphMemoryEdge(
-                edge.sourceId(),
+        MemoryEdge saved = new MemoryEdge(
+                edge.from(),
+                edge.to(),
                 edge.relation(),
-                edge.targetId(),
                 edge.weight(),
-                edge.attributes(),
+                edge.data(),
                 edge.createdAt() == null ? Instant.now() : edge.createdAt()
         );
         graph.edges.put(saved.key(), saved);
@@ -39,25 +39,25 @@ public class InMemoryGraphMemoryRepository implements GraphMemoryRepository {
     }
 
     @Override
-    public Optional<GraphMemoryNode> findNode(String userId, String nodeId) {
+    public Optional<MemoryNode> findNode(String userId, String nodeId) {
         return Optional.ofNullable(graphs.getOrDefault(safeUserId(userId), UserGraph.empty()).nodes.get(nodeId));
     }
 
     @Override
-    public List<GraphMemoryNode> listNodes(String userId) {
+    public List<MemoryNode> listNodes(String userId) {
         return List.copyOf(graphs.getOrDefault(safeUserId(userId), UserGraph.empty()).nodes.values());
     }
 
     @Override
-    public List<GraphMemoryEdge> listEdges(String userId) {
+    public List<MemoryEdge> listEdges(String userId) {
         return List.copyOf(graphs.getOrDefault(safeUserId(userId), UserGraph.empty()).edges.values());
     }
 
     @Override
-    public List<GraphMemoryEdge> outgoingEdges(String userId, String nodeId) {
-        List<GraphMemoryEdge> matched = new ArrayList<>();
-        for (GraphMemoryEdge edge : listEdges(userId)) {
-            if (edge.sourceId().equals(nodeId)) {
+    public List<MemoryEdge> outgoingEdges(String userId, String nodeId) {
+        List<MemoryEdge> matched = new ArrayList<>();
+        for (MemoryEdge edge : listEdges(userId)) {
+            if (edge.from().equals(nodeId)) {
                 matched.add(edge);
             }
         }
@@ -80,8 +80,8 @@ public class InMemoryGraphMemoryRepository implements GraphMemoryRepository {
     }
 
     private static final class UserGraph {
-        private final Map<String, GraphMemoryNode> nodes = new LinkedHashMap<>();
-        private final Map<String, GraphMemoryEdge> edges = new LinkedHashMap<>();
+        private final Map<String, MemoryNode> nodes = new LinkedHashMap<>();
+        private final Map<String, MemoryEdge> edges = new LinkedHashMap<>();
 
         private static UserGraph empty() {
             return new UserGraph();

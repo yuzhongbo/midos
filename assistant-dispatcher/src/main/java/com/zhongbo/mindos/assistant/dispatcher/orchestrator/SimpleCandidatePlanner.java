@@ -1,6 +1,7 @@
 package com.zhongbo.mindos.assistant.dispatcher.orchestrator;
 
 import com.zhongbo.mindos.assistant.memory.MemoryGateway;
+import com.zhongbo.mindos.assistant.memory.graph.GraphMemory;
 import com.zhongbo.mindos.assistant.memory.model.SkillUsageStats;
 import com.zhongbo.mindos.assistant.skill.SkillEngine;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -19,6 +20,7 @@ public class SimpleCandidatePlanner implements CandidatePlanner {
 
     private final SkillEngine skillEngine;
     private final MemoryGateway memoryGateway;
+    private final GraphMemory graphMemory;
     private final int maxCandidates;
     private final double explicitWeight;
     private final double keywordWeight;
@@ -26,12 +28,23 @@ public class SimpleCandidatePlanner implements CandidatePlanner {
     private final double successWeight;
 
     public SimpleCandidatePlanner() {
-        this(null, null, 3, 0.40, 0.35, 0.15, 0.10);
+        this(null, null, null, 3, 0.40, 0.35, 0.15, 0.10);
+    }
+
+    public SimpleCandidatePlanner(SkillEngine skillEngine,
+                                  MemoryGateway memoryGateway,
+                                  int maxCandidates,
+                                  double explicitWeight,
+                                  double keywordWeight,
+                                  double memoryWeight,
+                                  double successWeight) {
+        this(skillEngine, memoryGateway, null, maxCandidates, explicitWeight, keywordWeight, memoryWeight, successWeight);
     }
 
     @Autowired
     public SimpleCandidatePlanner(SkillEngine skillEngine,
                                   MemoryGateway memoryGateway,
+                                  GraphMemory graphMemory,
                                   @Value("${mindos.dispatcher.candidate-planner.max-candidates:3}") int maxCandidates,
                                   @Value("${mindos.dispatcher.candidate-planner.explicit-weight:0.40}") double explicitWeight,
                                   @Value("${mindos.dispatcher.candidate-planner.keyword-weight:0.35}") double keywordWeight,
@@ -39,6 +52,7 @@ public class SimpleCandidatePlanner implements CandidatePlanner {
                                   @Value("${mindos.dispatcher.candidate-planner.success-weight:0.10}") double successWeight) {
         this.skillEngine = skillEngine;
         this.memoryGateway = memoryGateway;
+        this.graphMemory = graphMemory;
         this.maxCandidates = Math.max(1, Math.min(3, maxCandidates));
         this.explicitWeight = explicitWeight;
         this.keywordWeight = keywordWeight;
@@ -50,11 +64,16 @@ public class SimpleCandidatePlanner implements CandidatePlanner {
     public List<ScoredCandidate> plan(String suggestedTarget, DecisionOrchestrator.OrchestrationRequest request) {
         Map<String, Integer> keywordScores = detectKeywordScores(request == null ? "" : request.userInput());
         Map<String, SkillUsageStats> usageStats = lookupUsageStats(request == null ? "" : request.userId());
+        Map<String, Double> graphScores = lookupGraphScores(request == null ? "" : request.userId(),
+                request == null ? "" : request.userInput(),
+                suggestedTarget,
+                keywordScores.keySet());
         Map<String, CandidateAccumulator> candidates = new LinkedHashMap<>();
         if (suggestedTarget != null && !suggestedTarget.isBlank()) {
             candidates.put(suggestedTarget, new CandidateAccumulator(suggestedTarget));
         }
         keywordScores.keySet().forEach(name -> candidates.computeIfAbsent(name, CandidateAccumulator::new));
+        graphScores.keySet().forEach(name -> candidates.computeIfAbsent(name, CandidateAccumulator::new));
         if (candidates.isEmpty()) {
             return List.of();
         }
@@ -67,14 +86,15 @@ public class SimpleCandidatePlanner implements CandidatePlanner {
             int rawKeywordScore = keywordScores.getOrDefault(accumulator.skillName, accumulator.skillName.equals(suggestedTarget) ? 700 : 0);
             double normalizedKeyword = normalizeKeywordScore(rawKeywordScore);
             SkillUsageStats stats = usageStats.get(accumulator.skillName);
-            double memoryScore = normalizeMemoryScore(stats, maxUsageCount);
+            double graphScore = graphScores.getOrDefault(accumulator.skillName, 0.0);
+            double memoryScore = Math.min(1.0, normalizeMemoryScore(stats, maxUsageCount) + graphScore);
             double successRate = normalizeSuccessRate(stats);
             double explicitScore = accumulator.skillName.equals(suggestedTarget) ? 1.0 : 0.0;
             double finalScore = explicitWeight * explicitScore
                     + keywordWeight * normalizedKeyword
                     + memoryWeight * memoryScore
                     + successWeight * successRate;
-            List<String> reasons = buildReasons(accumulator.skillName, suggestedTarget, rawKeywordScore, stats, memoryScore, successRate);
+            List<String> reasons = buildReasons(accumulator.skillName, suggestedTarget, rawKeywordScore, stats, graphScore, memoryScore, successRate);
             scored.add(new ScoredCandidate(accumulator.skillName, round(finalScore), round(normalizedKeyword), round(memoryScore), round(successRate), reasons));
         }
         scored.sort(Comparator
@@ -103,6 +123,20 @@ public class SimpleCandidatePlanner implements CandidatePlanner {
         return Map.copyOf(stats);
     }
 
+    private Map<String, Double> lookupGraphScores(String userId,
+                                                  String userInput,
+                                                  String suggestedTarget,
+                                                  java.util.Set<String> keywordCandidates) {
+        if (graphMemory == null || userId == null || userId.isBlank()) {
+            return Map.of();
+        }
+        List<String> candidateNames = new ArrayList<>(keywordCandidates == null ? List.of() : keywordCandidates);
+        if (suggestedTarget != null && !suggestedTarget.isBlank()) {
+            candidateNames.add(suggestedTarget);
+        }
+        return graphMemory.scoreCandidates(userId, userInput, candidateNames);
+    }
+
     private double normalizeKeywordScore(int rawKeywordScore) {
         if (rawKeywordScore <= 0) {
             return 0.0;
@@ -128,6 +162,7 @@ public class SimpleCandidatePlanner implements CandidatePlanner {
                                       String suggestedTarget,
                                       int rawKeywordScore,
                                       SkillUsageStats stats,
+                                      double graphScore,
                                       double memoryScore,
                                       double successRate) {
         List<String> reasons = new ArrayList<>();
@@ -143,6 +178,9 @@ public class SimpleCandidatePlanner implements CandidatePlanner {
             if (memoryScore > 0.0) {
                 reasons.add("habitScore=" + round(memoryScore));
             }
+        }
+        if (graphScore > 0.0) {
+            reasons.add("graphScore=" + round(graphScore));
         }
         if (reasons.isEmpty()) {
             reasons.add("fallback-candidate");

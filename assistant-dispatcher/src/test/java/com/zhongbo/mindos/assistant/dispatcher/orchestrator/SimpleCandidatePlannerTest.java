@@ -3,6 +3,8 @@ package com.zhongbo.mindos.assistant.dispatcher.orchestrator;
 import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.memory.MemoryGateway;
+import com.zhongbo.mindos.assistant.memory.graph.GraphMemory;
+import com.zhongbo.mindos.assistant.memory.graph.MemoryNode;
 import com.zhongbo.mindos.assistant.memory.model.ConversationTurn;
 import com.zhongbo.mindos.assistant.memory.model.LongTask;
 import com.zhongbo.mindos.assistant.memory.model.LongTaskStatus;
@@ -49,7 +51,9 @@ class SimpleCandidatePlannerTest {
                         new SkillUsageStats("mcp.qwensearch.webSearch", 1, 0, 1)
                 )
         );
-        SimpleCandidatePlanner planner = new SimpleCandidatePlanner(skillEngine, memoryGateway, 3, 0.40, 0.35, 0.15, 0.10);
+        GraphMemory graphMemory = new GraphMemory();
+        graphMemory.addNode("u1", new MemoryNode("skill:qwen", "result.skill", Map.of("name", "Qwen Search", "skillName", "mcp.qwensearch.webSearch", "topic", "今天新闻"), null, null));
+        SimpleCandidatePlanner planner = new SimpleCandidatePlanner(skillEngine, memoryGateway, graphMemory, 3, 0.40, 0.35, 0.15, 0.10);
 
         List<ScoredCandidate> candidates = planner.plan(
                 "",
@@ -59,6 +63,7 @@ class SimpleCandidatePlannerTest {
         assertEquals(3, candidates.size());
         assertEquals("mcp.bravesearch.webSearch", candidates.get(0).skillName());
         assertTrue(candidates.get(0).reasons().stream().anyMatch(reason -> reason.contains("successRate")));
+        assertTrue(candidates.stream().anyMatch(candidate -> candidate.reasons().stream().anyMatch(reason -> reason.contains("graphScore"))));
     }
 
     private Skill scoredSkill(String name, int routingScore) {

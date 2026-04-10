@@ -4,16 +4,16 @@ import java.util.Map;
 
 public interface GraphMemoryGateway {
 
-    GraphMemoryNode upsertNode(String userId, GraphMemoryNode node);
+    MemoryNode upsertNode(String userId, MemoryNode node);
 
-    GraphMemoryEdge upsertEdge(String userId, GraphMemoryEdge edge);
+    MemoryEdge upsertEdge(String userId, MemoryEdge edge);
 
-    default GraphMemoryEdge link(String userId,
-                                 String sourceId,
-                                 String relation,
-                                 String targetId,
-                                 double weight,
-                                 Map<String, Object> attributes) {
-        return upsertEdge(userId, new GraphMemoryEdge(sourceId, relation, targetId, weight, attributes, null));
+    default MemoryEdge link(String userId,
+                            String from,
+                            String relation,
+                            String to,
+                            double weight,
+                            Map<String, Object> data) {
+        return upsertEdge(userId, new MemoryEdge(from, to, relation, weight, data, null));
     }
 }

@@ -3,7 +3,7 @@ package com.zhongbo.mindos.assistant.dispatcher.agent.procedure;
 import com.zhongbo.mindos.assistant.dispatcher.agent.taskgraph.TaskGraph;
 import com.zhongbo.mindos.assistant.dispatcher.agent.taskgraph.TaskNode;
 import com.zhongbo.mindos.assistant.memory.graph.GraphMemoryGateway;
-import com.zhongbo.mindos.assistant.memory.graph.GraphMemoryNode;
+import com.zhongbo.mindos.assistant.memory.graph.MemoryNode;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -56,11 +56,10 @@ public class InMemoryProcedureMemoryEngine implements ProcedureMemoryEngine {
         );
         userTemplates.put(templateId, template);
         if (graphMemoryGateway != null) {
-            graphMemoryGateway.upsertNode(userId, new GraphMemoryNode(
+            graphMemoryGateway.upsertNode(userId, new MemoryNode(
                     "procedure:" + templateId,
                     "procedure.template",
-                    template.intent(),
-                    Map.of("trigger", template.trigger(), "successRate", template.successRate(), "reuseCount", template.reuseCount()),
+                    Map.of("name", template.intent(), "trigger", template.trigger(), "successRate", template.successRate(), "reuseCount", template.reuseCount()),
                     null,
                     null
             ));

@@ -2,6 +2,9 @@ package com.zhongbo.mindos.assistant.dispatcher.orchestrator;
 
 import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.memory.MemoryGateway;
+import com.zhongbo.mindos.assistant.memory.graph.GraphMemory;
+import com.zhongbo.mindos.assistant.memory.graph.MemoryEdge;
+import com.zhongbo.mindos.assistant.memory.graph.MemoryNode;
 import com.zhongbo.mindos.assistant.memory.model.ConversationTurn;
 import com.zhongbo.mindos.assistant.memory.model.LongTask;
 import com.zhongbo.mindos.assistant.memory.model.LongTaskStatus;
@@ -26,7 +29,8 @@ class SimpleParamValidatorTest {
         registry.registerDefaults();
         SimpleParamValidator validator = new SimpleParamValidator(
                 registry,
-                gateway(List.of(ConversationTurn.user("给 stu-123 制定数学学习计划，每周 8 小时，持续 6 周")))
+                gateway(List.of(ConversationTurn.user("给 stu-123 制定数学学习计划，每周 8 小时，持续 6 周"))),
+                new GraphMemory()
         );
 
         ParamValidator.ValidationResult result = validator.validate(
@@ -47,7 +51,8 @@ class SimpleParamValidatorTest {
         registry.registerDefaults();
         SimpleParamValidator validator = new SimpleParamValidator(
                 registry,
-                gateway(List.of(ConversationTurn.user("帮我做个英语学习计划")))
+                gateway(List.of(ConversationTurn.user("帮我做个英语学习计划"))),
+                new GraphMemory()
         );
 
         ParamValidator.ValidationResult result = validator.validate(
@@ -59,6 +64,28 @@ class SimpleParamValidatorTest {
         assertTrue(result.valid());
         assertEquals(4, result.normalizedParams().get("durationWeeks"));
         assertEquals(6, result.normalizedParams().get("weeklyHours"));
+    }
+
+    @Test
+    void shouldInferStudentIdFromGraphMemory() {
+        InMemoryParamSchemaRegistry registry = new InMemoryParamSchemaRegistry();
+        registry.registerDefaults();
+        GraphMemory graphMemory = new GraphMemory();
+        graphMemory.addNode("u1", new MemoryNode("entity:student:42", "entity.student", Map.of("studentId", "stu-42", "name", "Alice"), null, null));
+        graphMemory.addNode("u1", new MemoryNode("event:lesson:latest", "event.lesson", Map.of("topic", "数学"), null, null));
+        graphMemory.addNode("u1", new MemoryNode("result:plan:latest", "result.plan", Map.of("status", "draft"), null, null));
+        graphMemory.addEdge("u1", new MemoryEdge("event:lesson:latest", "entity:student:42", "about-student", 0.9, Map.of(), null));
+        graphMemory.addEdge("u1", new MemoryEdge("result:plan:latest", "event:lesson:latest", "derived-from", 0.8, Map.of(), null));
+        SimpleParamValidator validator = new SimpleParamValidator(registry, gateway(List.of()), graphMemory);
+
+        ParamValidator.ValidationResult result = validator.validate(
+                "teaching.plan",
+                Map.of("topic", "数学"),
+                new DecisionOrchestrator.OrchestrationRequest("u1", "给 Alice 做数学计划", new SkillContext("u1", "给 Alice 做数学计划", Map.of()), Map.of())
+        );
+
+        assertTrue(result.valid());
+        assertEquals("stu-42", result.autofilledParams().get("studentId"));
     }
 
     private MemoryGateway gateway(List<ConversationTurn> history) {

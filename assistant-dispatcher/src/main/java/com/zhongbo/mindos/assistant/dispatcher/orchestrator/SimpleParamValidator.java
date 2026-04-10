@@ -2,6 +2,7 @@ package com.zhongbo.mindos.assistant.dispatcher.orchestrator;
 
 import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.memory.MemoryGateway;
+import com.zhongbo.mindos.assistant.memory.graph.GraphMemory;
 import com.zhongbo.mindos.assistant.memory.model.ConversationTurn;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -30,15 +31,21 @@ public class SimpleParamValidator implements ParamValidator {
 
     private final ParamSchemaRegistry registry;
     private final MemoryGateway memoryGateway;
+    private final GraphMemory graphMemory;
 
     public SimpleParamValidator(ParamSchemaRegistry registry) {
-        this(registry, null);
+        this(registry, null, null);
+    }
+
+    public SimpleParamValidator(ParamSchemaRegistry registry, MemoryGateway memoryGateway) {
+        this(registry, memoryGateway, null);
     }
 
     @Autowired
-    public SimpleParamValidator(ParamSchemaRegistry registry, MemoryGateway memoryGateway) {
+    public SimpleParamValidator(ParamSchemaRegistry registry, MemoryGateway memoryGateway, GraphMemory graphMemory) {
         this.registry = registry;
         this.memoryGateway = memoryGateway;
+        this.graphMemory = graphMemory;
     }
 
     @Override
@@ -127,13 +134,10 @@ public class SimpleParamValidator implements ParamValidator {
                                                   Map<String, Object> currentParams,
                                                   DecisionOrchestrator.OrchestrationRequest request,
                                                   Set<String> extraRequired) {
-        if (memoryGateway == null || request == null || request.userId() == null || request.userId().isBlank()) {
+        if (request == null || request.userId() == null || request.userId().isBlank()) {
             return Map.of();
         }
-        List<ConversationTurn> history = memoryGateway.recentHistory(request.userId());
-        if (history.isEmpty()) {
-            return Map.of();
-        }
+        List<ConversationTurn> history = memoryGateway == null ? List.of() : memoryGateway.recentHistory(request.userId());
         Map<String, Object> resolved = new LinkedHashMap<>();
         Set<String> candidateKeys = collectCandidateKeys(schema, extraRequired);
         for (String key : candidateKeys) {
@@ -148,6 +152,9 @@ public class SimpleParamValidator implements ParamValidator {
                     resolved.put(key, inferred);
                     break;
                 }
+            }
+            if (!resolved.containsKey(key) && graphMemory != null) {
+                graphMemory.infer(request.userId(), key, request.userInput()).ifPresent(value -> resolved.put(key, value));
             }
         }
         return resolved;

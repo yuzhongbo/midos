@@ -6,9 +6,9 @@ public interface GraphMemoryView {
 
     GraphMemorySnapshot snapshot(String userId);
 
-    List<GraphMemoryNode> searchNodes(String userId, String keyword, int limit);
+    List<MemoryNode> searchNodes(String userId, String keyword, int limit);
 
-    List<GraphMemoryEdge> outgoingEdges(String userId, String nodeId);
+    List<MemoryEdge> outgoingEdges(String userId, String nodeId);
 
     GraphMemorySnapshot traverse(String userId, GraphMemoryQuery query);
 }
