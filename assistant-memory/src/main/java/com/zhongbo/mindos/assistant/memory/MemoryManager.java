@@ -317,6 +317,8 @@ public class MemoryManager implements InitializingBean, DisposableBean {
                 cursor = snapshot.cursor();
             }
             hydratedUsers.add(userId);
+            // remove the per-user lock after hydration to avoid unbounded growth of the map
+            hydrationLocks.remove(userId);
         }
     }
 

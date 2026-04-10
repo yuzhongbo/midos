@@ -5,14 +5,12 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.skill.Skill;
-import com.zhongbo.mindos.assistant.skill.SkillRegistry;
 import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalysisResult;
 import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalysisService;
-import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Component;
 
-import java.util.LinkedHashMap;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -21,13 +19,10 @@ import java.util.Map;
 public class SemanticAnalyzeSkill implements Skill {
 
     private final SemanticAnalysisService semanticAnalysisService;
-    private final SkillRegistry skillRegistry;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    public SemanticAnalyzeSkill(SemanticAnalysisService semanticAnalysisService,
-                                @Lazy SkillRegistry skillRegistry) {
+    public SemanticAnalyzeSkill(SemanticAnalysisService semanticAnalysisService) {
         this.semanticAnalysisService = semanticAnalysisService;
-        this.skillRegistry = skillRegistry;
     }
 
     @Override
@@ -37,7 +32,7 @@ public class SemanticAnalyzeSkill implements Skill {
 
     @Override
     public String description() {
-        return "Analyzes user intent, rewrites the request semantically, and suggests local skill routing or downstream LLM handling.";
+        return "Analyzes the user request and returns semantic hints without selecting execution targets.";
     }
 
     @Override
@@ -103,145 +98,60 @@ public class SemanticAnalyzeSkill implements Skill {
     private String renderText(SemanticAnalysisResult result, String targetInput) {
         StringBuilder output = new StringBuilder("[semantic.analyze]\n");
         output.append("原始输入: ").append(targetInput).append('\n');
-        output.append("意图: ").append(blankAsDefault(result.intent(), "未识别明确本地技能意图")).append('\n');
-        output.append("建议技能: ").append(blankAsDefault(result.suggestedSkill(), "交给后续模型")).append('\n');
+        output.append("意图: ").append(blankAsDefault(result.intent(), "未识别明确意图")).append('\n');
         output.append("改写请求: ").append(blankAsDefault(result.rewrittenInput(), targetInput)).append('\n');
+        output.append("摘要: ").append(blankAsDefault(result.summary(), "无")).append('\n');
         output.append("关键词: ").append(result.keywords().isEmpty() ? "-" : String.join(", ", result.keywords())).append('\n');
+        output.append("候选意图: ").append(renderCandidateIntentLabels(result)).append('\n');
         output.append("来源: ").append(blankAsDefault(result.source(), "heuristic")).append('\n');
         output.append("置信度: ").append(Math.round(result.confidence() * 100)).append("%");
         if (!result.payload().isEmpty()) {
-            output.append("\n建议参数: ").append(result.payload());
+            output.append("\n参数提示: ").append(result.payload());
         }
         return output.toString();
     }
 
     private String renderJson(SemanticAnalysisResult result, String targetInput, String memoryContext) {
-        List<Map<String, Object>> candidateIntents = buildCandidateIntents(result, targetInput);
-        String validatedIntent = selectBestIntentByContext(result.suggestedSkill(), candidateIntents, memoryContext);
         Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("intent", validatedIntent);
-        payload.put("params", result.payload());
-        payload.put("priority", derivePriority(result, targetInput));
-        payload.put("context_summary", buildContextSummary(memoryContext, result));
-        payload.put("cloud_enhance_needed", shouldCloudEnhance(targetInput, result));
-        payload.put("candidate_intents", candidateIntents);
-
-        // Backward-compatible fields retained for existing integrations.
-        payload.put("input", targetInput);
-        payload.put("rewrittenInput", result.rewrittenInput());
-        payload.put("suggestedSkill", result.suggestedSkill());
-        payload.put("payload", result.payload());
+        payload.put("intent", blankAsDefault(result.intent(), "unknown"));
+        payload.put("rewrittenInput", blankAsDefault(result.rewrittenInput(), targetInput));
+        payload.put("summary", blankAsDefault(result.summary(), ""));
+        payload.put("payloadHints", result.payload());
         payload.put("keywords", result.keywords());
         payload.put("confidence", result.confidence());
-        payload.put("source", result.source());
+        payload.put("source", blankAsDefault(result.source(), "heuristic"));
+        payload.put("candidateIntents", buildCandidateIntents(result));
+        payload.put("contextSummary", buildContextSummary(memoryContext, result));
+        payload.put("input", targetInput);
         try {
             return objectMapper.writeValueAsString(payload);
         } catch (JsonProcessingException ex) {
-            return "{\"input\":\"" + targetInput.replace("\"", "\\\"") + "\"}";
+            return "{\"intent\":\"unknown\",\"input\":\"" + targetInput.replace("\"", "\\\"") + "\"}";
         }
     }
 
-    private String resolveIntentCode(SemanticAnalysisResult result, String targetInput) {
-        if (result.suggestedSkill() != null && !result.suggestedSkill().isBlank() && isRegisteredSkill(result.suggestedSkill())) {
-            return result.suggestedSkill();
-        }
-        String normalized = targetInput == null ? "" : targetInput.toLowerCase(Locale.ROOT);
-        if ((normalized.contains("天气") || normalized.contains("weather")) && isRegisteredSkill("mcp.bravesearch.webSearch")) {
-            return "mcp.bravesearch.webSearch";
-        }
-        if ((normalized.contains("课程") || normalized.contains("报名") || normalized.contains("预订")) && isRegisteredSkill("teaching.plan")) {
-            return "teaching.plan";
-        }
-        if ((normalized.contains("日程") || normalized.contains("schedule") || normalized.contains("规划")) && isRegisteredSkill("teaching.plan")) {
-            return "teaching.plan";
-        }
-        if (isRegisteredSkill("clarification.ask")) {
-            return "clarification.ask";
-        }
-        return result.suggestedSkill() == null ? "" : result.suggestedSkill();
-    }
-
-    private int derivePriority(SemanticAnalysisResult result, String targetInput) {
-        String normalized = targetInput == null ? "" : targetInput.toLowerCase(Locale.ROOT);
-        if (normalized.contains("所有") || normalized.contains("全部") || normalized.contains("跨任务") || normalized.contains("优化")
-                || normalized.contains("复杂") || normalized.contains("综合")) {
-            return 5;
-        }
-        if (normalized.contains("规划") || normalized.contains("计划") || normalized.contains("方案") || normalized.contains("分析")) {
-            return 4;
-        }
-        if (normalized.contains("预订") || normalized.contains("报名") || normalized.contains("下周") || normalized.contains("安排")) {
-            return 3;
-        }
-        if (result.confidence() >= 0.85 && !result.payload().isEmpty()) {
-            return 1;
-        }
-        return 2;
-    }
-
-    private boolean shouldCloudEnhance(String targetInput, SemanticAnalysisResult result) {
-        String normalized = targetInput == null ? "" : targetInput.toLowerCase(Locale.ROOT);
-        int priority = derivePriority(result, targetInput);
-        return priority >= 4 || normalized.contains("总结") || normalized.contains("润色") || normalized.contains("优化");
-    }
-
-    private List<Map<String, Object>> buildCandidateIntents(SemanticAnalysisResult result, String targetInput) {
+    private List<Map<String, Object>> buildCandidateIntents(SemanticAnalysisResult result) {
         List<Map<String, Object>> candidates = new ArrayList<>();
-        addCandidate(candidates, resolveIntentCode(result, targetInput), Math.max(result.confidence(), 0.60));
-        String normalized = targetInput == null ? "" : targetInput.toLowerCase(Locale.ROOT);
-        if (normalized.contains("天气") || normalized.contains("weather")) {
-            addCandidate(candidates, "mcp.bravesearch.webSearch", 0.82);
-            addCandidate(candidates, "mcp.qwensearch.webSearch", 0.80);
-        }
-        if (normalized.contains("新闻") || normalized.contains("热点") || normalized.contains("最新")) {
-            addCandidate(candidates, "mcp.bravesearch.webSearch", 0.84);
-            addCandidate(candidates, "news_search", 0.72);
-        }
-        if (normalized.contains("待办") || normalized.contains("提醒")) {
-            addCandidate(candidates, "todo.create", 0.86);
-        }
-        if (normalized.contains("课程") || normalized.contains("学习") || normalized.contains("规划")) {
-            addCandidate(candidates, "teaching.plan", 0.78);
-        }
-        if (normalized.contains("沟通") || normalized.contains("情商")) {
-            addCandidate(candidates, "eq.coach", 0.76);
-        }
-        return candidates;
+        addCandidate(candidates, result.intent(), result.confidence());
+        addCandidate(candidates, result.suggestedSkill(), Math.max(result.confidence() - 0.1, 0.0));
+        return List.copyOf(candidates);
     }
 
-    private String selectBestIntentByContext(String suggestedSkill,
-                                             List<Map<String, Object>> candidates,
-                                             String memoryContext) {
+    private String renderCandidateIntentLabels(SemanticAnalysisResult result) {
+        List<Map<String, Object>> candidates = buildCandidateIntents(result);
         if (candidates.isEmpty()) {
-            return isRegisteredSkill("clarification.ask") ? "clarification.ask" : "";
+            return "-";
         }
-        double bestScore = -1.0;
-        String bestIntent = "";
-        String normalizedMemory = memoryContext == null ? "" : memoryContext.toLowerCase(Locale.ROOT);
-        for (Map<String, Object> candidate : candidates) {
-            String intent = asString(candidate.get("intent"));
-            if (!isRegisteredSkill(intent)) {
-                continue;
-            }
-            double confidence = candidate.get("confidence") instanceof Number n ? n.doubleValue() : 0.0;
-            double contextBoost = normalizedMemory.contains(intent.toLowerCase(Locale.ROOT)) ? 0.10 : 0.0;
-            if (suggestedSkill != null && suggestedSkill.equals(intent)) {
-                contextBoost += 0.08;
-            }
-            double score = confidence + contextBoost;
-            if (score > bestScore) {
-                bestScore = score;
-                bestIntent = intent;
-            }
-        }
-        if (!bestIntent.isBlank()) {
-            return bestIntent;
-        }
-        return isRegisteredSkill("clarification.ask") ? "clarification.ask" : asString(candidates.get(0).get("intent"));
+        return candidates.stream()
+                .map(candidate -> asString(candidate.get("intent")))
+                .filter(value -> !value.isBlank())
+                .distinct()
+                .reduce((left, right) -> left + ", " + right)
+                .orElse("-");
     }
 
     private void addCandidate(List<Map<String, Object>> candidates, String intent, double confidence) {
-        if (intent == null || intent.isBlank() || !isRegisteredSkill(intent)) {
+        if (intent == null || intent.isBlank()) {
             return;
         }
         for (Map<String, Object> existing : candidates) {
@@ -253,13 +163,6 @@ public class SemanticAnalyzeSkill implements Skill {
         row.put("intent", intent);
         row.put("confidence", Math.max(0.0, Math.min(1.0, confidence)));
         candidates.add(Map.copyOf(row));
-    }
-
-    private boolean isRegisteredSkill(String skillName) {
-        if (skillName == null || skillName.isBlank() || skillRegistry == null) {
-            return false;
-        }
-        return skillRegistry.getSkill(skillName).isPresent();
     }
 
     private String buildContextSummary(String memoryContext, SemanticAnalysisResult result) {
@@ -308,17 +211,19 @@ public class SemanticAnalyzeSkill implements Skill {
     private String renderAccessDeniedJson(String userId, String actorId) {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("intent", "access_denied");
-        payload.put("params", Map.of());
-        payload.put("priority", 0);
-        payload.put("context_summary", "权限校验失败：actor 与 userId 不匹配");
-        payload.put("cloud_enhance_needed", false);
-        payload.put("candidate_intents", List.of());
+        payload.put("rewrittenInput", "");
+        payload.put("summary", "权限校验失败：actor 与 userId 不匹配");
+        payload.put("payloadHints", Map.of());
+        payload.put("keywords", List.of());
+        payload.put("confidence", 0.0);
+        payload.put("source", "security");
+        payload.put("candidateIntents", List.of());
         payload.put("userId", asString(userId));
         payload.put("actorId", asString(actorId));
         try {
             return objectMapper.writeValueAsString(payload);
         } catch (JsonProcessingException ex) {
-            return "{\"intent\":\"access_denied\",\"priority\":0}";
+            return "{\"intent\":\"access_denied\",\"confidence\":0.0}";
         }
     }
 

@@ -16,6 +16,7 @@ import com.zhongbo.mindos.assistant.memory.ProceduralMemoryService;
 import com.zhongbo.mindos.assistant.memory.SemanticMemoryService;
 import com.zhongbo.mindos.assistant.memory.SemanticWriteGatePolicy;
 import com.zhongbo.mindos.assistant.memory.model.SemanticMemoryEntry;
+import com.zhongbo.mindos.assistant.dispatcher.decision.DecisionParser;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.DefaultDecisionOrchestrator;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.DefaultMemoryGateway;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.PostExecutionMemoryRecorder;
@@ -25,15 +26,15 @@ import com.zhongbo.mindos.assistant.dispatcher.orchestrator.SimpleFallbackPlan;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.DecisionOrchestrator;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.ParamValidator;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.SimpleParamValidator;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.TaskExecutor;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.InMemoryParamSchemaRegistry;
 import com.zhongbo.mindos.assistant.common.dto.LocalEscalationMetricsDto;
 import com.zhongbo.mindos.assistant.skill.Skill;
 import com.zhongbo.mindos.assistant.skill.SkillDslExecutor;
 import com.zhongbo.mindos.assistant.skill.SkillEngine;
 import com.zhongbo.mindos.assistant.skill.SkillRegistry;
-import com.zhongbo.mindos.assistant.skill.mcp.McpJsonRpcClient;
 import com.zhongbo.mindos.assistant.skill.mcp.McpToolDefinition;
-import com.zhongbo.mindos.assistant.skill.mcp.McpToolSkill;
+import com.zhongbo.mindos.assistant.skill.mcp.McpToolExecutor;
 import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalysisResult;
 import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalysisService;
 import org.junit.jupiter.api.Test;
@@ -714,7 +715,7 @@ class DispatcherServiceTest {
     void shouldRestrictLlmDispatcherPromptToShortlistedSkills() {
         MemoryManager memoryManager = createMemoryManager();
         RecordingLlmClient llmClient = new RecordingLlmClient(List.of(
-                "{\"skill\":\"code.generate\",\"input\":{\"task\":\"修复 spring 接口 bug\"}}"
+                "{\"intent\":\"code.fix\",\"target\":\"code.generate\",\"params\":{\"task\":\"修复 spring 接口 bug\"},\"confidence\":0.91,\"requireClarify\":false}"
         ));
         DispatcherService service = createDispatcher(memoryManager, llmClient, List.of(
                 new FixedSkill("code.generate", "Generate code and repair Spring API bugs", "代码修复完成"),
@@ -740,7 +741,7 @@ class DispatcherServiceTest {
     void shouldKeepGenericFallbackShortlistWhenNoSkillScoresPositive() {
         MemoryManager memoryManager = createMemoryManager();
         RecordingLlmClient llmClient = new RecordingLlmClient(List.of(
-                "{\"skill\":\"echo\",\"input\":{\"text\":\"auto-routed by llm-dsl\"}}"
+                "{\"intent\":\"general.confirm\",\"target\":\"echo\",\"params\":{\"text\":\"auto-routed by llm-dsl\"},\"confidence\":0.82,\"requireClarify\":false}"
         ));
         DispatcherService service = createDispatcher(memoryManager, llmClient, List.of(
                 new FixedSkill("echo", "Echo text for generic confirmation requests", "auto-routed by llm-dsl"),
@@ -761,7 +762,7 @@ class DispatcherServiceTest {
     void shouldRejectCodeGenerateWhenLlmRoutingMatchesGeneralKnowledgeQuestion() {
         MemoryManager memoryManager = createMemoryManager();
         RecordingLlmClient llmClient = new RecordingLlmClient(List.of(
-                "{\"skill\":\"code.generate\",\"input\":{\"task\":\"用简单例子解释量子计算的基本原理\"}}",
+                "{\"intent\":\"general.explain\",\"target\":\"code.generate\",\"params\":{\"task\":\"用简单例子解释量子计算的基本原理\"},\"confidence\":0.81,\"requireClarify\":false}",
                 "量子计算可以理解为让信息在多个可能状态上同时演化，再通过干涉放大正确答案。"
         ));
         DispatcherService service = createDispatcher(memoryManager, llmClient, List.of(
@@ -1533,7 +1534,7 @@ class DispatcherServiceTest {
     void shouldApplyStageMaxTokensToDslFallbackAndFinalizeContexts() {
         MemoryManager memoryManager = createMemoryManager();
         RecordingLlmClient llmClient = new RecordingLlmClient(List.of(
-                "{\"skill\":\"echo\",\"input\":{\"text\":\"auto-routed by llm-dsl\"}}",
+                "{\"intent\":\"general.confirm\",\"target\":\"echo\",\"params\":{\"text\":\"auto-routed by llm-dsl\"},\"confidence\":0.82,\"requireClarify\":false}",
                 "优化后的技能回复",
                 "普通 fallback 回复"
         ));
@@ -1847,27 +1848,32 @@ class DispatcherServiceTest {
         );
         MetaOrchestratorService metaOrchestratorService = new MetaOrchestratorService(false);
         SkillCapabilityPolicy capabilityPolicy = new SkillCapabilityPolicy(false, "fs.read,fs.write,exec,net", "");
-        PersonaCoreService personaCoreService = new PersonaCoreService(memoryManager, false, 2, "unknown,null,n/a");
+        DefaultMemoryGateway memoryGateway = new DefaultMemoryGateway(memoryManager);
+        PersonaCoreService personaCoreService = new PersonaCoreService(memoryManager, memoryGateway, false, 2, "unknown,null,n/a");
         DispatcherLlmTuningProperties tuningProperties = new DispatcherLlmTuningProperties();
         InMemoryParamSchemaRegistry paramSchemaRegistry = new InMemoryParamSchemaRegistry();
         paramSchemaRegistry.registerDefaults();
-        ParamValidator paramValidator = new SimpleParamValidator(paramSchemaRegistry);
+        ParamValidator paramValidator = new SimpleParamValidator(paramSchemaRegistry, memoryGateway);
         PostExecutionMemoryRecorder memoryRecorder = new PostExecutionMemoryRecorder(
-                new DefaultMemoryGateway(memoryManager),
+                memoryGateway,
                 Boolean.parseBoolean(System.getProperty("mindos.dispatcher.procedural-logging.enabled", "true")),
                 false,
                 "",
                 280
         );
         DecisionOrchestrator decisionOrchestrator = new DefaultDecisionOrchestrator(
-                new SimpleCandidatePlanner(),
+                new SimpleCandidatePlanner(skillEngine, memoryGateway, 3, 0.40, 0.35, 0.15, 0.10),
                 paramValidator,
                 new SimpleConversationLoop(),
                 new SimpleFallbackPlan(),
                 skillEngine,
                 memoryRecorder,
+                new TaskExecutor(3),
                 true,
-                2500
+                2500,
+                12000,
+                "eq.coach timeout",
+                3
         );
         return new DispatcherService(
                 skillEngine,
@@ -1881,6 +1887,10 @@ class DispatcherServiceTest {
                 memoryManager,
                 llmClient,
                 semanticAnalysisService,
+                new PromptBuilder(),
+                new LLMDecisionEngine(),
+                new DecisionParser(),
+                memoryGateway,
                 false,
                 true,
                 2,
@@ -1969,27 +1979,32 @@ class DispatcherServiceTest {
         );
         MetaOrchestratorService metaOrchestratorService = new MetaOrchestratorService(false);
         SkillCapabilityPolicy capabilityPolicy = new SkillCapabilityPolicy(false, "fs.read,fs.write,exec,net", "");
-        PersonaCoreService personaCoreService = new PersonaCoreService(memoryManager, false, 2, "unknown,null,n/a");
+        DefaultMemoryGateway memoryGateway = new DefaultMemoryGateway(memoryManager);
+        PersonaCoreService personaCoreService = new PersonaCoreService(memoryManager, memoryGateway, false, 2, "unknown,null,n/a");
         DispatcherLlmTuningProperties tuningProperties = new DispatcherLlmTuningProperties();
         InMemoryParamSchemaRegistry paramSchemaRegistry = new InMemoryParamSchemaRegistry();
         paramSchemaRegistry.registerDefaults();
-        ParamValidator paramValidator = new SimpleParamValidator(paramSchemaRegistry);
+        ParamValidator paramValidator = new SimpleParamValidator(paramSchemaRegistry, memoryGateway);
         PostExecutionMemoryRecorder memoryRecorder = new PostExecutionMemoryRecorder(
-                new DefaultMemoryGateway(memoryManager),
+                memoryGateway,
                 Boolean.parseBoolean(System.getProperty("mindos.dispatcher.procedural-logging.enabled", "true")),
                 false,
                 "",
                 280
         );
         DecisionOrchestrator decisionOrchestrator = new DefaultDecisionOrchestrator(
-                new SimpleCandidatePlanner(),
+                new SimpleCandidatePlanner(skillEngine, memoryGateway, 3, 0.40, 0.35, 0.15, 0.10),
                 paramValidator,
                 new SimpleConversationLoop(),
                 new SimpleFallbackPlan(),
                 skillEngine,
                 memoryRecorder,
+                new TaskExecutor(3),
                 false,
-                2500
+                2500,
+                12000,
+                "eq.coach timeout",
+                3
         );
         return new DispatcherService(
                 skillEngine,
@@ -2003,6 +2018,10 @@ class DispatcherServiceTest {
                 memoryManager,
                 llmClient,
                 semanticAnalysisService,
+                new PromptBuilder(),
+                new LLMDecisionEngine(),
+                new DecisionParser(),
+                memoryGateway,
                 false,
                 true,
                 2,
@@ -2423,7 +2442,8 @@ class DispatcherServiceTest {
         );
         MetaOrchestratorService metaOrchestratorService = new MetaOrchestratorService(false);
         SkillCapabilityPolicy capabilityPolicy = new SkillCapabilityPolicy(false, "fs.read,fs.write,exec,net", "");
-        PersonaCoreService personaCoreService = new PersonaCoreService(memoryManager, false, 2, "unknown,null,n/a");
+        DefaultMemoryGateway memoryGateway = new DefaultMemoryGateway(memoryManager);
+        PersonaCoreService personaCoreService = new PersonaCoreService(memoryManager, memoryGateway, false, 2, "unknown,null,n/a");
         DispatcherLlmTuningProperties tuningProperties = new DispatcherLlmTuningProperties();
         tuningProperties.getLlmDsl().setProvider(llmDslProvider);
         tuningProperties.getLlmDsl().setPreset(llmDslPreset);
@@ -2441,23 +2461,27 @@ class DispatcherServiceTest {
         tuningProperties.getLocalEscalation().getQuality().setReplyTerms("好的,收到,已收到,ok,okay,明白,可以,稍后,后面再说");
         InMemoryParamSchemaRegistry paramSchemaRegistry = new InMemoryParamSchemaRegistry();
         paramSchemaRegistry.registerDefaults();
-        ParamValidator paramValidator = new SimpleParamValidator(paramSchemaRegistry);
+        ParamValidator paramValidator = new SimpleParamValidator(paramSchemaRegistry, memoryGateway);
         PostExecutionMemoryRecorder memoryRecorder = new PostExecutionMemoryRecorder(
-                new DefaultMemoryGateway(memoryManager),
+                memoryGateway,
                 Boolean.parseBoolean(System.getProperty("mindos.dispatcher.procedural-logging.enabled", "true")),
                 postSkillSummaryEnabled,
                 postSkillSummarySkills,
                 280
         );
         DecisionOrchestrator decisionOrchestrator = new DefaultDecisionOrchestrator(
-                new SimpleCandidatePlanner(),
+                new SimpleCandidatePlanner(skillEngine, memoryGateway, 3, 0.40, 0.35, 0.15, 0.10),
                 paramValidator,
                 new SimpleConversationLoop(),
                 new SimpleFallbackPlan(),
                 skillEngine,
                 memoryRecorder,
+                new TaskExecutor(3),
                 false,
-                2500
+                2500,
+                eqCoachTimeoutMs,
+                eqCoachTimeoutReply,
+                3
         );
         return new DispatcherService(
                 skillEngine,
@@ -2471,6 +2495,10 @@ class DispatcherServiceTest {
                 memoryManager,
                 llmClient,
                 semanticAnalysisService,
+                new PromptBuilder(),
+                new LLMDecisionEngine(),
+                new DecisionParser(),
+                memoryGateway,
                 false,
                 true,
                 2,
@@ -2571,26 +2599,31 @@ class DispatcherServiceTest {
         );
         MetaOrchestratorService metaOrchestratorService = new MetaOrchestratorService(false);
         SkillCapabilityPolicy capabilityPolicy = new SkillCapabilityPolicy(false, "fs.read,fs.write,exec,net", "");
-        PersonaCoreService personaCoreService = new PersonaCoreService(memoryManager, false, 2, "unknown,null,n/a");
+        DefaultMemoryGateway memoryGateway = new DefaultMemoryGateway(memoryManager);
+        PersonaCoreService personaCoreService = new PersonaCoreService(memoryManager, memoryGateway, false, 2, "unknown,null,n/a");
         InMemoryParamSchemaRegistry paramSchemaRegistry = new InMemoryParamSchemaRegistry();
         paramSchemaRegistry.registerDefaults();
-        ParamValidator paramValidator = new SimpleParamValidator(paramSchemaRegistry);
+        ParamValidator paramValidator = new SimpleParamValidator(paramSchemaRegistry, memoryGateway);
         PostExecutionMemoryRecorder memoryRecorder = new PostExecutionMemoryRecorder(
-                new DefaultMemoryGateway(memoryManager),
+                memoryGateway,
                 Boolean.parseBoolean(System.getProperty("mindos.dispatcher.procedural-logging.enabled", "true")),
                 false,
                 "",
                 280
         );
         DecisionOrchestrator decisionOrchestrator = new DefaultDecisionOrchestrator(
-                new SimpleCandidatePlanner(),
+                new SimpleCandidatePlanner(skillEngine, memoryGateway, 3, 0.40, 0.35, 0.15, 0.10),
                 paramValidator,
                 new SimpleConversationLoop(),
                 new SimpleFallbackPlan(),
                 skillEngine,
                 memoryRecorder,
+                new TaskExecutor(3),
                 false,
-                2500
+                2500,
+                12000,
+                "eq.coach timeout",
+                3
         );
         return new DispatcherService(
                 skillEngine,
@@ -2604,6 +2637,10 @@ class DispatcherServiceTest {
                 memoryManager,
                 llmClient,
                 semanticAnalysisService,
+                new PromptBuilder(),
+                new LLMDecisionEngine(),
+                new DecisionParser(),
+                memoryGateway,
                 false,
                 true,
                 2,
@@ -2720,22 +2757,9 @@ class DispatcherServiceTest {
         String[] parts = skillName.split("\\.", 3);
         String serverAlias = parts.length > 1 ? parts[1] : "docs";
         String toolName = parts.length > 2 ? parts[2] : skillName;
-        return new McpToolSkill(
+        return new TestMcpLikeSkill(
                 new McpToolDefinition(serverAlias, "http://unused.local/mcp", toolName, description),
-                new McpJsonRpcClient() {
-                    @Override
-                    public String callTool(String serverUrl, String toolName, Map<String, Object> arguments) {
-                        return output;
-                    }
-
-                    @Override
-                    public String callTool(String serverUrl,
-                                           String toolName,
-                                           Map<String, Object> arguments,
-                                           Map<String, String> headers) {
-                        return output;
-                    }
-                }
+                output
         );
     }
 
@@ -2762,6 +2786,105 @@ class DispatcherServiceTest {
             }
             String normalized = input.stripLeading().toLowerCase(Locale.ROOT);
             return normalized.startsWith("semantic");
+        }
+    }
+
+    private static final class FixedNamedSkill implements Skill {
+        private final String name;
+        private final String description;
+        private final String output;
+
+        private FixedNamedSkill(String name, String description, String output) {
+            this.name = name;
+            this.description = description;
+            this.output = output;
+        }
+
+        @Override
+        public String name() {
+            return name;
+        }
+
+        @Override
+        public String description() {
+            return description;
+        }
+
+        @Override
+        public List<String> routingKeywords() {
+            return List.of(name, description);
+        }
+
+        @Override
+        public boolean supports(String input) {
+            if (input == null || input.isBlank()) {
+                return false;
+            }
+            String normalized = input.toLowerCase(Locale.ROOT);
+            return normalized.contains(name.toLowerCase(Locale.ROOT))
+                    || normalized.contains(description.toLowerCase(Locale.ROOT));
+        }
+
+        @Override
+        public SkillResult run(SkillContext context) {
+            return SkillResult.success(name, output);
+        }
+    }
+
+    private static final class TestMcpLikeSkill implements Skill {
+        private final McpToolDefinition toolDefinition;
+        private final McpToolExecutor executor = new McpToolExecutor();
+        private final String output;
+
+        private TestMcpLikeSkill(McpToolDefinition toolDefinition, String output) {
+            this.toolDefinition = toolDefinition;
+            this.output = output;
+        }
+
+        @Override
+        public String name() {
+            return toolDefinition.skillName();
+        }
+
+        @Override
+        public String description() {
+            return toolDefinition.description();
+        }
+
+        @Override
+        public List<String> routingKeywords() {
+            return executor.routingKeywords(toolDefinition);
+        }
+
+        @Override
+        public boolean supports(String input) {
+            return executor.supports(toolDefinition, input);
+        }
+
+        @Override
+        public int routingScore(String input) {
+            if (!supports(input)) {
+                return Integer.MIN_VALUE;
+            }
+            String normalized = input == null ? "" : input.toLowerCase(Locale.ROOT);
+            if (normalized.contains(toolDefinition.skillName().toLowerCase(Locale.ROOT))) {
+                return 1000;
+            }
+            if (toolDefinition.name().equalsIgnoreCase("searchDocs")) {
+                return normalized.contains("docs") || normalized.contains("文档") ? 960 : 880;
+            }
+            return switch (toolDefinition.serverAlias()) {
+                case "serper" -> 940;
+                case "qwensearch" -> 930;
+                case "serpapi" -> 920;
+                case "bravesearch", "brave" -> 900;
+                default -> 850;
+            };
+        }
+
+        @Override
+        public SkillResult run(SkillContext context) {
+            return SkillResult.success(toolDefinition.skillName(), output);
         }
     }
 

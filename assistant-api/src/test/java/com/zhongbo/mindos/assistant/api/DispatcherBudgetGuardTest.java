@@ -112,7 +112,7 @@ class DispatcherBudgetGuardTest {
                     if ("llm-dsl".equals(routeStage)) {
                         String input = context == null ? "" : String.valueOf(context.getOrDefault("input", ""));
                         if (input.contains("自动处理")) {
-                            return "{\"skill\":\"echo\",\"input\":{\"text\":\"auto-routed by llm-dsl\"}}";
+                            return "{\"intent\":\"auto.route\",\"target\":\"echo\",\"params\":{\"text\":\"auto-routed by llm-dsl\"},\"confidence\":0.93,\"requireClarify\":false}";
                         }
                         return "NONE";
                     }

@@ -5,6 +5,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 @Component
@@ -15,12 +16,34 @@ public class InMemoryParamSchemaRegistry implements ParamSchemaRegistry {
 
     @PostConstruct
     public void registerDefaults() {
-        register("todo.create", ParamSchema.atLeastOne("task", "input"));
-        register("news_search", ParamSchema.atLeastOne("query", "keyword", "input"));
-        register("teaching.plan", ParamSchema.atLeastOne("topic", "input"));
-        register("eq.coach", ParamSchema.atLeastOne("query", "input"));
-        register("code.generate", ParamSchema.atLeastOne("task", "input"));
-        register("mcp.*", ParamSchema.atLeastOne("input", "query"));
+        register("todo.create", ParamSchema.atLeastOne("task", "input")
+                .withAliases(Map.of("task", java.util.List.of("input", "query"))));
+        register("news_search", ParamSchema.atLeastOne("query", "keyword", "input")
+                .withAliases(Map.of("query", java.util.List.of("keyword", "input")))
+                .withTypes(Map.of("count", ParamType.INTEGER))
+                .withDefaults(Map.of("count", 5)));
+        register("teaching.plan", ParamSchema.of(Set.of("topic"), Set.of("topic", "input"))
+                .withAliases(Map.of(
+                        "topic", java.util.List.of("input", "query"),
+                        "studentId", java.util.List.of("student", "id"),
+                        "durationWeeks", java.util.List.of("weeks"),
+                        "weeklyHours", java.util.List.of("hours")
+                ))
+                .withTypes(Map.of(
+                        "studentId", ParamType.STRING,
+                        "durationWeeks", ParamType.INTEGER,
+                        "weeklyHours", ParamType.INTEGER
+                ))
+                .withDefaults(Map.of(
+                        "durationWeeks", 4,
+                        "weeklyHours", 6
+                )));
+        register("eq.coach", ParamSchema.atLeastOne("query", "input")
+                .withAliases(Map.of("query", java.util.List.of("input", "task"))));
+        register("code.generate", ParamSchema.atLeastOne("task", "input")
+                .withAliases(Map.of("task", java.util.List.of("input", "query"))));
+        register("mcp.*", ParamSchema.atLeastOne("input", "query")
+                .withAliases(Map.of("query", java.util.List.of("input", "keyword"))));
     }
 
     public void register(String target, ParamSchema schema) {

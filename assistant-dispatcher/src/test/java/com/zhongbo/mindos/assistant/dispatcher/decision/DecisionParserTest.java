@@ -20,7 +20,7 @@ class DecisionParserTest {
         assertTrue(parsed.isPresent());
         assertEquals("todo.create", parsed.get().target());
         assertEquals("demo", parsed.get().params().get("task"));
-        assertFalse(parsed.get().requiresClarify());
+        assertFalse(parsed.get().requireClarify());
     }
 
     @Test
@@ -29,13 +29,28 @@ class DecisionParserTest {
     }
 
     @Test
-    void shouldHandleSkillFieldForCompatibility() {
+    void shouldRejectLegacySkillDslShape() {
         String json = """
                 {"skill":"echo","input":{"text":"hi"}}
                 """;
+        assertTrue(parser.parse(json).isEmpty());
+    }
+
+    @Test
+    void shouldRejectNonObjectParams() {
+        String json = """
+                {"target":"echo","params":"bad"}
+                """;
+        assertTrue(parser.parse(json).isEmpty());
+    }
+
+    @Test
+    void shouldParseRequireClarifyField() {
+        String json = """
+                {"target":"todo.create","params":{"task":"demo"},"requireClarify":true}
+                """;
         Optional<Decision> parsed = parser.parse(json);
         assertTrue(parsed.isPresent());
-        assertEquals("echo", parsed.get().target());
-        assertEquals("hi", parsed.get().params().get("text"));
+        assertTrue(parsed.get().requireClarify());
     }
 }

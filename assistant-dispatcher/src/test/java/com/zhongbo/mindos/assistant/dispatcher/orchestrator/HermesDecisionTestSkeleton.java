@@ -38,7 +38,7 @@ class HermesDecisionTestSkeleton {
                 "weeklyHours": 8
               },
               "confidence": 0.82,
-              "requiresClarify": false
+              "requireClarify": false
             }
             """;
 
@@ -87,7 +87,7 @@ class HermesDecisionTestSkeleton {
                       "durationWeeks": 6
                     },
                     "confidence": 0.64,
-                    "requiresClarify": true
+                    "requireClarify": true
                   },
                   "dispatcherReply": "我理解你想执行 `teaching.plan`，但还缺少关键信息：缺少必填参数: topic,weeklyHours"
                 },
@@ -132,7 +132,7 @@ class HermesDecisionTestSkeleton {
                   "weeklyHours": 8
                 },
                 "confidence": 0.82,
-                "requiresClarify": false
+                "requireClarify": false
               },
               "orchestratorOutput": {
                 "selectedSkill": "teaching.plan",
@@ -153,7 +153,7 @@ class HermesDecisionTestSkeleton {
         assertEquals("teaching.plan", parsed.get().target());
         assertEquals("stu-1", parsed.get().params().get("studentId"));
         assertEquals(6, parsed.get().params().get("durationWeeks"));
-        assertFalse(parsed.get().requiresClarify());
+        assertFalse(parsed.get().requireClarify());
         assertTrue(CANDIDATE_PLANNER_EXAMPLE.contains("\"mcp.teaching.plan\""));
         assertTrue(PARAM_VALIDATOR_EXAMPLE.contains("\"autoFilled\""));
         assertTrue(CONVERSATION_LOOP_EXAMPLE.contains("\"dispatcherReply\""));
@@ -198,7 +198,7 @@ class HermesDecisionTestSkeleton {
                     "topic": "math"
                   },
                   "confidence": 0.78,
-                  "requiresClarify": false
+                  "requireClarify": false
                 }
                 """;
 
@@ -236,7 +236,7 @@ class HermesDecisionTestSkeleton {
                     "durationWeeks": 6
                   },
                   "confidence": 0.64,
-                  "requiresClarify": true
+                  "requireClarify": true
                 }
                 """;
 
@@ -291,11 +291,11 @@ class HermesDecisionTestSkeleton {
         List<HermesOutcome> outcomes = List.of(
                 harness.run(DECISION_JSON_EXAMPLE, "数学教学计划", Map.of(), Map.of(), List.of()),
                 harness.run("""
-                        {"intent":"teach.plan","target":"teaching.plan","params":{"topic":"math"},"confidence":0.8,"requiresClarify":false}
+                        {"intent":"teach.plan","target":"teaching.plan","params":{"topic":"math"},"confidence":0.8,"requireClarify":false}
                         """, "数学教学计划", Map.of("durationWeeks", 6), Map.of("studentId", "stu-1", "weeklyHours", 8), List.of()),
                 harness.run("not json", "坏的 DSL", Map.of(), Map.of(), List.of()),
                 harness.run("""
-                        {"intent":"teach.plan","target":"teaching.plan","params":{"studentId":"stu-1","durationWeeks":6},"confidence":0.6,"requiresClarify":true}
+                        {"intent":"teach.plan","target":"teaching.plan","params":{"studentId":"stu-1","durationWeeks":6},"confidence":0.6,"requireClarify":true}
                         """, "需要澄清", Map.of(), Map.of(), List.of("主题是 math", "每周 8 小时"))
         );
 
@@ -355,8 +355,12 @@ class HermesDecisionTestSkeleton {
                     new ExampleFallbackPlan(),
                     skillEngine(scriptedResults),
                     noopRecorder(),
+                    new TaskExecutor(3),
                     false,
-                    500
+                    500,
+                    0,
+                    "",
+                    3
             );
         }
 
@@ -535,11 +539,16 @@ class HermesDecisionTestSkeleton {
     private static final class ExampleCandidatePlanner implements CandidatePlanner {
 
         @Override
-        public List<String> plan(String suggestedTarget) {
+        public List<ScoredCandidate> plan(String suggestedTarget, DecisionOrchestrator.OrchestrationRequest request) {
             if ("teaching.plan".equals(suggestedTarget)) {
-                return List.of("teaching.plan", "mcp.teaching.plan");
+                return List.of(
+                        new ScoredCandidate("teaching.plan", 0.95, 0.80, 0.20, 0.80, List.of("explicit-target")),
+                        new ScoredCandidate("mcp.teaching.plan", 0.70, 0.65, 0.10, 0.60, List.of("alternate-tool"))
+                );
             }
-            return suggestedTarget == null || suggestedTarget.isBlank() ? List.of() : List.of(suggestedTarget);
+            return suggestedTarget == null || suggestedTarget.isBlank()
+                    ? List.of()
+                    : List.of(new ScoredCandidate(suggestedTarget, 0.90, 0.70, 0.10, 0.70, List.of("explicit-target")));
         }
     }
 
@@ -559,12 +568,14 @@ class HermesDecisionTestSkeleton {
         private static final Set<String> REQUIRED = Set.of("studentId", "topic", "durationWeeks", "weeklyHours");
 
         @Override
-        public ValidationResult validate(String target, Map<String, Object> params) {
+        public ValidationResult validate(String target,
+                                         Map<String, Object> params,
+                                         DecisionOrchestrator.OrchestrationRequest request) {
             if (target == null || target.isBlank()) {
                 return ValidationResult.error("missing target");
             }
             if (!"teaching.plan".equals(target) && !"teaching.plan.backup".equals(target) && !"mcp.teaching.plan".equals(target)) {
-                return ValidationResult.ok();
+                return ValidationResult.ok(params == null ? Map.of() : params, Map.of());
             }
             Map<String, Object> safeParams = params == null ? Map.of() : params;
             List<String> missing = REQUIRED.stream()
@@ -572,9 +583,9 @@ class HermesDecisionTestSkeleton {
                     .sorted()
                     .toList();
             if (missing.isEmpty()) {
-                return ValidationResult.ok();
+                return ValidationResult.ok(safeParams, Map.of());
             }
-            return ValidationResult.error("缺少必填参数: " + String.join(",", missing));
+            return ValidationResult.clarify("缺少必填参数: " + String.join(",", missing), missing, safeParams, Map.of());
         }
 
         private boolean isBlank(Object value) {
@@ -596,6 +607,19 @@ class HermesDecisionTestSkeleton {
             }
 
             @Override
+            public List<com.zhongbo.mindos.assistant.memory.model.SkillUsageStats> skillUsageStats(String userId) {
+                return List.of();
+            }
+
+            @Override
+            public void appendUserConversation(String userId, String message) {
+            }
+
+            @Override
+            public void appendAssistantConversation(String userId, String message) {
+            }
+
+            @Override
             public void recordSkillUsage(String userId, String skillName, String input, boolean success) {
             }
 
@@ -609,6 +633,47 @@ class HermesDecisionTestSkeleton {
 
             @Override
             public void writeSemantic(String userId, String text, List<Double> embedding, String bucket) {
+            }
+
+            @Override
+            public com.zhongbo.mindos.assistant.memory.model.PreferenceProfile updatePreferenceProfile(
+                    String userId,
+                    com.zhongbo.mindos.assistant.memory.model.PreferenceProfile profile) {
+                return com.zhongbo.mindos.assistant.memory.model.PreferenceProfile.empty();
+            }
+
+            @Override
+            public com.zhongbo.mindos.assistant.memory.model.LongTask createLongTask(
+                    String userId,
+                    String title,
+                    String objective,
+                    List<String> steps,
+                    java.time.Instant dueAt,
+                    java.time.Instant nextCheckAt) {
+                return null;
+            }
+
+            @Override
+            public com.zhongbo.mindos.assistant.memory.model.LongTask updateLongTaskProgress(
+                    String userId,
+                    String taskId,
+                    String workerId,
+                    String completedStep,
+                    String note,
+                    String blockedReason,
+                    java.time.Instant nextCheckAt,
+                    boolean markCompleted) {
+                return null;
+            }
+
+            @Override
+            public com.zhongbo.mindos.assistant.memory.model.LongTask updateLongTaskStatus(
+                    String userId,
+                    String taskId,
+                    com.zhongbo.mindos.assistant.memory.model.LongTaskStatus status,
+                    String note,
+                    java.time.Instant nextCheckAt) {
+                return null;
             }
         }, false, false, "", 280);
     }

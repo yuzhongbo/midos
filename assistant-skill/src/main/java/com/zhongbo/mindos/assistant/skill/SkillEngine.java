@@ -3,9 +3,14 @@ package com.zhongbo.mindos.assistant.skill;
 import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.common.SkillDsl;
 import com.zhongbo.mindos.assistant.common.SkillResult;
+import com.zhongbo.mindos.assistant.skill.mcp.DefaultMcpToolCatalog;
+import com.zhongbo.mindos.assistant.skill.mcp.McpToolCatalog;
+import com.zhongbo.mindos.assistant.skill.mcp.McpToolExecutor;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
@@ -21,7 +26,7 @@ import java.util.Optional;
 import java.util.stream.Collectors;
 
 @Service
-public class SkillEngine {
+public class SkillEngine implements SkillEngineFacade {
 
     public record SkillCandidate(String skillName, int score) {
     }
@@ -30,12 +35,21 @@ public class SkillEngine {
 
     private final SkillRegistry skillRegistry;
     private final SkillDslExecutor dslExecutor;
+    private final McpToolCatalog mcpToolCatalog;
     private final ExecutorService skillExecutor = Executors.newFixedThreadPool(4);
 
     public SkillEngine(SkillRegistry skillRegistry,
                        SkillDslExecutor dslExecutor) {
+        this(skillRegistry, dslExecutor, new DefaultMcpToolCatalog(new McpToolExecutor()));
+    }
+
+    @Autowired
+    public SkillEngine(SkillRegistry skillRegistry,
+                       SkillDslExecutor dslExecutor,
+                       McpToolCatalog mcpToolCatalog) {
         this.skillRegistry = skillRegistry;
         this.dslExecutor = dslExecutor;
+        this.mcpToolCatalog = mcpToolCatalog;
     }
 
     public Optional<SkillResult> executeDetectedSkill(SkillContext context) {
@@ -43,27 +57,33 @@ public class SkillEngine {
     }
 
     public Optional<String> detectSkillName(String input) {
-        return skillRegistry.detect(input).map(Skill::name);
+        return detectSkillCandidates(input, 1).stream().findFirst().map(SkillCandidate::skillName);
     }
 
     public List<SkillCandidate> detectSkillCandidates(String input, int limit) {
-        return skillRegistry.detectCandidates(input, limit).stream()
-                .map(candidate -> new SkillCandidate(candidate.skill().name(), candidate.score()))
-                .toList();
+        if (input == null || input.isBlank() || limit <= 0) {
+            return List.of();
+        }
+        List<SkillCandidate> candidates = new ArrayList<>();
+        skillRegistry.detectCandidates(input, limit).forEach(candidate ->
+                candidates.add(new SkillCandidate(candidate.skill().name(), candidate.score()))
+        );
+        mcpToolCatalog.detectCandidates(input, limit).forEach(candidate ->
+                candidates.add(new SkillCandidate(candidate.skillName(), candidate.score()))
+        );
+        candidates.sort(Comparator
+                .comparingInt(SkillCandidate::score).reversed()
+                .thenComparing(SkillCandidate::skillName));
+        int safeLimit = Math.min(limit, candidates.size());
+        return safeLimit <= 0 ? List.of() : List.copyOf(candidates.subList(0, safeLimit));
     }
 
     public CompletableFuture<Optional<SkillResult>> executeDetectedSkillAsync(SkillContext context) {
-        Optional<Skill> detectedSkill = skillRegistry.detect(context.input());
+        Optional<String> detectedSkill = detectSkillName(context.input());
         if (detectedSkill.isEmpty()) {
             return CompletableFuture.completedFuture(Optional.empty());
         }
-
-        Skill skill = detectedSkill.get();
-        Map<String, Object> parameters = new LinkedHashMap<>(context.attributes());
-        return CompletableFuture.supplyAsync(
-                () -> runWithTiming(skill.name(), context.userId(), context.input(), parameters, () -> skill.run(context)),
-                skillExecutor
-        ).thenApply(Optional::of);
+        return executeSkillByNameAsync(detectedSkill.get(), context);
     }
 
     public CompletableFuture<Optional<SkillResult>> executeSkillByNameAsync(String skillName, SkillContext context) {
@@ -71,12 +91,24 @@ public class SkillEngine {
             return CompletableFuture.completedFuture(Optional.empty());
         }
         Optional<Skill> skill = skillRegistry.getSkill(skillName);
-        if (skill.isEmpty()) {
+        if (skill.isPresent()) {
+            Map<String, Object> parameters = new LinkedHashMap<>(context.attributes());
+            return CompletableFuture.supplyAsync(
+                    () -> runWithTiming(skillName, context.userId(), context.input(), parameters, () -> skill.get().run(context)),
+                    skillExecutor
+            ).thenApply(Optional::of);
+        }
+        if (!mcpToolCatalog.hasTool(skillName)) {
             return CompletableFuture.completedFuture(Optional.empty());
         }
         Map<String, Object> parameters = new LinkedHashMap<>(context.attributes());
         return CompletableFuture.supplyAsync(
-                () -> runWithTiming(skillName, context.userId(), context.input(), parameters, () -> skill.get().run(context)),
+                () -> runWithTiming(skillName,
+                        context.userId(),
+                        context.input(),
+                        parameters,
+                        () -> mcpToolCatalog.executeTool(skillName, context)
+                                .orElseGet(() -> SkillResult.failure(skillName, "Skill not found: " + skillName))),
                 skillExecutor
         ).thenApply(Optional::of);
     }
@@ -89,6 +121,24 @@ public class SkillEngine {
         Map<String, Object> dslAttributes = new LinkedHashMap<>(context.attributes());
         dslAttributes.putAll(dsl.input());
         SkillContext dslContext = new SkillContext(context.userId(), context.input(), dslAttributes);
+        Optional<Skill> skill = skillRegistry.getSkill(dsl.skill());
+        if (skill.isPresent()) {
+            return CompletableFuture.supplyAsync(
+                    () -> runWithTiming(dsl.skill(), context.userId(), context.input(), dslAttributes, () -> dslExecutor.execute(dsl, dslContext)),
+                    skillExecutor
+            );
+        }
+        if (mcpToolCatalog.hasTool(dsl.skill())) {
+            return CompletableFuture.supplyAsync(
+                    () -> runWithTiming(dsl.skill(),
+                            context.userId(),
+                            context.input(),
+                            dslAttributes,
+                            () -> mcpToolCatalog.executeTool(dsl.skill(), dslContext)
+                                    .orElseGet(() -> SkillResult.failure(dsl.skill(), "Skill not found: " + dsl.skill()))),
+                    skillExecutor
+            );
+        }
         return CompletableFuture.supplyAsync(
                 () -> runWithTiming(dsl.skill(), context.userId(), context.input(), dslAttributes, () -> dslExecutor.execute(dsl, dslContext)),
                 skillExecutor
@@ -105,10 +155,13 @@ public class SkillEngine {
     }
 
     public List<String> listAvailableSkillSummaries() {
-        return skillRegistry.getAllSkills().stream()
+        List<String> summaries = new ArrayList<>(skillRegistry.getAllSkills().stream()
                 .sorted(Comparator.comparing(Skill::name))
                 .map(skill -> skill.name() + " - " + (skill.description() == null ? "" : skill.description()))
-                .toList();
+                .toList());
+        summaries.addAll(mcpToolCatalog.listToolSummaries());
+        summaries.sort(String::compareTo);
+        return List.copyOf(summaries);
     }
 
     private SkillResult runWithTiming(String skillName,

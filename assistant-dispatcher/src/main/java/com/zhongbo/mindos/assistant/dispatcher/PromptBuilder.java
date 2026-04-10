@@ -2,6 +2,7 @@ package com.zhongbo.mindos.assistant.dispatcher;
 
 import com.zhongbo.mindos.assistant.common.dto.PromptMemoryContextDto;
 import com.zhongbo.mindos.assistant.common.dto.RetrievedMemoryItemDto;
+import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -10,6 +11,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 
+@Component
 public class PromptBuilder {
 
     // Keep fallback prompts comfortably below provider limits while leaving room for system/context metadata.

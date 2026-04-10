@@ -2,19 +2,20 @@ package com.zhongbo.mindos.assistant.skill.mcp;
 
 import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.common.SkillResult;
-import com.zhongbo.mindos.assistant.skill.Skill;
+import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Locale;
+import java.util.Map;
 import java.util.logging.Logger;
 import java.util.regex.Pattern;
 
-public class McpToolSkill implements Skill {
+@Component
+public class McpToolExecutor {
 
-    private static final Logger LOGGER = Logger.getLogger(McpToolSkill.class.getName());
+    private static final Logger LOGGER = Logger.getLogger(McpToolExecutor.class.getName());
 
     private static final List<String> SEARCH_INTENT_CUES = List.of(
             "search", "find", "lookup", "query", "搜", "搜索", "查询", "查一下", "查找", "帮我查"
@@ -27,7 +28,7 @@ public class McpToolSkill implements Skill {
             "新闻", "最新", "实时", "今天", "头条", "热点", "热搜", "天气", "汇率", "股价"
     );
     private static final Pattern LEADING_SEARCH_REQUEST_PATTERN = Pattern.compile(
-            "^(?:请|请帮我|帮我|麻烦你|想|我想|我想看|我想看看|我想了解|想看|想了解|查看|看|看看|查|查下|查一下|搜|搜下|搜一下|搜索|了解一下|了解|告诉我)?\\s*"
+            "^(?:请|请帮我|帮我|帮我看看|麻烦你|想|我想|我想看|我想看看|我想了解|想看|想了解|查看|看|看看|查|查下|查一下|搜|搜下|搜一下|搜索|了解一下|了解|告诉我)?\\s*"
                     + "(?:一下|一下子)?\\s*(?:今天|今日|最新|实时|当前)?\\s*(?:的)?\\s*(?:新闻|资讯|消息|头条|热点|热搜)?\\s*(?:关于|有关|里|中)?\\s*",
             Pattern.CASE_INSENSITIVE);
     private static final Pattern TRAILING_NEWS_PATTERN = Pattern.compile("(?:的)?\\s*(?:新闻|资讯|消息|头条|热点|热搜)$", Pattern.CASE_INSENSITIVE);
@@ -36,26 +37,7 @@ public class McpToolSkill implements Skill {
             "^(?:今天|今日|最新|实时|当前|新闻|资讯|消息|头条|热点|热搜|看看|查看|查一下|搜索|搜一下|搜|查|看|想看|我想看|我想了解|了解一下|关于|有关|的|\\s)+$",
             Pattern.CASE_INSENSITIVE);
 
-    private final McpToolDefinition toolDefinition;
-    private final McpJsonRpcClient mcpClient;
-
-    public McpToolSkill(McpToolDefinition toolDefinition, McpJsonRpcClient mcpClient) {
-        this.toolDefinition = toolDefinition;
-        this.mcpClient = mcpClient;
-    }
-
-    @Override
-    public String name() {
-        return toolDefinition.skillName();
-    }
-
-    @Override
-    public String description() {
-        return toolDefinition.description();
-    }
-
-    @Override
-    public List<String> routingKeywords() {
+    public List<String> routingKeywords(McpToolDefinition toolDefinition) {
         List<String> keywords = new ArrayList<>();
         keywords.add(toolDefinition.serverAlias());
         keywords.add(splitCamelCase(toolDefinition.name()));
@@ -78,19 +60,17 @@ public class McpToolSkill implements Skill {
         return List.copyOf(keywords);
     }
 
-    @Override
-    public boolean supports(String input) {
-        return routingScore(input) > 0;
+    public boolean supports(McpToolDefinition toolDefinition, String input) {
+        return routingScore(toolDefinition, input) > 0;
     }
 
-    @Override
-    public int routingScore(String input) {
+    public int routingScore(McpToolDefinition toolDefinition, String input) {
         if (input == null || input.isBlank()) {
             return Integer.MIN_VALUE;
         }
 
         String normalizedInput = normalizePhrase(input);
-        String normalizedSkillName = normalizePhrase(name());
+        String normalizedSkillName = normalizePhrase(toolDefinition.skillName());
         String normalizedToolName = normalizePhrase(toolDefinition.name());
         if (normalizedInput.equals(normalizedSkillName)
                 || normalizedInput.startsWith(normalizedSkillName + " ")) {
@@ -101,8 +81,8 @@ public class McpToolSkill implements Skill {
             return 950;
         }
 
-        List<String> phrases = new ArrayList<>(routingKeywords());
-        phrases.add(0, name());
+        List<String> phrases = new ArrayList<>(routingKeywords(toolDefinition));
+        phrases.add(0, toolDefinition.skillName());
 
         int bestScore = Integer.MIN_VALUE;
         for (String phrase : phrases) {
@@ -140,16 +120,17 @@ public class McpToolSkill implements Skill {
         return bestScore > 0 ? bestScore : Integer.MIN_VALUE;
     }
 
-    @Override
-    public SkillResult run(SkillContext context) {
+    public SkillResult execute(McpToolDefinition toolDefinition,
+                               McpJsonRpcClient mcpClient,
+                               SkillContext context) {
         try {
             Map<String, Object> arguments = new LinkedHashMap<>(context.attributes());
             if (!arguments.containsKey("input") && context.input() != null && !context.input().isBlank()) {
                 arguments.put("input", context.input());
             }
-            ensureSearchQuery(arguments, context);
-            if (isSearchLikeTool() && stringValue(arguments.get("query")).isBlank()) {
-                return SkillResult.success(name(), buildMissingQueryReply(context));
+            ensureSearchQuery(toolDefinition, arguments, context);
+            if (isSearchLikeTool(toolDefinition) && stringValue(arguments.get("query")).isBlank()) {
+                return SkillResult.success(toolDefinition.skillName(), buildMissingQueryReply(context));
             }
             String output = mcpClient.callTool(
                     toolDefinition.serverUrl(),
@@ -157,14 +138,14 @@ public class McpToolSkill implements Skill {
                     arguments,
                     toolDefinition.headers()
             );
-            return SkillResult.success(name(), output);
+            return SkillResult.success(toolDefinition.skillName(), output);
         } catch (RuntimeException ex) {
             if (isMissingQueryError(ex)) {
-                return SkillResult.success(name(), buildMissingQueryReply(context));
+                return SkillResult.success(toolDefinition.skillName(), buildMissingQueryReply(context));
             }
             String failureMessage = rootCauseMessage(ex);
             LOGGER.warning(() -> "{\"event\":\"mcp.tool.failure\",\"skill\":\""
-                    + escapeJson(name())
+                    + escapeJson(toolDefinition.skillName())
                     + "\",\"tool\":\""
                     + escapeJson(toolDefinition.name())
                     + "\",\"serverAlias\":\""
@@ -172,7 +153,7 @@ public class McpToolSkill implements Skill {
                     + "\",\"message\":\""
                     + escapeJson(failureMessage)
                     + "\"}");
-            return SkillResult.failure(name(), buildFriendlyFailureReply(failureMessage));
+            return SkillResult.failure(toolDefinition.skillName(), buildFriendlyFailureReply(failureMessage));
         }
     }
 
@@ -234,8 +215,10 @@ public class McpToolSkill implements Skill {
         return matches;
     }
 
-    private void ensureSearchQuery(Map<String, Object> arguments, SkillContext context) {
-        if (!isSearchLikeTool()) {
+    private void ensureSearchQuery(McpToolDefinition toolDefinition,
+                                   Map<String, Object> arguments,
+                                   SkillContext context) {
+        if (!isSearchLikeTool(toolDefinition)) {
             return;
         }
         String query = stringValue(arguments.get("query"));
@@ -258,120 +241,84 @@ public class McpToolSkill implements Skill {
         if (candidate.isBlank()) {
             return "";
         }
-        String cleaned = candidate;
-        for (int i = 0; i < 3; i++) {
-            String next = LEADING_SEARCH_REQUEST_PATTERN.matcher(cleaned).replaceFirst("").trim();
-            next = LEADING_CONNECTOR_PATTERN.matcher(next).replaceFirst("").trim();
-            next = TRAILING_NEWS_PATTERN.matcher(next).replaceFirst("").trim();
-            next = LEADING_CONNECTOR_PATTERN.matcher(next).replaceFirst("").trim();
-            if (next.equals(cleaned)) {
-                break;
-            }
-            cleaned = next;
-        }
-        if (cleaned.isBlank() || ONLY_GENERIC_NEWS_PATTERN.matcher(cleaned).matches()) {
-            return deriveGenericSearchQuery(candidate);
-        }
-        return cleaned;
-    }
-
-    private String deriveGenericSearchQuery(String rawInput) {
-        String normalized = normalizePhrase(rawInput);
-        if (normalized.isBlank()) {
+        candidate = LEADING_SEARCH_REQUEST_PATTERN.matcher(candidate).replaceFirst("").trim();
+        candidate = candidate.replaceFirst("^(?:看看|看下|看一下|查下|查一下|搜下|搜一下)\\s*", "").trim();
+        candidate = LEADING_CONNECTOR_PATTERN.matcher(candidate).replaceFirst("").trim();
+        candidate = TRAILING_NEWS_PATTERN.matcher(candidate).replaceFirst("").trim();
+        candidate = LEADING_CONNECTOR_PATTERN.matcher(candidate).replaceFirst("").trim();
+        candidate = candidate.replaceAll("^[，。；、,.!?！？:：\\-]+", "").trim();
+        candidate = candidate.replaceAll("[，。；、,.!?！？:：]+$", "").trim();
+        if (candidate.length() <= 1 || ONLY_GENERIC_NEWS_PATTERN.matcher(candidate).matches()) {
             return "";
         }
-        if (normalized.contains("今天") || normalized.contains("今日") || normalized.contains("today")) {
-            return "今天新闻";
-        }
-        if (normalized.contains("实时") || normalized.contains("latest") || normalized.contains("最新")) {
-            return "最新新闻";
-        }
-        if (normalized.contains("头条") || normalized.contains("热点") || normalized.contains("热搜")) {
-            return "热点新闻";
-        }
-        if (normalized.contains("news") || normalized.contains("新闻") || normalized.contains("资讯") || normalized.contains("消息")) {
-            return "新闻";
-        }
-        return "";
+        return candidate;
     }
 
-    private boolean isSearchLikeTool() {
-        String capabilityText = normalizePhrase(name() + " " + description() + " " + splitCamelCase(toolDefinition.name()));
-        return containsAny(capabilityText, SEARCH_INTENT_CUES)
-                || containsAny(capabilityText, REALTIME_INTENT_CUES)
-                || capabilityText.contains("websearch")
-                || capabilityText.contains("web search");
+    private boolean isSearchLikeTool(McpToolDefinition toolDefinition) {
+        String text = normalizePhrase(toolDefinition.skillName() + " " + toolDefinition.description() + " " + toolDefinition.name());
+        return containsAny(text, SEARCH_INTENT_CUES)
+                || containsAny(text, REALTIME_INTENT_CUES)
+                || text.contains("websearch")
+                || text.contains("web search")
+                || text.contains("searchdocs")
+                || text.contains("search docs");
     }
 
-    private String firstNonBlank(String... values) {
-        for (String value : values) {
-            String normalized = stringValue(value);
-            if (!normalized.isBlank()) {
-                return normalized;
-            }
+    private boolean isMissingQueryError(RuntimeException ex) {
+        String message = rootCauseMessage(ex).toLowerCase(Locale.ROOT);
+        return message.contains("missing required parameter")
+                && (message.contains("query") || message.contains("keyword") || message.contains("input"));
+    }
+
+    private String buildMissingQueryReply(SkillContext context) {
+        String input = context == null ? "" : stringValue(context.input());
+        if (input.isBlank()) {
+            return "抱歉，我还不知道你想查什么。你可以直接说例如：科技新闻、AI 头条、成都天气、美元汇率。";
         }
-        return "";
+        return "抱歉，我还没提取到明确的查询主题。请直接说你想查的内容，例如：科技新闻、AI 头条、成都天气、美元汇率。";
+    }
+
+    private String buildFriendlyFailureReply(String failureMessage) {
+        String normalized = failureMessage == null ? "" : failureMessage.toLowerCase(Locale.ROOT);
+        if (normalized.contains("403") || normalized.contains("forbidden") || normalized.contains("challenge")) {
+            return "Brave search returned HTTP 403 (blocked by upstream challenge). 请检查 X-Subscription-Token、Brave 控制台配置与出口 IP 白名单后再重试。";
+        }
+        if (normalized.contains("timeout") || normalized.contains("connection reset") || normalized.contains("broken pipe")) {
+            return "联网查询网络不稳定（" + failureMessage + "）。你可以稍后再试，我也可以先基于已有上下文给你一个离线总结。若你愿意，我之后会自动重试。";
+        }
+        return "当前外部查询工具调用失败：" + failureMessage;
+    }
+
+    private String rootCauseMessage(Throwable throwable) {
+        Throwable current = throwable;
+        while (current != null && current.getCause() != null && current.getCause() != current) {
+            current = current.getCause();
+        }
+        return current == null || current.getMessage() == null || current.getMessage().isBlank()
+                ? "unknown error"
+                : current.getMessage();
     }
 
     private String stringValue(Object value) {
         return value == null ? "" : String.valueOf(value).trim();
     }
 
-    private String rootCauseMessage(Throwable error) {
-        if (error == null) {
-            return "unknown error";
+    private String firstNonBlank(String... values) {
+        if (values == null) {
+            return "";
         }
-        Throwable current = error;
-        while (current.getCause() != null && current.getCause() != current) {
-            current = current.getCause();
+        for (String value : values) {
+            if (value != null && !value.isBlank()) {
+                return value;
+            }
         }
-        String message = stringValue(current.getMessage());
-        return message.isBlank() ? current.getClass().getSimpleName() : message;
+        return "";
     }
 
     private String escapeJson(String value) {
-        return stringValue(value)
-                .replace("\\", "\\\\")
-                .replace("\"", "\\\"");
-    }
-
-    private boolean isMissingQueryError(RuntimeException ex) {
-        String message = ex == null ? "" : stringValue(ex.getMessage()).toLowerCase(Locale.ROOT);
-        return message.contains("query is required")
-                || message.contains("param:query is required")
-                || message.contains("missing query");
-    }
-
-    private String buildMissingQueryReply(SkillContext context) {
-        String originalInput = firstNonBlank(
-                stringValue(context.attributes().get("originalInput")),
-                context.input()
-        );
-        String attemptedTopic = deriveSearchQuery(originalInput);
-        if (!attemptedTopic.isBlank()) {
-            return "抱歉，刚才我没有顺利查到你提到的“" + attemptedTopic + "”相关新闻。你可以直接说想关注的方向，我会继续按这个主题帮你查，比如科技、AI、股市、上海或本地热点。";
+        if (value == null) {
+            return "";
         }
-        return "抱歉，刚才没接住你想看的新闻方向。你直接用自然的话告诉我关注的主题就行，比如“我想看看今天的科技新闻”“帮我查一下 AI 动态”或“想了解今天股市有什么消息”。";
-    }
-
-    private String buildFriendlyFailureReply(String failureMessage) {
-        String normalized = stringValue(failureMessage);
-        String lowerCaseMessage = normalized.toLowerCase(Locale.ROOT);
-        if (lowerCaseMessage.contains("brave search returned http 403")
-                && (lowerCaseMessage.contains("upstream challenge")
-                || lowerCaseMessage.contains("cloudflare")
-                || lowerCaseMessage.contains("just a moment"))) {
-            return "抱歉，Brave 搜索接口当前触发了访问拦截（HTTP 403）。我建议先重试一次；如果仍失败，请检查 Brave API Key、请求头 X-Subscription-Token，或切换到另一个搜索 MCP。";
-        }
-        if (lowerCaseMessage.contains("connection reset")
-                || lowerCaseMessage.contains("socket timeout")
-                || lowerCaseMessage.contains("timed out")
-                || lowerCaseMessage.contains("connection refused")
-                || lowerCaseMessage.contains("broken pipe")
-                || lowerCaseMessage.contains("reset by peer")) {
-            return "抱歉，联网搜索服务刚才网络不稳定，我已经自动重试过，但这次仍未成功。请稍后再试一次；如果持续出现，请检查 MCP 服务地址、反向代理/网络连通性，或切换到另一个搜索 MCP。";
-        }
-        return "MCP tool call failed: " + normalized;
+        return value.replace("\\", "\\\\").replace("\"", "\\\"");
     }
 }
-

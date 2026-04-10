@@ -41,10 +41,12 @@ public class AssistantSdkClient {
     private final URI baseUri;
 
     public AssistantSdkClient(URI baseUri) {
-        this.httpClient = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(5))
-                .build();
-        this.objectMapper = new ObjectMapper().findAndRegisterModules();
+        this(baseUri, HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build(), new ObjectMapper().findAndRegisterModules());
+    }
+
+    public AssistantSdkClient(URI baseUri, HttpClient httpClient, ObjectMapper objectMapper) {
+        this.httpClient = httpClient == null ? HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build() : httpClient;
+        this.objectMapper = objectMapper == null ? new ObjectMapper().findAndRegisterModules() : objectMapper;
         this.baseUri = baseUri;
     }
 

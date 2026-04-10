@@ -2,12 +2,14 @@ package com.zhongbo.mindos.assistant.dispatcher;
 
 import com.zhongbo.mindos.assistant.common.dto.PromptMemoryContextDto;
 import com.zhongbo.mindos.assistant.common.dto.RetrievedMemoryItemDto;
+import org.springframework.stereotype.Component;
 
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.logging.Logger;
 
+@Component
 public class LLMDecisionEngine {
 
     private static final Logger LOGGER = Logger.getLogger(LLMDecisionEngine.class.getName());

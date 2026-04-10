@@ -21,7 +21,6 @@ public class LlmOrchestrateSkill implements Skill {
 
     private final LlmClient llmClient;
     private final List<String> defaultProviders;
-    private final int maxHops;
     private final int promptMaxChars;
     private final int historyMaxItems;
 
@@ -33,7 +32,6 @@ public class LlmOrchestrateSkill implements Skill {
                                @Value("${mindos.llm.orchestrate.history.max-items:6}") int historyMaxItems) {
         this.llmClient = llmClient;
         this.defaultProviders = parseProviders(providers);
-        this.maxHops = Math.max(1, maxHops);
         this.promptMaxChars = Math.max(400, promptMaxChars);
         this.historyMaxItems = Math.max(1, historyMaxItems);
     }
@@ -46,7 +44,6 @@ public class LlmOrchestrateSkill implements Skill {
                         int historyMaxItems) {
         this.llmClient = llmClient;
         this.defaultProviders = providers == null ? List.of() : List.copyOf(providers);
-        this.maxHops = Math.max(1, maxHops);
         this.promptMaxChars = Math.max(400, promptMaxChars);
         this.historyMaxItems = Math.max(1, historyMaxItems);
     }
@@ -58,12 +55,12 @@ public class LlmOrchestrateSkill implements Skill {
 
     @Override
     public String description() {
-        return "Attempts multiple LLM providers with shared chat history to keep answers continuous and fall back when needed.";
+        return "Builds a single LLM prompt from recent context and forwards it to the selected provider.";
     }
 
     @Override
     public List<String> routingKeywords() {
-        return List.of("llm.orchestrate", "多模型", "换个模型", "模型不稳定", "换个回答", "重试一下");
+        return List.of("llm.orchestrate", "调用模型", "llm prompt", "模型总结", "模型回复");
     }
 
     @Override
@@ -73,11 +70,9 @@ public class LlmOrchestrateSkill implements Skill {
         }
         String normalized = input.trim().toLowerCase();
         return normalized.startsWith("llm.orchestrate")
-                || normalized.contains("多模型")
-                || normalized.contains("换个模型")
-                || normalized.contains("模型不稳定")
-                || normalized.contains("换个回答")
-                || normalized.contains("重试一下");
+                || normalized.contains("调用模型")
+                || normalized.contains("模型总结")
+                || normalized.contains("模型回复");
     }
 
     @Override
@@ -90,27 +85,14 @@ public class LlmOrchestrateSkill implements Skill {
         String memoryContext = asText(attrs.get("memoryContext"));
         List<Map<String, Object>> chatHistory = limitHistory(asHistory(attrs.get("chatHistory")));
         String preferred = firstNonBlank(asText(attrs.get("preferredProvider")), asText(attrs.get("llmProvider")));
-
-        List<String> chain = buildProviderChain(preferred, defaultProviders);
-        List<Attempt> attempts = new ArrayList<>();
-
+        String provider = resolveProvider(preferred, defaultProviders);
         String prompt = buildPrompt(memoryContext, chatHistory, userInput);
-        int hops = Math.min(maxHops, chain.size());
-        for (int i = 0; i < hops; i++) {
-            String provider = chain.get(i);
-            Map<String, Object> llmContext = buildLlmContext(context.userId(), memoryContext, chatHistory, userInput, provider);
-            String output = llmClient.generateResponse(prompt, llmContext);
-            attempts.add(new Attempt(provider, output));
-            if (isAcceptable(output)) {
-                return SkillResult.success(name(), formatSuccess(output, provider, attempts.size()));
-            }
-            // append last assistant output to history for next hop
-            if (output != null && !output.isBlank()) {
-                chatHistory = appendHistory(chatHistory, Map.of("role", "assistant", "content", output));
-                prompt = buildPrompt(memoryContext, chatHistory, userInput);
-            }
+        Map<String, Object> llmContext = buildLlmContext(context.userId(), memoryContext, chatHistory, userInput, provider);
+        String output = llmClient.generateResponse(prompt, llmContext);
+        if (isAcceptable(output)) {
+            return SkillResult.success(name(), formatSuccess(output, provider));
         }
-        return SkillResult.failure(name(), formatFailure(attempts));
+        return SkillResult.failure(name(), formatFailure(provider, output));
     }
 
     private List<String> parseProviders(String raw) {
@@ -127,7 +109,7 @@ public class LlmOrchestrateSkill implements Skill {
         return List.copyOf(ordered);
     }
 
-    private List<String> buildProviderChain(String preferred, List<String> defaults) {
+    private String resolveProvider(String preferred, List<String> defaults) {
         LinkedHashSet<String> chain = new LinkedHashSet<>();
         if (preferred != null && !preferred.isBlank() && !"auto".equalsIgnoreCase(preferred)) {
             chain.add(preferred.trim());
@@ -136,7 +118,7 @@ public class LlmOrchestrateSkill implements Skill {
         if (chain.isEmpty()) {
             chain.add("openai");
         }
-        return List.copyOf(chain);
+        return chain.iterator().next();
     }
 
     private Map<String, Object> buildLlmContext(String userId,
@@ -162,7 +144,7 @@ public class LlmOrchestrateSkill implements Skill {
                                List<Map<String, Object>> history,
                                String userInput) {
         StringBuilder builder = new StringBuilder();
-        builder.append("You orchestrate multiple LLM providers. Keep answers consistent and concise.\n");
+        builder.append("You are a focused assistant. Use the supplied context to answer clearly and concisely.\n");
         if (history != null && !history.isEmpty()) {
             builder.append("Recent chat history:\n");
             for (Map<String, Object> turn : history) {
@@ -189,26 +171,12 @@ public class LlmOrchestrateSkill implements Skill {
         return !normalized.contains("[llm error]") && !normalized.contains("no api key resolved");
     }
 
-    private String formatSuccess(String output, String provider, int hops) {
-        return "[orchestrate provider=" + provider + ", hops=" + hops + "]\n" + output;
+    private String formatSuccess(String output, String provider) {
+        return "[llm provider=" + provider + "]\n" + output;
     }
 
-    private String formatFailure(List<Attempt> attempts) {
-        StringBuilder builder = new StringBuilder("[llm.orchestrate] 全部尝试失败。已尝试: ");
-        if (attempts.isEmpty()) {
-            builder.append("无可用 provider。");
-            return builder.toString();
-        }
-        for (int i = 0; i < attempts.size(); i++) {
-            Attempt attempt = attempts.get(i);
-            builder.append(attempt.provider());
-            if (i < attempts.size() - 1) {
-                builder.append(" -> ");
-            }
-        }
-        builder.append("。最后输出: ");
-        builder.append(cap(attempts.get(attempts.size() - 1).output(), 260));
-        return builder.toString();
+    private String formatFailure(String provider, String output) {
+        return "[llm.orchestrate] provider=" + provider + " 返回了不可用结果: " + cap(output, 260);
     }
 
     private String asText(Object value) {
@@ -243,13 +211,6 @@ public class LlmOrchestrateSkill implements Skill {
         return List.copyOf(history.subList(fromIndex, history.size()));
     }
 
-    private List<Map<String, Object>> appendHistory(List<Map<String, Object>> history,
-                                                    Map<String, Object> turn) {
-        List<Map<String, Object>> merged = new ArrayList<>(history == null ? List.of() : history);
-        merged.add(turn);
-        return limitHistory(merged);
-    }
-
     private String cap(String value, int max) {
         if (value == null) {
             return "";
@@ -262,8 +223,5 @@ public class LlmOrchestrateSkill implements Skill {
 
     private String firstNonBlank(String first, String second) {
         return first != null && !first.isBlank() ? first : second;
-    }
-
-    private record Attempt(String provider, String output) {
     }
 }

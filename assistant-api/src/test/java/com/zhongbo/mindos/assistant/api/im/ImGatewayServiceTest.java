@@ -2,7 +2,8 @@ package com.zhongbo.mindos.assistant.api.im;
 
 import com.zhongbo.mindos.assistant.common.ImDegradedReplyMarker;
 import com.zhongbo.mindos.assistant.dispatcher.DispatchResult;
-import com.zhongbo.mindos.assistant.dispatcher.DispatcherService;
+import com.zhongbo.mindos.assistant.dispatcher.DispatcherFacade;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.DefaultMemoryGateway;
 import com.zhongbo.mindos.assistant.memory.MemoryConsolidationService;
 import com.zhongbo.mindos.assistant.memory.MemoryManager;
 import com.zhongbo.mindos.assistant.memory.model.MemoryCompressionPlan;
@@ -46,10 +47,15 @@ class ImGatewayServiceTest {
 
     @Test
     void shouldReturnKeyPointReviewAfterAffirmativeFollowUp() {
-        DispatcherService dispatcherService = mock(DispatcherService.class);
+        DispatcherFacade dispatcherService = mock(DispatcherFacade.class);
         MemoryManager memoryManager = mock(MemoryManager.class);
         MemoryConsolidationService consolidationService = new MemoryConsolidationService();
-        ImGatewayService service = new ImGatewayService(dispatcherService, memoryManager, consolidationService);
+        ImGatewayService service = new ImGatewayService(
+                dispatcherService,
+                new DefaultMemoryGateway(memoryManager),
+                memoryManager,
+                consolidationService
+        );
 
         MemoryCompressionPlan plan = new MemoryCompressionPlan(
                 new MemoryStyleProfile("concise", "direct", "plain"),
@@ -82,10 +88,15 @@ class ImGatewayServiceTest {
 
     @Test
     void shouldFallbackToDispatcherWhenNoPendingReviewExists() {
-        DispatcherService dispatcherService = mock(DispatcherService.class);
+        DispatcherFacade dispatcherService = mock(DispatcherFacade.class);
         MemoryManager memoryManager = mock(MemoryManager.class);
         MemoryConsolidationService consolidationService = new MemoryConsolidationService();
-        ImGatewayService service = new ImGatewayService(dispatcherService, memoryManager, consolidationService);
+        ImGatewayService service = new ImGatewayService(
+                dispatcherService,
+                new DefaultMemoryGateway(memoryManager),
+                memoryManager,
+                consolidationService
+        );
 
         when(dispatcherService.dispatch(eq("im:wechat:u2"), eq("要"), any()))
                 .thenReturn(new DispatchResult("normal", "echo"));
@@ -98,10 +109,15 @@ class ImGatewayServiceTest {
 
     @Test
     void shouldSanitizeLeakedSkeletonPromptFromDispatcherReply() {
-        DispatcherService dispatcherService = mock(DispatcherService.class);
+        DispatcherFacade dispatcherService = mock(DispatcherFacade.class);
         MemoryManager memoryManager = mock(MemoryManager.class);
         MemoryConsolidationService consolidationService = new MemoryConsolidationService();
-        ImGatewayService service = new ImGatewayService(dispatcherService, memoryManager, consolidationService);
+        ImGatewayService service = new ImGatewayService(
+                dispatcherService,
+                new DefaultMemoryGateway(memoryManager),
+                memoryManager,
+                consolidationService
+        );
 
         when(dispatcherService.dispatch(eq("im:dingtalk:u4"), eq("优化记忆"), any()))
                 .thenReturn(new DispatchResult(
@@ -145,10 +161,15 @@ class ImGatewayServiceTest {
 
     @Test
     void shouldCompleteAsyncDingtalkReplyThroughDispatcher() throws Exception {
-        DispatcherService dispatcherService = mock(DispatcherService.class);
+        DispatcherFacade dispatcherService = mock(DispatcherFacade.class);
         MemoryManager memoryManager = mock(MemoryManager.class);
         MemoryConsolidationService consolidationService = new MemoryConsolidationService();
-        ImGatewayService service = new ImGatewayService(dispatcherService, memoryManager, consolidationService);
+        ImGatewayService service = new ImGatewayService(
+                dispatcherService,
+                new DefaultMemoryGateway(memoryManager),
+                memoryManager,
+                consolidationService
+        );
 
         when(dispatcherService.dispatch(eq("im:dingtalk:u5"), eq("继续生成"), any()))
                 .thenReturn(new DispatchResult(
@@ -164,10 +185,15 @@ class ImGatewayServiceTest {
 
     @Test
     void shouldReturnAsyncFutureBeforeSlowDispatcherCompletes() throws Exception {
-        DispatcherService dispatcherService = mock(DispatcherService.class);
+        DispatcherFacade dispatcherService = mock(DispatcherFacade.class);
         MemoryManager memoryManager = mock(MemoryManager.class);
         MemoryConsolidationService consolidationService = new MemoryConsolidationService();
-        ImGatewayService service = new ImGatewayService(dispatcherService, memoryManager, consolidationService);
+        ImGatewayService service = new ImGatewayService(
+                dispatcherService,
+                new DefaultMemoryGateway(memoryManager),
+                memoryManager,
+                consolidationService
+        );
 
         when(dispatcherService.dispatch(eq("im:dingtalk:u6"), eq("继续"), any()))
                 .thenAnswer(invocation -> {
@@ -193,10 +219,15 @@ class ImGatewayServiceTest {
         System.setProperty("mindos.todo.window.p2", "建议两天内完成");
         System.setProperty("mindos.todo.legend", "优先级说明：按团队自定义策略执行。");
 
-        DispatcherService dispatcherService = mock(DispatcherService.class);
+        DispatcherFacade dispatcherService = mock(DispatcherFacade.class);
         MemoryManager memoryManager = mock(MemoryManager.class);
         MemoryConsolidationService consolidationService = new MemoryConsolidationService();
-        ImGatewayService service = new ImGatewayService(dispatcherService, memoryManager, consolidationService);
+        ImGatewayService service = new ImGatewayService(
+                dispatcherService,
+                new DefaultMemoryGateway(memoryManager),
+                memoryManager,
+                consolidationService
+        );
 
         MemoryCompressionPlan plan = new MemoryCompressionPlan(
                 new MemoryStyleProfile("concise", "direct", "plain"),
@@ -217,13 +248,14 @@ class ImGatewayServiceTest {
 
     @Test
     void shouldMarkTaskCompletedWhenOpenApiFallbackPushSucceeds() {
-        DispatcherService dispatcherService = mock(DispatcherService.class);
+        DispatcherFacade dispatcherService = mock(DispatcherFacade.class);
         MemoryManager memoryManager = mock(MemoryManager.class);
         MemoryConsolidationService consolidationService = new MemoryConsolidationService();
         DingtalkAsyncReplyClient asyncReplyClient = mock(DingtalkAsyncReplyClient.class);
         DingtalkOpenApiMessageClient openApiMessageClient = mock(DingtalkOpenApiMessageClient.class);
         ImGatewayService service = new ImGatewayService(
                 dispatcherService,
+                new DefaultMemoryGateway(memoryManager),
                 memoryManager,
                 consolidationService,
                 asyncReplyClient,
@@ -249,13 +281,14 @@ class ImGatewayServiceTest {
 
     @Test
     void shouldKeepCompensationFallbackWhenOpenApiPushFails() {
-        DispatcherService dispatcherService = mock(DispatcherService.class);
+        DispatcherFacade dispatcherService = mock(DispatcherFacade.class);
         MemoryManager memoryManager = mock(MemoryManager.class);
         MemoryConsolidationService consolidationService = new MemoryConsolidationService();
         DingtalkAsyncReplyClient asyncReplyClient = mock(DingtalkAsyncReplyClient.class);
         DingtalkOpenApiMessageClient openApiMessageClient = mock(DingtalkOpenApiMessageClient.class);
         ImGatewayService service = new ImGatewayService(
                 dispatcherService,
+                new DefaultMemoryGateway(memoryManager),
                 memoryManager,
                 consolidationService,
                 asyncReplyClient,
@@ -310,4 +343,3 @@ class CapturingHandler extends Handler {
         return String.join("\n", messages);
     }
 }
-

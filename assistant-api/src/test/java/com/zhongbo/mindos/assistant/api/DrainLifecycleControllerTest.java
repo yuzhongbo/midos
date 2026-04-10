@@ -1,6 +1,6 @@
 package com.zhongbo.mindos.assistant.api;
 
-import com.zhongbo.mindos.assistant.dispatcher.DispatcherService;
+import com.zhongbo.mindos.assistant.dispatcher.DispatcherFacade;
 import com.zhongbo.mindos.assistant.memory.MemoryManager;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -34,7 +34,7 @@ class DrainLifecycleControllerTest {
     private MockMvc mockMvc;
 
     @MockBean
-    private DispatcherService dispatcherService;
+    private DispatcherFacade dispatcherService;
 
     @MockBean
     private MemoryManager memoryManager;

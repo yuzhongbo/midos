@@ -11,6 +11,7 @@ import com.zhongbo.mindos.assistant.common.dto.LlmCallMetricDto;
 import com.zhongbo.mindos.assistant.common.dto.LlmCacheMetricsDto;
 import com.zhongbo.mindos.assistant.common.dto.LlmCacheWindowMetricsDto;
 import com.zhongbo.mindos.assistant.common.dsl.SkillDSL;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -35,6 +36,8 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Consumer;
+import java.util.function.Function;
+import java.util.function.Supplier;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
@@ -97,6 +100,7 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
     private final boolean arkWebSearchEnabled;
     private final Set<String> arkWebSearchStages;
     private final Set<String> arkWebSearchPlatforms;
+    private final List<LlmProviderAdapter> providerAdapters;
     private final ConcurrentHashMap<String, CachedResponse> responseCache = new ConcurrentHashMap<>();
     private final Set<String> routingSampleKeys = ConcurrentHashMap.newKeySet();
     private final AtomicLong cacheHitCount = new AtomicLong();
@@ -105,11 +109,10 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
     private final ArrayDeque<CacheAccessEvent> cacheAccessEvents = new ArrayDeque<>();
     private static final int MAX_CACHE_ACCESS_EVENTS = 10_000;
     private static final Duration HTTP_TIMEOUT = Duration.ofSeconds(30);
-    private final ObjectMapper objectMapper = new ObjectMapper();
-    private final HttpClient httpClient = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(10))
-            .build();
+    private final ObjectMapper objectMapper;
+    private final HttpClient httpClient;
 
+    @Autowired
     public ApiKeyLlmClient(@Value("${mindos.llm.provider:openai}") String provider,
                            @Value("${mindos.llm.profile:}") String llmProfile,
                            @Value("${mindos.llm.routing.mode:fixed}") String routingMode,
@@ -132,6 +135,58 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
                            @Value("${mindos.llm.ark.web-search.platforms:}") String arkWebSearchPlatforms,
                            UserApiKeyService userApiKeyService,
                            LlmMetricsService llmMetricsService) {
+        this(
+                provider,
+                llmProfile,
+                routingMode,
+                endpoint,
+                globalApiKey,
+                providerEndpoints,
+                providerModels,
+                providerKeys,
+                stageProviderMap,
+                presetProviderMap,
+                userKeys,
+                maxRetries,
+                retryDelayMs,
+                httpEnabled,
+                responseCacheEnabled,
+                responseCacheTtlSeconds,
+                responseCacheMaxEntries,
+                arkWebSearchEnabled,
+                arkWebSearchStages,
+                arkWebSearchPlatforms,
+                userApiKeyService,
+                llmMetricsService,
+                new ObjectMapper(),
+                HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build()
+        );
+    }
+
+    ApiKeyLlmClient(String provider,
+                    String llmProfile,
+                    String routingMode,
+                    String endpoint,
+                    String globalApiKey,
+                    String providerEndpoints,
+                    String providerModels,
+                    String providerKeys,
+                    String stageProviderMap,
+                    String presetProviderMap,
+                    String userKeys,
+                    int maxRetries,
+                    long retryDelayMs,
+                    boolean httpEnabled,
+                    boolean responseCacheEnabled,
+                    long responseCacheTtlSeconds,
+                    int responseCacheMaxEntries,
+                    boolean arkWebSearchEnabled,
+                    String arkWebSearchStages,
+                    String arkWebSearchPlatforms,
+                    UserApiKeyService userApiKeyService,
+                    LlmMetricsService llmMetricsService,
+                    ObjectMapper objectMapper,
+                    HttpClient httpClient) {
         this.provider = provider;
         this.llmProfile = llmProfile == null ? "" : llmProfile.trim().toUpperCase(Locale.ROOT);
         this.routingMode = routingMode == null ? "fixed" : routingMode.trim().toLowerCase(Locale.ROOT);
@@ -154,8 +209,40 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
         this.arkWebSearchPlatforms = parseCsvSet(arkWebSearchPlatforms);
         this.userApiKeyService = userApiKeyService;
         this.llmMetricsService = llmMetricsService;
+        this.objectMapper = objectMapper == null ? new ObjectMapper() : objectMapper;
+        this.httpClient = httpClient == null ? HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build() : httpClient;
+        this.providerAdapters = createProviderAdapters();
         logStartupRoutingProfile();
         logProfileDiagnostics();
+    }
+
+    private List<LlmProviderAdapter> createProviderAdapters() {
+        return List.of(
+                new DelegatingLlmProviderAdapter(
+                        httpEnabled,
+                        (normalizedProvider, endpointValue) -> LlmEndpointClassifier.isOllamaGenerateEndpoint(endpointValue),
+                        (providerName, endpointValue, model, prompt, context, apiKey, deltaConsumer, streamEmitted) ->
+                                callOllamaGenerateProvider(endpointValue, model, prompt, context, deltaConsumer, streamEmitted)
+                ),
+                new DelegatingLlmProviderAdapter(
+                        httpEnabled,
+                        (normalizedProvider, endpointValue) -> LlmEndpointClassifier.isOllamaChatEndpoint(endpointValue),
+                        (providerName, endpointValue, model, prompt, context, apiKey, deltaConsumer, streamEmitted) ->
+                                callOllamaChatProvider(endpointValue, model, prompt, context, deltaConsumer, streamEmitted)
+                ),
+                new DelegatingLlmProviderAdapter(
+                        httpEnabled,
+                        (normalizedProvider, endpointValue) -> LlmEndpointClassifier.isNativeGeminiEndpoint(endpointValue),
+                        (providerName, endpointValue, model, prompt, context, apiKey, deltaConsumer, streamEmitted) ->
+                                callNativeGeminiProvider(endpointValue, prompt, context, apiKey, deltaConsumer, streamEmitted)
+                ),
+                new DelegatingLlmProviderAdapter(
+                        httpEnabled,
+                        LlmEndpointClassifier::isOpenAiCompatibleProvider,
+                        (providerName, endpointValue, model, prompt, context, apiKey, deltaConsumer, streamEmitted) ->
+                                callOpenAiCompatibleProvider(endpointValue, model, prompt, context, apiKey, deltaConsumer, streamEmitted)
+                )
+        );
     }
 
     private void logStartupRoutingProfile() {
@@ -511,17 +598,11 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
                                 Consumer<String> deltaConsumer,
                                 AtomicBoolean streamEmitted) {
         String normalized = normalizeProvider(providerName);
-        if (httpEnabled && isOllamaGenerateEndpoint(endpointValue)) {
-            return callOllamaGenerateProvider(endpointValue, model, prompt, context, deltaConsumer, streamEmitted);
-        }
-        if (httpEnabled && isOllamaChatEndpoint(endpointValue)) {
-            return callOllamaChatProvider(endpointValue, model, prompt, context, deltaConsumer, streamEmitted);
-        }
-        if (httpEnabled && isNativeGeminiEndpoint(endpointValue)) {
-            return callNativeGeminiProvider(endpointValue, prompt, context, apiKey, deltaConsumer, streamEmitted);
-        }
-        if (httpEnabled && isOpenAiCompatibleProvider(normalized, endpointValue)) {
-            return callOpenAiCompatibleProvider(endpointValue, model, prompt, context, apiKey, deltaConsumer, streamEmitted);
+        for (LlmProviderAdapter adapter : providerAdapters) {
+            if (!adapter.supports(normalized, endpointValue)) {
+                continue;
+            }
+            return adapter.call(providerName, endpointValue, model, prompt, context, apiKey, deltaConsumer, streamEmitted);
         }
         if (normalized.contains("openai")
                 || "deepseek".equals(normalized)
@@ -543,43 +624,19 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
     }
 
     private boolean isOpenAiCompatibleProvider(String normalizedProvider, String endpointValue) {
-        if (normalizedProvider.contains("local") || normalizedProvider.contains("llama") || normalizedProvider.contains("mpt")) {
-            return false;
-        }
-        if (normalizedProvider.contains("openai")
-                || "deepseek".equals(normalizedProvider)
-                || "qwen".equals(normalizedProvider)
-                || "kimi".equals(normalizedProvider)
-                || "doubao".equals(normalizedProvider)
-                || "hunyuan".equals(normalizedProvider)
-                || "ernie".equals(normalizedProvider)
-                || "glm".equals(normalizedProvider)
-                || "gemini".equals(normalizedProvider)
-                || "grok".equals(normalizedProvider)) {
-            return true;
-        }
-        return endpointValue != null && endpointValue.contains("/chat/completions");
+        return LlmEndpointClassifier.isOpenAiCompatibleProvider(normalizedProvider, endpointValue);
     }
 
     private boolean isNativeGeminiEndpoint(String endpointValue) {
-        if (endpointValue == null || endpointValue.isBlank()) {
-            return false;
-        }
-        return endpointValue.trim().toLowerCase(Locale.ROOT).contains(":generatecontent");
+        return LlmEndpointClassifier.isNativeGeminiEndpoint(endpointValue);
     }
 
     private boolean isOllamaGenerateEndpoint(String endpointValue) {
-        if (endpointValue == null || endpointValue.isBlank()) {
-            return false;
-        }
-        return endpointValue.trim().toLowerCase(Locale.ROOT).contains("/api/generate");
+        return LlmEndpointClassifier.isOllamaGenerateEndpoint(endpointValue);
     }
 
     private boolean isOllamaChatEndpoint(String endpointValue) {
-        if (endpointValue == null || endpointValue.isBlank()) {
-            return false;
-        }
-        return endpointValue.trim().toLowerCase(Locale.ROOT).contains("/api/chat");
+        return LlmEndpointClassifier.isOllamaChatEndpoint(endpointValue);
     }
 
     private String callOpenAiCompatibleProvider(String endpointValue,
@@ -849,55 +906,25 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
     private String extractAssistantText(String responseBody,
                                         Consumer<String> deltaConsumer,
                                         AtomicBoolean streamEmitted) {
-        if (looksLikeSsePayload(responseBody)) {
-            String streamed = extractOpenAiCompatibleStreamText(responseBody, deltaConsumer, streamEmitted);
-            if (streamed != null && !streamed.isBlank()) {
-                return streamed;
-            }
-        }
-        try {
-            JsonNode root = objectMapper.readTree(responseBody == null ? "" : responseBody);
-            String content = extractAssistantText(root);
-            return content == null ? null : content.trim();
-        } catch (Exception ex) {
-            throw new RuntimeException("invalid_response_json", ex);
-        }
+        return extractStructuredText(responseBody,
+                () -> extractOpenAiCompatibleStreamText(responseBody, deltaConsumer, streamEmitted),
+                this::extractAssistantText);
     }
 
     private String extractResponsesText(String responseBody,
                                         Consumer<String> deltaConsumer,
                                         AtomicBoolean streamEmitted) {
-        if (looksLikeSsePayload(responseBody)) {
-            String streamed = extractResponsesStreamText(responseBody, deltaConsumer, streamEmitted);
-            if (streamed != null && !streamed.isBlank()) {
-                return streamed;
-            }
-        }
-        try {
-            JsonNode root = objectMapper.readTree(responseBody == null ? "" : responseBody);
-            String content = extractResponsesText(root);
-            return content == null ? null : content.trim();
-        } catch (Exception ex) {
-            throw new RuntimeException("invalid_response_json", ex);
-        }
+        return extractStructuredText(responseBody,
+                () -> extractResponsesStreamText(responseBody, deltaConsumer, streamEmitted),
+                this::extractResponsesText);
     }
 
     private String extractGeminiText(String responseBody,
                                      Consumer<String> deltaConsumer,
                                      AtomicBoolean streamEmitted) {
-        if (looksLikeSsePayload(responseBody)) {
-            String streamed = extractGeminiStreamText(responseBody, deltaConsumer, streamEmitted);
-            if (streamed != null && !streamed.isBlank()) {
-                return streamed;
-            }
-        }
-        try {
-            JsonNode root = objectMapper.readTree(responseBody == null ? "" : responseBody);
-            String content = extractGeminiText(root);
-            return content == null ? null : content.trim();
-        } catch (Exception ex) {
-            throw new RuntimeException("invalid_response_json", ex);
-        }
+        return extractStructuredText(responseBody,
+                () -> extractGeminiStreamText(responseBody, deltaConsumer, streamEmitted),
+                this::extractGeminiText);
     }
 
     private String extractOllamaText(String responseBody,
@@ -906,25 +933,9 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
         if (responseBody == null || responseBody.isBlank()) {
             return null;
         }
-        StringBuilder aggregated = new StringBuilder();
-        for (String rawLine : responseBody.split("\\R")) {
-            String line = rawLine.trim();
-            if (line.isBlank()) {
-                continue;
-            }
-            String chunk = extractOllamaChunkText(line);
-            if (chunk != null && !chunk.isBlank()) {
-                aggregated.append(chunk);
-                if (deltaConsumer != null) {
-                    deltaConsumer.accept(chunk);
-                    if (streamEmitted != null) {
-                        streamEmitted.set(true);
-                    }
-                }
-            }
-        }
-        if (!aggregated.isEmpty()) {
-            return aggregated.toString().trim();
+        String aggregated = extractDelimitedText(responseBody, deltaConsumer, streamEmitted, false, this::extractOllamaChunkText);
+        if (aggregated != null && !aggregated.isBlank()) {
+            return aggregated;
         }
         try {
             JsonNode root = objectMapper.readTree(responseBody);
@@ -938,33 +949,7 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
     private String readOllamaNdjsonStream(InputStream bodyStream,
                                           Consumer<String> deltaConsumer,
                                           AtomicBoolean streamEmitted) throws IOException {
-        if (bodyStream == null) {
-            return null;
-        }
-        StringBuilder aggregated = new StringBuilder();
-        try (InputStream input = bodyStream;
-             BufferedReader reader = new BufferedReader(new InputStreamReader(input, java.nio.charset.StandardCharsets.UTF_8))) {
-            String line;
-            while ((line = reader.readLine()) != null) {
-                String trimmed = line.trim();
-                if (trimmed.isBlank()) {
-                    continue;
-                }
-                String chunk = extractOllamaChunkText(trimmed);
-                if (chunk == null || chunk.isBlank()) {
-                    continue;
-                }
-                aggregated.append(chunk);
-                if (deltaConsumer != null) {
-                    deltaConsumer.accept(chunk);
-                    if (streamEmitted != null) {
-                        streamEmitted.set(true);
-                    }
-                }
-            }
-        }
-        String content = aggregated.toString().trim();
-        return content.isBlank() ? null : content;
+        return readDelimitedText(bodyStream, deltaConsumer, streamEmitted, false, this::extractOllamaChunkText);
     }
 
     private String extractOllamaChunkText(String chunkPayload) {
@@ -1031,74 +1016,127 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
     private String extractOpenAiCompatibleStreamText(String responseBody,
                                                      Consumer<String> deltaConsumer,
                                                      AtomicBoolean streamEmitted) {
-        return extractSseText(responseBody, false, deltaConsumer, streamEmitted);
+        return extractSseText(responseBody, deltaConsumer, streamEmitted, this::extractAssistantChunkText);
     }
 
     private String extractResponsesStreamText(String responseBody,
                                               Consumer<String> deltaConsumer,
                                               AtomicBoolean streamEmitted) {
-        if (responseBody == null || responseBody.isBlank()) {
-            return null;
-        }
-        StringBuilder aggregated = new StringBuilder();
-        for (String rawLine : responseBody.split("\\R")) {
-            String line = rawLine.trim();
-            if (!line.startsWith("data:")) {
-                continue;
-            }
-            String payload = line.substring("data:".length()).trim();
-            if (payload.isBlank() || "[DONE]".equals(payload)) {
-                continue;
-            }
-            String chunk = extractResponsesChunkText(payload);
-            if (chunk != null && !chunk.isBlank()) {
-                aggregated.append(chunk);
-                if (deltaConsumer != null) {
-                    deltaConsumer.accept(chunk);
-                    if (streamEmitted != null) {
-                        streamEmitted.set(true);
-                    }
-                }
-            }
-        }
-        return aggregated.isEmpty() ? null : aggregated.toString().trim();
+        return extractSseText(responseBody, deltaConsumer, streamEmitted, this::extractResponsesChunkText);
     }
 
     private String extractGeminiStreamText(String responseBody,
                                            Consumer<String> deltaConsumer,
                                            AtomicBoolean streamEmitted) {
-        return extractSseText(responseBody, true, deltaConsumer, streamEmitted);
+        return extractSseText(responseBody, deltaConsumer, streamEmitted, this::extractGeminiChunkText);
     }
 
     private String extractSseText(String responseBody,
-                                  boolean geminiFormat,
                                   Consumer<String> deltaConsumer,
-                                  AtomicBoolean streamEmitted) {
+                                  AtomicBoolean streamEmitted,
+                                  Function<String, String> chunkExtractor) {
+        return extractDelimitedText(responseBody, deltaConsumer, streamEmitted, true, chunkExtractor);
+    }
+
+    private String extractStructuredText(String responseBody,
+                                         Supplier<String> streamExtractor,
+                                         Function<JsonNode, String> jsonExtractor) {
+        if (looksLikeSsePayload(responseBody)) {
+            String streamed = streamExtractor.get();
+            if (streamed != null && !streamed.isBlank()) {
+                return streamed;
+            }
+        }
+        try {
+            JsonNode root = objectMapper.readTree(responseBody == null ? "" : responseBody);
+            String content = jsonExtractor.apply(root);
+            return content == null ? null : content.trim();
+        } catch (Exception ex) {
+            throw new RuntimeException("invalid_response_json", ex);
+        }
+    }
+
+    private String extractDelimitedText(String responseBody,
+                                        Consumer<String> deltaConsumer,
+                                        AtomicBoolean streamEmitted,
+                                        boolean ssePayload,
+                                        Function<String, String> chunkExtractor) {
         if (responseBody == null || responseBody.isBlank()) {
             return null;
         }
         StringBuilder aggregated = new StringBuilder();
         for (String rawLine : responseBody.split("\\R")) {
-            String line = rawLine.trim();
-            if (!line.startsWith("data:")) {
-                continue;
-            }
-            String payload = line.substring("data:".length()).trim();
-            if (payload.isBlank() || "[DONE]".equals(payload)) {
-                continue;
-            }
-            String chunk = geminiFormat ? extractGeminiChunkText(payload) : extractAssistantChunkText(payload);
-            if (chunk != null && !chunk.isBlank()) {
-                aggregated.append(chunk);
-                if (deltaConsumer != null) {
-                    deltaConsumer.accept(chunk);
-                    if (streamEmitted != null) {
-                        streamEmitted.set(true);
-                    }
-                }
-            }
+            appendDelimitedChunk(aggregated, rawLine, deltaConsumer, streamEmitted, ssePayload, chunkExtractor);
         }
         return aggregated.isEmpty() ? null : aggregated.toString().trim();
+    }
+
+    private String readDelimitedText(InputStream bodyStream,
+                                     Consumer<String> deltaConsumer,
+                                     AtomicBoolean streamEmitted,
+                                     boolean ssePayload,
+                                     Function<String, String> chunkExtractor) throws IOException {
+        if (bodyStream == null) {
+            return null;
+        }
+        StringBuilder aggregated = new StringBuilder();
+        try (InputStream input = bodyStream;
+             BufferedReader reader = new BufferedReader(new InputStreamReader(input, java.nio.charset.StandardCharsets.UTF_8))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                appendDelimitedChunk(aggregated, line, deltaConsumer, streamEmitted, ssePayload, chunkExtractor);
+            }
+        }
+        String content = aggregated.toString().trim();
+        return content.isBlank() ? null : content;
+    }
+
+    private void appendDelimitedChunk(StringBuilder aggregated,
+                                      String rawLine,
+                                      Consumer<String> deltaConsumer,
+                                      AtomicBoolean streamEmitted,
+                                      boolean ssePayload,
+                                      Function<String, String> chunkExtractor) {
+        String payload = normalizeDelimitedPayload(rawLine, ssePayload);
+        if (payload == null) {
+            return;
+        }
+        String chunk = chunkExtractor.apply(payload);
+        emitChunk(aggregated, chunk, deltaConsumer, streamEmitted);
+    }
+
+    private String normalizeDelimitedPayload(String rawLine, boolean ssePayload) {
+        String line = rawLine == null ? "" : rawLine.trim();
+        if (line.isBlank()) {
+            return null;
+        }
+        if (!ssePayload) {
+            return line;
+        }
+        if (!line.startsWith("data:")) {
+            return null;
+        }
+        String payload = line.substring("data:".length()).trim();
+        if (payload.isBlank() || "[DONE]".equals(payload)) {
+            return null;
+        }
+        return payload;
+    }
+
+    private void emitChunk(StringBuilder aggregated,
+                           String chunk,
+                           Consumer<String> deltaConsumer,
+                           AtomicBoolean streamEmitted) {
+        if (chunk == null || chunk.isBlank()) {
+            return;
+        }
+        aggregated.append(chunk);
+        if (deltaConsumer != null) {
+            deltaConsumer.accept(chunk);
+            if (streamEmitted != null) {
+                streamEmitted.set(true);
+            }
+        }
     }
 
     private String extractAssistantChunkText(String chunkPayload) {
@@ -1331,7 +1369,7 @@ public class ApiKeyLlmClient implements LlmClient, LlmCacheMetricsReader {
         if ("local".equals(normalizedProvider) || "ollama".equals(normalizedProvider)) {
             return false;
         }
-        return !isOllamaGenerateEndpoint(endpointValue);
+        return !LlmEndpointClassifier.isOllamaGenerateEndpoint(endpointValue);
     }
 
     private boolean isTemplatePlaceholder(String value) {

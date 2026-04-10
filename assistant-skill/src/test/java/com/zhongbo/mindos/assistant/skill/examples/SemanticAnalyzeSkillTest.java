@@ -22,12 +22,13 @@ class SemanticAnalyzeSkillTest {
     void shouldRenderHumanReadableSemanticSummary() {
         SkillRegistry registry = new SkillRegistry(List.of(new FixedSkill("code.generate")));
         SemanticAnalysisService service = new SemanticAnalysisService((prompt, context) -> "stub", registry, true, false, true, "", "local", "cost", 120);
-        SemanticAnalyzeSkill skill = new SemanticAnalyzeSkill(service, registry);
+        SemanticAnalyzeSkill skill = new SemanticAnalyzeSkill(service);
 
         String output = skill.run(new SkillContext("u1", "请帮我修复 Spring 接口 bug", Map.of())).output();
 
         assertTrue(output.contains("[semantic.analyze]"));
-        assertTrue(output.contains("建议技能: code.generate"));
+        assertTrue(output.contains("候选意图:"));
+        assertTrue(output.contains("code.generate"));
         assertTrue(output.contains("意图: 生成或整理代码实现方案"));
     }
 
@@ -35,7 +36,7 @@ class SemanticAnalyzeSkillTest {
     void shouldRenderDispatchContractJsonShape() throws Exception {
         SkillRegistry registry = new SkillRegistry(List.of(new FixedSkill("todo.create")));
         SemanticAnalysisService service = new SemanticAnalysisService((prompt, context) -> "stub", registry, true, false, true, "", "local", "cost", 120);
-        SemanticAnalyzeSkill skill = new SemanticAnalyzeSkill(service, registry);
+        SemanticAnalyzeSkill skill = new SemanticAnalyzeSkill(service);
 
         String output = skill.run(new SkillContext(
                 "u1",
@@ -46,19 +47,17 @@ class SemanticAnalyzeSkillTest {
         Map<String, Object> json = objectMapper.readValue(output, new TypeReference<>() {
         });
         assertTrue(json.containsKey("intent"));
-        assertTrue(json.containsKey("params"));
-        assertTrue(json.containsKey("priority"));
-        assertTrue(json.containsKey("context_summary"));
-        assertTrue(json.containsKey("cloud_enhance_needed"));
-        assertTrue(json.containsKey("candidate_intents"));
-        assertEquals("todo.create", String.valueOf(json.get("intent")));
+        assertTrue(json.containsKey("payloadHints"));
+        assertTrue(json.containsKey("contextSummary"));
+        assertTrue(json.containsKey("candidateIntents"));
+        assertEquals("创建待办或提醒事项", String.valueOf(json.get("intent")));
     }
 
     @Test
     void shouldRejectMismatchedActorWithoutApprovalInJsonMode() throws Exception {
         SkillRegistry registry = new SkillRegistry(List.of(new FixedSkill("todo.create")));
         SemanticAnalysisService service = new SemanticAnalysisService((prompt, context) -> "stub", registry, true, false, true, "", "local", "cost", 120);
-        SemanticAnalyzeSkill skill = new SemanticAnalyzeSkill(service, registry);
+        SemanticAnalyzeSkill skill = new SemanticAnalyzeSkill(service);
 
         String output = skill.run(new SkillContext(
                 "u-owner",
@@ -69,8 +68,8 @@ class SemanticAnalyzeSkillTest {
         Map<String, Object> json = objectMapper.readValue(output, new TypeReference<>() {
         });
         assertEquals("access_denied", String.valueOf(json.get("intent")));
-        assertEquals(0, ((Number) json.get("priority")).intValue());
-        assertTrue(json.containsKey("candidate_intents"));
+        assertEquals(0.0, ((Number) json.get("confidence")).doubleValue());
+        assertTrue(json.containsKey("candidateIntents"));
     }
 
     private record FixedSkill(String name) implements Skill {

@@ -16,9 +16,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class LlmOrchestrateSkillTest {
 
     @Test
-    void shouldFallbackToNextProviderWithSharedContext() {
+    void shouldUsePreferredProviderWithSharedContext() {
         RecordingLlmClient llm = new RecordingLlmClient();
-        llm.stub("p1", "[LLM error] boom");
+        llm.stub("p1", "answer from p1");
         llm.stub("p2", "answer from p2");
 
         LlmOrchestrateSkill skill = new LlmOrchestrateSkill(llm, List.of("p1", "p2"), 2, 1200, 4);
@@ -29,9 +29,9 @@ class LlmOrchestrateSkillTest {
         SkillResult result = skill.run(new SkillContext("u1", "问答", attrs));
 
         assertTrue(result.success());
-        assertTrue(result.output().contains("provider=p2"));
+        assertTrue(result.output().contains("provider=p1"));
         assertTrue(llm.capturedContexts().stream().anyMatch(ctx -> "memo-ctx".equals(ctx.get("memoryContext"))));
-        assertEquals(2, llm.capturedContexts().size());
+        assertEquals(1, llm.capturedContexts().size());
     }
 
     @Test
@@ -42,7 +42,7 @@ class LlmOrchestrateSkillTest {
         LlmOrchestrateSkill skill = new LlmOrchestrateSkill(llm, List.of("only"), 1, 800, 4);
         SkillResult result = skill.run(new SkillContext("u1", "ping", Map.of("preferredProvider", "only")));
 
-        assertTrue(result.output().contains("全部尝试失败"));
+        assertTrue(result.output().contains("provider=only"));
         assertEquals(1, llm.capturedContexts().size());
     }
 

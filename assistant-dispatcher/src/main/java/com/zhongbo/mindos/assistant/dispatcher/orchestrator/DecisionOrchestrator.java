@@ -10,6 +10,8 @@ import java.util.Map;
 
 public interface DecisionOrchestrator {
 
+    SkillResult execute(String userInput, String intent, Map<String, Object> params);
+
     OrchestrationOutcome orchestrate(Decision decision, OrchestrationRequest request);
 
     void recordOutcome(String userId, String userInput, SkillResult result, ExecutionTraceDto trace);

@@ -47,13 +47,8 @@ class DingtalkOpenApiConversationSenderTest {
                 "",
                 ""
         );
-        HttpClient httpClient = mock(HttpClient.class);
-        @SuppressWarnings("unchecked")
-        HttpResponse<String> tokenResponse = mock(HttpResponse.class);
-        when(tokenResponse.statusCode()).thenReturn(200);
-        when(tokenResponse.body()).thenReturn("{\"errcode\":40014,\"errmsg\":\"invalid app credentials\"}");
-        when(httpClient.send(any(HttpRequest.class), org.mockito.ArgumentMatchers.<HttpResponse.BodyHandler<String>>any()))
-                .thenReturn(tokenResponse);
+        TestHttpClient httpClient = new TestHttpClient();
+        httpClient.enqueueResponse(new StubHttpResponse(200, "{\"errcode\":40014,\"errmsg\":\"invalid app credentials\"}"));
         DingtalkOpenApiConversationSender sender = new DingtalkOpenApiConversationSender(
                 settings,
                 new ObjectMapper().findAndRegisterModules(),
@@ -106,18 +101,9 @@ class DingtalkOpenApiConversationSenderTest {
                 "",
                 ""
         );
-        HttpClient httpClient = mock(HttpClient.class);
-        @SuppressWarnings("unchecked")
-        HttpResponse<String> tokenResponse = mock(HttpResponse.class);
-        when(tokenResponse.statusCode()).thenReturn(200);
-        when(tokenResponse.body()).thenReturn("{\"errcode\":0,\"access_token\":\"token-123\",\"expires_in\":7200}");
-        @SuppressWarnings("unchecked")
-        HttpResponse<String> updateResponse = mock(HttpResponse.class);
-        when(updateResponse.statusCode()).thenReturn(200);
-        when(updateResponse.body()).thenReturn("{\"success\":true,\"data\":{\"messageId\":\"msg-1\",\"processQueryKey\":\"pqk-2\",\"outTrackId\":\"ot-3\"}}");
-        when(httpClient.send(any(HttpRequest.class), org.mockito.ArgumentMatchers.<HttpResponse.BodyHandler<String>>any()))
-                .thenReturn(tokenResponse)
-                .thenReturn(updateResponse);
+        TestHttpClient httpClient = new TestHttpClient();
+        httpClient.enqueueResponse(new StubHttpResponse(200, "{\"errcode\":0,\"access_token\":\"token-123\",\"expires_in\":7200}"));
+        httpClient.enqueueResponse(new StubHttpResponse(200, "{\"success\":true,\"data\":{\"messageId\":\"msg-1\",\"processQueryKey\":\"pqk-2\",\"outTrackId\":\"ot-3\"}}"));
 
         DingtalkOpenApiConversationSender sender = new DingtalkOpenApiConversationSender(
                 settings,
@@ -180,19 +166,10 @@ class DingtalkOpenApiConversationSenderTest {
                 "",
                 ""
         );
-        HttpClient httpClient = mock(HttpClient.class);
-        @SuppressWarnings("unchecked")
-        HttpResponse<String> tokenResponse = mock(HttpResponse.class);
-        when(tokenResponse.statusCode()).thenReturn(200);
-        when(tokenResponse.body()).thenReturn("{\"errcode\":0,\"access_token\":\"token-123\",\"expires_in\":7200}");
-        @SuppressWarnings("unchecked")
-        HttpResponse<String> sendResponse = mock(HttpResponse.class);
-        when(sendResponse.statusCode()).thenReturn(404);
-        when(sendResponse.body()).thenReturn("{\"code\":\"InvalidAction.NotFound\",\"message\":\"Specified api is not found\"}");
-        when(httpClient.send(any(HttpRequest.class), org.mockito.ArgumentMatchers.<HttpResponse.BodyHandler<String>>any()))
-                .thenReturn(tokenResponse)
-                .thenReturn(sendResponse)
-                .thenReturn(sendResponse);
+        TestHttpClient httpClient = new TestHttpClient();
+        httpClient.enqueueResponse(new StubHttpResponse(200, "{\"errcode\":0,\"access_token\":\"token-123\",\"expires_in\":7200}"));
+        httpClient.enqueueResponse(new StubHttpResponse(404, "{\"code\":\"InvalidAction.NotFound\",\"message\":\"Specified api is not found\"}"));
+        httpClient.enqueueResponse(new StubHttpResponse(404, "{\"code\":\"InvalidAction.NotFound\",\"message\":\"Specified api is not found\"}"));
 
         DingtalkOpenApiConversationSender sender = new DingtalkOpenApiConversationSender(
                 settings,
@@ -245,38 +222,27 @@ class DingtalkOpenApiConversationSenderTest {
                 "",
                 ""
         );
-        HttpClient httpClient = mock(HttpClient.class);
+        TestHttpClient httpClient = new TestHttpClient();
 
-        @SuppressWarnings("unchecked")
-        HttpResponse<String> tokenResponse = mock(HttpResponse.class);
-        when(tokenResponse.statusCode()).thenReturn(200);
-        when(tokenResponse.body()).thenReturn("{\"errcode\":0,\"access_token\":\"token-123\",\"expires_in\":7200}");
+        HttpResponse<String> tokenResponse = new StubHttpResponse(200, "{\"errcode\":0,\"access_token\":\"token-123\",\"expires_in\":7200}");
 
-        @SuppressWarnings("unchecked")
-        HttpResponse<String> send404Response = mock(HttpResponse.class);
-        when(send404Response.statusCode()).thenReturn(404);
-        when(send404Response.body()).thenReturn("{\"code\":\"InvalidAction.NotFound\",\"message\":\"Specified api is not found\"}");
+        HttpResponse<String> send404Response = new StubHttpResponse(404, "{\"code\":\"InvalidAction.NotFound\",\"message\":\"Specified api is not found\"}");
 
-        @SuppressWarnings("unchecked")
-        HttpResponse<String> fallbackSuccessResponse = mock(HttpResponse.class);
-        when(fallbackSuccessResponse.statusCode()).thenReturn(200);
-        when(fallbackSuccessResponse.body()).thenReturn("{\"success\":true,\"data\":{\"messageId\":\"msg-fallback\"}}");
+        HttpResponse<String> fallbackSuccessResponse = new StubHttpResponse(200, "{\"success\":true,\"data\":{\"messageId\":\"msg-fallback\"}}");
 
         AtomicInteger sendCallCount = new AtomicInteger(0);
         List<String> requestPaths = new ArrayList<>();
-        when(httpClient.send(any(HttpRequest.class), org.mockito.ArgumentMatchers.<HttpResponse.BodyHandler<String>>any()))
-                .thenAnswer(invocation -> {
-                    HttpRequest request = invocation.getArgument(0);
-                    requestPaths.add(request.uri().getPath());
-                    String path = request.uri().getPath();
-                    if (path.contains("gettoken")) {
-                        return tokenResponse;
-                    }
-                    if (sendCallCount.getAndIncrement() == 0) {
-                        return send404Response;
-                    }
-                    return fallbackSuccessResponse;
-                });
+        httpClient.setResponder(request -> {
+            requestPaths.add(request.uri().getPath());
+            String path = request.uri().getPath();
+            if (path.contains("gettoken")) {
+                return tokenResponse;
+            }
+            if (sendCallCount.getAndIncrement() == 0) {
+                return send404Response;
+            }
+            return fallbackSuccessResponse;
+        });
 
         DingtalkOpenApiConversationSender sender = new DingtalkOpenApiConversationSender(
                 settings,
@@ -340,6 +306,130 @@ class DingtalkOpenApiConversationSenderTest {
 
         private String joinedMessages() {
             return String.join("\n", messages);
+        }
+    }
+
+    private static final class TestHttpClient extends HttpClient {
+        private final java.util.Queue<Object> outcomes = new java.util.ArrayDeque<>();
+        private java.util.function.Function<HttpRequest, Object> responder;
+
+        void enqueueResponse(Object outcome) { outcomes.add(outcome); }
+
+        void setResponder(java.util.function.Function<HttpRequest, Object> responder) { this.responder = responder; }
+
+        @Override
+        public java.util.Optional<java.net.CookieHandler> cookieHandler() {
+            return java.util.Optional.empty();
+        }
+
+        @Override
+        public java.util.Optional<java.time.Duration> connectTimeout() {
+            return java.util.Optional.of(java.time.Duration.ofSeconds(5));
+        }
+
+        @Override
+        public Redirect followRedirects() {
+            return Redirect.NEVER;
+        }
+
+        @Override
+        public java.util.Optional<java.net.ProxySelector> proxy() {
+            return java.util.Optional.empty();
+        }
+
+        @Override
+        public javax.net.ssl.SSLContext sslContext() {
+            return null;
+        }
+
+        @Override
+        public javax.net.ssl.SSLParameters sslParameters() {
+            return new javax.net.ssl.SSLParameters();
+        }
+
+        @Override
+        public java.util.Optional<java.net.Authenticator> authenticator() {
+            return java.util.Optional.empty();
+        }
+
+        @Override
+        public Version version() {
+            return Version.HTTP_1_1;
+        }
+
+        @Override
+        public java.util.Optional<java.util.concurrent.Executor> executor() {
+            return java.util.Optional.empty();
+        }
+
+        @Override
+        @SuppressWarnings("unchecked")
+        public <T> HttpResponse<T> send(HttpRequest request, HttpResponse.BodyHandler<T> responseBodyHandler) throws java.io.IOException {
+            Object outcome;
+            if (responder != null) outcome = responder.apply(request);
+            else outcome = outcomes.poll();
+            if (outcome instanceof java.io.IOException io) throw io;
+            return (HttpResponse<T>) outcome;
+        }
+
+        @Override
+        public <T> java.util.concurrent.CompletableFuture<HttpResponse<T>> sendAsync(HttpRequest request, HttpResponse.BodyHandler<T> responseBodyHandler) {
+            return java.util.concurrent.CompletableFuture.failedFuture(new UnsupportedOperationException("not used in tests"));
+        }
+
+        @Override
+        public <T> java.util.concurrent.CompletableFuture<HttpResponse<T>> sendAsync(HttpRequest request, HttpResponse.BodyHandler<T> responseBodyHandler, HttpResponse.PushPromiseHandler<T> pushPromiseHandler) {
+            return java.util.concurrent.CompletableFuture.failedFuture(new UnsupportedOperationException("not used in tests"));
+        }
+    }
+
+    private static final class StubHttpResponse implements HttpResponse<String> {
+        private final int statusCode;
+        private final String body;
+
+        private StubHttpResponse(int statusCode, String body) {
+            this.statusCode = statusCode;
+            this.body = body;
+        }
+
+        @Override
+        public int statusCode() {
+            return statusCode;
+        }
+
+        @Override
+        public HttpRequest request() {
+            return HttpRequest.newBuilder(java.net.URI.create("https://example.com")).build();
+        }
+
+        @Override
+        public java.util.Optional<HttpResponse<String>> previousResponse() {
+            return java.util.Optional.empty();
+        }
+
+        @Override
+        public java.net.http.HttpHeaders headers() {
+            return java.net.http.HttpHeaders.of(java.util.Map.of(), (a, b) -> true);
+        }
+
+        @Override
+        public String body() {
+            return body;
+        }
+
+        @Override
+        public java.util.Optional<javax.net.ssl.SSLSession> sslSession() {
+            return java.util.Optional.empty();
+        }
+
+        @Override
+        public java.net.URI uri() {
+            return java.net.URI.create("https://example.com");
+        }
+
+        @Override
+        public HttpClient.Version version() {
+            return HttpClient.Version.HTTP_1_1;
         }
     }
 }

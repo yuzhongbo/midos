@@ -5,6 +5,7 @@ import com.zhongbo.mindos.assistant.common.dto.LongTaskAutoRunResultDto;
 import com.zhongbo.mindos.assistant.common.dto.LongTaskDto;
 import com.zhongbo.mindos.assistant.common.dto.LongTaskProgressUpdateDto;
 import com.zhongbo.mindos.assistant.common.dto.LongTaskStatusUpdateDto;
+import com.zhongbo.mindos.assistant.memory.MemoryGateway;
 import com.zhongbo.mindos.assistant.memory.MemoryManager;
 import com.zhongbo.mindos.assistant.memory.model.LongTask;
 import com.zhongbo.mindos.assistant.memory.model.LongTaskStatus;
@@ -27,13 +28,16 @@ import java.util.Locale;
 public class LongTaskController {
 
     private final MemoryManager memoryManager;
+    private final MemoryGateway memoryGateway;
     private final LongTaskAutoRunner longTaskAutoRunner;
     private final SecurityPolicyGuard securityPolicyGuard;
 
     public LongTaskController(MemoryManager memoryManager,
+                              MemoryGateway memoryGateway,
                               LongTaskAutoRunner longTaskAutoRunner,
                               SecurityPolicyGuard securityPolicyGuard) {
         this.memoryManager = memoryManager;
+        this.memoryGateway = memoryGateway;
         this.longTaskAutoRunner = longTaskAutoRunner;
         this.securityPolicyGuard = securityPolicyGuard;
     }
@@ -41,7 +45,7 @@ public class LongTaskController {
     @PostMapping("/{userId}")
     public LongTaskDto createTask(@PathVariable String userId,
                                   @RequestBody LongTaskCreateRequestDto request) {
-        LongTask created = memoryManager.createLongTask(
+        LongTask created = memoryGateway.createLongTask(
                 userId,
                 request == null ? null : request.title(),
                 request == null ? null : request.objective(),
@@ -96,7 +100,7 @@ public class LongTaskController {
                                       @PathVariable String taskId,
                                       @RequestBody LongTaskProgressUpdateDto request) {
         try {
-            LongTask updated = memoryManager.updateLongTaskProgress(
+            LongTask updated = memoryGateway.updateLongTaskProgress(
                     userId,
                     taskId,
                     request == null ? null : request.workerId(),
@@ -120,7 +124,7 @@ public class LongTaskController {
                                     @PathVariable String taskId,
                                     @RequestBody LongTaskStatusUpdateDto request) {
         LongTaskStatus status = parseStatus(request == null ? null : request.status());
-        LongTask updated = memoryManager.updateLongTaskStatus(
+        LongTask updated = memoryGateway.updateLongTaskStatus(
                 userId,
                 taskId,
                 status,
@@ -165,5 +169,4 @@ public class LongTaskController {
         );
     }
 }
-
 

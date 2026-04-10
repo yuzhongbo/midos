@@ -4,5 +4,11 @@ import java.util.List;
 
 public interface CandidatePlanner {
 
-    List<String> plan(String suggestedTarget);
+    List<ScoredCandidate> plan(String suggestedTarget, DecisionOrchestrator.OrchestrationRequest request);
+
+    default List<String> plan(String suggestedTarget) {
+        return plan(suggestedTarget, null).stream()
+                .map(ScoredCandidate::skillName)
+                .toList();
+    }
 }

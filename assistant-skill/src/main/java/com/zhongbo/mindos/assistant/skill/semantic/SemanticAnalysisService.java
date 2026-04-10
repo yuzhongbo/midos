@@ -385,56 +385,15 @@ public class SemanticAnalysisService {
         }
         Map<String, Object> cleaned = new LinkedHashMap<>();
 
-        // Strings: intent, rewrittenInput, suggestedSkill, summary
         cleaned.put("intent", stringValue(raw.get("intent")));
         cleaned.put("rewrittenInput", stringValue(raw.get("rewrittenInput")));
         cleaned.put("suggestedSkill", stringValue(raw.get("suggestedSkill")));
         cleaned.put("summary", stringValue(raw.get("summary")));
-
-        // Payload / params alias: prefer payload, fallback to params; coerce only if map-like
-        Object payloadObj = raw.get("payload");
-        if (!(payloadObj instanceof Map) && raw.get("params") instanceof Map) {
-            payloadObj = raw.get("params");
-        }
-        if (payloadObj instanceof Map<?, ?> mapVal) {
-            cleaned.put("payload", toStringObjectMap(mapVal));
-        } else {
-            // not a map -> treat as empty payload to avoid execution surprises
-            cleaned.put("payload", Map.of());
-        }
-        // debug trace for malformed payloads to aid tests/diagnosis
-        try {
-            if (!(raw.get("payload") instanceof Map)) {
-                LOGGER.fine("semantic.analysis.validate.cleaned payload was non-map; cleaned=" + cleaned);
-            }
-        } catch (RuntimeException ex) {
-            // ignore logging issues
-        }
-
-        // Keywords: accept list of values or comma/space-separated string
-        Object keywordsObj = raw.get("keywords");
-        List<String> keywords = List.of();
-        if (keywordsObj instanceof List<?>) {
-            keywords = toStringList(keywordsObj);
-        } else if (keywordsObj instanceof String s) {
-            List<String> parts = new ArrayList<>();
-            for (String p : s.split("[,;\\s]+")) {
-                String norm = stringValue(p);
-                if (!norm.isBlank()) parts.add(norm);
-            }
-            keywords = List.copyOf(parts);
-        }
-        cleaned.put("keywords", keywords);
-
-        // Candidate intents: list of {intent, confidence}
+        cleaned.put("payload", resolvePayloadMap(raw));
+        logMalformedPayloadIfNeeded(raw, cleaned);
+        cleaned.put("keywords", parseKeywords(raw.get("keywords")));
         cleaned.put("candidate_intents", parseCandidateIntents(raw.get("candidate_intents")));
-
-        // Confidence: coerce numeric or parseable string, clamp 0..1
-        double conf = numberValue(raw.get("confidence"), 0.0);
-        if (Double.isNaN(conf) || conf < 0.0) conf = 0.0;
-        if (conf > 1.0) conf = 1.0;
-        cleaned.put("confidence", conf);
-
+        cleaned.put("confidence", clampConfidence(numberValue(raw.get("confidence"), 0.0)));
         return cleaned;
     }
 
@@ -442,38 +401,14 @@ public class SemanticAnalysisService {
         if (raw == null || raw.isEmpty()) {
             return SemanticAnalysisResult.empty();
         }
-        String intent = stringValue(raw.get("intent"));
+        String intent = resolvedIntent(raw);
         String rewrittenInput = stringValue(raw.get("rewrittenInput"));
         String suggestedSkill = normalizeSkillName(stringValue(raw.get("suggestedSkill")));
-        double confidence = numberValue(raw.get("confidence"), 0.0);
-        String summary = stringValue(raw.get("summary"));
-        Map<String, Object> payload = raw.get("payload") instanceof Map<?, ?> nested
-                ? toStringObjectMap(nested)
-                : Map.of();
-        if (payload.isEmpty() && raw.get("params") instanceof Map<?, ?> params) {
-            payload = toStringObjectMap(params);
-        }
-        if (intent.isBlank()) {
-            intent = summary;
-        }
-        if (summary.isBlank()) {
-            summary = !rewrittenInput.isBlank() ? rewrittenInput : intent;
-        }
-        // Log when key semantic fields are missing/backfilled to aid debugging and tests
-        try {
-            List<String> missing = new ArrayList<>();
-            if (intent.isBlank()) missing.add("intent");
-            if (summary.isBlank()) missing.add("summary");
-            if (suggestedSkill.isBlank()) missing.add("suggestedSkill");
-            if (payload.isEmpty()) missing.add("payload");
-            if (!missing.isEmpty()) {
-                LOGGER.info("semantic.analysis.parse.missing-fields source=" + source + " missing=" + missing + " rawKeys=" + raw.keySet());
-            }
-        } catch (RuntimeException ex) {
-            // swallow logging errors to avoid affecting analysis flow
-            LOGGER.log(Level.FINE, "Failed to log semantic.parse missing fields", ex);
-        }
-        List<String> keywords = toStringList(raw.get("keywords"));
+        double confidence = clampConfidence(numberValue(raw.get("confidence"), 0.0));
+        String summary = resolvedSummary(raw, rewrittenInput, intent);
+        Map<String, Object> payload = resolvePayloadMap(raw);
+        logMissingSemanticFields(source, raw, intent, summary, suggestedSkill, payload);
+        List<String> keywords = parseKeywords(raw.get("keywords"));
         List<SemanticAnalysisResult.CandidateIntent> candidateIntents = parseCandidateIntents(raw.get("candidate_intents"));
         return new SemanticAnalysisResult(source, intent, rewrittenInput, suggestedSkill, payload, keywords, summary, confidence, candidateIntents);
     }
@@ -488,7 +423,7 @@ public class SemanticAnalysisService {
                 String intent = stringValue(candidate.intent());
                 if (!intent.isBlank()) {
                     parsed.add(new SemanticAnalysisResult.CandidateIntent(intent,
-                            Math.max(0.0, Math.min(1.0, candidate.confidence()))));
+                            clampConfidence(candidate.confidence())));
                 }
                 continue;
             }
@@ -499,8 +434,7 @@ public class SemanticAnalysisService {
             if (intent.isBlank()) {
                 continue;
             }
-            double confidence = numberValue(map.get("confidence"), 0.0);
-            confidence = Math.max(0.0, Math.min(1.0, confidence));
+            double confidence = clampConfidence(numberValue(map.get("confidence"), 0.0));
             parsed.add(new SemanticAnalysisResult.CandidateIntent(intent, confidence));
         }
         return parsed.isEmpty() ? List.of() : List.copyOf(parsed);
@@ -700,25 +634,11 @@ public class SemanticAnalysisService {
         if (result == null) {
             return SemanticAnalysisResult.empty();
         }
-        String suggestedSkill = normalizeSkillName(result.suggestedSkill());
-        if (isInternalSemanticRouteSkill(suggestedSkill)) {
-            suggestedSkill = "";
-        }
-        if (!suggestedSkill.isBlank() && skillRegistry.getSkill(suggestedSkill).isEmpty()) {
-            suggestedSkill = "";
-        }
+        String suggestedSkill = sanitizeSuggestedSkill(result.suggestedSkill());
         String rewrittenInput = result.hasRewrittenInput() ? result.rewrittenInput().trim() : originalInput == null ? "" : originalInput.trim();
-        String summary = stringValue(result.summary());
-        if (summary.isBlank()) {
-            summary = capText(rewrittenInput.isBlank() ? stringValue(originalInput) : rewrittenInput, 90);
-        }
-        String intent = stringValue(result.intent());
-        if (intent.isBlank()) {
-            intent = summary;
-        }
-        List<SemanticAnalysisResult.CandidateIntent> candidateIntents = result.candidateIntents().stream()
-                .filter(candidate -> !isInternalSemanticRouteSkill(candidate.intent()))
-                .toList();
+        String summary = normalizeSanitizedSummary(result.summary(), rewrittenInput, originalInput);
+        String intent = normalizeSanitizedIntent(result.intent(), summary);
+        List<SemanticAnalysisResult.CandidateIntent> candidateIntents = sanitizeCandidateIntents(result.candidateIntents());
         return new SemanticAnalysisResult(
                 result.source(),
                 intent,
@@ -730,6 +650,126 @@ public class SemanticAnalysisService {
                 result.confidence(),
                 candidateIntents
         );
+    }
+
+    private Map<String, Object> resolvePayloadMap(Map<String, Object> raw) {
+        if (raw == null || raw.isEmpty()) {
+            return Map.of();
+        }
+        Object payloadObj = raw.get("payload");
+        if (!(payloadObj instanceof Map) && raw.get("params") instanceof Map) {
+            payloadObj = raw.get("params");
+        }
+        if (payloadObj instanceof Map<?, ?> mapVal) {
+            return toStringObjectMap(mapVal);
+        }
+        return Map.of();
+    }
+
+    private void logMalformedPayloadIfNeeded(Map<String, Object> raw, Map<String, Object> cleaned) {
+        try {
+            if (raw != null && !(raw.get("payload") instanceof Map)) {
+                LOGGER.fine("semantic.analysis.validate.cleaned payload was non-map; cleaned=" + cleaned);
+            }
+        } catch (RuntimeException ex) {
+            LOGGER.log(Level.FINE, "Failed to log semantic cleaned payload", ex);
+        }
+    }
+
+    private List<String> parseKeywords(Object rawKeywords) {
+        if (rawKeywords instanceof List<?>) {
+            return toStringList(rawKeywords);
+        }
+        if (rawKeywords instanceof String rawText) {
+            List<String> parts = new ArrayList<>();
+            for (String part : rawText.split("[,;\\s]+")) {
+                String normalized = stringValue(part);
+                if (!normalized.isBlank()) {
+                    parts.add(normalized);
+                }
+            }
+            return parts.isEmpty() ? List.of() : List.copyOf(parts);
+        }
+        return List.of();
+    }
+
+    private double clampConfidence(double confidence) {
+        if (Double.isNaN(confidence) || confidence < 0.0) {
+            return 0.0;
+        }
+        if (confidence > 1.0) {
+            return 1.0;
+        }
+        return confidence;
+    }
+
+    private String resolvedIntent(Map<String, Object> raw) {
+        String intent = stringValue(raw.get("intent"));
+        if (!intent.isBlank()) {
+            return intent;
+        }
+        return stringValue(raw.get("summary"));
+    }
+
+    private String resolvedSummary(Map<String, Object> raw, String rewrittenInput, String intent) {
+        String summary = stringValue(raw.get("summary"));
+        if (!summary.isBlank()) {
+            return summary;
+        }
+        return !rewrittenInput.isBlank() ? rewrittenInput : intent;
+    }
+
+    private void logMissingSemanticFields(String source,
+                                          Map<String, Object> raw,
+                                          String intent,
+                                          String summary,
+                                          String suggestedSkill,
+                                          Map<String, Object> payload) {
+        try {
+            List<String> missing = new ArrayList<>();
+            if (intent.isBlank()) missing.add("intent");
+            if (summary.isBlank()) missing.add("summary");
+            if (suggestedSkill.isBlank()) missing.add("suggestedSkill");
+            if (payload.isEmpty()) missing.add("payload");
+            if (!missing.isEmpty()) {
+                LOGGER.info("semantic.analysis.parse.missing-fields source=" + source + " missing=" + missing + " rawKeys=" + raw.keySet());
+            }
+        } catch (RuntimeException ex) {
+            LOGGER.log(Level.FINE, "Failed to log semantic.parse missing fields", ex);
+        }
+    }
+
+    private String sanitizeSuggestedSkill(String rawSuggestedSkill) {
+        String suggestedSkill = normalizeSkillName(rawSuggestedSkill);
+        if (isInternalSemanticRouteSkill(suggestedSkill)) {
+            return "";
+        }
+        if (!suggestedSkill.isBlank() && skillRegistry.getSkill(suggestedSkill).isEmpty()) {
+            return "";
+        }
+        return suggestedSkill;
+    }
+
+    private String normalizeSanitizedSummary(String rawSummary, String rewrittenInput, String originalInput) {
+        String summary = stringValue(rawSummary);
+        if (!summary.isBlank()) {
+            return summary;
+        }
+        return capText(rewrittenInput.isBlank() ? stringValue(originalInput) : rewrittenInput, 90);
+    }
+
+    private String normalizeSanitizedIntent(String rawIntent, String summary) {
+        String intent = stringValue(rawIntent);
+        return intent.isBlank() ? summary : intent;
+    }
+
+    private List<SemanticAnalysisResult.CandidateIntent> sanitizeCandidateIntents(List<SemanticAnalysisResult.CandidateIntent> candidateIntents) {
+        if (candidateIntents == null || candidateIntents.isEmpty()) {
+            return List.of();
+        }
+        return candidateIntents.stream()
+                .filter(candidate -> !isInternalSemanticRouteSkill(candidate.intent()))
+                .toList();
     }
 
     private boolean isInternalSemanticRouteSkill(String skillName) {

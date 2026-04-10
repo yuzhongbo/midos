@@ -1,19 +1,33 @@
 package com.zhongbo.mindos.assistant.dispatcher.orchestrator;
 
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 public final class ParamSchema {
 
     private final Set<String> required;
     private final Set<String> atLeastOne;
+    private final Map<String, Object> defaults;
+    private final Map<String, ParamType> types;
+    private final Map<String, List<String>> aliases;
 
     public ParamSchema(Set<String> required) {
-        this(required, Set.of());
+        this(required, Set.of(), Map.of(), Map.of(), Map.of());
     }
 
     public ParamSchema(Set<String> required, Set<String> atLeastOne) {
+        this(required, atLeastOne, Map.of(), Map.of(), Map.of());
+    }
+
+    public ParamSchema(Set<String> required,
+                       Set<String> atLeastOne,
+                       Map<String, Object> defaults,
+                       Map<String, ParamType> types,
+                       Map<String, List<String>> aliases) {
         if (required == null || required.isEmpty()) {
             this.required = Set.of();
         } else {
@@ -23,6 +37,31 @@ public final class ParamSchema {
             this.atLeastOne = Set.of();
         } else {
             this.atLeastOne = Collections.unmodifiableSet(new LinkedHashSet<>(atLeastOne));
+        }
+        if (defaults == null || defaults.isEmpty()) {
+            this.defaults = Map.of();
+        } else {
+            this.defaults = Collections.unmodifiableMap(new LinkedHashMap<>(defaults));
+        }
+        if (types == null || types.isEmpty()) {
+            this.types = Map.of();
+        } else {
+            this.types = Collections.unmodifiableMap(new LinkedHashMap<>(types));
+        }
+        if (aliases == null || aliases.isEmpty()) {
+            this.aliases = Map.of();
+        } else {
+            Map<String, List<String>> normalized = new LinkedHashMap<>();
+            aliases.forEach((key, values) -> {
+                if (key == null || key.isBlank() || values == null || values.isEmpty()) {
+                    return;
+                }
+                normalized.put(key, List.copyOf(values.stream()
+                        .filter(value -> value != null && !value.isBlank())
+                        .map(String::trim)
+                        .toList()));
+            });
+            this.aliases = Collections.unmodifiableMap(normalized);
         }
     }
 
@@ -47,11 +86,35 @@ public final class ParamSchema {
         return new ParamSchema(required, atLeastOne);
     }
 
+    public ParamSchema withDefaults(Map<String, Object> defaults) {
+        return new ParamSchema(required, atLeastOne, defaults, types, aliases);
+    }
+
+    public ParamSchema withTypes(Map<String, ParamType> types) {
+        return new ParamSchema(required, atLeastOne, defaults, types, aliases);
+    }
+
+    public ParamSchema withAliases(Map<String, List<String>> aliases) {
+        return new ParamSchema(required, atLeastOne, defaults, types, aliases);
+    }
+
     public Set<String> required() {
         return required;
     }
 
     public Set<String> atLeastOne() {
         return atLeastOne;
+    }
+
+    public Map<String, Object> defaults() {
+        return defaults;
+    }
+
+    public Map<String, ParamType> types() {
+        return types;
+    }
+
+    public Map<String, List<String>> aliases() {
+        return aliases;
     }
 }

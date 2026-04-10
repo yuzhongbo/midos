@@ -1,10 +1,11 @@
 package com.zhongbo.mindos.assistant.api;
 
 import com.zhongbo.mindos.assistant.api.testsupport.ApiTestSupport;
+import com.zhongbo.mindos.assistant.common.SkillContext;
+import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.skill.Skill;
-import com.zhongbo.mindos.assistant.skill.mcp.McpJsonRpcClient;
 import com.zhongbo.mindos.assistant.skill.mcp.McpToolDefinition;
-import com.zhongbo.mindos.assistant.skill.mcp.McpToolSkill;
+import com.zhongbo.mindos.assistant.skill.mcp.McpToolExecutor;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -402,67 +403,103 @@ class ChatControllerTest {
 
         @Bean
         Skill mcpDocsSearchSkill() {
-            return new McpToolSkill(
-                    new McpToolDefinition("docs", "http://unused.local/mcp", "searchDocs", "Search docs"),
-                    new McpJsonRpcClient() {
-                        @Override
-                        public String callTool(String serverUrl, String toolName, java.util.Map<String, Object> arguments) {
-                            return "MCP docs result for " + arguments.getOrDefault("input", "");
-                        }
-
-                        @Override
-                        public String callTool(String serverUrl,
-                                               String toolName,
-                                               java.util.Map<String, Object> arguments,
-                                               java.util.Map<String, String> headers) {
-                            return "MCP docs result for " + arguments.getOrDefault("input", "");
-                        }
-                    }
-            );
+            return mcpLikeSkill("docs", "searchDocs", "Search docs", context ->
+                    "MCP docs result for " + context.attributes().getOrDefault("input", context.input()));
         }
 
         @Bean
         Skill mcpQwenSearchSkill() {
-            return new McpToolSkill(
-                    new McpToolDefinition("qwensearch", "http://unused.local/mcp", "webSearch", "Search latest web news"),
-                    new McpJsonRpcClient() {
-                        @Override
-                        public String callTool(String serverUrl, String toolName, java.util.Map<String, Object> arguments) {
-                            return "Qwen MCP news result for " + arguments.getOrDefault("input", "");
-                        }
-
-                        @Override
-                        public String callTool(String serverUrl,
-                                               String toolName,
-                                               java.util.Map<String, Object> arguments,
-                                               java.util.Map<String, String> headers) {
-                            Object query = arguments.get("query");
-                            return "Qwen MCP news result for " + (query == null ? arguments.getOrDefault("input", "") : query);
-                        }
-                    }
-            );
+            return mcpLikeSkill("qwensearch", "webSearch", "Search latest web news", context -> {
+                Object query = context.attributes().get("query");
+                return "Qwen MCP news result for " + (query == null ? context.attributes().getOrDefault("input", context.input()) : query);
+            });
         }
 
         @Bean
         Skill mcpBraveSearchSkill() {
-            return new McpToolSkill(
-                    new McpToolDefinition("bravesearch", "http://unused.local/mcp", "webSearch", "Brave latest news search"),
-                    new McpJsonRpcClient() {
-                        @Override
-                        public String callTool(String serverUrl, String toolName, java.util.Map<String, Object> arguments) {
-                            return "Brave MCP news result for " + arguments.getOrDefault("input", "");
-                        }
+            return mcpLikeSkill("bravesearch", "webSearch", "Brave latest news search", context -> {
+                Object query = context.attributes().get("query");
+                return "Brave MCP news result for " + (query == null ? context.attributes().getOrDefault("input", context.input()) : query);
+            });
+        }
 
-                        @Override
-                        public String callTool(String serverUrl,
-                                               String toolName,
-                                               java.util.Map<String, Object> arguments,
-                                               java.util.Map<String, String> headers) {
-                            Object query = arguments.get("query");
-                            return "Brave MCP news result for " + (query == null ? arguments.getOrDefault("input", "") : query);
-                        }
+        private Skill mcpLikeSkill(String alias,
+                                   String toolName,
+                                   String description,
+                                   java.util.function.Function<SkillContext, String> output) {
+            McpToolDefinition definition = new McpToolDefinition(alias, "http://unused.local/mcp", toolName, description);
+            McpToolExecutor executor = new McpToolExecutor();
+            return new Skill() {
+                @Override
+                public String name() {
+                    return definition.skillName();
+                }
+
+                @Override
+                public String description() {
+                    return description;
+                }
+
+                @Override
+                public java.util.List<String> routingKeywords() {
+                    return executor.routingKeywords(definition);
+                }
+
+                @Override
+                public boolean supports(String input) {
+                    return executor.supports(definition, input);
+                }
+
+                @Override
+                public int routingScore(String input) {
+                    if (!supports(input)) {
+                        return Integer.MIN_VALUE;
                     }
-            );
+                    return switch (alias) {
+                        case "qwensearch" -> 930;
+                        case "bravesearch", "brave" -> 900;
+                        default -> 850;
+                    };
+                }
+
+                @Override
+                public SkillResult run(SkillContext context) {
+                    return SkillResult.success(definition.skillName(), output.apply(context));
+                }
+            };
+        }
+
+        private Skill fixedSkill(String name, String description, java.util.function.Function<SkillContext, String> output) {
+            return new Skill() {
+                @Override
+                public String name() {
+                    return name;
+                }
+
+                @Override
+                public String description() {
+                    return description;
+                }
+
+                @Override
+                public java.util.List<String> routingKeywords() {
+                    return java.util.List.of(name, description);
+                }
+
+                @Override
+                public boolean supports(String input) {
+                    if (input == null || input.isBlank()) {
+                        return false;
+                    }
+                    String normalized = input.toLowerCase();
+                    return normalized.contains(name.toLowerCase()) || normalized.contains(description.toLowerCase());
+                }
+
+                @Override
+                public SkillResult run(SkillContext context) {
+                    return SkillResult.success(name, output.apply(context));
+                }
+            };
         }
     }
 }
