@@ -116,7 +116,7 @@ class SemanticAnalysisServiceTest {
     }
 
     @Test
-    void shouldAcceptDelegateSkillOutputLikeMcpRouter() {
+    void shouldIgnoreDelegateSkillExecutionPath() {
         Skill delegateSkill = new Skill() {
             @Override
             public String name() {
@@ -145,10 +145,8 @@ class SemanticAnalysisServiceTest {
                 List.of("todo.create - Creates todo items")
         );
 
-        assertEquals("skill:mcp.semantic.route", result.source());
-        assertEquals("todo.create", result.suggestedSkill());
-        assertEquals("提交周报", result.payload().get("task"));
-        assertTrue(result.confidence() > 0.9);
+        assertEquals("heuristic", result.source());
+        assertNotEquals("skill:mcp.semantic.route", result.source());
     }
 
     @Test

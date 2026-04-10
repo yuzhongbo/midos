@@ -4,9 +4,6 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.zhongbo.mindos.assistant.common.LlmClient;
-import com.zhongbo.mindos.assistant.common.SkillContext;
-import com.zhongbo.mindos.assistant.common.SkillResult;
-import com.zhongbo.mindos.assistant.skill.Skill;
 import com.zhongbo.mindos.assistant.skill.SkillRegistry;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -163,37 +160,8 @@ public class SemanticAnalysisService {
             return SemanticAnalysisResult.empty();
         }
         SemanticAnalysisResult best = heuristicAnalysis(userInput);
-        best = preferHigherConfidence(best, analyzeWithDelegateSkill(userId, userInput, memoryContext, profileContext, availableSkillSummaries));
         best = preferHigherConfidence(best, analyzeWithLlm(userId, userInput, memoryContext, profileContext, availableSkillSummaries, best));
         return sanitize(best, userInput);
-    }
-
-    private Optional<SemanticAnalysisResult> analyzeWithDelegateSkill(String userId,
-                                                                      String userInput,
-                                                                      String memoryContext,
-                                                                      Map<String, Object> profileContext,
-                                                                      List<String> availableSkillSummaries) {
-        if (delegateSkillName.isBlank() || "semantic.analyze".equals(delegateSkillName)) {
-            return Optional.empty();
-        }
-        Optional<Skill> delegateSkill = skillRegistry.getSkill(delegateSkillName);
-        if (delegateSkill.isEmpty()) {
-            return Optional.empty();
-        }
-        try {
-            SkillResult result = delegateSkill.get().run(new SkillContext(
-                    userId,
-                    userInput,
-                    buildDelegateSkillAttributes(userInput, memoryContext, profileContext, availableSkillSummaries)
-            ));
-            if (result == null || !result.success()) {
-                return Optional.empty();
-            }
-            return parseResult(result.output(), "skill:" + delegateSkillName);
-        } catch (RuntimeException ex) {
-            LOGGER.log(Level.WARNING, "Semantic delegate skill failed, fallback to local analysis", ex);
-            return Optional.empty();
-        }
     }
 
     private Optional<SemanticAnalysisResult> analyzeWithLlm(String userId,
@@ -337,21 +305,6 @@ public class SemanticAnalysisService {
 
     private boolean isPreferred(Optional<SemanticAnalysisResult> candidate, SemanticAnalysisResult baseline) {
         return candidate.isPresent() && (baseline == null || candidate.get().confidence() >= baseline.confidence());
-    }
-
-    private Map<String, Object> buildDelegateSkillAttributes(String userInput,
-                                                             String memoryContext,
-                                                             Map<String, Object> profileContext,
-                                                             List<String> availableSkillSummaries) {
-        Map<String, Object> attributes = new LinkedHashMap<>();
-        attributes.put("input", userInput);
-        attributes.put("memoryContext", memoryContext == null ? "" : memoryContext);
-        attributes.put("availableSkills", availableSkillSummaries == null ? List.of() : availableSkillSummaries);
-        attributes.put("responseFormat", "json");
-        if (profileContext != null && !profileContext.isEmpty()) {
-            attributes.put("profile", profileContext);
-        }
-        return attributes;
     }
 
     private Optional<SemanticAnalysisResult> parseResult(String raw, String source) {

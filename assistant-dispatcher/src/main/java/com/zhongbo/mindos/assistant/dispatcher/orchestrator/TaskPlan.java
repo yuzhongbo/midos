@@ -12,6 +12,9 @@ public record TaskPlan(List<TaskStep> steps) {
             return new TaskPlan(List.of());
         }
         Object raw = params.get("steps");
+        if (!(raw instanceof List<?>)) {
+            raw = params.get("tasks");
+        }
         if (!(raw instanceof List<?> values)) {
             return new TaskPlan(List.of());
         }

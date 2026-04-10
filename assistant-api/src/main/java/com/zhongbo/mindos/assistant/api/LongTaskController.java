@@ -5,7 +5,7 @@ import com.zhongbo.mindos.assistant.common.dto.LongTaskAutoRunResultDto;
 import com.zhongbo.mindos.assistant.common.dto.LongTaskDto;
 import com.zhongbo.mindos.assistant.common.dto.LongTaskProgressUpdateDto;
 import com.zhongbo.mindos.assistant.common.dto.LongTaskStatusUpdateDto;
-import com.zhongbo.mindos.assistant.memory.MemoryGateway;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.DecisionOrchestrator;
 import com.zhongbo.mindos.assistant.memory.MemoryManager;
 import com.zhongbo.mindos.assistant.memory.model.LongTask;
 import com.zhongbo.mindos.assistant.memory.model.LongTaskStatus;
@@ -28,16 +28,16 @@ import java.util.Locale;
 public class LongTaskController {
 
     private final MemoryManager memoryManager;
-    private final MemoryGateway memoryGateway;
+    private final DecisionOrchestrator decisionOrchestrator;
     private final LongTaskAutoRunner longTaskAutoRunner;
     private final SecurityPolicyGuard securityPolicyGuard;
 
     public LongTaskController(MemoryManager memoryManager,
-                              MemoryGateway memoryGateway,
+                              DecisionOrchestrator decisionOrchestrator,
                               LongTaskAutoRunner longTaskAutoRunner,
                               SecurityPolicyGuard securityPolicyGuard) {
         this.memoryManager = memoryManager;
-        this.memoryGateway = memoryGateway;
+        this.decisionOrchestrator = decisionOrchestrator;
         this.longTaskAutoRunner = longTaskAutoRunner;
         this.securityPolicyGuard = securityPolicyGuard;
     }
@@ -45,7 +45,7 @@ public class LongTaskController {
     @PostMapping("/{userId}")
     public LongTaskDto createTask(@PathVariable String userId,
                                   @RequestBody LongTaskCreateRequestDto request) {
-        LongTask created = memoryGateway.createLongTask(
+        LongTask created = decisionOrchestrator.createLongTask(
                 userId,
                 request == null ? null : request.title(),
                 request == null ? null : request.objective(),
@@ -100,7 +100,7 @@ public class LongTaskController {
                                       @PathVariable String taskId,
                                       @RequestBody LongTaskProgressUpdateDto request) {
         try {
-            LongTask updated = memoryGateway.updateLongTaskProgress(
+            LongTask updated = decisionOrchestrator.updateLongTaskProgress(
                     userId,
                     taskId,
                     request == null ? null : request.workerId(),
@@ -124,7 +124,7 @@ public class LongTaskController {
                                     @PathVariable String taskId,
                                     @RequestBody LongTaskStatusUpdateDto request) {
         LongTaskStatus status = parseStatus(request == null ? null : request.status());
-        LongTask updated = memoryGateway.updateLongTaskStatus(
+        LongTask updated = decisionOrchestrator.updateLongTaskStatus(
                 userId,
                 taskId,
                 status,
@@ -169,4 +169,3 @@ public class LongTaskController {
         );
     }
 }
-

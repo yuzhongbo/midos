@@ -7,7 +7,12 @@ import com.zhongbo.mindos.assistant.common.dto.CritiqueReportDto;
 import com.zhongbo.mindos.assistant.common.dto.ExecutionTraceDto;
 import com.zhongbo.mindos.assistant.common.dto.PlanStepDto;
 import com.zhongbo.mindos.assistant.dispatcher.decision.Decision;
-import com.zhongbo.mindos.assistant.skill.SkillEngine;
+import com.zhongbo.mindos.assistant.memory.MemoryGateway;
+import com.zhongbo.mindos.assistant.memory.model.LongTask;
+import com.zhongbo.mindos.assistant.memory.model.LongTaskStatus;
+import com.zhongbo.mindos.assistant.memory.model.PreferenceProfile;
+import com.zhongbo.mindos.assistant.skill.SkillExecutionGateway;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -31,12 +36,14 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
             "mcp.qwensearch.websearch",
             "mcp.qwen.websearch"
     );
+    private static final double TASK_PLAN_LOW_CONFIDENCE_THRESHOLD = 0.70;
 
     private final CandidatePlanner candidatePlanner;
     private final ParamValidator paramValidator;
     private final ConversationLoop conversationLoop;
     private final FallbackPlan fallbackPlan;
-    private final SkillEngine skillEngine;
+    private final SkillExecutionGateway skillExecutionGateway;
+    private final MemoryGateway memoryGateway;
     private final PostExecutionMemoryRecorder memoryRecorder;
     private final TaskExecutor taskExecutor;
     private final boolean mcpParallelEnabled;
@@ -46,11 +53,13 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
     private final List<String> mcpPriorityOrder;
     private final int maxLoops;
 
+    @Autowired
     public DefaultDecisionOrchestrator(CandidatePlanner candidatePlanner,
                                        ParamValidator paramValidator,
                                        ConversationLoop conversationLoop,
                                        FallbackPlan fallbackPlan,
-                                       SkillEngine skillEngine,
+                                       SkillExecutionGateway skillExecutionGateway,
+                                       MemoryGateway memoryGateway,
                                        PostExecutionMemoryRecorder memoryRecorder,
                                        TaskExecutor taskExecutor,
                                        @Value("${mindos.dispatcher.parallel-routing.enabled:false}") boolean mcpParallelEnabled,
@@ -62,7 +71,8 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
         this.paramValidator = paramValidator;
         this.conversationLoop = conversationLoop;
         this.fallbackPlan = fallbackPlan;
-        this.skillEngine = skillEngine;
+        this.skillExecutionGateway = skillExecutionGateway;
+        this.memoryGateway = memoryGateway;
         this.memoryRecorder = memoryRecorder;
         this.taskExecutor = taskExecutor;
         this.mcpParallelEnabled = mcpParallelEnabled;
@@ -77,8 +87,10 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
 
     @Override
     public SkillResult execute(String userInput, String intent, Map<String, Object> params) {
-        Decision decision = new Decision(intent, intent, params == null ? Map.of() : Map.copyOf(params), 1.0, false);
-        SkillContext context = new SkillContext("", userInput == null ? "" : userInput, params == null ? Map.of() : Map.copyOf(params));
+        Map<String, Object> safeParams = params == null ? Map.of() : Map.copyOf(params);
+        String resolvedTarget = resolveExecutionTarget(intent, safeParams);
+        Decision decision = new Decision(intent, resolvedTarget, safeParams, 1.0, false);
+        SkillContext context = new SkillContext("", userInput == null ? "" : userInput, safeParams);
         OrchestrationOutcome outcome = orchestrate(
                 decision,
                 new OrchestrationRequest("", userInput == null ? "" : userInput, context, Map.of())
@@ -116,12 +128,75 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
         if ("task.plan".equalsIgnoreCase(decision.target()) || !taskPlan.isEmpty()) {
             return orchestrateTaskPlan(taskPlan, effectiveParams, request);
         }
+        TaskPlan lowConfidenceTaskPlan = buildLowConfidenceTaskPlan(decision, request);
+        if (!lowConfidenceTaskPlan.isEmpty()) {
+            return orchestrateTaskPlan(lowConfidenceTaskPlan, attachTaskPlan(effectiveParams, lowConfidenceTaskPlan), request);
+        }
         return orchestrateCandidateChain(decision.target(), effectiveParams, request, maxLoops, true, List.of(), 0);
     }
 
     @Override
     public void recordOutcome(String userId, String userInput, SkillResult result, ExecutionTraceDto trace) {
         memoryRecorder.record(userId, userInput, result, trace);
+    }
+
+    @Override
+    public void appendUserConversation(String userId, String message) {
+        if (memoryGateway != null) {
+            memoryGateway.appendUserConversation(userId, message);
+        }
+    }
+
+    @Override
+    public void appendAssistantConversation(String userId, String message) {
+        if (memoryGateway != null) {
+            memoryGateway.appendAssistantConversation(userId, message);
+        }
+    }
+
+    @Override
+    public void writeSemantic(String userId, String text, List<Double> embedding, String bucket) {
+        if (memoryGateway != null) {
+            memoryGateway.writeSemantic(userId, text, embedding, bucket);
+        }
+    }
+
+    @Override
+    public PreferenceProfile updatePreferenceProfile(String userId, PreferenceProfile profile) {
+        return memoryGateway == null ? PreferenceProfile.empty() : memoryGateway.updatePreferenceProfile(userId, profile);
+    }
+
+    @Override
+    public LongTask createLongTask(String userId,
+                                   String title,
+                                   String objective,
+                                   List<String> steps,
+                                   Instant dueAt,
+                                   Instant nextCheckAt) {
+        return memoryGateway == null ? null : memoryGateway.createLongTask(userId, title, objective, steps, dueAt, nextCheckAt);
+    }
+
+    @Override
+    public LongTask updateLongTaskProgress(String userId,
+                                           String taskId,
+                                           String workerId,
+                                           String completedStep,
+                                           String note,
+                                           String blockedReason,
+                                           Instant nextCheckAt,
+                                           boolean markCompleted) {
+        return memoryGateway == null
+                ? null
+                : memoryGateway.updateLongTaskProgress(userId, taskId, workerId, completedStep, note, blockedReason, nextCheckAt, markCompleted);
+    }
+
+    @Override
+    public LongTask updateLongTaskStatus(String userId,
+                                         String taskId,
+                                         LongTaskStatus status,
+                                         String note,
+                                         Instant nextCheckAt) {
+        return memoryGateway == null ? null : memoryGateway.updateLongTaskStatus(userId, taskId, status, note, nextCheckAt);
     }
 
     private OrchestrationOutcome orchestrateTaskPlan(TaskPlan taskPlan,
@@ -302,7 +377,7 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
             CompletableFuture<SkillResult> execution = applySkillTimeoutIfNeeded(
                     candidate.skillName(),
                     skillContext,
-                    skillEngine.executeDslAsync(new SkillDsl(candidate.skillName(), candidate.params()), skillContext)
+                    skillExecutionGateway.executeDslAsync(new SkillDsl(candidate.skillName(), candidate.params()), skillContext)
             )
                     .completeOnTimeout(SkillResult.failure(candidate.skillName(), "timeout"), mcpPerSkillTimeoutMs, TimeUnit.MILLISECONDS)
                     .exceptionally(error -> SkillResult.failure(candidate.skillName(), String.valueOf(error.getMessage())));
@@ -440,7 +515,7 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
             CompletableFuture<SkillResult> future = applySkillTimeoutIfNeeded(
                     candidate,
                     skillContext,
-                    skillEngine.executeDslAsync(new SkillDsl(candidate, params), skillContext)
+                    skillExecutionGateway.executeDslAsync(new SkillDsl(candidate, params), skillContext)
             );
             if (isMcpSkill(candidate)) {
                 future = future.completeOnTimeout(
@@ -518,6 +593,64 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
             merged.putAll(params);
         }
         return merged.isEmpty() ? Map.of() : Map.copyOf(merged);
+    }
+
+    private String resolveExecutionTarget(String intent, Map<String, Object> params) {
+        if (params != null) {
+            Object explicitTarget = params.get("_target");
+            if (explicitTarget instanceof String target && !target.isBlank()) {
+                return target.trim();
+            }
+            if ((intent == null || intent.isBlank()) && params.get("target") instanceof String target && !target.isBlank()) {
+                return target.trim();
+            }
+        }
+        return intent == null ? "" : intent;
+    }
+
+    private TaskPlan buildLowConfidenceTaskPlan(Decision decision, OrchestrationRequest request) {
+        if (decision == null
+                || decision.confidence() >= TASK_PLAN_LOW_CONFIDENCE_THRESHOLD
+                || decision.target() == null
+                || decision.target().isBlank()
+                || "task.plan".equalsIgnoreCase(decision.target())
+                || isMcpSkill(decision.target())) {
+            return new TaskPlan(List.of());
+        }
+        List<ScoredCandidate> candidates = candidatePlanner.plan(decision.target(), request).stream()
+                .filter(candidate -> candidate != null && candidate.skillName() != null && !candidate.skillName().isBlank())
+                .filter(candidate -> !isMcpSkill(candidate.skillName()))
+                .toList();
+        if (candidates.size() < 2) {
+            return new TaskPlan(List.of());
+        }
+        List<TaskStep> steps = new ArrayList<>();
+        LinkedHashSet<String> seen = new LinkedHashSet<>();
+        int index = 1;
+        for (ScoredCandidate candidate : candidates) {
+            if (!seen.add(candidate.skillName())) {
+                continue;
+            }
+            steps.add(new TaskStep("auto-step-" + index, candidate.skillName(), Map.of(), "auto" + index, false));
+            index++;
+            if (steps.size() >= 3) {
+                break;
+            }
+        }
+        return steps.size() < 2 ? new TaskPlan(List.of()) : new TaskPlan(steps);
+    }
+
+    private Map<String, Object> attachTaskPlan(Map<String, Object> effectiveParams, TaskPlan taskPlan) {
+        Map<String, Object> enriched = new LinkedHashMap<>(effectiveParams == null ? Map.of() : effectiveParams);
+        enriched.put("tasks", taskPlan.steps().stream()
+                .map(step -> Map.of(
+                        "id", step.id(),
+                        "target", step.target(),
+                        "params", step.params(),
+                        "saveAs", step.saveAs(),
+                        "optional", step.optional()))
+                .toList());
+        return Map.copyOf(enriched);
     }
 
     private SkillContext buildExecutionContext(OrchestrationRequest request, Map<String, Object> params) {

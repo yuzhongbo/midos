@@ -4,8 +4,10 @@ import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.dispatcher.decision.Decision;
 import com.zhongbo.mindos.assistant.memory.MemoryGateway;
+import com.zhongbo.mindos.assistant.skill.DefaultSkillExecutionGateway;
 import com.zhongbo.mindos.assistant.skill.Skill;
 import com.zhongbo.mindos.assistant.skill.SkillDslExecutor;
+import com.zhongbo.mindos.assistant.skill.SkillExecutionGateway;
 import com.zhongbo.mindos.assistant.skill.SkillEngine;
 import com.zhongbo.mindos.assistant.skill.SkillRegistry;
 import org.junit.jupiter.api.Test;
@@ -18,15 +20,16 @@ import static org.junit.jupiter.api.Assertions.*;
 
 class DefaultDecisionOrchestratorTest {
 
-    private DefaultDecisionOrchestrator orchestrator(SkillEngine skillEngine, boolean parallelMcp) {
+    private DefaultDecisionOrchestrator orchestrator(SkillRuntime runtime, boolean parallelMcp) {
         InMemoryParamSchemaRegistry registry = new InMemoryParamSchemaRegistry();
         registry.registerDefaults();
         return new DefaultDecisionOrchestrator(
-                new SimpleCandidatePlanner(skillEngine, noopGateway(), 3, 0.40, 0.35, 0.15, 0.10),
+                new SimpleCandidatePlanner(runtime.skillEngine(), noopGateway(), 3, 0.40, 0.35, 0.15, 0.10),
                 new SimpleParamValidator(registry, noopGateway()),
                 new SimpleConversationLoop(),
                 new SimpleFallbackPlan(),
-                skillEngine,
+                runtime.executionGateway(),
+                noopGateway(),
                 noopRecorder(),
                 new TaskExecutor(3),
                 parallelMcp,
@@ -49,12 +52,14 @@ class DefaultDecisionOrchestratorTest {
         ParamValidator validator = new SimpleParamValidator(registry, noopGateway());
         ParamValidator.ValidationResult validation = validator.validate("teaching.plan", Map.of());
         assertFalse(validation.valid());
+        SkillRuntime emptyRuntime = simpleSkillRuntime(Map.of());
         DefaultDecisionOrchestrator orchestrator = new DefaultDecisionOrchestrator(
-                new SimpleCandidatePlanner(simpleSkillEngine(Map.of()), noopGateway(), 3, 0.40, 0.35, 0.15, 0.10),
+                new SimpleCandidatePlanner(emptyRuntime.skillEngine(), noopGateway(), 3, 0.40, 0.35, 0.15, 0.10),
                 validator,
                 new SimpleConversationLoop(),
                 new SimpleFallbackPlan(),
-                simpleSkillEngine(Map.of()),
+                emptyRuntime.executionGateway(),
+                noopGateway(),
                 noopRecorder(),
                 new TaskExecutor(3),
                 false,
@@ -76,7 +81,7 @@ class DefaultDecisionOrchestratorTest {
 
     @Test
     void shouldRejectInvalidMcpNamespace() {
-        DefaultDecisionOrchestrator orchestrator = orchestrator(simpleSkillEngine(Map.of()), false);
+        DefaultDecisionOrchestrator orchestrator = orchestrator(simpleSkillRuntime(Map.of()), false);
         Decision decision = new Decision("tool", "mcp.invalid", Map.of("input", "hi"), 0.80, false);
 
         DecisionOrchestrator.OrchestrationOutcome outcome = orchestrator.orchestrate(decision, request());
@@ -87,8 +92,8 @@ class DefaultDecisionOrchestratorTest {
 
     @Test
     void shouldReturnDslWhenParamsPresent() {
-        SkillEngine skillEngine = simpleSkillEngine(Map.of("todo.create", SkillResult.success("todo.create", "ok")));
-        DefaultDecisionOrchestrator orchestrator = orchestrator(skillEngine, false);
+        SkillRuntime skillRuntime = simpleSkillRuntime(Map.of("todo.create", SkillResult.success("todo.create", "ok")));
+        DefaultDecisionOrchestrator orchestrator = orchestrator(skillRuntime, false);
         Decision decision = new Decision("todo", "todo.create", Map.of("task", "demo task"), 0.9, false);
 
         DecisionOrchestrator.OrchestrationOutcome outcome = orchestrator.orchestrate(decision, request());
@@ -101,11 +106,11 @@ class DefaultDecisionOrchestratorTest {
 
     @Test
     void shouldPickPreferredMcpInParallel() {
-        SkillEngine skillEngine = simpleSkillEngine(Map.of(
+        SkillRuntime skillRuntime = simpleSkillRuntime(Map.of(
                 "mcp.a.tool", SkillResult.success("mcp.a.tool", "a"),
                 "mcp.b.tool", SkillResult.success("mcp.b.tool", "b")
         ));
-        DefaultDecisionOrchestrator orchestrator = orchestrator(skillEngine, true);
+        DefaultDecisionOrchestrator orchestrator = orchestrator(skillRuntime, true);
         Decision decision = new Decision("tool", "mcp.a.tool", Map.of("input", "demo"), 0.9, false);
 
         DecisionOrchestrator.OrchestrationOutcome outcome = orchestrator.orchestrate(decision, request());
@@ -150,13 +155,15 @@ class DefaultDecisionOrchestratorTest {
             }
         };
         SkillRegistry skillRegistry = new SkillRegistry(List.of(retryingSkill));
-        SkillEngine skillEngine = new SkillEngine(skillRegistry, new SkillDslExecutor(skillRegistry));
+        SkillDslExecutor dslExecutor = new SkillDslExecutor(skillRegistry);
+        SkillEngine skillEngine = new SkillEngine(skillRegistry, dslExecutor);
         DefaultDecisionOrchestrator orchestrator = new DefaultDecisionOrchestrator(
                 new SimpleCandidatePlanner(skillEngine, gatewayWithHistory(List.of()), 3, 0.40, 0.35, 0.15, 0.10),
                 validator,
                 new SimpleConversationLoop(),
                 new SimpleFallbackPlan(),
-                skillEngine,
+                new DefaultSkillExecutionGateway(skillRegistry, dslExecutor),
+                noopGateway(),
                 noopRecorder(),
                 new TaskExecutor(3),
                 false,
@@ -212,13 +219,15 @@ class DefaultDecisionOrchestratorTest {
             }
         };
         SkillRegistry registry = new SkillRegistry(List.of(fetchSkill, summarizeSkill));
-        SkillEngine skillEngine = new SkillEngine(registry, new SkillDslExecutor(registry));
+        SkillDslExecutor dslExecutor = new SkillDslExecutor(registry);
+        SkillEngine skillEngine = new SkillEngine(registry, dslExecutor);
         DefaultDecisionOrchestrator orchestrator = new DefaultDecisionOrchestrator(
                 new SimpleCandidatePlanner(skillEngine, noopGateway(), 3, 0.40, 0.35, 0.15, 0.10),
                 new SimpleParamValidator(new InMemoryParamSchemaRegistry(), noopGateway()),
                 new SimpleConversationLoop(),
                 new SimpleFallbackPlan(),
-                skillEngine,
+                new DefaultSkillExecutionGateway(registry, dslExecutor),
+                noopGateway(),
                 noopRecorder(),
                 new TaskExecutor(3),
                 false,
@@ -244,9 +253,169 @@ class DefaultDecisionOrchestratorTest {
     }
 
     @Test
+    void shouldExecuteTaskPlanFromTasksAlias() {
+        Skill fetchSkill = new Skill() {
+            @Override
+            public String name() {
+                return "student.get";
+            }
+
+            @Override
+            public String description() {
+                return "student.get";
+            }
+
+            @Override
+            public SkillResult run(SkillContext context) {
+                return SkillResult.success(name(), "student:stu-42");
+            }
+        };
+        Skill analyzeSkill = new Skill() {
+            @Override
+            public String name() {
+                return "student.analyze";
+            }
+
+            @Override
+            public String description() {
+                return "student.analyze";
+            }
+
+            @Override
+            public SkillResult run(SkillContext context) {
+                return SkillResult.success(name(), "analysis:" + context.attributes().get("student"));
+            }
+        };
+        SkillRegistry registry = new SkillRegistry(List.of(fetchSkill, analyzeSkill));
+        SkillDslExecutor dslExecutor = new SkillDslExecutor(registry);
+        SkillEngine skillEngine = new SkillEngine(registry, dslExecutor);
+        DefaultDecisionOrchestrator orchestrator = new DefaultDecisionOrchestrator(
+                new SimpleCandidatePlanner(skillEngine, noopGateway(), 3, 0.40, 0.35, 0.15, 0.10),
+                new SimpleParamValidator(new InMemoryParamSchemaRegistry(), noopGateway()),
+                new SimpleConversationLoop(),
+                new SimpleFallbackPlan(),
+                new DefaultSkillExecutionGateway(registry, dslExecutor),
+                noopGateway(),
+                noopRecorder(),
+                new TaskExecutor(3),
+                false,
+                500,
+                0,
+                "",
+                3
+        );
+
+        Decision decision = new Decision("student.plan", "student.get", Map.of(
+                "tasks", List.of(
+                        Map.of("target", "student.get", "saveAs", "student"),
+                        Map.of("target", "student.analyze", "params", Map.of("student", "${task.student.output}"))
+                )
+        ), 0.65, false);
+
+        DecisionOrchestrator.OrchestrationOutcome outcome = orchestrator.orchestrate(decision, request());
+
+        assertTrue(outcome.hasResult());
+        assertEquals("student.analyze", outcome.result().skillName());
+        assertEquals("analysis:student:stu-42", outcome.result().output());
+        assertEquals(2, outcome.trace().steps().size());
+    }
+
+    @Test
+    void shouldAutoPromoteLowConfidenceDecisionToTaskPlan() {
+        Skill studentGet = new Skill() {
+            @Override
+            public String name() {
+                return "student.get";
+            }
+
+            @Override
+            public String description() {
+                return "student.get";
+            }
+
+            @Override
+            public SkillResult run(SkillContext context) {
+                return SkillResult.success(name(), "student:stu-42");
+            }
+        };
+        Skill studentAnalyze = new Skill() {
+            @Override
+            public String name() {
+                return "student.analyze";
+            }
+
+            @Override
+            public String description() {
+                return "student.analyze";
+            }
+
+            @Override
+            public SkillResult run(SkillContext context) {
+                return SkillResult.success(name(), "analysis:" + context.attributes().get("task.last.output"));
+            }
+        };
+        Skill teachingPlan = new Skill() {
+            @Override
+            public String name() {
+                return "teaching.plan";
+            }
+
+            @Override
+            public String description() {
+                return "teaching.plan";
+            }
+
+            @Override
+            public SkillResult run(SkillContext context) {
+                return SkillResult.success(name(), "plan:" + context.attributes().get("task.last.output"));
+            }
+        };
+        SkillRegistry registry = new SkillRegistry(List.of(studentGet, studentAnalyze, teachingPlan));
+        SkillDslExecutor dslExecutor = new SkillDslExecutor(registry);
+        SkillEngine skillEngine = new SkillEngine(registry, dslExecutor);
+        DefaultDecisionOrchestrator orchestrator = new DefaultDecisionOrchestrator(
+                new CandidatePlanner() {
+                    @Override
+                    public List<ScoredCandidate> plan(String suggestedTarget, DecisionOrchestrator.OrchestrationRequest request) {
+                        if (!"student.plan".equals(suggestedTarget)) {
+                            return List.of(new ScoredCandidate(suggestedTarget, 0.95, 0.8, 0.0, 0.5, List.of("exact-step")));
+                        }
+                        return List.of(
+                                new ScoredCandidate("student.get", 0.91, 0.8, 0.0, 0.5, List.of("candidate-1")),
+                                new ScoredCandidate("student.analyze", 0.87, 0.7, 0.0, 0.5, List.of("candidate-2")),
+                                new ScoredCandidate("teaching.plan", 0.83, 0.6, 0.0, 0.5, List.of("candidate-3"))
+                        );
+                    }
+                },
+                new SimpleParamValidator(new InMemoryParamSchemaRegistry(), noopGateway()),
+                new SimpleConversationLoop(),
+                new SimpleFallbackPlan(),
+                new DefaultSkillExecutionGateway(registry, dslExecutor),
+                noopGateway(),
+                noopRecorder(),
+                new TaskExecutor(3),
+                false,
+                500,
+                0,
+                "",
+                3
+        );
+
+        DecisionOrchestrator.OrchestrationOutcome outcome = orchestrator.orchestrate(
+                new Decision("student.plan", "student.plan", Map.of("studentId", "stu-42"), 0.62, false),
+                request()
+        );
+
+        assertTrue(outcome.hasResult());
+        assertEquals("teaching.plan", outcome.result().skillName());
+        assertEquals("plan:analysis:student:stu-42", outcome.result().output());
+        assertEquals(3, outcome.trace().steps().size());
+    }
+
+    @Test
     void shouldExecuteViaConvenienceEntrypoint() {
-        SkillEngine skillEngine = simpleSkillEngine(Map.of("todo.create", SkillResult.success("todo.create", "created")));
-        DefaultDecisionOrchestrator orchestrator = orchestrator(skillEngine, false);
+        SkillRuntime skillRuntime = simpleSkillRuntime(Map.of("todo.create", SkillResult.success("todo.create", "created")));
+        DefaultDecisionOrchestrator orchestrator = orchestrator(skillRuntime, false);
 
         SkillResult result = orchestrator.execute("创建待办", "todo.create", Map.of("task", "demo"));
 
@@ -257,7 +426,7 @@ class DefaultDecisionOrchestratorTest {
 
     @Test
     void shouldReturnUnifiedFailurePayloadWhenAllCandidatesFail() {
-        SkillEngine skillEngine = simpleSkillEngine(Map.of(
+        SkillRuntime failedRuntime = simpleSkillRuntime(Map.of(
                 "todo.create", SkillResult.failure("todo.create", "primary failed"),
                 "todo.create.backup", SkillResult.failure("todo.create.backup", "backup failed")
         ));
@@ -274,7 +443,8 @@ class DefaultDecisionOrchestratorTest {
                 new SimpleParamValidator(new InMemoryParamSchemaRegistry(), noopGateway()),
                 new SimpleConversationLoop(),
                 new SimpleFallbackPlan(),
-                skillEngine,
+                failedRuntime.executionGateway(),
+                noopGateway(),
                 noopRecorder(),
                 new TaskExecutor(3),
                 false,
@@ -293,7 +463,7 @@ class DefaultDecisionOrchestratorTest {
         assertTrue(result.output().contains("\"attemptedCandidates\""));
     }
 
-    private SkillEngine simpleSkillEngine(Map<String, SkillResult> results) {
+    private SkillRuntime simpleSkillRuntime(Map<String, SkillResult> results) {
         List<Skill> skills = results.entrySet().stream()
                 .map(entry -> (Skill) new Skill() {
                     @Override
@@ -318,7 +488,10 @@ class DefaultDecisionOrchestratorTest {
                 }).toList();
         SkillRegistry registry = new SkillRegistry(skills);
         SkillDslExecutor executor = new SkillDslExecutor(registry);
-        return new SkillEngine(registry, executor);
+        return new SkillRuntime(new SkillEngine(registry, executor), new DefaultSkillExecutionGateway(registry, executor));
+    }
+
+    private record SkillRuntime(SkillEngine skillEngine, SkillExecutionGateway executionGateway) {
     }
 
     private PostExecutionMemoryRecorder noopRecorder() {

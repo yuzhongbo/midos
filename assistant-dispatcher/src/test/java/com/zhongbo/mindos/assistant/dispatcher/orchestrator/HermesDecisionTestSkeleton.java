@@ -5,8 +5,10 @@ import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.dispatcher.decision.Decision;
 import com.zhongbo.mindos.assistant.dispatcher.decision.DecisionParser;
 import com.zhongbo.mindos.assistant.memory.MemoryGateway;
+import com.zhongbo.mindos.assistant.skill.DefaultSkillExecutionGateway;
 import com.zhongbo.mindos.assistant.skill.Skill;
 import com.zhongbo.mindos.assistant.skill.SkillDslExecutor;
+import com.zhongbo.mindos.assistant.skill.SkillExecutionGateway;
 import com.zhongbo.mindos.assistant.skill.SkillEngine;
 import com.zhongbo.mindos.assistant.skill.SkillRegistry;
 import org.junit.jupiter.api.Test;
@@ -348,12 +350,14 @@ class HermesDecisionTestSkeleton {
         private final DefaultDecisionOrchestrator orchestrator;
 
         private HermesHarness(Map<String, SkillResult> scriptedResults) {
+            SkillRuntime runtime = skillRuntime(scriptedResults);
             this.orchestrator = new DefaultDecisionOrchestrator(
                     candidatePlanner,
                     validator,
                     conversationLoop,
                     new ExampleFallbackPlan(),
-                    skillEngine(scriptedResults),
+                    runtime.executionGateway(),
+                    noopGateway(),
                     noopRecorder(),
                     new TaskExecutor(3),
                     false,
@@ -447,7 +451,7 @@ class HermesDecisionTestSkeleton {
             );
         }
 
-        private SkillEngine skillEngine(Map<String, SkillResult> scriptedResults) {
+        private SkillRuntime skillRuntime(Map<String, SkillResult> scriptedResults) {
             List<Skill> skills = scriptedResults.entrySet().stream()
                     .map(entry -> (Skill) new Skill() {
                         @Override
@@ -475,7 +479,10 @@ class HermesDecisionTestSkeleton {
                     .toList();
             SkillRegistry registry = new SkillRegistry(skills);
             SkillDslExecutor executor = new SkillDslExecutor(registry);
-            return new SkillEngine(registry, executor);
+            return new SkillRuntime(new SkillEngine(registry, executor), new DefaultSkillExecutionGateway(registry, executor));
+        }
+
+        private record SkillRuntime(SkillEngine skillEngine, SkillExecutionGateway executionGateway) {
         }
 
         private Map<String, Object> merge(Map<String, Object> modelParams,
@@ -600,7 +607,11 @@ class HermesDecisionTestSkeleton {
     }
 
     private static PostExecutionMemoryRecorder noopRecorder() {
-        return new PostExecutionMemoryRecorder(new MemoryGateway() {
+        return new PostExecutionMemoryRecorder(noopGateway(), false, false, "", 280);
+    }
+
+    private static MemoryGateway noopGateway() {
+        return new MemoryGateway() {
             @Override
             public List<com.zhongbo.mindos.assistant.memory.model.ConversationTurn> recentHistory(String userId) {
                 return List.of();
@@ -675,6 +686,6 @@ class HermesDecisionTestSkeleton {
                     java.time.Instant nextCheckAt) {
                 return null;
             }
-        }, false, false, "", 280);
+        };
     }
 }

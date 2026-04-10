@@ -594,7 +594,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
             java.util.concurrent.atomic.AtomicBoolean memoryDirectBypassedRef = new java.util.concurrent.atomic.AtomicBoolean(false);
             RoutingReplayProbe replayProbe = new RoutingReplayProbe();
 
-            memoryGateway.appendUserConversation(userId, userInput);
+            decisionOrchestrator.appendUserConversation(userId, userInput);
             maybeStoreSemanticMemory(userId, userInput);
 
             // Fast-path: short conversational acknowledgements should avoid expensive routing.
@@ -610,7 +610,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
 
         if (isPromptInjectionAttempt(userInput)) {
             LOGGER.warning("Dispatcher guard=prompt-injection, userId=" + userId + ", input=" + clip(userInput));
-            memoryGateway.appendAssistantConversation(userId, promptInjectionSafeReply);
+            decisionOrchestrator.appendAssistantConversation(userId, promptInjectionSafeReply);
             routingDecisionRef.set(new RoutingDecisionDto(
                     "security.guard",
                     "security.guard",
@@ -699,7 +699,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                     ExecutionTraceDto trace = enrichTraceWithRouting(orchestration.trace(), routingWithObservability);
                     finalResultSuccessRef.set(result.success());
                     decisionOrchestrator.recordOutcome(userId, userInput, result, trace);
-                    memoryGateway.appendAssistantConversation(userId, result.output());
+                    decisionOrchestrator.appendAssistantConversation(userId, result.output());
                     maybeStoreBehaviorProfile(userId, result);
                     personaCoreService.learnFromTurn(userId, resolvedProfileContext, result);
                     recordRoutingReplaySample(userInput, routingDecisionRef.get(), replayProbe, promptMemoryContext, result.skillName());
@@ -751,7 +751,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
             java.util.concurrent.atomic.AtomicBoolean memoryDirectBypassedRef = new java.util.concurrent.atomic.AtomicBoolean(false);
             RoutingReplayProbe replayProbe = new RoutingReplayProbe();
 
-            memoryGateway.appendUserConversation(userId, userInput);
+            decisionOrchestrator.appendUserConversation(userId, userInput);
             maybeStoreSemanticMemory(userId, userInput);
 
         // Fast-path: short conversational acknowledgements should avoid expensive routing
@@ -765,7 +765,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
 
         if (isPromptInjectionAttempt(userInput)) {
             String safeReply = promptInjectionSafeReply;
-            memoryGateway.appendAssistantConversation(userId, safeReply);
+            decisionOrchestrator.appendAssistantConversation(userId, safeReply);
             RoutingDecisionDto decision = new RoutingDecisionDto(
                     "security.guard",
                     "security.guard",
@@ -846,7 +846,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                     );
                     ExecutionTraceDto trace = new ExecutionTraceDto("stream-single-pass", 0, null, List.of(), routingWithObservability);
                     finalResultSuccessRef.set(normalized.success());
-                    memoryGateway.appendAssistantConversation(userId, normalized.output());
+                    decisionOrchestrator.appendAssistantConversation(userId, normalized.output());
                     decisionOrchestrator.recordOutcome(userId, userInput, normalized, trace);
                     maybeStoreBehaviorProfile(userId, normalized);
                     personaCoreService.learnFromTurn(userId, resolvedProfileContext, normalized);
@@ -3888,7 +3888,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                 (double) ((Integer) embeddingSeed.get("length")),
                 ((Integer) embeddingSeed.get("hash")) / 1000.0
         );
-        memoryGateway.writeSemantic(userId, knowledge, embedding, memoryBucket);
+        decisionOrchestrator.writeSemantic(userId, knowledge, embedding, memoryBucket);
     }
 
     private String buildConversationContext(String userId,
@@ -4351,7 +4351,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
             reply = "你好！有什么我可以帮你的吗？";
         }
         // Persist assistant reply to conversation history for consistency
-        memoryGateway.appendAssistantConversation(userId, reply == null ? "" : reply);
+        decisionOrchestrator.appendAssistantConversation(userId, reply == null ? "" : reply);
         RoutingDecisionDto decision = new RoutingDecisionDto(
                 "conversational-bypass",
                 "conversational-bypass",
@@ -4653,7 +4653,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                 (double) memoryText.length(),
                 Math.abs(memoryText.hashCode() % 1000) / 1000.0
         );
-        memoryGateway.writeSemantic(userId, memoryText, embedding, inferMemoryBucket(userInput));
+        decisionOrchestrator.writeSemantic(userId, memoryText, embedding, inferMemoryBucket(userInput));
     }
 
     private void completeSemanticPayloadFromMemory(String userId,
@@ -4837,7 +4837,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         // Log that we are storing an updated behavior profile for observability
         LOGGER.info(() -> "behavior-learning.store userId=" + userId + ", bucket=" + bucket + ", profileSummary=" + capText(profile, 200));
         List<Double> embedding = List.of((double) profile.length(), Math.abs(profile.hashCode() % 1000) / 1000.0);
-        memoryGateway.writeSemantic(userId, profile, embedding, bucket);
+        decisionOrchestrator.writeSemantic(userId, profile, embedding, bucket);
     }
 
     private String buildBehaviorProfileSummary(String userId) {

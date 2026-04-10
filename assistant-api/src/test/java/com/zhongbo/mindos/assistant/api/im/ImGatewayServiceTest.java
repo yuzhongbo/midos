@@ -1,14 +1,22 @@
 package com.zhongbo.mindos.assistant.api.im;
 
 import com.zhongbo.mindos.assistant.common.ImDegradedReplyMarker;
+import com.zhongbo.mindos.assistant.common.SkillResult;
+import com.zhongbo.mindos.assistant.common.dto.ExecutionTraceDto;
 import com.zhongbo.mindos.assistant.dispatcher.DispatchResult;
 import com.zhongbo.mindos.assistant.dispatcher.DispatcherFacade;
+import com.zhongbo.mindos.assistant.dispatcher.decision.Decision;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.DefaultMemoryGateway;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.DecisionOrchestrator;
 import com.zhongbo.mindos.assistant.memory.MemoryConsolidationService;
+import com.zhongbo.mindos.assistant.memory.MemoryGateway;
 import com.zhongbo.mindos.assistant.memory.MemoryManager;
+import com.zhongbo.mindos.assistant.memory.model.LongTask;
+import com.zhongbo.mindos.assistant.memory.model.LongTaskStatus;
 import com.zhongbo.mindos.assistant.memory.model.MemoryCompressionPlan;
 import com.zhongbo.mindos.assistant.memory.model.MemoryCompressionStep;
 import com.zhongbo.mindos.assistant.memory.model.MemoryStyleProfile;
+import com.zhongbo.mindos.assistant.memory.model.PreferenceProfile;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -35,6 +43,67 @@ import static org.mockito.Mockito.when;
 
 class ImGatewayServiceTest {
 
+    private DecisionOrchestrator decisionOrchestrator(MemoryManager memoryManager) {
+        MemoryGateway memoryGateway = new DefaultMemoryGateway(memoryManager);
+        return new DecisionOrchestrator() {
+            @Override
+            public SkillResult execute(String userInput, String intent, java.util.Map<String, Object> params) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public OrchestrationOutcome orchestrate(Decision decision, OrchestrationRequest request) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public void recordOutcome(String userId, String userInput, SkillResult result, ExecutionTraceDto trace) {
+            }
+
+            @Override
+            public void appendUserConversation(String userId, String message) {
+                memoryGateway.appendUserConversation(userId, message);
+            }
+
+            @Override
+            public void appendAssistantConversation(String userId, String message) {
+                memoryGateway.appendAssistantConversation(userId, message);
+            }
+
+            @Override
+            public void writeSemantic(String userId, String text, List<Double> embedding, String bucket) {
+                memoryGateway.writeSemantic(userId, text, embedding, bucket);
+            }
+
+            @Override
+            public PreferenceProfile updatePreferenceProfile(String userId, PreferenceProfile profile) {
+                return memoryGateway.updatePreferenceProfile(userId, profile);
+            }
+
+            @Override
+            public LongTask createLongTask(String userId, String title, String objective, List<String> steps, Instant dueAt, Instant nextCheckAt) {
+                return memoryGateway.createLongTask(userId, title, objective, steps, dueAt, nextCheckAt);
+            }
+
+            @Override
+            public LongTask updateLongTaskProgress(String userId,
+                                                   String taskId,
+                                                   String workerId,
+                                                   String completedStep,
+                                                   String note,
+                                                   String blockedReason,
+                                                   Instant nextCheckAt,
+                                                   boolean markCompleted) {
+                return memoryGateway.updateLongTaskProgress(userId, taskId, workerId, completedStep, note, blockedReason, nextCheckAt, markCompleted);
+            }
+
+            @Override
+            public LongTask updateLongTaskStatus(String userId, String taskId, LongTaskStatus status, String note, Instant nextCheckAt) {
+                return memoryGateway.updateLongTaskStatus(userId, taskId, status, note, nextCheckAt);
+            }
+        };
+    }
+
     @AfterEach
     void clearTodoPolicyProperties() {
         System.clearProperty("mindos.todo.priority.p1-threshold");
@@ -52,7 +121,7 @@ class ImGatewayServiceTest {
         MemoryConsolidationService consolidationService = new MemoryConsolidationService();
         ImGatewayService service = new ImGatewayService(
                 dispatcherService,
-                new DefaultMemoryGateway(memoryManager),
+                decisionOrchestrator(memoryManager),
                 memoryManager,
                 consolidationService
         );
@@ -93,7 +162,7 @@ class ImGatewayServiceTest {
         MemoryConsolidationService consolidationService = new MemoryConsolidationService();
         ImGatewayService service = new ImGatewayService(
                 dispatcherService,
-                new DefaultMemoryGateway(memoryManager),
+                decisionOrchestrator(memoryManager),
                 memoryManager,
                 consolidationService
         );
@@ -114,7 +183,7 @@ class ImGatewayServiceTest {
         MemoryConsolidationService consolidationService = new MemoryConsolidationService();
         ImGatewayService service = new ImGatewayService(
                 dispatcherService,
-                new DefaultMemoryGateway(memoryManager),
+                decisionOrchestrator(memoryManager),
                 memoryManager,
                 consolidationService
         );
@@ -166,7 +235,7 @@ class ImGatewayServiceTest {
         MemoryConsolidationService consolidationService = new MemoryConsolidationService();
         ImGatewayService service = new ImGatewayService(
                 dispatcherService,
-                new DefaultMemoryGateway(memoryManager),
+                decisionOrchestrator(memoryManager),
                 memoryManager,
                 consolidationService
         );
@@ -190,7 +259,7 @@ class ImGatewayServiceTest {
         MemoryConsolidationService consolidationService = new MemoryConsolidationService();
         ImGatewayService service = new ImGatewayService(
                 dispatcherService,
-                new DefaultMemoryGateway(memoryManager),
+                decisionOrchestrator(memoryManager),
                 memoryManager,
                 consolidationService
         );
@@ -224,7 +293,7 @@ class ImGatewayServiceTest {
         MemoryConsolidationService consolidationService = new MemoryConsolidationService();
         ImGatewayService service = new ImGatewayService(
                 dispatcherService,
-                new DefaultMemoryGateway(memoryManager),
+                decisionOrchestrator(memoryManager),
                 memoryManager,
                 consolidationService
         );
@@ -255,7 +324,7 @@ class ImGatewayServiceTest {
         DingtalkOpenApiMessageClient openApiMessageClient = mock(DingtalkOpenApiMessageClient.class);
         ImGatewayService service = new ImGatewayService(
                 dispatcherService,
-                new DefaultMemoryGateway(memoryManager),
+                decisionOrchestrator(memoryManager),
                 memoryManager,
                 consolidationService,
                 asyncReplyClient,
@@ -288,7 +357,7 @@ class ImGatewayServiceTest {
         DingtalkOpenApiMessageClient openApiMessageClient = mock(DingtalkOpenApiMessageClient.class);
         ImGatewayService service = new ImGatewayService(
                 dispatcherService,
-                new DefaultMemoryGateway(memoryManager),
+                decisionOrchestrator(memoryManager),
                 memoryManager,
                 consolidationService,
                 asyncReplyClient,

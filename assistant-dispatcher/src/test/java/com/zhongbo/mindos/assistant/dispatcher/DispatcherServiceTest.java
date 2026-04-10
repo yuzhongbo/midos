@@ -7,6 +7,7 @@ import com.zhongbo.mindos.assistant.memory.CentralMemoryRepository;
 import com.zhongbo.mindos.assistant.memory.EpisodicMemoryService;
 import com.zhongbo.mindos.assistant.memory.InMemoryCentralMemoryRepository;
 import com.zhongbo.mindos.assistant.memory.LongTaskService;
+import com.zhongbo.mindos.assistant.memory.MemoryGateway;
 import com.zhongbo.mindos.assistant.memory.MemoryCompressionPlanningService;
 import com.zhongbo.mindos.assistant.memory.MemoryConsolidationService;
 import com.zhongbo.mindos.assistant.memory.MemoryManager;
@@ -29,6 +30,7 @@ import com.zhongbo.mindos.assistant.dispatcher.orchestrator.SimpleParamValidator
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.TaskExecutor;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.InMemoryParamSchemaRegistry;
 import com.zhongbo.mindos.assistant.common.dto.LocalEscalationMetricsDto;
+import com.zhongbo.mindos.assistant.skill.DefaultSkillExecutionGateway;
 import com.zhongbo.mindos.assistant.skill.Skill;
 import com.zhongbo.mindos.assistant.skill.SkillDslExecutor;
 import com.zhongbo.mindos.assistant.skill.SkillEngine;
@@ -1849,7 +1851,7 @@ class DispatcherServiceTest {
         MetaOrchestratorService metaOrchestratorService = new MetaOrchestratorService(false);
         SkillCapabilityPolicy capabilityPolicy = new SkillCapabilityPolicy(false, "fs.read,fs.write,exec,net", "");
         DefaultMemoryGateway memoryGateway = new DefaultMemoryGateway(memoryManager);
-        PersonaCoreService personaCoreService = new PersonaCoreService(memoryManager, memoryGateway, false, 2, "unknown,null,n/a");
+        PersonaCoreService personaCoreService = new PersonaCoreService(memoryManager, decisionOrchestratorProxy(memoryGateway), false, 2, "unknown,null,n/a");
         DispatcherLlmTuningProperties tuningProperties = new DispatcherLlmTuningProperties();
         InMemoryParamSchemaRegistry paramSchemaRegistry = new InMemoryParamSchemaRegistry();
         paramSchemaRegistry.registerDefaults();
@@ -1866,7 +1868,8 @@ class DispatcherServiceTest {
                 paramValidator,
                 new SimpleConversationLoop(),
                 new SimpleFallbackPlan(),
-                skillEngine,
+                new DefaultSkillExecutionGateway(registry, dslExecutor),
+                memoryGateway,
                 memoryRecorder,
                 new TaskExecutor(3),
                 true,
@@ -1980,7 +1983,7 @@ class DispatcherServiceTest {
         MetaOrchestratorService metaOrchestratorService = new MetaOrchestratorService(false);
         SkillCapabilityPolicy capabilityPolicy = new SkillCapabilityPolicy(false, "fs.read,fs.write,exec,net", "");
         DefaultMemoryGateway memoryGateway = new DefaultMemoryGateway(memoryManager);
-        PersonaCoreService personaCoreService = new PersonaCoreService(memoryManager, memoryGateway, false, 2, "unknown,null,n/a");
+        PersonaCoreService personaCoreService = new PersonaCoreService(memoryManager, decisionOrchestratorProxy(memoryGateway), false, 2, "unknown,null,n/a");
         DispatcherLlmTuningProperties tuningProperties = new DispatcherLlmTuningProperties();
         InMemoryParamSchemaRegistry paramSchemaRegistry = new InMemoryParamSchemaRegistry();
         paramSchemaRegistry.registerDefaults();
@@ -1997,7 +2000,8 @@ class DispatcherServiceTest {
                 paramValidator,
                 new SimpleConversationLoop(),
                 new SimpleFallbackPlan(),
-                skillEngine,
+                new DefaultSkillExecutionGateway(registry, dslExecutor),
+                memoryGateway,
                 memoryRecorder,
                 new TaskExecutor(3),
                 false,
@@ -2443,7 +2447,7 @@ class DispatcherServiceTest {
         MetaOrchestratorService metaOrchestratorService = new MetaOrchestratorService(false);
         SkillCapabilityPolicy capabilityPolicy = new SkillCapabilityPolicy(false, "fs.read,fs.write,exec,net", "");
         DefaultMemoryGateway memoryGateway = new DefaultMemoryGateway(memoryManager);
-        PersonaCoreService personaCoreService = new PersonaCoreService(memoryManager, memoryGateway, false, 2, "unknown,null,n/a");
+        PersonaCoreService personaCoreService = new PersonaCoreService(memoryManager, decisionOrchestratorProxy(memoryGateway), false, 2, "unknown,null,n/a");
         DispatcherLlmTuningProperties tuningProperties = new DispatcherLlmTuningProperties();
         tuningProperties.getLlmDsl().setProvider(llmDslProvider);
         tuningProperties.getLlmDsl().setPreset(llmDslPreset);
@@ -2474,7 +2478,8 @@ class DispatcherServiceTest {
                 paramValidator,
                 new SimpleConversationLoop(),
                 new SimpleFallbackPlan(),
-                skillEngine,
+                new DefaultSkillExecutionGateway(registry, dslExecutor),
+                memoryGateway,
                 memoryRecorder,
                 new TaskExecutor(3),
                 false,
@@ -2600,7 +2605,7 @@ class DispatcherServiceTest {
         MetaOrchestratorService metaOrchestratorService = new MetaOrchestratorService(false);
         SkillCapabilityPolicy capabilityPolicy = new SkillCapabilityPolicy(false, "fs.read,fs.write,exec,net", "");
         DefaultMemoryGateway memoryGateway = new DefaultMemoryGateway(memoryManager);
-        PersonaCoreService personaCoreService = new PersonaCoreService(memoryManager, memoryGateway, false, 2, "unknown,null,n/a");
+        PersonaCoreService personaCoreService = new PersonaCoreService(memoryManager, decisionOrchestratorProxy(memoryGateway), false, 2, "unknown,null,n/a");
         InMemoryParamSchemaRegistry paramSchemaRegistry = new InMemoryParamSchemaRegistry();
         paramSchemaRegistry.registerDefaults();
         ParamValidator paramValidator = new SimpleParamValidator(paramSchemaRegistry, memoryGateway);
@@ -2616,7 +2621,8 @@ class DispatcherServiceTest {
                 paramValidator,
                 new SimpleConversationLoop(),
                 new SimpleFallbackPlan(),
-                skillEngine,
+                new DefaultSkillExecutionGateway(registry, dslExecutor),
+                memoryGateway,
                 memoryRecorder,
                 new TaskExecutor(3),
                 false,
@@ -2750,6 +2756,24 @@ class DispatcherServiceTest {
                 compressionPlanningService,
                 preferenceProfileService,
                 longTaskService
+        );
+    }
+
+    private DecisionOrchestrator decisionOrchestratorProxy(MemoryGateway memoryGateway) {
+        return new DefaultDecisionOrchestrator(
+                new SimpleCandidatePlanner(new SkillEngine(new SkillRegistry(List.of()), new SkillDslExecutor(new SkillRegistry(List.of()))), memoryGateway, 3, 0.40, 0.35, 0.15, 0.10),
+                new SimpleParamValidator(new InMemoryParamSchemaRegistry(), memoryGateway),
+                new SimpleConversationLoop(),
+                new SimpleFallbackPlan(),
+                new DefaultSkillExecutionGateway(new SkillRegistry(List.of()), new SkillDslExecutor(new SkillRegistry(List.of()))),
+                memoryGateway,
+                new PostExecutionMemoryRecorder(memoryGateway, false, false, "", 280),
+                new TaskExecutor(3),
+                false,
+                500,
+                0,
+                "",
+                3
         );
     }
 
