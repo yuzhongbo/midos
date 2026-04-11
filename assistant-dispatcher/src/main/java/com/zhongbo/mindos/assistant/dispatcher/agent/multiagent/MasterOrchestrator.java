@@ -82,7 +82,9 @@ public class MasterOrchestrator {
         String graphId = state.traceId.isBlank() ? UUID.randomUUID().toString() : state.traceId + "-graph";
         AgentResponse executionResponse = gateway.send(buildExecutionMessage(state, plannedGraph, planResponse, graphId));
         SkillResult finalResult = resolveFinalResult(executionResponse);
-        gateway.send(buildMemoryWriteMessage(state, finalResult, plannedGraph, executionResponse, graphId));
+        if (!shouldSkipMemoryWrite(safeRequest)) {
+            gateway.send(buildMemoryWriteMessage(state, finalResult, plannedGraph, executionResponse, graphId));
+        }
 
         ExecutionTraceDto trace = new ExecutionTraceDto(
                 "multi-agent-master",
@@ -192,6 +194,15 @@ public class MasterOrchestrator {
             return fallback == null ? "" : fallback;
         }
         return normalized;
+    }
+
+    private boolean shouldSkipMemoryWrite(DecisionOrchestrator.OrchestrationRequest request) {
+        Map<String, Object> profileContext = request == null ? Map.of() : request.safeProfileContext();
+        Object value = profileContext.get("multiAgent.skipMemoryWrite");
+        if (value instanceof Boolean bool) {
+            return bool;
+        }
+        return value != null && Boolean.parseBoolean(String.valueOf(value));
     }
 
     private List<String> inferKeys(Decision decision) {

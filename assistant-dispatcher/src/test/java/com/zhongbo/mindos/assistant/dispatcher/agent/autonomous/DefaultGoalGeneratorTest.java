@@ -66,4 +66,27 @@ class DefaultGoalGeneratorTest {
         assertTrue(goals.get(0).priority() > 0.7);
         assertEquals(AutonomousGoalType.BEHAVIOR_OPTIMIZATION, generator.generate("u1", 1).get(0).type());
     }
+
+    @Test
+    void shouldIncludeStrategicGoalFromStrategyAgent() {
+        StrategyAgent strategyAgent = userId -> new StrategicGoal(
+                "减少排课冲突",
+                0.92,
+                List.of("优化排课算法", "增加自动冲突检测"),
+                List.of("history-review", "schedule-signal"),
+                Instant.now()
+        );
+
+        DefaultGoalGenerator generator = new DefaultGoalGenerator(null, null, strategyAgent, 5, 6);
+        List<AutonomousGoal> goals = generator.generate("u-strategy", 3);
+
+        assertTrue(goals.stream().anyMatch(goal -> goal.type() == AutonomousGoalType.STRATEGIC));
+        AutonomousGoal strategicGoal = goals.stream()
+                .filter(goal -> goal.type() == AutonomousGoalType.STRATEGIC)
+                .findFirst()
+                .orElseThrow();
+        assertTrue(strategicGoal.goalId().startsWith("strategy:"));
+        assertEquals("llm.orchestrate", strategicGoal.target());
+        assertTrue(strategicGoal.priority() >= 70);
+    }
 }

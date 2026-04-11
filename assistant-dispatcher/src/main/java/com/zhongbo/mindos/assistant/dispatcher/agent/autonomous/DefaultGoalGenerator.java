@@ -24,25 +24,35 @@ public class DefaultGoalGenerator implements GoalGenerator {
 
     private final MemoryGateway memoryGateway;
     private final LongTaskService longTaskService;
+    private final StrategyAgent strategyAgent;
     private final int maxGoals;
     private final int recentHistoryTurns;
 
     public DefaultGoalGenerator() {
-        this(null, null, 5, 6);
+        this(null, null, null, 5, 6);
     }
 
     public DefaultGoalGenerator(MemoryGateway memoryGateway,
                                 LongTaskService longTaskService) {
-        this(memoryGateway, longTaskService, 5, 6);
+        this(memoryGateway, longTaskService, null, 5, 6);
+    }
+
+    public DefaultGoalGenerator(MemoryGateway memoryGateway,
+                                LongTaskService longTaskService,
+                                int maxGoals,
+                                int recentHistoryTurns) {
+        this(memoryGateway, longTaskService, null, maxGoals, recentHistoryTurns);
     }
 
     @Autowired
     public DefaultGoalGenerator(MemoryGateway memoryGateway,
                                 LongTaskService longTaskService,
+                                StrategyAgent strategyAgent,
                                 @Value("${mindos.autonomous.goal.max-goals:5}") int maxGoals,
                                 @Value("${mindos.autonomous.goal.recent-history-turns:6}") int recentHistoryTurns) {
         this.memoryGateway = memoryGateway;
         this.longTaskService = longTaskService;
+        this.strategyAgent = strategyAgent;
         this.maxGoals = Math.max(1, maxGoals);
         this.recentHistoryTurns = Math.max(1, recentHistoryTurns);
     }
@@ -55,6 +65,7 @@ public class DefaultGoalGenerator implements GoalGenerator {
         List<AutonomousGoal> goals = new ArrayList<>();
         goals.addAll(generateLongTaskGoals(safeUserId));
         goals.addAll(generateBehaviorOptimizationGoals(safeUserId));
+        goals.addAll(generateStrategicGoals(safeUserId));
         goals.addAll(generateSkillRecoveryGoals(safeUserId));
         goals.addAll(generateMemoryReviewGoals(safeUserId));
 
@@ -77,6 +88,41 @@ public class DefaultGoalGenerator implements GoalGenerator {
                         .thenComparing(AutonomousGoal::goalId))
                 .limit(effectiveLimit)
                 .toList();
+    }
+
+    private List<AutonomousGoal> generateStrategicGoals(String userId) {
+        if (strategyAgent == null) {
+            return List.of();
+        }
+        StrategicGoal strategicGoal = strategyAgent.generate(userId);
+        if (strategicGoal == null || strategicGoal.goal().isBlank()) {
+            return List.of();
+        }
+
+        Map<String, Object> params = new LinkedHashMap<>();
+        params.put("strategyGoal", strategicGoal.goal());
+        params.put("strategyPriority", strategicGoal.priority());
+        params.put("strategyActions", strategicGoal.actions());
+        params.put("strategyReasons", strategicGoal.reasons());
+
+        List<String> reasons = new ArrayList<>(strategicGoal.reasons());
+        if (reasons.isEmpty()) {
+            reasons.add("strategy-agent");
+        }
+
+        int priority = Math.max(0, Math.min(100, (int) Math.round(45.0 + strategicGoal.priority() * 35.0)));
+        return List.of(new AutonomousGoal(
+                "strategy:" + strategicGoal.goal(),
+                AutonomousGoalType.STRATEGIC,
+                "长期战略：" + strategicGoal.goal(),
+                strategicGoal.goal(),
+                "llm.orchestrate",
+                "strategy.agent",
+                priority,
+                params,
+                reasons,
+                strategicGoal.generatedAt()
+        ));
     }
 
     private List<AutonomousGoal> generateLongTaskGoals(String userId) {

@@ -16,6 +16,7 @@ import com.zhongbo.mindos.assistant.common.dto.PromptMemoryContextDto;
 import com.zhongbo.mindos.assistant.common.dto.RoutingReplayDatasetDto;
 import com.zhongbo.mindos.assistant.common.dto.RoutingReplayItemDto;
 import com.zhongbo.mindos.assistant.common.dto.RoutingDecisionDto;
+import com.zhongbo.mindos.assistant.common.dto.CritiqueReportDto;
 import com.zhongbo.mindos.assistant.common.dto.SkillPreAnalyzeMetricsDto;
 import com.zhongbo.mindos.assistant.memory.MemoryManager;
 import com.zhongbo.mindos.assistant.memory.model.MemoryCompressionPlan;
@@ -37,6 +38,8 @@ import com.zhongbo.mindos.assistant.dispatcher.orchestrator.SimpleCandidatePlann
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.SimpleConversationLoop;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.SimpleFallbackPlan;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.SimpleParamValidator;
+import com.zhongbo.mindos.assistant.dispatcher.agent.multiagent.MasterOrchestrationResult;
+import com.zhongbo.mindos.assistant.dispatcher.agent.multiagent.MasterOrchestrator;
 import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalysisResult;
 import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalysisService;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -62,6 +65,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.function.UnaryOperator;
 import java.util.logging.Level;
@@ -257,6 +261,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
     private final DecisionOrchestrator decisionOrchestrator;
     private final ParamValidator paramValidator;
     private final MemoryGateway memoryGateway;
+    private MasterOrchestrator masterOrchestrator;
 
     public DispatcherService(SkillEngine skillEngine,
                              SkillDslParser skillDslParser,
@@ -568,6 +573,11 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         this.parallelDetectedSkillRoutingTimeoutMs = Math.max(100L, parallelDetectedSkillRoutingTimeoutMs);
     }
 
+    @Autowired(required = false)
+    void setMasterOrchestrator(MasterOrchestrator masterOrchestrator) {
+        this.masterOrchestrator = masterOrchestrator;
+    }
+
     public DispatchResult dispatch(String userId, String userInput) {
         return dispatch(userId, userInput, Map.of());
     }
@@ -673,6 +683,33 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         intentModelRoutingPolicy.applyForFallback(userInput, promptMemoryContext, realtimeIntentInput, resolvedProfileContext, llmContext);
         if (!chatHistory.isEmpty()) {
             llmContext.put("chatHistory", chatHistory);
+        }
+
+        if (shouldUseMasterOrchestrator(resolvedProfileContext)) {
+            return attachDispatchCompletion(
+                    executeMasterOrchestratorDispatch(
+                            userId,
+                            userInput,
+                            context,
+                            promptMemoryContext,
+                            llmContext,
+                            realtimeIntentInput,
+                            routingDecisionRef,
+                            semanticAnalysis,
+                            replayProbe,
+                            skillPostprocessSentRef,
+                            finalResultSuccessRef,
+                            realtimeLookupRef,
+                            memoryDirectBypassedRef,
+                            resolvedProfileContext
+                    ),
+                    userId,
+                    startTime,
+                    skillPostprocessSentRef,
+                    finalResultSuccessRef,
+                    realtimeLookupRef,
+                    memoryDirectBypassedRef
+            );
         }
 
             return metaOrchestratorService.orchestrate(
@@ -898,6 +935,187 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                     return routingOutcome.result().orElseGet(() ->
                         buildFallbackResult(memoryContext, promptMemoryContext, context.input(), llmContext, realtimeIntentInput));
                 });
+    }
+
+    private CompletableFuture<DispatchResult> executeMasterOrchestratorDispatch(String userId,
+                                                                                String userInput,
+                                                                                SkillContext context,
+                                                                                PromptMemoryContextDto promptMemoryContext,
+                                                                                Map<String, Object> llmContext,
+                                                                                boolean realtimeIntentInput,
+                                                                                AtomicReference<RoutingDecisionDto> routingDecisionRef,
+                                                                                SemanticAnalysisResult semanticAnalysis,
+                                                                                RoutingReplayProbe replayProbe,
+                                                                                AtomicBoolean skillPostprocessSentRef,
+                                                                                AtomicBoolean finalResultSuccessRef,
+                                                                                AtomicBoolean realtimeLookupRef,
+                                                                                AtomicBoolean memoryDirectBypassedRef,
+                                                                                Map<String, Object> resolvedProfileContext) {
+        return CompletableFuture.supplyAsync(() -> {
+            Map<String, Object> multiAgentProfileContext = new LinkedHashMap<>(resolvedProfileContext == null ? Map.of() : resolvedProfileContext);
+            multiAgentProfileContext.put("multiAgent", true);
+            multiAgentProfileContext.put("orchestrationMode", "multi-agent");
+            multiAgentProfileContext.put("multiAgent.skipMemoryWrite", true);
+            Decision decision = buildMultiAgentDecision(userInput, semanticAnalysis, context);
+            if (decision == null || masterOrchestrator == null) {
+                return new DispatchResult("multi-agent orchestrator unavailable", "multi-agent.master",
+                        new ExecutionTraceDto("multi-agent-master", 0,
+                                new CritiqueReportDto(false, "multi-agent orchestrator unavailable", "replan"),
+                                List.of()));
+            }
+            replayProbe.ruleCandidate = "multi-agent-master";
+            llmContext.put("routeStage", "multi-agent-master");
+            realtimeLookupRef.set(realtimeIntentInput || isRealtimeLikeInput(userInput, semanticAnalysis));
+
+            MasterOrchestrationResult orchestration = masterOrchestrator.execute(
+                    userId,
+                    userInput,
+                    decision,
+                    multiAgentProfileContext
+            );
+            SkillResult result = orchestration == null || orchestration.result() == null
+                    ? SkillResult.failure(firstNonBlank(decision.target(), "multi-agent.master"), "master orchestrator produced no result")
+                    : orchestration.result();
+            SkillFinalizeOutcome finalizeOutcome = maybeFinalizeSkillResultWithLlm(userInput, result, llmContext);
+            result = finalizeOutcome.result();
+            skillPostprocessSentRef.set(finalizeOutcome.applied());
+            if ("llm".equals(result.skillName())) {
+                result = SkillResult.success("llm", capText(result.output(), llmReplyMaxChars));
+            }
+            memoryDirectBypassedRef.set(realtimeLookupRef.get() && !"memory.direct".equalsIgnoreCase(result.skillName()));
+            String actualSearchSource = classifyMcpSearchSource(result.skillName());
+            RoutingDecisionDto baseRoutingDecision = routingDecisionRef.get();
+            if (baseRoutingDecision == null) {
+                baseRoutingDecision = new RoutingDecisionDto(
+                        "multi-agent-master",
+                        decision.target(),
+                        decision.confidence(),
+                        List.of("multi-agent master orchestrator used"),
+                        List.of()
+                );
+                routingDecisionRef.set(baseRoutingDecision);
+            }
+            RoutingDecisionDto routingWithObservability = enrichRoutingDecisionWithFinalObservability(
+                    baseRoutingDecision,
+                    result.skillName(),
+                    realtimeLookupRef.get(),
+                    memoryDirectBypassedRef.get(),
+                    actualSearchSource
+            );
+            routingDecisionRef.set(routingWithObservability);
+            ExecutionTraceDto trace = orchestration == null
+                    ? new ExecutionTraceDto(
+                            "multi-agent-master",
+                            0,
+                            new CritiqueReportDto(
+                                    result.success(),
+                                    result.success() ? "multi-agent success" : safeText(result.output(), "multi-agent failed"),
+                                    result.success() ? "none" : "failed"
+                            ),
+                            List.of(),
+                            routingWithObservability
+                    )
+                    : enrichTraceWithRouting(orchestration.trace(), routingWithObservability);
+            finalResultSuccessRef.set(result.success());
+            decisionOrchestrator.recordOutcome(userId, userInput, result, trace);
+            decisionOrchestrator.appendAssistantConversation(userId, result.output());
+            maybeStoreBehaviorProfile(userId, result);
+            personaCoreService.learnFromTurn(userId, resolvedProfileContext, result);
+            recordRoutingReplaySample(userInput, routingDecisionRef.get(), replayProbe, promptMemoryContext, result.skillName());
+            return new DispatchResult(result.output(), result.skillName(), trace);
+        });
+    }
+
+    private Decision buildMultiAgentDecision(String userInput,
+                                             SemanticAnalysisResult semanticAnalysis,
+                                             SkillContext context) {
+        if (context == null) {
+            return null;
+        }
+        Map<String, Object> params = new LinkedHashMap<>(context.attributes() == null ? Map.of() : context.attributes());
+        if (semanticAnalysis != null) {
+            params.putAll(semanticAnalysis.asAttributes());
+            if (semanticAnalysis.payload() != null && !semanticAnalysis.payload().isEmpty()) {
+                params.putIfAbsent("semanticPayload", semanticAnalysis.payload());
+            }
+            if (semanticAnalysis.keywords() != null && !semanticAnalysis.keywords().isEmpty()) {
+                params.putIfAbsent("semanticKeywords", semanticAnalysis.keywords());
+            }
+        }
+        params.putIfAbsent("input", context.input());
+        params.putIfAbsent("multiAgent", true);
+        params.putIfAbsent("orchestrationMode", "multi-agent");
+        String intent = firstNonBlank(
+                semanticAnalysis == null ? null : semanticAnalysis.intent(),
+                semanticAnalysis == null ? null : semanticAnalysis.suggestedSkill(),
+                context.input()
+        );
+        String target = firstNonBlank(
+                semanticAnalysis == null ? null : semanticAnalysis.suggestedSkill(),
+                semanticAnalysis == null ? null : semanticAnalysis.intent(),
+                "llm.orchestrate"
+        );
+        double confidence = semanticAnalysis == null ? 0.75 : Math.max(semanticAnalysis.effectiveConfidence(), 0.75);
+        return new Decision(intent, target, params, confidence, false);
+    }
+
+    private boolean shouldUseMasterOrchestrator(Map<String, Object> profileContext) {
+        if (masterOrchestrator == null) {
+            return false;
+        }
+        if (isTruthy(profileContext == null ? null : profileContext.get("multiAgent"))) {
+            return true;
+        }
+        String orchestrationMode = asString(profileContext == null ? null : profileContext.get("orchestrationMode"));
+        return "multi-agent".equalsIgnoreCase(orchestrationMode)
+                || "master".equalsIgnoreCase(orchestrationMode)
+                || "master-orchestrator".equalsIgnoreCase(orchestrationMode);
+    }
+
+    private boolean isTruthy(Object value) {
+        if (value instanceof Boolean bool) {
+            return bool;
+        }
+        if (value == null) {
+            return false;
+        }
+        String normalized = String.valueOf(value).trim().toLowerCase(Locale.ROOT);
+        return "true".equals(normalized)
+                || "1".equals(normalized)
+                || "yes".equals(normalized)
+                || "on".equals(normalized);
+    }
+
+    private CompletableFuture<DispatchResult> attachDispatchCompletion(CompletableFuture<DispatchResult> future,
+                                                                       String userId,
+                                                                       Instant startTime,
+                                                                       AtomicBoolean skillPostprocessSentRef,
+                                                                       AtomicBoolean finalResultSuccessRef,
+                                                                       AtomicBoolean realtimeLookupRef,
+                                                                       AtomicBoolean memoryDirectBypassedRef) {
+        return future.whenComplete((result, error) -> {
+            activeDispatchCount.decrementAndGet();
+            long durationMs = Duration.between(startTime, Instant.now()).toMillis();
+            if (error != null) {
+                LOGGER.log(Level.SEVERE,
+                        "Dispatcher error: userId=" + userId + ", durationMs=" + durationMs,
+                        error);
+                return;
+            }
+            LOGGER.info("Dispatcher output: userId=" + userId
+                    + ", channel=" + result.channel()
+                    + ", output=" + clip(result.reply())
+                    + ", durationMs=" + durationMs);
+            logFinalAggregateTrace(
+                    userId,
+                    result.channel(),
+                    result.executionTrace(),
+                    skillPostprocessSentRef.get(),
+                    finalResultSuccessRef.get(),
+                    realtimeLookupRef.get(),
+                    memoryDirectBypassedRef.get()
+            );
+        });
     }
 
     private SkillResult buildFallbackResult(String memoryContext,
@@ -2629,6 +2847,23 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         }
         String normalized = String.valueOf(value).trim();
         return normalized.isBlank() ? null : normalized;
+    }
+
+    private String firstNonBlank(String... values) {
+        if (values == null || values.length == 0) {
+            return null;
+        }
+        for (String value : values) {
+            if (value != null && !value.isBlank()) {
+                return value.trim();
+            }
+        }
+        return null;
+    }
+
+    private String safeText(String value, String fallback) {
+        String normalized = asString(value);
+        return normalized == null ? fallback : normalized;
     }
 
     private void copyInteractionContext(Map<String, Object> profileContext, Map<String, Object> llmContext) {

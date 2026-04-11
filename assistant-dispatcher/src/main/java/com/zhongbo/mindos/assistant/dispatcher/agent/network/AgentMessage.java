@@ -66,17 +66,11 @@ public record AgentMessage(String from, String to, String type, Object payload) 
     }
 
     public com.zhongbo.mindos.assistant.dispatcher.agent.multiagent.AgentMessage toMultiAgentMessage() {
-        return com.zhongbo.mindos.assistant.dispatcher.agent.multiagent.AgentMessage.of(from, to, payload);
+        return com.zhongbo.mindos.assistant.dispatcher.agent.multiagent.AgentMessage.fromNetworkMessage(this);
     }
 
     public static AgentMessage fromMultiAgentMessage(com.zhongbo.mindos.assistant.dispatcher.agent.multiagent.AgentMessage message) {
-        if (message == null) {
-            return new AgentMessage("", "", "message", null);
-        }
-        String inferredType = message.type() == null
-                ? inferType(message.payload())
-                : message.type().name().toLowerCase(Locale.ROOT);
-        return new AgentMessage(message.from(), message.to(), inferredType, message.payload());
+        return message == null ? new AgentMessage("", "", "message", null) : message.toNetworkMessage();
     }
 
     private static String normalize(String value) {

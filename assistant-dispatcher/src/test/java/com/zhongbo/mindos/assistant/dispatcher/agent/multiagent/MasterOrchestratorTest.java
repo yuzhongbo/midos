@@ -211,4 +211,126 @@ class MasterOrchestratorTest {
         assertFalse(assistantMessages.isEmpty());
         assertTrue(proceduralMemory.matchReusableProcedure("u1", "帮我生成学生计划", "student.plan", Map.of("studentId", "stu-42")).isPresent());
     }
+
+    @Test
+    void shouldSkipMemoryWriteWhenRequested() {
+        GraphMemory graphMemory = new GraphMemory();
+        List<String> skillUsageEvents = new ArrayList<>();
+        MemoryGateway memoryGateway = new MemoryGateway() {
+            @Override
+            public List<ConversationTurn> recentHistory(String userId) {
+                return List.of(ConversationTurn.user("帮我生成学生计划"));
+            }
+
+            @Override
+            public List<SkillUsageStats> skillUsageStats(String userId) {
+                return List.of();
+            }
+
+            @Override
+            public void appendUserConversation(String userId, String message) {
+            }
+
+            @Override
+            public void appendAssistantConversation(String userId, String message) {
+            }
+
+            @Override
+            public void recordSkillUsage(String userId, String skillName, String input, boolean success) {
+                skillUsageEvents.add(skillName + ":" + success);
+            }
+
+            @Override
+            public void writeProcedural(String userId, ProceduralMemoryEntry entry) {
+            }
+
+            @Override
+            public void writeSemantic(String userId, SemanticMemoryEntry entry) {
+            }
+
+            @Override
+            public void writeSemantic(String userId, String text, List<Double> embedding, String bucket) {
+            }
+
+            @Override
+            public PreferenceProfile updatePreferenceProfile(String userId, PreferenceProfile profile) {
+                return profile;
+            }
+
+            @Override
+            public LongTask createLongTask(String userId, String title, String objective, List<String> steps, Instant dueAt, Instant nextCheckAt) {
+                return null;
+            }
+
+            @Override
+            public LongTask updateLongTaskProgress(String userId, String taskId, String workerId, String completedStep, String note, String blockedReason, Instant nextCheckAt, boolean markCompleted) {
+                return null;
+            }
+
+            @Override
+            public LongTask updateLongTaskStatus(String userId, String taskId, LongTaskStatus status, String note, Instant nextCheckAt) {
+                return null;
+            }
+        };
+
+        ProceduralMemory proceduralMemory = new ProceduralMemory(new InMemoryProcedureMemoryEngine());
+        MemoryFacade memoryFacade = new MemoryFacade(graphMemory, null);
+
+        Skill studentGet = new Skill() {
+            @Override
+            public String name() {
+                return "student.get";
+            }
+
+            @Override
+            public String description() {
+                return "student.get";
+            }
+
+            @Override
+            public SkillResult run(SkillContext context) {
+                return SkillResult.success(name(), "student:" + context.attributes().get("studentId"));
+            }
+        };
+
+        SkillRegistry registry = new SkillRegistry(List.of(studentGet));
+        SkillDslExecutor dslExecutor = new SkillDslExecutor(registry);
+        DefaultSkillExecutionGateway skillGateway = new DefaultSkillExecutionGateway(registry, dslExecutor);
+
+        TaskGraph taskGraph = new TaskGraph(List.of(
+                new TaskNode("fetch", "student.get", Map.of("studentId", "stu-42"), List.of(), "student", false)
+        ));
+
+        System2Planner planner = request -> new System2Planner.PlanResult(taskGraph, null, "stub-plan");
+        MasterOrchestrator orchestrator = new MasterOrchestrator(
+                new DefaultPlannerAgent(planner),
+                new DefaultExecutorAgent(),
+                new DefaultMemoryAgent(memoryGateway, memoryFacade, proceduralMemory),
+                new DefaultToolAgent(skillGateway),
+                null
+        );
+
+        Decision decision = new Decision("student.plan", "student.plan", Map.of("studentId", "stu-42"), 0.62, false);
+        MasterOrchestrationResult result = orchestrator.orchestrate(
+                decision,
+                new com.zhongbo.mindos.assistant.dispatcher.orchestrator.DecisionOrchestrator.OrchestrationRequest(
+                        "u1",
+                        "帮我生成学生计划",
+                        new SkillContext("u1", "帮我生成学生计划", Map.of()),
+                        Map.of("multiAgent.skipMemoryWrite", true)
+                )
+        );
+
+        assertTrue(result.success());
+        assertEquals(1, skillUsageEvents.size());
+        long memoryWriteCount = result.transcript().stream()
+                .filter(msg -> "memory-agent".equals(msg.to()) && msg.type() == AgentTaskType.MEMORY_WRITE)
+                .count();
+        assertEquals(1L, memoryWriteCount);
+        long procedureWriteCount = result.transcript().stream()
+                .filter(msg -> "memory-agent".equals(msg.to()) && msg.type() == AgentTaskType.MEMORY_WRITE)
+                .filter(msg -> "procedure".equalsIgnoreCase(String.valueOf(msg.payloadMap().get("kind"))))
+                .count();
+        assertEquals(0L, procedureWriteCount);
+    }
 }
