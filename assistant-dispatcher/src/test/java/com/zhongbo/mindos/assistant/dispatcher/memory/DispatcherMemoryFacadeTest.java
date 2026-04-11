@@ -2,6 +2,7 @@ package com.zhongbo.mindos.assistant.dispatcher.memory;
 
 import com.zhongbo.mindos.assistant.common.dto.PromptMemoryContextDto;
 import com.zhongbo.mindos.assistant.common.SkillContext;
+import com.zhongbo.mindos.assistant.memory.MemoryFacade;
 import com.zhongbo.mindos.assistant.memory.MemoryManager;
 import com.zhongbo.mindos.assistant.memory.model.ConversationTurn;
 import com.zhongbo.mindos.assistant.memory.model.MemoryCompressionPlan;
@@ -36,7 +37,7 @@ class DispatcherMemoryFacadeTest {
                 null,
                 new PromptMemoryContextDto("recent", "semantic", "procedural", Map.of("tone", "direct"), List.of())
         );
-        DispatcherMemoryFacade facade = new DispatcherMemoryFacade(memoryManager, 4, 2, 2, 2, 3);
+        DispatcherMemoryFacade facade = new DispatcherMemoryFacade(new MemoryFacade(memoryManager), 4, 2, 2, 2, 3);
 
         List<Map<String, Object>> history = facade.buildChatHistory("u1");
         PromptMemoryContextDto actual = facade.buildPromptMemoryContext("u1", "帮我回顾", 128, Map.of("multiAgent", true));
@@ -69,7 +70,7 @@ class DispatcherMemoryFacadeTest {
                 ),
                 new PromptMemoryContextDto("recent", "semantic", "procedural", Map.of("tone", "direct"), List.of())
         );
-        DispatcherMemoryFacade facade = new DispatcherMemoryFacade(memoryManager, 4, 2, 2, 2, 3);
+        DispatcherMemoryFacade facade = new DispatcherMemoryFacade(new MemoryFacade(memoryManager), 4, 2, 2, 2, 3);
 
         AtomicReference<DispatcherMemoryFacade.MemoryCompressionStats> statsRef = new AtomicReference<>();
         String context = facade.buildMemoryContext("u1", "查一下记忆", 500, statsRef::set);
@@ -99,7 +100,7 @@ class DispatcherMemoryFacadeTest {
                 null,
                 new PromptMemoryContextDto("recent", "semantic", "procedural", Map.of("tone", "direct"), List.of())
         );
-        DispatcherMemoryFacade facade = new DispatcherMemoryFacade(memoryManager, 4, 2, 2, 2, 3);
+        DispatcherMemoryFacade facade = new DispatcherMemoryFacade(new MemoryFacade(memoryManager), 4, 2, 2, 2, 3);
         SemanticAnalysisResult semanticAnalysis = new SemanticAnalysisResult(
                 "semantic",
                 "create.todo",

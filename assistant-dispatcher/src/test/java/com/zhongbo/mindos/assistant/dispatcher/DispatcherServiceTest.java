@@ -30,6 +30,7 @@ import com.zhongbo.mindos.assistant.dispatcher.orchestrator.ParamValidator;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.SimpleParamValidator;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.TaskExecutor;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.InMemoryParamSchemaRegistry;
+import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryFacade;
 import com.zhongbo.mindos.assistant.common.dto.LocalEscalationMetricsDto;
 import com.zhongbo.mindos.assistant.skill.DefaultSkillExecutionGateway;
 import com.zhongbo.mindos.assistant.skill.Skill;
@@ -1782,8 +1783,10 @@ class DispatcherServiceTest {
         );
         MetaOrchestratorService metaOrchestratorService = new MetaOrchestratorService(false);
         SkillCapabilityPolicy capabilityPolicy = new SkillCapabilityPolicy(false, "fs.read,fs.write,exec,net", "");
-        DefaultMemoryGateway memoryGateway = new DefaultMemoryGateway(memoryManager);
-        PersonaCoreService personaCoreService = new PersonaCoreService(new MemoryFacade(memoryManager), false, 2, "unknown,null,n/a");
+        MemoryFacade unifiedMemoryFacade = new MemoryFacade(memoryManager);
+        DispatcherMemoryFacade dispatcherMemoryFacade = new DispatcherMemoryFacade(unifiedMemoryFacade, 6, 3, 3, 2, 4);
+        DefaultMemoryGateway memoryGateway = new DefaultMemoryGateway(unifiedMemoryFacade);
+        PersonaCoreService personaCoreService = new PersonaCoreService(unifiedMemoryFacade, false, 2, "unknown,null,n/a");
         DispatcherLlmTuningProperties tuningProperties = new DispatcherLlmTuningProperties();
         InMemoryParamSchemaRegistry paramSchemaRegistry = new InMemoryParamSchemaRegistry();
         paramSchemaRegistry.registerDefaults();
@@ -1819,7 +1822,7 @@ class DispatcherServiceTest {
                 metaOrchestratorService,
                 capabilityPolicy,
                 personaCoreService,
-                memoryManager,
+                dispatcherMemoryFacade,
                 llmClient,
                 semanticAnalysisService,
                 new PromptBuilder(),
@@ -1914,8 +1917,10 @@ class DispatcherServiceTest {
         );
         MetaOrchestratorService metaOrchestratorService = new MetaOrchestratorService(false);
         SkillCapabilityPolicy capabilityPolicy = new SkillCapabilityPolicy(false, "fs.read,fs.write,exec,net", "");
-        DefaultMemoryGateway memoryGateway = new DefaultMemoryGateway(memoryManager);
-        PersonaCoreService personaCoreService = new PersonaCoreService(new MemoryFacade(memoryManager), false, 2, "unknown,null,n/a");
+        MemoryFacade unifiedMemoryFacade = new MemoryFacade(memoryManager);
+        DispatcherMemoryFacade dispatcherMemoryFacade = new DispatcherMemoryFacade(unifiedMemoryFacade, 6, 3, 3, 2, 4);
+        DefaultMemoryGateway memoryGateway = new DefaultMemoryGateway(unifiedMemoryFacade);
+        PersonaCoreService personaCoreService = new PersonaCoreService(unifiedMemoryFacade, false, 2, "unknown,null,n/a");
         DispatcherLlmTuningProperties tuningProperties = new DispatcherLlmTuningProperties();
         InMemoryParamSchemaRegistry paramSchemaRegistry = new InMemoryParamSchemaRegistry();
         paramSchemaRegistry.registerDefaults();
@@ -1951,7 +1956,7 @@ class DispatcherServiceTest {
                 metaOrchestratorService,
                 capabilityPolicy,
                 personaCoreService,
-                memoryManager,
+                dispatcherMemoryFacade,
                 llmClient,
                 semanticAnalysisService,
                 new PromptBuilder(),
@@ -2378,8 +2383,10 @@ class DispatcherServiceTest {
         );
         MetaOrchestratorService metaOrchestratorService = new MetaOrchestratorService(false);
         SkillCapabilityPolicy capabilityPolicy = new SkillCapabilityPolicy(false, "fs.read,fs.write,exec,net", "");
-        DefaultMemoryGateway memoryGateway = new DefaultMemoryGateway(memoryManager);
-        PersonaCoreService personaCoreService = new PersonaCoreService(new MemoryFacade(memoryManager), false, 2, "unknown,null,n/a");
+        MemoryFacade unifiedMemoryFacade = new MemoryFacade(memoryManager);
+        DispatcherMemoryFacade dispatcherMemoryFacade = new DispatcherMemoryFacade(unifiedMemoryFacade, 6, 3, 3, 2, 4);
+        DefaultMemoryGateway memoryGateway = new DefaultMemoryGateway(unifiedMemoryFacade);
+        PersonaCoreService personaCoreService = new PersonaCoreService(unifiedMemoryFacade, false, 2, "unknown,null,n/a");
         DispatcherLlmTuningProperties tuningProperties = new DispatcherLlmTuningProperties();
         tuningProperties.getLlmDsl().setProvider(llmDslProvider);
         tuningProperties.getLlmDsl().setPreset(llmDslPreset);
@@ -2429,7 +2436,7 @@ class DispatcherServiceTest {
                 metaOrchestratorService,
                 capabilityPolicy,
                 personaCoreService,
-                memoryManager,
+                dispatcherMemoryFacade,
                 llmClient,
                 semanticAnalysisService,
                 new PromptBuilder(),
@@ -2536,8 +2543,10 @@ class DispatcherServiceTest {
         );
         MetaOrchestratorService metaOrchestratorService = new MetaOrchestratorService(false);
         SkillCapabilityPolicy capabilityPolicy = new SkillCapabilityPolicy(false, "fs.read,fs.write,exec,net", "");
-        DefaultMemoryGateway memoryGateway = new DefaultMemoryGateway(memoryManager);
-        PersonaCoreService personaCoreService = new PersonaCoreService(new MemoryFacade(memoryManager), false, 2, "unknown,null,n/a");
+        MemoryFacade unifiedMemoryFacade = new MemoryFacade(memoryManager);
+        DispatcherMemoryFacade dispatcherMemoryFacade = new DispatcherMemoryFacade(unifiedMemoryFacade, 6, 3, 3, 2, 4);
+        DefaultMemoryGateway memoryGateway = new DefaultMemoryGateway(unifiedMemoryFacade);
+        PersonaCoreService personaCoreService = new PersonaCoreService(unifiedMemoryFacade, false, 2, "unknown,null,n/a");
         InMemoryParamSchemaRegistry paramSchemaRegistry = new InMemoryParamSchemaRegistry();
         paramSchemaRegistry.registerDefaults();
         ParamValidator paramValidator = new SimpleParamValidator(paramSchemaRegistry, memoryGateway);
@@ -2572,7 +2581,7 @@ class DispatcherServiceTest {
                 metaOrchestratorService,
                 capabilityPolicy,
                 personaCoreService,
-                memoryManager,
+                dispatcherMemoryFacade,
                 llmClient,
                 semanticAnalysisService,
                 new PromptBuilder(),

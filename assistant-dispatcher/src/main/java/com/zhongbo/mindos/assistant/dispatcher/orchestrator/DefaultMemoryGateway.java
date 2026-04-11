@@ -2,7 +2,6 @@ package com.zhongbo.mindos.assistant.dispatcher.orchestrator;
 
 import com.zhongbo.mindos.assistant.memory.MemoryGateway;
 import com.zhongbo.mindos.assistant.memory.MemoryFacade;
-import com.zhongbo.mindos.assistant.memory.MemoryManager;
 import com.zhongbo.mindos.assistant.memory.model.ConversationTurn;
 import com.zhongbo.mindos.assistant.memory.model.LongTask;
 import com.zhongbo.mindos.assistant.memory.model.LongTaskStatus;
@@ -22,10 +21,6 @@ public class DefaultMemoryGateway implements MemoryGateway {
 
     private final MemoryFacade memoryFacade;
     private final int historyWindow;
-
-    public DefaultMemoryGateway(MemoryManager memoryManager) {
-        this(new MemoryFacade(memoryManager), 12);
-    }
 
     public DefaultMemoryGateway(MemoryFacade memoryFacade) {
         this(memoryFacade, 12);

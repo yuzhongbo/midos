@@ -95,11 +95,6 @@ public class TeachingPlanSkill implements Skill, SkillDescriptorProvider {
     @Override
     public SkillResult run(SkillContext context) {
         PlanRequest request = buildRequest(context);
-        List<String> validationErrors = validateRequest(request);
-        if (!validationErrors.isEmpty()) {
-            return SkillResult.failure(name(), "[teaching.plan] 输入校验失败: " + String.join("; ", validationErrors));
-        }
-
         Map<String, Object> plan = generatePlanWithLlm(request, context)
                 .orElseGet(() -> generateFallbackPlan(request));
 
@@ -150,20 +145,6 @@ public class TeachingPlanSkill implements Skill, SkillDescriptorProvider {
                 asStringList(attributes.get("constraints")),
                 asStringList(attributes.get("resourcePreference"))
         );
-    }
-
-    private List<String> validateRequest(PlanRequest request) {
-        List<String> errors = new ArrayList<>();
-        if (request.topic() == null || request.topic().isBlank()) {
-            errors.add("topic 不能为空");
-        }
-        if (request.durationWeeks() <= 0 || request.durationWeeks() > 52) {
-            errors.add("durationWeeks 需在 1-52");
-        }
-        if (request.weeklyHours() <= 0 || request.weeklyHours() > 80) {
-            errors.add("weeklyHours 需在 1-80");
-        }
-        return errors;
     }
 
     private Optional<Map<String, Object>> generatePlanWithLlm(PlanRequest request, SkillContext context) {

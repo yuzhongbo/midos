@@ -14,20 +14,22 @@ public final class ParamSchema {
     private final Map<String, Object> defaults;
     private final Map<String, ParamType> types;
     private final Map<String, List<String>> aliases;
+    private final Map<String, NumericRange> numericRanges;
 
     public ParamSchema(Set<String> required) {
-        this(required, Set.of(), Map.of(), Map.of(), Map.of());
+        this(required, Set.of(), Map.of(), Map.of(), Map.of(), Map.of());
     }
 
     public ParamSchema(Set<String> required, Set<String> atLeastOne) {
-        this(required, atLeastOne, Map.of(), Map.of(), Map.of());
+        this(required, atLeastOne, Map.of(), Map.of(), Map.of(), Map.of());
     }
 
     public ParamSchema(Set<String> required,
                        Set<String> atLeastOne,
                        Map<String, Object> defaults,
                        Map<String, ParamType> types,
-                       Map<String, List<String>> aliases) {
+                       Map<String, List<String>> aliases,
+                       Map<String, NumericRange> numericRanges) {
         if (required == null || required.isEmpty()) {
             this.required = Set.of();
         } else {
@@ -63,6 +65,11 @@ public final class ParamSchema {
             });
             this.aliases = Collections.unmodifiableMap(normalized);
         }
+        if (numericRanges == null || numericRanges.isEmpty()) {
+            this.numericRanges = Map.of();
+        } else {
+            this.numericRanges = Collections.unmodifiableMap(new LinkedHashMap<>(numericRanges));
+        }
     }
 
     public static ParamSchema required(Set<String> required) {
@@ -87,15 +94,19 @@ public final class ParamSchema {
     }
 
     public ParamSchema withDefaults(Map<String, Object> defaults) {
-        return new ParamSchema(required, atLeastOne, defaults, types, aliases);
+        return new ParamSchema(required, atLeastOne, defaults, types, aliases, numericRanges);
     }
 
     public ParamSchema withTypes(Map<String, ParamType> types) {
-        return new ParamSchema(required, atLeastOne, defaults, types, aliases);
+        return new ParamSchema(required, atLeastOne, defaults, types, aliases, numericRanges);
     }
 
     public ParamSchema withAliases(Map<String, List<String>> aliases) {
-        return new ParamSchema(required, atLeastOne, defaults, types, aliases);
+        return new ParamSchema(required, atLeastOne, defaults, types, aliases, numericRanges);
+    }
+
+    public ParamSchema withNumericRanges(Map<String, NumericRange> numericRanges) {
+        return new ParamSchema(required, atLeastOne, defaults, types, aliases, numericRanges);
     }
 
     public Set<String> required() {
@@ -116,5 +127,32 @@ public final class ParamSchema {
 
     public Map<String, List<String>> aliases() {
         return aliases;
+    }
+
+    public Map<String, NumericRange> numericRanges() {
+        return numericRanges;
+    }
+
+    public record NumericRange(double minInclusive, double maxInclusive) {
+        public NumericRange {
+            if (Double.isNaN(minInclusive) || Double.isNaN(maxInclusive) || maxInclusive < minInclusive) {
+                throw new IllegalArgumentException("invalid numeric range");
+            }
+        }
+
+        public static NumericRange closed(double minInclusive, double maxInclusive) {
+            return new NumericRange(minInclusive, maxInclusive);
+        }
+
+        public String describe() {
+            return format(minInclusive) + "-" + format(maxInclusive);
+        }
+
+        private static String format(double value) {
+            if (Math.rint(value) == value) {
+                return Integer.toString((int) value);
+            }
+            return Double.toString(value);
+        }
     }
 }

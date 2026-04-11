@@ -18,7 +18,6 @@ import com.zhongbo.mindos.assistant.common.dto.RoutingReplayItemDto;
 import com.zhongbo.mindos.assistant.common.dto.RoutingDecisionDto;
 import com.zhongbo.mindos.assistant.common.dto.CritiqueReportDto;
 import com.zhongbo.mindos.assistant.common.dto.SkillPreAnalyzeMetricsDto;
-import com.zhongbo.mindos.assistant.memory.MemoryManager;
 import com.zhongbo.mindos.assistant.memory.model.ProceduralMemoryEntry;
 import com.zhongbo.mindos.assistant.memory.model.SemanticMemoryEntry;
 import com.zhongbo.mindos.assistant.memory.model.SkillUsageStats;
@@ -28,9 +27,7 @@ import com.zhongbo.mindos.assistant.dispatcher.decision.Decision;
 import com.zhongbo.mindos.assistant.dispatcher.decision.DecisionParser;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.CandidatePlanner;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.DecisionOrchestrator;
-import com.zhongbo.mindos.assistant.dispatcher.orchestrator.InMemoryParamSchemaRegistry;
 import com.zhongbo.mindos.assistant.memory.MemoryGateway;
-import com.zhongbo.mindos.assistant.dispatcher.orchestrator.ParamSchemaRegistry;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.ParamValidator;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.SimpleCandidatePlanner;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.SimpleConversationLoop;
@@ -87,37 +84,10 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
             "mcp.qwen.websearch"
     );
 
-    private static final int CONTEXT_HISTORY_LIMIT = 6;
-    private static final int CONTEXT_KNOWLEDGE_LIMIT = 3;
-    private static final int HABIT_SKILL_STATS_LIMIT = 3;
     private static final int SEMANTIC_SUMMARY_MIN_CHARS = 120;
     private static final double SEMANTIC_CONTEXT_MIN_CONFIDENCE = 0.45;
     private static final double SEMANTIC_CLARIFY_CONFIDENCE_THRESHOLD = 0.70;
     private static final String SKILL_HELP_CHANNEL = "skills.help";
-    private static final List<String> HABIT_CONTINUATION_CUES = List.of(
-            "继续",
-            "按之前",
-            "按上次",
-            "沿用",
-            "还是那个",
-            "同样方式",
-            "按照我的习惯",
-            "根据我的习惯"
-    );
-    private static final Pattern TOPIC_BEFORE_PLAN_PATTERN = Pattern.compile("([\\p{L}A-Za-z0-9+#._-]{2,32})\\s*(?:教学规划|学习计划|复习计划|课程规划)");
-    private static final Pattern TOPIC_AFTER_VERB_PATTERN = Pattern.compile("(?:学|学习|复习|备考|课程)\\s*([\\p{L}A-Za-z0-9+#._-]{2,32})");
-    private static final Pattern GOAL_PATTERN = Pattern.compile("(?:目标(?:是|为)?|想要|希望)\\s*([^，。；;\\n]+)");
-    private static final Pattern DURATION_PATTERN = Pattern.compile("([0-9零一二两三四五六七八九十百千万]+)\\s*(?:周|weeks?)", Pattern.CASE_INSENSITIVE);
-    private static final Pattern WEEKLY_HOURS_PATTERN = Pattern.compile("(?:每周|一周)\\s*([0-9零一二两三四五六七八九十百千万]+)\\s*(?:小时|h|hours?)", Pattern.CASE_INSENSITIVE);
-    private static final Pattern LEVEL_PATTERN = Pattern.compile("(?:年级|阶段|level|级别)\\s*[:：]?\\s*([A-Za-z0-9一二三四五六七八九十高初大研Gg-]+)", Pattern.CASE_INSENSITIVE);
-    private static final Pattern STUDENT_ID_PATTERN = Pattern.compile("(?:学生|student)\\s*(?:id|ID)?\\s*[:：]?\\s*([A-Za-z0-9._-]+)");
-    private static final Pattern WEAK_TOPICS_PATTERN = Pattern.compile("(?:薄弱点|薄弱科目|弱项)\\s*[:：]?\\s*([^，。；;\\n]+)");
-    private static final Pattern STRONG_TOPICS_PATTERN = Pattern.compile("(?:优势项|擅长|强项)\\s*[:：]?\\s*([^，。；;\\n]+)");
-    private static final Pattern LEARNING_STYLE_PATTERN = Pattern.compile("(?:学习风格|学习方式)\\s*[:：]?\\s*([^，。；;\\n]+)");
-    private static final Pattern CONSTRAINTS_PATTERN = Pattern.compile("(?:约束|限制|不可用时段)\\s*[:：]?\\s*([^，。；;\\n]+)");
-    private static final Pattern RESOURCE_PATTERN = Pattern.compile("(?:资源偏好|资源|教材偏好)\\s*[:：]?\\s*([^，。；;\\n]+)");
-    private static final Pattern FILE_PATH_PATTERN = Pattern.compile("(?:路径|path|目录)\\s*[:：]?\\s*([^，。；;\\n]+)", Pattern.CASE_INSENSITIVE);
-    private static final Pattern TODO_DUE_DATE_PATTERN = Pattern.compile("(?:截止|due|到期|deadline)\\s*(?:时间|日期|date)?\\s*[:：]?\\s*([^，。；;\\n]+)", Pattern.CASE_INSENSITIVE);
     private static final Pattern ROUTING_TOKEN_SPLIT_PATTERN = Pattern.compile("[^\\p{L}\\p{N}.#_-]+");
     private static final Pattern EXPLICIT_MEMORY_STORE_PATTERN = Pattern.compile(
             "^(?:remember\\s*[:：]?|please remember\\s*[:：]?|请记住\\s*[:：]?|帮我记住\\s*[:：]?|记住\\s*[:：]?|记一下\\s*[:：]?)(.+)$",
@@ -145,7 +115,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
     private final MetaOrchestratorService metaOrchestratorService;
     private final SkillCapabilityPolicy skillCapabilityPolicy;
     private final PersonaCoreService personaCoreService;
-    private final MemoryManager memoryManager;
+    private final DispatcherMemoryFacade dispatcherMemoryFacade;
     private final LlmClient llmClient;
     private final SemanticAnalysisService semanticAnalysisService;
     private final boolean preferenceReuseEnabled;
@@ -262,10 +232,11 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
     private final DecisionOrchestrator decisionOrchestrator;
     private final ParamValidator paramValidator;
     private final MemoryGateway memoryGateway;
-    private final DispatcherMemoryFacade defaultDispatcherMemoryFacade;
+    private final BehaviorRoutingSupport behaviorRoutingSupport;
+    private final SkillRoutingSupport skillRoutingSupport;
+    private final SemanticRoutingSupport semanticRoutingSupport;
     private MasterOrchestrator masterOrchestrator;
     private RoutingCoordinator routingCoordinator;
-    private DispatcherMemoryFacade dispatcherMemoryFacade;
 
     public DispatcherService(SkillEngineFacade skillEngine,
                              SkillDslParser skillDslParser,
@@ -275,7 +246,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                              MetaOrchestratorService metaOrchestratorService,
                              SkillCapabilityPolicy skillCapabilityPolicy,
                              PersonaCoreService personaCoreService,
-                             MemoryManager memoryManager,
+                             DispatcherMemoryFacade dispatcherMemoryFacade,
                              LlmClient llmClient,
                              SemanticAnalysisService semanticAnalysisService,
                              PromptBuilder promptBuilder,
@@ -344,7 +315,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                 metaOrchestratorService,
                 skillCapabilityPolicy,
                 personaCoreService,
-                memoryManager,
+                dispatcherMemoryFacade,
                 llmClient,
                 semanticAnalysisService,
                 promptBuilder,
@@ -412,16 +383,16 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
     // primary constructor with safe defaults (disabled).
     @Autowired
     public DispatcherService(SkillEngineFacade skillEngine,
-                          SkillDslParser skillDslParser,
-                          ParamValidator paramValidator,
-                          DecisionOrchestrator decisionOrchestrator,
-                          IntentModelRoutingPolicy intentModelRoutingPolicy,
-                          MetaOrchestratorService metaOrchestratorService,
-                           SkillCapabilityPolicy skillCapabilityPolicy,
-                              PersonaCoreService personaCoreService,
-                              MemoryManager memoryManager,
-                              LlmClient llmClient,
-                              SemanticAnalysisService semanticAnalysisService,
+                           SkillDslParser skillDslParser,
+                           ParamValidator paramValidator,
+                           DecisionOrchestrator decisionOrchestrator,
+                           IntentModelRoutingPolicy intentModelRoutingPolicy,
+                           MetaOrchestratorService metaOrchestratorService,
+                            SkillCapabilityPolicy skillCapabilityPolicy,
+                               PersonaCoreService personaCoreService,
+                               DispatcherMemoryFacade dispatcherMemoryFacade,
+                               LlmClient llmClient,
+                               SemanticAnalysisService semanticAnalysisService,
                               PromptBuilder promptBuilder,
                               LLMDecisionEngine llmDecisionEngine,
                               DecisionParser decisionParser,
@@ -485,7 +456,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         this.metaOrchestratorService = metaOrchestratorService;
         this.skillCapabilityPolicy = skillCapabilityPolicy;
         this.personaCoreService = personaCoreService;
-        this.memoryManager = memoryManager;
+        this.dispatcherMemoryFacade = Objects.requireNonNull(dispatcherMemoryFacade, "dispatcherMemoryFacade");
         this.llmClient = llmClient;
         this.semanticAnalysisService = semanticAnalysisService;
         this.promptBuilder = promptBuilder;
@@ -575,13 +546,38 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         this.parallelDetectedSkillRoutingEnabled = parallelDetectedSkillRoutingEnabled;
         this.parallelDetectedSkillRoutingMaxCandidates = Math.max(1, parallelDetectedSkillRoutingMaxCandidates);
         this.parallelDetectedSkillRoutingTimeoutMs = Math.max(100L, parallelDetectedSkillRoutingTimeoutMs);
-        this.defaultDispatcherMemoryFacade = new DispatcherMemoryFacade(
-                memoryManager,
-                CONTEXT_HISTORY_LIMIT,
-                CONTEXT_KNOWLEDGE_LIMIT,
-                HABIT_SKILL_STATS_LIMIT,
-                this.memoryContextKeepRecentTurns,
-                this.memoryContextHistorySummaryMinTurns
+        this.behaviorRoutingSupport = new BehaviorRoutingSupport(
+                this.skillDslParser,
+                this.dispatcherMemoryFacade,
+                this.preferenceReuseEnabled,
+                this.habitRoutingEnabled,
+                this.habitRoutingMinTotalCount,
+                this.habitRoutingMinSuccessRate,
+                this.habitContinuationInputMaxLength,
+                this.habitRoutingRecentWindowSize,
+                this.habitRoutingRecentMinSuccessCount,
+                this.habitRoutingRecentMaxAgeHours,
+                this.behaviorLearningEnabled,
+                this.behaviorLearningWindowSize,
+                this.behaviorLearningDefaultParamThreshold
+        );
+        this.skillRoutingSupport = new SkillRoutingSupport(
+                this.skillEngine,
+                this.dispatcherMemoryFacade,
+                this.behaviorRoutingSupport,
+                this.llmRoutingShortlistMaxSkills,
+                this::inferMemoryBucket
+        );
+        this.semanticRoutingSupport = new SemanticRoutingSupport(
+                this.dispatcherMemoryFacade,
+                this.behaviorRoutingSupport,
+                this.paramValidator,
+                this::isKnownSkillName,
+                this::inferMemoryBucket,
+                this.semanticAnalysisRouteMinConfidence,
+                this.semanticAnalysisClarifyMinConfidence,
+                this.preferSuggestedSkillEnabled,
+                this.preferSuggestedSkillMinConfidence
         );
     }
 
@@ -595,13 +591,8 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         this.routingCoordinator = routingCoordinator;
     }
 
-    @Autowired(required = false)
-    void setDispatcherMemoryFacade(DispatcherMemoryFacade dispatcherMemoryFacade) {
-        this.dispatcherMemoryFacade = dispatcherMemoryFacade;
-    }
-
     private DispatcherMemoryFacade activeDispatcherMemoryFacade() {
-        return dispatcherMemoryFacade == null ? defaultDispatcherMemoryFacade : dispatcherMemoryFacade;
+        return dispatcherMemoryFacade;
     }
 
     public DispatchResult dispatch(String userId, String userInput) {
@@ -696,7 +687,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                         resolvedProfileContext,
                         availableSkillSummaries
                 );
-        maybeStoreSemanticSummary(userId, userInput, semanticAnalysis);
+        semanticRoutingSupport.maybeStoreSemanticSummary(userId, userInput, semanticAnalysis);
         boolean realtimeIntentInput = isRealtimeIntent(userInput, semanticAnalysis);
         realtimeLookupRef.set(realtimeIntentInput || isRealtimeLikeInput(userInput, semanticAnalysis));
         String routingInput = semanticAnalysis.routingInput(userInput);
@@ -800,7 +791,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                     finalResultSuccessRef.set(result.success());
                     decisionOrchestrator.recordOutcome(userId, userInput, result, trace);
                     activeDispatcherMemoryFacade().appendAssistantConversation(userId, result.output());
-                    maybeStoreBehaviorProfile(userId, result);
+                    behaviorRoutingSupport.maybeStoreBehaviorProfile(userId, result);
                     personaCoreService.learnFromTurn(userId, resolvedProfileContext, result);
                     recordRoutingReplaySample(userInput, routingDecisionRef.get(), replayProbe, promptMemoryContext, result.skillName());
                     return new DispatchResult(result.output(), result.skillName(), trace);
@@ -912,7 +903,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                         resolvedProfileContext,
                         availableSkillSummaries
                 );
-        maybeStoreSemanticSummary(userId, userInput, semanticAnalysis);
+        semanticRoutingSupport.maybeStoreSemanticSummary(userId, userInput, semanticAnalysis);
         boolean realtimeIntentInput = isRealtimeIntent(userInput, semanticAnalysis);
         realtimeLookupRef.set(realtimeIntentInput || isRealtimeLikeInput(userInput, semanticAnalysis));
         String routingInput = semanticAnalysis.routingInput(userInput);
@@ -981,7 +972,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                     finalResultSuccessRef.set(normalized.success());
                     activeDispatcherMemoryFacade().appendAssistantConversation(userId, normalized.output());
                     decisionOrchestrator.recordOutcome(userId, userInput, normalized, trace);
-                    maybeStoreBehaviorProfile(userId, normalized);
+                    behaviorRoutingSupport.maybeStoreBehaviorProfile(userId, normalized);
                     personaCoreService.learnFromTurn(userId, resolvedProfileContext, normalized);
                     recordRoutingReplaySample(userInput, routingDecisionRef.get(), replayProbe, promptMemoryContext, normalized.skillName());
                     return new DispatchResult(normalized.output(), normalized.skillName(), trace);
@@ -1115,7 +1106,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
             finalResultSuccessRef.set(result.success());
             decisionOrchestrator.recordOutcome(userId, userInput, result, trace);
             activeDispatcherMemoryFacade().appendAssistantConversation(userId, result.output());
-            maybeStoreBehaviorProfile(userId, result);
+            behaviorRoutingSupport.maybeStoreBehaviorProfile(userId, result);
             personaCoreService.learnFromTurn(userId, resolvedProfileContext, result);
             recordRoutingReplaySample(userInput, routingDecisionRef.get(), replayProbe, promptMemoryContext, result.skillName());
             return new DispatchResult(result.output(), result.skillName(), trace);
@@ -1743,12 +1734,12 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                                                                            SkillContext context,
                                                                            SemanticAnalysisResult semanticAnalysis,
                                                                            List<String> rejectedReasons) {
-        SemanticRoutingPlan semanticPlan = buildSemanticRoutingPlan(userId, semanticAnalysis, userInput);
-        Optional<SkillDsl> semanticDsl = isContinuationIntent(normalize(context.input()))
+        SemanticRoutingSupport.SemanticRoutingPlan semanticPlan = semanticRoutingSupport.buildSemanticRoutingPlan(userId, semanticAnalysis, userInput);
+        Optional<SkillDsl> semanticDsl = behaviorRoutingSupport.isContinuationIntent(normalize(context.input()))
                 ? Optional.empty()
-                : toSemanticSkillDsl(semanticPlan);
-        if (shouldAskSemanticClarification(semanticAnalysis, context.input(), semanticPlan)) {
-            String clarifyReply = buildSemanticClarifyReply(semanticAnalysis, semanticPlan);
+                : semanticRoutingSupport.toSemanticSkillDsl(semanticPlan);
+        if (semanticRoutingSupport.shouldAskSemanticClarification(semanticAnalysis, context.input(), semanticPlan)) {
+            String clarifyReply = semanticRoutingSupport.buildSemanticClarifyReply(semanticAnalysis, semanticPlan);
             LOGGER.info("Dispatcher route=semantic-clarify, userId=" + userId
                     + ", skill=" + semanticPlan.skillName()
                     + ", confidence=" + semanticPlan.confidence());
@@ -1788,7 +1779,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                     rejectedReasons
             ));
         }
-        rejectedReasons.add(isContinuationIntent(normalize(context.input()))
+        rejectedReasons.add(behaviorRoutingSupport.isContinuationIntent(normalize(context.input()))
                 ? "semantic analysis deferred to continuation or habit routing"
                 : "semantic analysis did not select a confident local skill");
         return Optional.empty();
@@ -1803,7 +1794,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         if (ruleDsl.isPresent()
                 && "code.generate".equals(ruleDsl.get().skill())
                 && !isCodeGenerationIntent(userInput)
-                && !isContinuationOnlyInput(userInput)) {
+                && !behaviorRoutingSupport.isContinuationOnlyInput(userInput)) {
             rejectedReasons.add("rule-based code.generate rejected because input does not look like a code task");
             ruleDsl = Optional.empty();
         }
@@ -2055,14 +2046,18 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         boolean realtimeLikeInput = isRealtimeLikeInput(userInput, semanticAnalysis);
         Optional<SkillDsl> habitDsl = realtimeLikeInput
                 ? Optional.empty()
-                : detectSkillWithMemoryHabits(userId, userInput, context.attributes());
+                : behaviorRoutingSupport.detectSkillWithMemoryHabits(
+                        userId,
+                        userInput,
+                        context.attributes(),
+                        skill -> isSkillLoopGuardBlocked(userId, skill, userInput));
         if (realtimeLikeInput) {
             rejectedReasons.add("realtime-like input skipped memory-habit routing");
         }
         if (habitDsl.isPresent()
                 && "code.generate".equals(habitDsl.get().skill())
                 && !isCodeGenerationIntent(userInput)
-                && !isContinuationOnlyInput(userInput)) {
+                && !behaviorRoutingSupport.isContinuationOnlyInput(userInput)) {
             rejectedReasons.add("habit-based code.generate rejected because input does not look like a code task");
             habitDsl = Optional.empty();
         }
@@ -2135,7 +2130,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                                                                     SemanticAnalysisResult semanticAnalysis,
                                                                     RoutingReplayProbe replayProbe,
                                                                     List<String> rejectedReasons) {
-        if (isContinuationOnlyInput(userInput)) {
+        if (behaviorRoutingSupport.isContinuationOnlyInput(userInput)) {
             replayProbe.preAnalyzeCandidate = "SKIPPED_CONTINUATION";
             return llmFallbackRoute(
                     userId,
@@ -2200,7 +2195,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         if (llmDsl.isPresent()
                 && "code.generate".equals(llmDsl.get().skill())
                 && !isCodeGenerationIntent(userInput)
-                && !isContinuationOnlyInput(userInput)) {
+                && !behaviorRoutingSupport.isContinuationOnlyInput(userInput)) {
             rejectedReasons.add("LLM-routed code.generate rejected because input does not look like a code task");
             llmDsl = Optional.empty();
         }
@@ -2585,27 +2580,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
             return Optional.of(new SkillDsl("code.generate", payload));
         }
         if (isTeachingPlanIntent(normalized)) {
-            Map<String, Object> payload = new LinkedHashMap<>();
-            putIfPresent(payload, "studentId", extractByPattern(userInput, STUDENT_ID_PATTERN));
-            putIfPresent(payload, "topic", extractTopic(userInput));
-            putIfPresent(payload, "goal", extractGoal(userInput));
-
-            Integer durationWeeks = extractFlexibleNumber(userInput, DURATION_PATTERN);
-            if (durationWeeks != null && durationWeeks > 0) {
-                payload.put("durationWeeks", durationWeeks);
-            }
-
-            Integer weeklyHours = extractFlexibleNumber(userInput, WEEKLY_HOURS_PATTERN);
-            if (weeklyHours != null && weeklyHours > 0) {
-                payload.put("weeklyHours", weeklyHours);
-            }
-
-            putIfPresent(payload, "gradeOrLevel", extractLevel(userInput));
-            putListIfPresent(payload, "weakTopics", extractDelimitedValues(userInput, WEAK_TOPICS_PATTERN));
-            putListIfPresent(payload, "strongTopics", extractDelimitedValues(userInput, STRONG_TOPICS_PATTERN));
-            putListIfPresent(payload, "learningStyle", extractDelimitedValues(userInput, LEARNING_STYLE_PATTERN));
-            putListIfPresent(payload, "constraints", extractDelimitedValues(userInput, CONSTRAINTS_PATTERN));
-            putListIfPresent(payload, "resourcePreference", extractDelimitedValues(userInput, RESOURCE_PATTERN));
+            Map<String, Object> payload = behaviorRoutingSupport.extractTeachingPlanPayload(userInput);
             return Optional.of(new SkillDsl("teaching.plan", payload));
         }
         return Optional.empty();
@@ -2647,280 +2622,6 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                 "explain")
                 && !containsAny(normalized, "代码", "函数", "class", "method", "api", "bug", "修复");
         return !looksLikeGeneralQuestion;
-    }
-
-    private Optional<SkillDsl> detectSkillWithMemoryHabits(String userId,
-                                                           String userInput,
-                                                           Map<String, Object> profileContext) {
-        if (!habitRoutingEnabled) {
-            return Optional.empty();
-        }
-        if (userInput == null || userInput.isBlank()) {
-            return Optional.empty();
-        }
-
-        String normalized = normalize(userInput);
-        if (!isContinuationIntent(normalized)) {
-            return Optional.empty();
-        }
-
-        List<ProceduralMemoryEntry> history = activeDispatcherMemoryFacade().getSkillUsageHistory(userId);
-        Optional<String> preferredSkill = preferredSkillFromHistory(history)
-                .or(() -> preferredSkillFromStats(userId));
-        if (preferredSkill.isEmpty()) {
-            return Optional.empty();
-        }
-        if (!passesHabitConfidenceGate(userId, preferredSkill.get(), history)) {
-            return Optional.empty();
-        }
-        if (isSkillLoopGuardBlocked(userId, preferredSkill.get(), userInput)) {
-            return Optional.empty();
-        }
-
-        return toSkillDslByHabit(userId, preferredSkill.get(), userInput, profileContext == null ? Map.of() : profileContext);
-    }
-
-    private Optional<String> preferredSkillFromHistory(List<ProceduralMemoryEntry> history) {
-        for (int i = history.size() - 1; i >= 0; i--) {
-            ProceduralMemoryEntry entry = history.get(i);
-            if (entry != null && entry.success() && isHabitEligibleSkill(entry.skillName())) {
-                return Optional.of(entry.skillName());
-            }
-        }
-        return Optional.empty();
-    }
-
-    private boolean passesHabitConfidenceGate(String userId,
-                                              String preferredSkill,
-                                              List<ProceduralMemoryEntry> history) {
-        if (preferredSkill == null || preferredSkill.isBlank() || history == null || history.isEmpty()) {
-            return false;
-        }
-        if (!passesStatsThreshold(userId, preferredSkill)) {
-            return false;
-        }
-
-        int scanned = 0;
-        int successCount = 0;
-        Instant lastSuccessAt = null;
-        for (int i = history.size() - 1; i >= 0 && scanned < habitRoutingRecentWindowSize; i--) {
-            ProceduralMemoryEntry entry = history.get(i);
-            scanned++;
-            if (!entry.success() || !preferredSkill.equals(entry.skillName())) {
-                continue;
-            }
-            successCount++;
-            if (lastSuccessAt == null || (entry.createdAt() != null && entry.createdAt().isAfter(lastSuccessAt))) {
-                lastSuccessAt = entry.createdAt();
-            }
-        }
-        if (successCount < habitRoutingRecentMinSuccessCount) {
-            return false;
-        }
-        if (lastSuccessAt == null) {
-            return false;
-        }
-
-        double ageHours = Math.max(0.0, Duration.between(lastSuccessAt, Instant.now()).toMillis() / 3_600_000d);
-        return ageHours <= habitRoutingRecentMaxAgeHours;
-    }
-
-    private boolean passesStatsThreshold(String userId, String skillName) {
-        return activeDispatcherMemoryFacade().getSkillUsageStats(userId).stream()
-                .filter(stats -> isHabitEligibleSkill(stats.skillName()))
-                .filter(stats -> skillName.equals(stats.skillName()))
-                .anyMatch(stats -> stats.totalCount() >= habitRoutingMinTotalCount
-                        && stats.successCount() * 1.0 / Math.max(1, stats.totalCount()) >= habitRoutingMinSuccessRate);
-    }
-
-    private Optional<String> preferredSkillFromStats(String userId) {
-        return activeDispatcherMemoryFacade().getSkillUsageStats(userId).stream()
-                .filter(stats -> isHabitEligibleSkill(stats.skillName()))
-                .filter(stats -> stats.totalCount() >= habitRoutingMinTotalCount)
-                .filter(stats -> stats.successCount() * 1.0 / Math.max(1, stats.totalCount()) >= habitRoutingMinSuccessRate)
-                .max(Comparator.comparingLong(SkillUsageStats::successCount))
-                .map(SkillUsageStats::skillName);
-    }
-
-    private Optional<SkillDsl> toSkillDslByHabit(String userId,
-                                                 String skillName,
-                                                 String userInput,
-                                                 Map<String, Object> profileContext) {
-        if ("teaching.plan".equals(skillName)) {
-            Map<String, Object> payload = extractTeachingPlanPayload(userInput);
-            Optional<String> lastInput = findLastSuccessfulSkillInput(userId, skillName);
-            if (lastInput.isPresent()) {
-                mergeTeachingPlanFromHistory(payload, lastInput.get());
-            }
-            mergeTeachingPlanFromProfile(payload, profileContext);
-            return Optional.of(new SkillDsl(skillName, payload));
-        }
-        if ("code.generate".equals(skillName)) {
-            Map<String, Object> payload = new LinkedHashMap<>();
-            String task = userInput;
-            if (isContinuationOnlyInput(userInput)) {
-                task = findLastSuccessfulSkillInput(userId, skillName)
-                        .map(lastInput -> resolveHistoricalTask(skillName, lastInput, "task"))
-                        .orElse(userInput);
-            }
-            task = sanitizeContinuationPrefix(task);
-            payload.put("task", task);
-            mergeCodeGenerateFromProfile(payload, profileContext);
-            return Optional.of(new SkillDsl(skillName, payload));
-        }
-        if ("todo.create".equals(skillName)) {
-            Map<String, Object> payload = new LinkedHashMap<>();
-            String task = userInput;
-            String historicalInput = null;
-            if (isContinuationOnlyInput(userInput)) {
-                historicalInput = findLastSuccessfulSkillInput(userId, skillName).orElse(null);
-                task = historicalInput == null ? userInput : resolveHistoricalTask(skillName, historicalInput, "task");
-            }
-            payload.put("task", sanitizeContinuationPrefix(task));
-            String dueDate = extractByPattern(userInput, TODO_DUE_DATE_PATTERN);
-            if ((dueDate == null || dueDate.isBlank()) && isContinuationOnlyInput(userInput)) {
-                dueDate = extractByPattern(task, TODO_DUE_DATE_PATTERN);
-                if ((dueDate == null || dueDate.isBlank()) && historicalInput != null) {
-                    dueDate = resolveHistoricalTask(skillName, historicalInput, "dueDate");
-                }
-            }
-            if (dueDate != null && !dueDate.isBlank()) {
-                payload.put("dueDate", dueDate);
-            }
-            mergeTodoCreateFromProfile(payload, profileContext);
-            return Optional.of(new SkillDsl(skillName, payload));
-        }
-        if ("file.search".equals(skillName)) {
-            Map<String, Object> payload = new LinkedHashMap<>();
-            String path = extractByPattern(userInput, FILE_PATH_PATTERN);
-            payload.put("path", path == null || path.isBlank() ? "./" : path.trim());
-            payload.put("keyword", userInput);
-            return Optional.of(new SkillDsl(skillName, payload));
-        }
-        if ("echo".equals(skillName) || "time".equals(skillName)) {
-            return Optional.of(SkillDsl.of(skillName));
-        }
-        return Optional.empty();
-    }
-
-    private Optional<String> findLastSuccessfulSkillInput(String userId, String skillName) {
-        List<ProceduralMemoryEntry> history = activeDispatcherMemoryFacade().getSkillUsageHistory(userId);
-        for (int i = history.size() - 1; i >= 0; i--) {
-            ProceduralMemoryEntry entry = history.get(i);
-            if (entry.success()
-                    && skillName.equals(entry.skillName())
-                    && entry.input() != null
-                    && !entry.input().isBlank()) {
-                return Optional.of(entry.input());
-            }
-        }
-        return Optional.empty();
-    }
-
-    private void mergeTeachingPlanFromHistory(Map<String, Object> payload, String historyInput) {
-        if (payload.get("topic") == null) {
-            putIfPresent(payload, "topic", extractTopic(historyInput));
-        }
-        if (payload.get("goal") == null) {
-            putIfPresent(payload, "goal", extractGoal(historyInput));
-        }
-        if (payload.get("studentId") == null) {
-            putIfPresent(payload, "studentId", extractByPattern(historyInput, STUDENT_ID_PATTERN));
-        }
-        if (payload.get("durationWeeks") == null) {
-            Integer durationWeeks = extractFlexibleNumber(historyInput, DURATION_PATTERN);
-            if (durationWeeks != null && durationWeeks > 0) {
-                payload.put("durationWeeks", durationWeeks);
-            }
-        }
-        if (payload.get("weeklyHours") == null) {
-            Integer weeklyHours = extractFlexibleNumber(historyInput, WEEKLY_HOURS_PATTERN);
-            if (weeklyHours != null && weeklyHours > 0) {
-                payload.put("weeklyHours", weeklyHours);
-            }
-        }
-    }
-
-    private void mergeTeachingPlanFromProfile(Map<String, Object> payload, Map<String, Object> profileContext) {
-        if (!preferenceReuseEnabled || profileContext == null || profileContext.isEmpty()) {
-            return;
-        }
-        String role = asString(profileContext.get("role"));
-        if ((payload.get("gradeOrLevel") == null || String.valueOf(payload.get("gradeOrLevel")).isBlank())
-                && role != null && !role.isBlank()) {
-            payload.put("gradeOrLevel", role);
-        }
-
-        String style = asString(profileContext.get("style"));
-        if (!payload.containsKey("learningStyle") && style != null && !style.isBlank()) {
-            payload.put("learningStyle", List.of(style));
-        }
-
-        String timezone = asString(profileContext.get("timezone"));
-        if (!payload.containsKey("constraints") && timezone != null && !timezone.isBlank()) {
-            payload.put("constraints", List.of("时区:" + timezone));
-        }
-
-        String language = asString(profileContext.get("language"));
-        if (!payload.containsKey("resourcePreference") && language != null && !language.isBlank()) {
-            payload.put("resourcePreference", List.of("语言:" + language));
-        }
-    }
-
-    private void mergeCodeGenerateFromProfile(Map<String, Object> payload, Map<String, Object> profileContext) {
-        if (!preferenceReuseEnabled || profileContext == null || profileContext.isEmpty()) {
-            return;
-        }
-        String style = asString(profileContext.get("style"));
-        if (style != null && !style.isBlank() && !payload.containsKey("style")) {
-            payload.put("style", style);
-        }
-        String language = asString(profileContext.get("language"));
-        if (language != null && !language.isBlank() && !payload.containsKey("language")) {
-            payload.put("language", language);
-        }
-    }
-
-    private void mergeTodoCreateFromProfile(Map<String, Object> payload, Map<String, Object> profileContext) {
-        if (!preferenceReuseEnabled || profileContext == null || profileContext.isEmpty()) {
-            return;
-        }
-        String timezone = asString(profileContext.get("timezone"));
-        if (timezone != null && !timezone.isBlank() && !payload.containsKey("timezone")) {
-            payload.put("timezone", timezone);
-        }
-        String style = asString(profileContext.get("style"));
-        if (style != null && !style.isBlank() && !payload.containsKey("style")) {
-            payload.put("style", style);
-        }
-    }
-
-    private String sanitizeContinuationPrefix(String value) {
-        if (value == null) {
-            return "";
-        }
-        return value.replaceFirst("^(继续|按之前|按上次|沿用|同样方式|还是那个)[，,、 ]*", "").trim();
-    }
-
-    private String resolveHistoricalTask(String skillName, String historicalInput, String fieldName) {
-        if (historicalInput == null || historicalInput.isBlank()) {
-            return "";
-        }
-        try {
-            Optional<SkillDsl> parsed = skillDslParser.parse(historicalInput);
-            if (parsed.isPresent() && skillName.equals(parsed.get().skill())) {
-                Object value = parsed.get().input().get(fieldName);
-                if (value != null) {
-                    String normalized = String.valueOf(value).trim();
-                    if (!normalized.isBlank()) {
-                        return normalized;
-                    }
-                }
-            }
-        } catch (SkillDslValidationException ignored) {
-            // Historical inputs are often plain natural language instead of explicit SkillDSL JSON.
-        }
-        return historicalInput;
     }
 
     private SkillResult enrichMemoryHabitResult(SkillResult result,
@@ -2998,53 +2699,6 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         }
     }
 
-    private boolean isContinuationOnlyInput(String userInput) {
-        String normalized = normalize(userInput);
-        return isContinuationIntent(normalized)
-                && normalized.length() <= habitContinuationInputMaxLength;
-    }
-
-    private boolean isContinuationIntent(String normalized) {
-        if (normalized == null || normalized.isBlank()) {
-            return false;
-        }
-        for (String cue : HABIT_CONTINUATION_CUES) {
-            int index = normalized.indexOf(cue);
-            if (index < 0) {
-                continue;
-            }
-            if (index <= 2) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private Map<String, Object> extractTeachingPlanPayload(String userInput) {
-        Map<String, Object> payload = new LinkedHashMap<>();
-        putIfPresent(payload, "studentId", extractByPattern(userInput, STUDENT_ID_PATTERN));
-        putIfPresent(payload, "topic", extractTopic(userInput));
-        putIfPresent(payload, "goal", extractGoal(userInput));
-
-        Integer durationWeeks = extractFlexibleNumber(userInput, DURATION_PATTERN);
-        if (durationWeeks != null && durationWeeks > 0) {
-            payload.put("durationWeeks", durationWeeks);
-        }
-
-        Integer weeklyHours = extractFlexibleNumber(userInput, WEEKLY_HOURS_PATTERN);
-        if (weeklyHours != null && weeklyHours > 0) {
-            payload.put("weeklyHours", weeklyHours);
-        }
-
-        putIfPresent(payload, "gradeOrLevel", extractLevel(userInput));
-        putListIfPresent(payload, "weakTopics", extractDelimitedValues(userInput, WEAK_TOPICS_PATTERN));
-        putListIfPresent(payload, "strongTopics", extractDelimitedValues(userInput, STRONG_TOPICS_PATTERN));
-        putListIfPresent(payload, "learningStyle", extractDelimitedValues(userInput, LEARNING_STYLE_PATTERN));
-        putListIfPresent(payload, "constraints", extractDelimitedValues(userInput, CONSTRAINTS_PATTERN));
-        putListIfPresent(payload, "resourcePreference", extractDelimitedValues(userInput, RESOURCE_PATTERN));
-        return payload;
-    }
-
     private boolean isTeachingPlanIntent(String normalized) {
         return containsAny(normalized,
                 "教学规划",
@@ -3056,168 +2710,6 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                 "teaching plan");
     }
 
-    private String extractTopic(String userInput) {
-        Matcher beforePlanMatcher = TOPIC_BEFORE_PLAN_PATTERN.matcher(userInput);
-        if (beforePlanMatcher.find()) {
-            return sanitizeTopic(beforePlanMatcher.group(1));
-        }
-
-        Matcher afterVerbMatcher = TOPIC_AFTER_VERB_PATTERN.matcher(userInput);
-        if (afterVerbMatcher.find()) {
-            return sanitizeTopic(afterVerbMatcher.group(1));
-        }
-        return null;
-    }
-
-    private String sanitizeTopic(String rawTopic) {
-        if (rawTopic == null || rawTopic.isBlank()) {
-            return null;
-        }
-        return rawTopic.trim()
-                .replaceFirst("^(给我一个|给我一份|给我|帮我做|帮我|请帮我|请|做个|做一份)", "")
-                .trim();
-    }
-
-    private String extractGoal(String userInput) {
-        Matcher matcher = GOAL_PATTERN.matcher(userInput);
-        return matcher.find() ? matcher.group(1).trim() : null;
-    }
-
-    private String extractByPattern(String input, Pattern pattern) {
-        Matcher matcher = pattern.matcher(input);
-        return matcher.find() ? matcher.group(1).trim() : null;
-    }
-
-    private String extractLevel(String userInput) {
-        Matcher matcher = LEVEL_PATTERN.matcher(userInput);
-        return matcher.find() ? matcher.group(1).trim() : null;
-    }
-
-    private Integer extractFlexibleNumber(String input, Pattern pattern) {
-        Matcher matcher = pattern.matcher(input);
-        if (!matcher.find()) {
-            return null;
-        }
-        return parseFlexibleNumber(matcher.group(1));
-    }
-
-    private Integer parseFlexibleNumber(String value) {
-        if (value == null || value.isBlank()) {
-            return null;
-        }
-        String normalized = value.trim();
-        if (normalized.matches("\\d+")) {
-            return Integer.parseInt(normalized);
-        }
-        return parseSimpleChineseNumber(normalized);
-    }
-
-    private Integer parseSimpleChineseNumber(String value) {
-        String normalized = value.trim().replace('两', '二');
-        while (normalized.startsWith("零")) {
-            normalized = normalized.substring(1);
-        }
-        if (normalized.isBlank()) {
-            return 0;
-        }
-
-        Integer withWan = parseChineseUnitNumber(normalized, '万', 10_000);
-        if (withWan != null) {
-            return withWan;
-        }
-        Integer withThousands = parseChineseUnitNumber(normalized, '千', 1_000);
-        if (withThousands != null) {
-            return withThousands;
-        }
-        Integer withHundreds = parseChineseUnitNumber(normalized, '百', 100);
-        if (withHundreds != null) {
-            return withHundreds;
-        }
-        if ("十".equals(normalized)) {
-            return 10;
-        }
-        if (normalized.endsWith("十") && normalized.length() == 2) {
-            Integer tens = chineseDigit(normalized.charAt(0));
-            return tens == null ? null : tens * 10;
-        }
-        if (normalized.startsWith("十") && normalized.length() == 2) {
-            Integer ones = chineseDigit(normalized.charAt(1));
-            return ones == null ? null : 10 + ones;
-        }
-        if (normalized.contains("十") && normalized.length() == 3) {
-            Integer tens = chineseDigit(normalized.charAt(0));
-            Integer ones = chineseDigit(normalized.charAt(2));
-            return (tens == null || ones == null) ? null : tens * 10 + ones;
-        }
-        if (normalized.length() == 1) {
-            return chineseDigit(normalized.charAt(0));
-        }
-        return null;
-    }
-
-    private Integer parseChineseUnitNumber(String normalized, char unitChar, int unitValue) {
-        int unitIndex = normalized.indexOf(unitChar);
-        if (unitIndex < 0) {
-            return null;
-        }
-        String headPart = normalized.substring(0, unitIndex);
-        String tailPart = normalized.substring(unitIndex + 1);
-
-        Integer head = headPart.isBlank() ? 1 : parseSimpleChineseNumber(headPart);
-        if (head == null) {
-            return null;
-        }
-        if (tailPart.isBlank()) {
-            return head * unitValue;
-        }
-        Integer tail = parseSimpleChineseNumber(tailPart);
-        return tail == null ? null : head * unitValue + tail;
-    }
-
-    private Integer chineseDigit(char c) {
-        return switch (c) {
-            case '零' -> 0;
-            case '一' -> 1;
-            case '二' -> 2;
-            case '三' -> 3;
-            case '四' -> 4;
-            case '五' -> 5;
-            case '六' -> 6;
-            case '七' -> 7;
-            case '八' -> 8;
-            case '九' -> 9;
-            default -> null;
-        };
-    }
-
-    private void putIfPresent(Map<String, Object> payload, String key, String value) {
-        if (value != null && !value.isBlank()) {
-            payload.put(key, value);
-        }
-    }
-
-    private void putListIfPresent(Map<String, Object> payload, String key, List<String> values) {
-        if (values != null && !values.isEmpty()) {
-            payload.put(key, values);
-        }
-    }
-
-    private List<String> extractDelimitedValues(String input, Pattern pattern) {
-        String raw = extractByPattern(input, pattern);
-        if (raw == null || raw.isBlank()) {
-            return List.of();
-        }
-        String[] parts = raw.split("[,，;；/、]");
-        List<String> values = new java.util.ArrayList<>();
-        for (String part : parts) {
-            String normalized = part.trim();
-            if (!normalized.isBlank()) {
-                values.add(normalized);
-            }
-        }
-        return List.copyOf(values);
-    }
-
     private LlmDetectionResult detectSkillWithLlm(String userId,
                                                   String userInput,
                                                   String memoryContext,
@@ -3227,7 +2719,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         if (llmRoutingConversationalBypassEnabled && isConversationalBypassInput(normalizedInput)) {
             return LlmDetectionResult.empty();
         }
-        String knownSkills = describeSkillRoutingCandidates(userId, userInput);
+        String knownSkills = skillRoutingSupport.describeSkillRoutingCandidates(userId, userInput);
         if (knownSkills.isBlank()) {
             return LlmDetectionResult.empty();
         }
@@ -3284,7 +2776,9 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
     }
 
     private boolean shouldRejectCodeGenerate(String userInput, String skillName) {
-        return "code.generate".equals(skillName) && !isCodeGenerationIntent(userInput) && !isContinuationOnlyInput(userInput);
+        return "code.generate".equals(skillName)
+                && !isCodeGenerationIntent(userInput)
+                && !behaviorRoutingSupport.isContinuationOnlyInput(userInput);
     }
 
     private record LlmDetectionResult(Optional<SkillResult> result,
@@ -3580,7 +3074,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         if (value == null || value.isBlank()) {
             return "";
         }
-        return normalize(sanitizeContinuationPrefix(value));
+        return normalize(behaviorRoutingSupport.sanitizeContinuationPrefix(value));
     }
 
     private Optional<SkillResult> maybeBlockByCapability(String skillName) {
@@ -4245,45 +3739,6 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         );
     }
 
-    private String describeSkillRoutingCandidates(String userId, String userInput) {
-        List<String> summaries = skillEngine.listAvailableSkillSummaries();
-        if (summaries.isEmpty()) {
-            return "";
-        }
-        Set<String> inputTokens = routingTokens(userInput);
-        String memoryBucket = inferMemoryBucket(userInput);
-        Optional<String> preferredFromStats = preferredSkillFromStats(userId);
-        Optional<String> preferredFromHistory = preferredSkillFromHistory(activeDispatcherMemoryFacade().getSkillUsageHistory(userId));
-
-        List<SkillRoutingCandidate> rankedCandidates = summaries.stream()
-                .map(summary -> new SkillRoutingCandidate(summary, skillRoutingScore(
-                        summary,
-                        normalize(userInput),
-                        inputTokens,
-                        memoryBucket,
-                        preferredFromStats,
-                        preferredFromHistory)))
-                .sorted(Comparator.comparingInt(SkillRoutingCandidate::score).reversed()
-                        .thenComparing(SkillRoutingCandidate::summary))
-                .toList();
-
-        List<String> shortlisted = rankedCandidates.stream()
-                .filter(candidate -> candidate.score() > 0)
-                .limit(llmRoutingShortlistMaxSkills)
-                .map(SkillRoutingCandidate::summary)
-                .toList();
-        if (shortlisted.isEmpty()) {
-            shortlisted = rankedCandidates.stream()
-                    .limit(llmRoutingShortlistMaxSkills)
-                    .map(SkillRoutingCandidate::summary)
-                    .toList();
-        }
-
-        return shortlisted.stream()
-                .reduce((left, right) -> left + ", " + right)
-                .orElse("");
-    }
-
     private boolean shouldRunSkillPreAnalyze(String userId, String userInput) {
         if ("never".equals(skillPreAnalyzeMode)) {
             return false;
@@ -4291,31 +3746,8 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         if ("always".equals(skillPreAnalyzeMode)) {
             return true;
         }
-        int confidence = bestSkillRoutingScore(userId, userInput);
+        int confidence = skillRoutingSupport.bestSkillRoutingScore(userId, userInput);
         return confidence >= skillPreAnalyzeConfidenceThreshold;
-    }
-
-    private int bestSkillRoutingScore(String userId, String userInput) {
-        List<String> summaries = skillEngine.listAvailableSkillSummaries();
-        if (summaries.isEmpty()) {
-            return 0;
-        }
-        Set<String> inputTokens = routingTokens(userInput);
-        String memoryBucket = inferMemoryBucket(userInput);
-        Optional<String> preferredFromStats = preferredSkillFromStats(userId);
-        Optional<String> preferredFromHistory = preferredSkillFromHistory(activeDispatcherMemoryFacade().getSkillUsageHistory(userId));
-
-        String normalizedInput = normalize(userInput);
-        int best = 0;
-        for (String summary : summaries) {
-            best = Math.max(best, skillRoutingScore(summary,
-                    normalizedInput,
-                    inputTokens,
-                    memoryBucket,
-                    preferredFromStats,
-                    preferredFromHistory));
-        }
-        return best;
     }
 
     private String normalizeSkillPreAnalyzeMode(String mode) {
@@ -4354,74 +3786,6 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
             }
         }
         return parsed.isEmpty() ? List.of() : List.copyOf(parsed);
-    }
-
-    private int skillRoutingScore(String summary,
-                                  String normalizedInput,
-                                  Set<String> inputTokens,
-                                  String memoryBucket,
-                                  Optional<String> preferredFromStats,
-                                  Optional<String> preferredFromHistory) {
-        String skillName = summary;
-        String description = "";
-        int separator = summary.indexOf(" - ");
-        if (separator >= 0) {
-            skillName = summary.substring(0, separator).trim();
-            description = summary.substring(separator + 3).trim();
-        }
-        String normalizedSkillName = normalize(skillName);
-        int score = 0;
-        if (!normalizedSkillName.isBlank() && normalizedInput.contains(normalizedSkillName)) {
-            score += 80;
-        }
-        Set<String> skillTokens = routingTokens(skillName + " " + description);
-        for (String token : inputTokens) {
-            if (skillTokens.contains(token)) {
-                score += 12;
-            }
-        }
-        if (preferredFromStats.filter(normalizedSkillName::equals).isPresent()) {
-            score += 30;
-        }
-        if (preferredFromHistory.filter(normalizedSkillName::equals).isPresent()) {
-            score += 20;
-        }
-        score += bucketRoutingBoost(memoryBucket, normalizedSkillName);
-        return score;
-    }
-
-    private int bucketRoutingBoost(String memoryBucket, String skillName) {
-        return switch (memoryBucket) {
-            case "learning" -> "teaching.plan".equals(skillName) ? 80 : 0;
-            case "eq" -> "eq.coach".equals(skillName) ? 80 : 0;
-            case "task" -> "todo.create".equals(skillName) ? 60 : 0;
-            case "coding" -> {
-                if ("code.generate".equals(skillName)) {
-                    yield 80;
-                }
-                yield "file.search".equals(skillName) ? 40 : 0;
-            }
-            default -> 0;
-        };
-    }
-
-    private Set<String> routingTokens(String text) {
-        String normalized = normalize(text);
-        if (normalized.isBlank()) {
-            return Set.of();
-        }
-        LinkedHashSet<String> tokens = new LinkedHashSet<>();
-        String[] parts = ROUTING_TOKEN_SPLIT_PATTERN.split(normalized, -1);
-        for (String part : parts) {
-            if (part == null || part.isBlank()) {
-                continue;
-            }
-            if (part.length() == 1 && !containsHan(part)) {
-                continue;
-            }
-            tokens.add(part);
-        }
-        return tokens.isEmpty() ? Set.of() : Set.copyOf(tokens);
     }
 
     private boolean isConversationalBypassInput(String normalizedInput) {
@@ -4615,13 +3979,6 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         };
     }
 
-    private boolean containsHan(String value) {
-        if (value == null || value.isBlank()) {
-            return false;
-        }
-        return value.codePoints().anyMatch(codePoint -> Character.UnicodeScript.of(codePoint) == Character.UnicodeScript.HAN);
-    }
-
     private RoutingDecisionDto fallbackRoutingDecision(List<String> rejectedReasons) {
         return new RoutingDecisionDto(
                 "llm-fallback",
@@ -4674,9 +4031,6 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         reasons.add(key + "=" + (value == null ? "" : value));
     }
 
-    private record SkillRoutingCandidate(String summary, int score) {
-    }
-
     private record ParallelSkillCandidateExecution(String skillName,
                                                    int score,
                                                    CompletableFuture<Optional<SkillResult>> resultFuture) {
@@ -4700,516 +4054,6 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         }
     }
 
-    private Optional<SkillDsl> toSemanticSkillDsl(SemanticRoutingPlan semanticPlan) {
-        if (semanticPlan == null || !semanticPlan.routable() || semanticPlan.skillName().isBlank()) {
-            return Optional.empty();
-        }
-        Map<String, Object> payload = new LinkedHashMap<>(semanticPlan.effectivePayload() == null ? Map.of() : semanticPlan.effectivePayload());
-        return payload.isEmpty()
-                ? Optional.of(SkillDsl.of(semanticPlan.skillName()))
-                : Optional.of(new SkillDsl(semanticPlan.skillName(), payload));
-    }
-
-    private Map<String, Object> buildEffectiveSemanticPayload(String userId,
-                                                              SemanticAnalysisResult semanticAnalysis,
-                                                              String originalInput,
-                                                              String targetSkill) {
-        if (semanticAnalysis == null || targetSkill == null || targetSkill.isBlank()) {
-            return Map.of();
-        }
-        Map<String, Object> payload = new LinkedHashMap<>(semanticAnalysis.payload());
-        switch (targetSkill) {
-            case "code.generate" -> payload.putIfAbsent("task", semanticAnalysis.routingInput(originalInput));
-            case "todo.create" -> payload.putIfAbsent("task", semanticAnalysis.routingInput(originalInput));
-            case "eq.coach" -> payload.putIfAbsent("query", semanticAnalysis.routingInput(originalInput));
-            case "teaching.plan" -> payload.putAll(extractTeachingPlanPayload(originalInput));
-            case "file.search" -> {
-                payload.putIfAbsent("path", "./");
-                payload.putIfAbsent("keyword", semanticAnalysis.routingInput(originalInput));
-            }
-            default -> {
-            }
-        }
-        if (isMcpSearchSkill(targetSkill)) {
-            payload.putIfAbsent("query", semanticAnalysis.routingInput(originalInput));
-        }
-        completeSemanticPayloadFromMemory(userId, targetSkill, semanticAnalysis, payload, originalInput);
-        return payload;
-    }
-
-    private void maybeStoreSemanticSummary(String userId,
-                                           String userInput,
-                                           SemanticAnalysisResult semanticAnalysis) {
-        if (semanticAnalysis == null || semanticAnalysis.summary() == null || semanticAnalysis.summary().isBlank()) {
-            return;
-        }
-        if (resolveSemanticAnalysisConfidence(semanticAnalysis) < 0.6) {
-            return;
-        }
-        String summary = capText(semanticAnalysis.summary(), 220);
-        if (summary.isBlank()) {
-            return;
-        }
-        String paramsDigest = summarizeSemanticParams(semanticAnalysis.payload());
-        String memoryText = "semantic-summary intent="
-                + capText(semanticAnalysis.intent() == null ? "" : semanticAnalysis.intent(), 48)
-                + ", skill="
-                + capText(semanticAnalysis.suggestedSkill() == null ? "" : semanticAnalysis.suggestedSkill(), 48)
-                + ", summary="
-                + summary
-                + (paramsDigest.isBlank() ? "" : ", params=" + paramsDigest);
-        List<Double> embedding = List.of(
-                (double) memoryText.length(),
-                Math.abs(memoryText.hashCode() % 1000) / 1000.0
-        );
-        activeDispatcherMemoryFacade().writeSemantic(userId, memoryText, embedding, inferMemoryBucket(userInput));
-    }
-
-    private void completeSemanticPayloadFromMemory(String userId,
-                                                   String targetSkill,
-                                                   SemanticAnalysisResult semanticAnalysis,
-                                                   Map<String, Object> payload,
-                                                   String originalInput) {
-        if (userId == null || userId.isBlank() || payload == null) {
-            return;
-        }
-        String skill = targetSkill == null || targetSkill.isBlank()
-                ? (semanticAnalysis == null ? "" : semanticAnalysis.suggestedSkill())
-                : targetSkill;
-        if (skill == null || skill.isBlank()) {
-            return;
-        }
-        String summary = semanticAnalysis.summary() == null ? "" : semanticAnalysis.summary().trim();
-        String routingInput = semanticAnalysis.routingInput(originalInput);
-        String memoryQuery = summary.isBlank() ? routingInput : summary;
-        List<SemanticMemoryEntry> related = activeDispatcherMemoryFacade().searchKnowledge(
-                userId,
-                memoryQuery,
-                3,
-                inferMemoryBucket(originalInput)
-        );
-        String memoryHint = related.isEmpty() ? "" : related.get(0).text();
-
-        if ("todo.create".equals(skill) && isBlankValue(payload.get("task"))) {
-            String fallbackTask = !summary.isBlank() ? summary : (!memoryHint.isBlank() ? memoryHint : routingInput);
-            if (!fallbackTask.isBlank()) {
-                payload.put("task", capText(fallbackTask, 140));
-            }
-        }
-        if ("eq.coach".equals(skill) && isBlankValue(payload.get("query"))) {
-            String fallbackQuery = !summary.isBlank() ? summary : (!memoryHint.isBlank() ? memoryHint : routingInput);
-            if (!fallbackQuery.isBlank()) {
-                payload.put("query", capText(fallbackQuery, 180));
-            }
-        }
-        if ("file.search".equals(skill)) {
-            if (isBlankValue(payload.get("path"))) {
-                payload.put("path", "./");
-            }
-            if (isBlankValue(payload.get("keyword"))) {
-                String fallbackKeyword = !summary.isBlank() ? summary : routingInput;
-                payload.put("keyword", capText(fallbackKeyword, 120));
-            }
-        }
-        if (isMcpSearchSkill(skill) && isBlankValue(payload.get("query"))) {
-            String fallbackQuery = !summary.isBlank() ? summary : (!memoryHint.isBlank() ? memoryHint : routingInput);
-            if (!fallbackQuery.isBlank()) {
-                payload.put("query", capText(fallbackQuery, 120));
-            }
-        }
-        // Apply behavior-learned defaults and log any fields that were filled from memory or behavior defaults.
-        List<String> filledKeys = new ArrayList<>();
-        // detect which keys will be present before behavior defaults
-        Set<String> beforeKeys = payload.isEmpty() ? Set.of() : new LinkedHashSet<>(payload.keySet());
-        applyBehaviorLearnedDefaults(userId, skill, payload);
-        // detect newly filled keys
-        for (String key : payload.keySet()) {
-            if (!beforeKeys.contains(key)) {
-                filledKeys.add(key);
-            }
-        }
-        if (!filledKeys.isEmpty()) {
-            LOGGER.info(() -> "semantic.payload.completed userId=" + userId + ", skill=" + skill + ", filled=" + filledKeys + ", memoryHintPresent=" + !memoryHint.isBlank());
-        }
-    }
-
-    private void applyBehaviorLearnedDefaults(String userId,
-                                              String skillName,
-                                              Map<String, Object> payload) {
-        if (!behaviorLearningEnabled || userId == null || userId.isBlank() || skillName == null || payload == null) {
-            return;
-        }
-        Map<String, String> defaults = inferDefaultParamsFromHistory(userId, skillName);
-        if (defaults.isEmpty()) {
-            return;
-        }
-        List<String> applied = new ArrayList<>();
-        defaults.forEach((key, value) -> {
-            if (isBlankValue(payload.get(key))) {
-                payload.put(key, value);
-                applied.add(key + "=" + value);
-            }
-        });
-        if (!applied.isEmpty()) {
-            LOGGER.info(() -> "behavior-learning.apply userId=" + userId + ", skill=" + skillName + ", appliedDefaults=" + applied);
-        }
-    }
-
-    private Map<String, String> inferDefaultParamsFromHistory(String userId, String skillName) {
-        List<ProceduralMemoryEntry> history = activeDispatcherMemoryFacade().getSkillUsageHistory(userId);
-        if (history.isEmpty()) {
-            return Map.of();
-        }
-        String normalizedSkill = normalize(skillName);
-        int scanned = 0;
-        Map<String, Map<String, Integer>> keyValueCounts = new LinkedHashMap<>();
-        for (int i = history.size() - 1; i >= 0 && scanned < behaviorLearningWindowSize; i--) {
-            ProceduralMemoryEntry entry = history.get(i);
-            if (entry == null || !entry.success() || !normalizedSkill.equals(normalize(entry.skillName()))) {
-                continue;
-            }
-            scanned++;
-            extractBehaviorParams(normalizedSkill, entry.input()).forEach((key, value) -> {
-                if (key == null || key.isBlank() || value == null || value.isBlank()) {
-                    return;
-                }
-                keyValueCounts.computeIfAbsent(key, ignored -> new LinkedHashMap<>())
-                        .merge(value, 1, Integer::sum);
-            });
-        }
-        if (scanned < 2 || keyValueCounts.isEmpty()) {
-            return Map.of();
-        }
-        Map<String, String> defaults = new LinkedHashMap<>();
-        for (Map.Entry<String, Map<String, Integer>> entry : keyValueCounts.entrySet()) {
-            Map.Entry<String, Integer> top = entry.getValue().entrySet().stream()
-                    .max(Map.Entry.comparingByValue())
-                    .orElse(null);
-            if (top == null) {
-                continue;
-            }
-            double ratio = top.getValue() * 1.0 / scanned;
-            if (top.getValue() >= 2 && ratio >= behaviorLearningDefaultParamThreshold) {
-                defaults.put(entry.getKey(), top.getKey());
-            }
-        }
-        if (!defaults.isEmpty()) {
-            int scannedWindow = scanned; // create effectively-final copy for lambda capture
-            LOGGER.info(() -> "behavior-learning.infer userId=" + userId + ", skill=" + skillName + ", defaults=" + defaults + ", scannedWindow=" + scannedWindow);
-        }
-        return defaults.isEmpty() ? Map.of() : Map.copyOf(defaults);
-    }
-
-    private Map<String, String> extractBehaviorParams(String skillName, String input) {
-        if (input == null || input.isBlank()) {
-            return Map.of();
-        }
-        Map<String, String> extracted = new LinkedHashMap<>();
-        Optional<SkillDsl> parsed = skillDslParser.parse(input);
-        if (parsed.isPresent() && normalize(skillName).equals(normalize(parsed.get().skill()))) {
-            parsed.get().input().forEach((key, value) -> {
-                if (key == null || key.isBlank() || value == null) {
-                    return;
-                }
-                String normalized = String.valueOf(value).trim();
-                if (!normalized.isBlank()) {
-                    extracted.put(key, capText(normalized, 48));
-                }
-            });
-        }
-        if ("todo.create".equals(normalize(skillName)) && !extracted.containsKey("dueDate")) {
-            String dueDate = extractByPattern(input, TODO_DUE_DATE_PATTERN);
-            if (dueDate != null && !dueDate.isBlank()) {
-                extracted.put("dueDate", capText(dueDate.trim(), 40));
-            }
-        }
-        return extracted.isEmpty() ? Map.of() : Map.copyOf(extracted);
-    }
-
-    private void maybeStoreBehaviorProfile(String userId, SkillResult result) {
-        if (!behaviorLearningEnabled || result == null || !result.success()) {
-            return;
-        }
-        String channel = normalize(result.skillName());
-        if (!isHabitEligibleSkill(channel)) {
-            return;
-        }
-        String profile = buildBehaviorProfileSummary(userId);
-        if (profile.isBlank()) {
-            return;
-        }
-        String bucket = inferMemoryBucketBySkill(channel);
-        List<SemanticMemoryEntry> recent = activeDispatcherMemoryFacade().searchKnowledge(userId, "behavior-profile", 1, bucket);
-        if (!recent.isEmpty() && profile.equals(recent.get(0).text())) {
-            return;
-        }
-        // Log that we are storing an updated behavior profile for observability
-        LOGGER.info(() -> "behavior-learning.store userId=" + userId + ", bucket=" + bucket + ", profileSummary=" + capText(profile, 200));
-        List<Double> embedding = List.of((double) profile.length(), Math.abs(profile.hashCode() % 1000) / 1000.0);
-        activeDispatcherMemoryFacade().writeSemantic(userId, profile, embedding, bucket);
-    }
-
-    private String buildBehaviorProfileSummary(String userId) {
-        List<ProceduralMemoryEntry> history = activeDispatcherMemoryFacade().getSkillUsageHistory(userId);
-        if (history.isEmpty()) {
-            return "";
-        }
-        List<ProceduralMemoryEntry> window = new ArrayList<>();
-        for (int i = history.size() - 1; i >= 0 && window.size() < behaviorLearningWindowSize; i--) {
-            ProceduralMemoryEntry entry = history.get(i);
-            if (entry != null && entry.success() && isHabitEligibleSkill(entry.skillName())) {
-                window.add(0, entry);
-            }
-        }
-        if (window.size() < 2) {
-            return "";
-        }
-        Map<String, Integer> intentCounts = new LinkedHashMap<>();
-        for (ProceduralMemoryEntry entry : window) {
-            intentCounts.merge(normalize(entry.skillName()), 1, Integer::sum);
-        }
-        List<Map.Entry<String, Integer>> topIntents = intentCounts.entrySet().stream()
-                .sorted(Map.Entry.<String, Integer>comparingByValue().reversed())
-                .limit(3)
-                .toList();
-        List<String> intentParts = new ArrayList<>();
-        for (Map.Entry<String, Integer> entry : topIntents) {
-            intentParts.add(entry.getKey() + "(" + entry.getValue() + ")");
-        }
-
-        Map<String, String> defaults = inferDefaultParamsFromHistory(userId,
-                topIntents.isEmpty() ? "" : topIntents.get(0).getKey());
-        List<String> defaultParts = defaults.entrySet().stream()
-                .limit(3)
-                .map(entry -> entry.getKey() + "=" + entry.getValue())
-                .toList();
-
-        Map<String, Integer> sequenceCounts = new LinkedHashMap<>();
-        for (int i = 1; i < window.size(); i++) {
-            String pair = normalize(window.get(i - 1).skillName()) + "->" + normalize(window.get(i).skillName());
-            sequenceCounts.merge(pair, 1, Integer::sum);
-        }
-        Map.Entry<String, Integer> topSequence = sequenceCounts.entrySet().stream()
-                .max(Map.Entry.comparingByValue())
-                .orElse(null);
-
-        StringBuilder summary = new StringBuilder("behavior-profile intents=");
-        summary.append(String.join(";", intentParts));
-        if (!defaultParts.isEmpty()) {
-            summary.append(", defaults=").append(String.join(";", defaultParts));
-        }
-        if (topSequence != null && topSequence.getValue() > 1) {
-            summary.append(", sequence=").append(topSequence.getKey()).append("(").append(topSequence.getValue()).append(")");
-        }
-        return capText(summary.toString(), 360);
-    }
-
-    private boolean isHabitEligibleSkill(String skillName) {
-        String normalized = normalize(skillName);
-        if (normalized.isBlank()) {
-            return false;
-        }
-        if ("llm".equals(normalized) || "security.guard".equals(normalized) || "reflection".equals(normalized)) {
-            return false;
-        }
-        return !normalized.startsWith("memory.")
-                && !normalized.startsWith("semantic.")
-                && !normalized.startsWith("policy.")
-                && !normalized.startsWith("planner.")
-                && !normalized.startsWith("reflection.")
-                && !normalized.startsWith("strategy.")
-                && !normalized.startsWith("autonomous.");
-    }
-
-    private String inferMemoryBucketBySkill(String skillName) {
-        String normalized = normalize(skillName);
-        if (normalized.startsWith("todo") || normalized.contains("task")) {
-            return "task";
-        }
-        if (normalized.contains("teach") || normalized.contains("plan")) {
-            return "learning";
-        }
-        if (normalized.contains("eq") || normalized.contains("coach")) {
-            return "eq";
-        }
-        if (normalized.contains("code") || normalized.contains("file")) {
-            return "coding";
-        }
-        return "general";
-    }
-
-    private boolean isMcpSearchSkill(String skillName) {
-        String normalized = normalize(skillName);
-        return normalized.startsWith("mcp.")
-                && (normalized.contains("search") || normalized.endsWith("query"));
-    }
-
-    private String summarizeSemanticParams(Map<String, Object> payload) {
-        if (payload == null || payload.isEmpty()) {
-            return "";
-        }
-        List<String> keys = List.of("task", "query", "keyword", "topic", "goal", "dueDate");
-        List<String> pairs = new ArrayList<>();
-        for (String key : keys) {
-            Object value = payload.get(key);
-            if (isBlankValue(value)) {
-                continue;
-            }
-            pairs.add(key + "=" + capText(String.valueOf(value).trim(), 40));
-            if (pairs.size() >= 3) {
-                break;
-            }
-        }
-        return String.join(";", pairs);
-    }
-
-    private boolean isBlankValue(Object value) {
-        if (value == null) {
-            return true;
-        }
-        String normalized = String.valueOf(value).trim();
-        return normalized.isBlank();
-    }
-
-    private boolean shouldAskSemanticClarification(SemanticAnalysisResult semanticAnalysis,
-                                                   String input,
-                                                   SemanticRoutingPlan semanticPlan) {
-        if (semanticAnalysis == null || semanticPlan == null || semanticPlan.skillName().isBlank()) {
-            return false;
-        }
-        if (isContinuationIntent(normalize(input))) {
-            return false;
-        }
-        double threshold = semanticAnalysisClarifyMinConfidence > 0.0
-                ? semanticAnalysisClarifyMinConfidence
-                : SEMANTIC_CLARIFY_CONFIDENCE_THRESHOLD;
-        boolean lowConfidence = semanticPlan.confidence() > 0.0 && semanticPlan.confidence() < threshold;
-        boolean missingRequiredParams = !missingRequiredParamsForSkill(semanticPlan.skillName(), semanticPlan.effectivePayload()).isEmpty();
-        return lowConfidence || missingRequiredParams;
-    }
-
-    private SemanticRoutingPlan buildSemanticRoutingPlan(String userId,
-                                                         SemanticAnalysisResult semanticAnalysis,
-                                                         String originalInput) {
-        String skillName = resolveSemanticRoutingSkill(semanticAnalysis);
-        if (skillName.isBlank()) {
-            return SemanticRoutingPlan.empty();
-        }
-        Map<String, Object> effectivePayload = buildEffectiveSemanticPayload(userId, semanticAnalysis, originalInput, skillName);
-        double confidence = resolveSemanticRouteConfidence(semanticAnalysis, skillName);
-        boolean routable = confidence >= semanticAnalysisRouteMinConfidence && isSemanticDirectSkillCandidate(skillName);
-
-        // If configured, allow accepting semanticAnalysis.suggestedSkill even when the main
-        // candidate does not meet the normal route threshold. This is opt-in and gated
-        // by preferSuggestedSkillEnabled and a configurable minimum confidence.
-        if (!routable && preferSuggestedSkillEnabled && semanticAnalysis != null) {
-            String suggested = normalizeOptional(semanticAnalysis.suggestedSkill());
-            if (!suggested.isBlank() && isKnownSkillName(suggested)) {
-                double suggestedConf = resolveSemanticRouteConfidence(semanticAnalysis, suggested);
-                if (suggestedConf >= preferSuggestedSkillMinConfidence) {
-                    // use suggested skill as routable override
-                    skillName = suggested;
-                    effectivePayload = buildEffectiveSemanticPayload(userId, semanticAnalysis, originalInput, skillName);
-                    confidence = suggestedConf;
-                    routable = true;
-                    LOGGER.fine("Dispatcher: accepting suggestedSkill override=" + skillName + ", conf=" + confidence);
-                }
-            }
-        }
-
-        return new SemanticRoutingPlan(skillName, effectivePayload, confidence, routable);
-    }
-
-    private String resolveSemanticRoutingSkill(SemanticAnalysisResult semanticAnalysis) {
-        if (semanticAnalysis == null) {
-            return "";
-        }
-        List<String> candidates = new ArrayList<>();
-        String suggestedSkill = normalizeOptional(semanticAnalysis.suggestedSkill());
-        if (!suggestedSkill.isBlank()) {
-            candidates.add(suggestedSkill);
-        }
-        semanticAnalysis.candidateIntents().stream()
-                .sorted((left, right) -> Double.compare(right.confidence(), left.confidence()))
-                .map(SemanticAnalysisResult.CandidateIntent::intent)
-                .map(this::normalizeOptional)
-                .filter(candidate -> !candidate.isBlank() && !candidates.contains(candidate))
-                .forEach(candidates::add);
-        return candidates.stream()
-                .filter(this::isSemanticDirectSkillCandidate)
-                .max(java.util.Comparator.comparingDouble(candidate -> resolveSemanticRouteConfidence(semanticAnalysis, candidate)))
-                .orElse("");
-    }
-
-    private boolean isSemanticDirectSkillCandidate(String skillName) {
-        if (skillName == null || skillName.isBlank()) {
-            return false;
-        }
-        if ("semantic.analyze".equals(skillName)) {
-            return false;
-        }
-        // Keep code.generate on the LLM shortlist path so provider/preset stage routing still applies.
-        if ("code.generate".equals(skillName)) {
-            return false;
-        }
-        return isKnownSkillName(skillName);
-    }
-
-    private double resolveSemanticRouteConfidence(SemanticAnalysisResult semanticAnalysis, String skillName) {
-        if (semanticAnalysis == null || skillName == null || skillName.isBlank()) {
-            return 0.0;
-        }
-        return Math.max(semanticAnalysis.confidence(), semanticAnalysis.confidenceForSkill(skillName));
-    }
-
-    private double resolveSemanticAnalysisConfidence(SemanticAnalysisResult semanticAnalysis) {
-        if (semanticAnalysis == null) {
-            return 0.0;
-        }
-        String bestSkill = resolveSemanticRoutingSkill(semanticAnalysis);
-        if (bestSkill.isBlank()) {
-            return semanticAnalysis.confidence();
-        }
-        return resolveSemanticRouteConfidence(semanticAnalysis, bestSkill);
-    }
-
-    private String buildSemanticClarifyReply(SemanticAnalysisResult semanticAnalysis,
-                                             SemanticRoutingPlan semanticPlan) {
-        String skill = semanticPlan == null ? "" : normalizeOptional(semanticPlan.skillName());
-        List<String> missing = semanticPlan == null ? List.of() : missingRequiredParamsForSkill(skill, semanticPlan.effectivePayload());
-        StringBuilder reply = new StringBuilder("我理解你想执行");
-        reply.append(skill.isBlank() ? "相关操作" : " `" + skill + "`");
-        if (semanticAnalysis != null && semanticAnalysis.summary() != null && !semanticAnalysis.summary().isBlank()) {
-            reply.append("（").append(capText(semanticAnalysis.summary(), 80)).append("）");
-        }
-        reply.append("，但我还需要补充一点信息：");
-        if (missing.isEmpty()) {
-            reply.append("请确认你的目标和关键参数（例如对象、时间、范围）。");
-        } else {
-            reply.append("请补充 ").append(String.join("、", missing)).append("。");
-        }
-        return reply.toString();
-    }
-
-    private List<String> missingRequiredParamsForSkill(String skillName, Map<String, Object> payload) {
-        if (skillName == null || skillName.isBlank()) {
-            return List.of();
-        }
-        Map<String, Object> safePayload = payload == null ? Map.of() : payload;
-        List<String> missing = new ArrayList<>();
-        String normalized = normalize(skillName);
-        if ("todo.create".equals(normalized) && isBlankValue(safePayload.get("task"))) {
-            missing.add("task");
-        }
-        if ("eq.coach".equals(normalized) && isBlankValue(safePayload.get("query"))) {
-            missing.add("query");
-        }
-        if ("file.search".equals(normalized) && isBlankValue(safePayload.get("keyword"))) {
-            missing.add("keyword");
-        }
-        return missing.isEmpty() ? List.of() : List.copyOf(missing);
-    }
-
     private boolean isKnownSkillName(String skillName) {
         if (skillName == null || skillName.isBlank()) {
             return false;
@@ -5225,15 +4069,6 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
     private static final class RoutingReplayProbe {
         private String ruleCandidate = "NONE";
         private String preAnalyzeCandidate = "NOT_RUN";
-    }
-
-    private record SemanticRoutingPlan(String skillName,
-                                       Map<String, Object> effectivePayload,
-                                       double confidence,
-                                       boolean routable) {
-        private static SemanticRoutingPlan empty() {
-            return new SemanticRoutingPlan("", Map.of(), 0.0, false);
-        }
     }
 
     private int scoreNewsDomainRelevance(String line) {

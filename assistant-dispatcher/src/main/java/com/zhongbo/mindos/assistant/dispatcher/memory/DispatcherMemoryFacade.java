@@ -3,7 +3,6 @@ package com.zhongbo.mindos.assistant.dispatcher.memory;
 import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.common.dto.PromptMemoryContextDto;
 import com.zhongbo.mindos.assistant.memory.MemoryFacade;
-import com.zhongbo.mindos.assistant.memory.MemoryManager;
 import com.zhongbo.mindos.assistant.memory.model.ConversationTurn;
 import com.zhongbo.mindos.assistant.memory.model.ProceduralMemoryEntry;
 import com.zhongbo.mindos.assistant.memory.model.MemoryCompressionPlan;
@@ -41,22 +40,8 @@ public class DispatcherMemoryFacade {
     public record MemoryCompressionStats(int rawChars, int finalChars, boolean compressed, int summarizedTurns) {
     }
 
-    public DispatcherMemoryFacade(MemoryManager memoryManager) {
-        this(new MemoryFacade(memoryManager), 6, 3, 3, 2, 4);
-    }
-
-    public DispatcherMemoryFacade(MemoryManager memoryManager,
-                                  int conversationHistoryLimit,
-                                  int knowledgeLimit,
-                                  int habitSkillStatsLimit,
-                                  int memoryContextKeepRecentTurns,
-                                  int memoryContextHistorySummaryMinTurns) {
-        this(new MemoryFacade(memoryManager),
-                conversationHistoryLimit,
-                knowledgeLimit,
-                habitSkillStatsLimit,
-                memoryContextKeepRecentTurns,
-                memoryContextHistorySummaryMinTurns);
+    public DispatcherMemoryFacade(MemoryFacade memoryFacade) {
+        this(memoryFacade, 6, 3, 3, 2, 4);
     }
 
     @Autowired

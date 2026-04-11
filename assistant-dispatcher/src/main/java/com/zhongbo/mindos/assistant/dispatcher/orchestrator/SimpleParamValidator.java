@@ -103,6 +103,10 @@ public class SimpleParamValidator implements ParamValidator {
         if (!atLeastOne.valid()) {
             return new ValidationResult(false, true, normalized, atLeastOne.missingParams(), autofilled, atLeastOne.message());
         }
+        ValidationResult rangeValidation = validateNumericRanges(schema.numericRanges(), normalized, autofilled);
+        if (!rangeValidation.valid()) {
+            return rangeValidation;
+        }
         return ValidationResult.ok(normalized, autofilled);
     }
 
@@ -293,6 +297,33 @@ public class SimpleParamValidator implements ParamValidator {
         return ValidationResult.clarify("至少需要提供以下参数之一: " + String.join(",", missing), missing, params, autofilled);
     }
 
+    private ValidationResult validateNumericRanges(Map<String, ParamSchema.NumericRange> numericRanges,
+                                                   Map<String, Object> params,
+                                                   Map<String, Object> autofilled) {
+        if (numericRanges == null || numericRanges.isEmpty()) {
+            return ValidationResult.ok(params, autofilled);
+        }
+        List<String> invalidKeys = new ArrayList<>();
+        List<String> reasons = new ArrayList<>();
+        numericRanges.forEach((key, range) -> {
+            if (!hasValue(params, key) || range == null) {
+                return;
+            }
+            Double value = asNumber(params.get(key));
+            if (value == null) {
+                return;
+            }
+            if (value < range.minInclusive() || value > range.maxInclusive()) {
+                invalidKeys.add(key);
+                reasons.add(key + " 需在 " + range.describe());
+            }
+        });
+        if (invalidKeys.isEmpty()) {
+            return ValidationResult.ok(params, autofilled);
+        }
+        return ValidationResult.clarify("参数超出范围: " + String.join("; ", reasons), invalidKeys, params, autofilled);
+    }
+
     private List<String> missingRequired(Set<String> required,
                                          Map<String, Object> params,
                                          Set<String> extraRequired) {
@@ -342,10 +373,29 @@ public class SimpleParamValidator implements ParamValidator {
         keys.addAll(schema.defaults().keySet());
         keys.addAll(schema.types().keySet());
         keys.addAll(schema.aliases().keySet());
+        keys.addAll(schema.numericRanges().keySet());
         if (extraRequired != null) {
             keys.addAll(extraRequired);
         }
         return keys;
+    }
+
+    private Double asNumber(Object value) {
+        if (value instanceof Number number) {
+            return number.doubleValue();
+        }
+        if (value == null) {
+            return null;
+        }
+        Matcher integerMatcher = INTEGER_PATTERN.matcher(String.valueOf(value));
+        if (integerMatcher.find()) {
+            return Double.parseDouble(integerMatcher.group(1));
+        }
+        Matcher doubleMatcher = DOUBLE_PATTERN.matcher(String.valueOf(value));
+        if (doubleMatcher.find()) {
+            return Double.parseDouble(doubleMatcher.group(1));
+        }
+        return null;
     }
 
     private boolean hasValue(Map<String, Object> params, String key) {

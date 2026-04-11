@@ -90,6 +90,39 @@ class SimpleParamValidatorTest {
         assertEquals("stu-42", result.autofilledParams().get("studentId"));
     }
 
+    @Test
+    void shouldRejectOutOfRangeTeachingPlanNumbers() {
+        InMemoryParamSchemaRegistry registry = new InMemoryParamSchemaRegistry();
+        registry.registerDefaults();
+        SimpleParamValidator validator = new SimpleParamValidator(registry);
+
+        ParamValidator.ValidationResult result = validator.validate(
+                "teaching.plan",
+                Map.of("topic", "数学", "durationWeeks", 60, "weeklyHours", 100),
+                new DecisionOrchestrator.OrchestrationRequest("u1", "数学学习计划", new SkillContext("u1", "数学学习计划", Map.of()), Map.of())
+        );
+
+        assertTrue(result.needsClarification());
+        assertTrue(result.message().contains("durationWeeks 需在 1-52"));
+        assertTrue(result.message().contains("weeklyHours 需在 1-80"));
+    }
+
+    @Test
+    void shouldApplyFileSearchSchemaDefaultsAndTypeCoercion() {
+        InMemoryParamSchemaRegistry registry = new InMemoryParamSchemaRegistry();
+        registry.registerDefaults();
+        SimpleParamValidator validator = new SimpleParamValidator(registry);
+
+        ParamValidator.ValidationResult result = validator.validate(
+                "file.search",
+                Map.of("keyword", "dispatcher", "limit", "12"),
+                new DecisionOrchestrator.OrchestrationRequest("u1", "查 dispatcher 文件", new SkillContext("u1", "查 dispatcher 文件", Map.of()), Map.of())
+        );
+
+        assertTrue(result.valid());
+        assertEquals(12, result.normalizedParams().get("limit"));
+    }
+
     private MemoryGateway gateway(List<ConversationTurn> history) {
         return new MemoryGateway() {
             @Override

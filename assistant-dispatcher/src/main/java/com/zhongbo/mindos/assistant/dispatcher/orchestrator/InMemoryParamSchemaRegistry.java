@@ -21,7 +21,8 @@ public class InMemoryParamSchemaRegistry implements ParamSchemaRegistry {
         register("news_search", ParamSchema.atLeastOne("query", "keyword", "input")
                 .withAliases(Map.of("query", java.util.List.of("keyword", "input")))
                 .withTypes(Map.of("count", ParamType.INTEGER))
-                .withDefaults(Map.of("count", 5)));
+                .withDefaults(Map.of("count", 5))
+                .withNumericRanges(Map.of("count", ParamSchema.NumericRange.closed(1, 10))));
         register("teaching.plan", ParamSchema.of(Set.of("topic"), Set.of("topic", "input"))
                 .withAliases(Map.of(
                         "topic", java.util.List.of("input", "query"),
@@ -37,11 +38,23 @@ public class InMemoryParamSchemaRegistry implements ParamSchemaRegistry {
                 .withDefaults(Map.of(
                         "durationWeeks", 4,
                         "weeklyHours", 6
+                ))
+                .withNumericRanges(Map.of(
+                        "durationWeeks", ParamSchema.NumericRange.closed(1, 52),
+                        "weeklyHours", ParamSchema.NumericRange.closed(1, 80)
                 )));
         register("eq.coach", ParamSchema.atLeastOne("query", "input")
                 .withAliases(Map.of("query", java.util.List.of("input", "task"))));
         register("code.generate", ParamSchema.atLeastOne("task", "input")
                 .withAliases(Map.of("task", java.util.List.of("input", "query"))));
+        register("file.search", ParamSchema.atLeastOne("keyword", "path", "input")
+                .withAliases(Map.of(
+                        "keyword", java.util.List.of("query", "input"),
+                        "fileType", java.util.List.of("type")
+                ))
+                .withTypes(Map.of("limit", ParamType.INTEGER))
+                .withDefaults(Map.of("limit", 5))
+                .withNumericRanges(Map.of("limit", ParamSchema.NumericRange.closed(1, 20))));
         register("mcp.*", ParamSchema.atLeastOne("input", "query")
                 .withAliases(Map.of("query", java.util.List.of("input", "keyword"))));
     }
