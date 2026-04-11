@@ -36,6 +36,26 @@ class SkillRegistryTest {
         assertTrue(keywords.contains("自定义别名"));
     }
 
+    @Test
+    void shouldExposeSkillDescriptorsWithMergedRoutingKeywords() {
+        SkillRoutingProperties properties = new SkillRoutingProperties();
+        properties.getKeywords().put("todo.create", "事项整理");
+        SkillRegistry registry = new SkillRegistry(List.of(
+                new DescriptorSkill("alpha.clean", "Clean alpha"),
+                new DescriptorSkill("todo.create", "Create todo")
+        ), properties);
+
+        SkillDescriptor descriptor = registry.describeSkill("todo.create").orElseThrow();
+        List<SkillDescriptor> descriptors = registry.listSkillDescriptors();
+
+        assertEquals("todo.create", descriptor.name());
+        assertEquals("Create todo", descriptor.description());
+        assertTrue(descriptor.routingKeywords().contains("事项整理"));
+        assertTrue(descriptor.routingKeywords().contains("todo create"));
+        assertEquals(List.of("alpha.clean", "todo.create"), descriptors.stream().map(SkillDescriptor::name).toList());
+        assertEquals(descriptor, descriptors.get(1));
+    }
+
     private record FixedSkill(String name) implements Skill {
         @Override
         public String description() {
@@ -69,5 +89,16 @@ class SkillRegistryTest {
             return SkillResult.success(name(), "ok");
         }
     }
-}
 
+    private record DescriptorSkill(String name, String description) implements Skill {
+        @Override
+        public SkillResult run(SkillContext context) {
+            return SkillResult.success(name, name);
+        }
+
+        @Override
+        public List<String> routingKeywords() {
+            return List.of("todo", name.replace('.', ' '));
+        }
+    }
+}
