@@ -31,9 +31,9 @@ public class ProceduralMemory {
     }
 
     public Optional<ReusableProcedure> matchReusableProcedure(String userId,
-                                                             String userInput,
-                                                             String suggestedTarget,
-                                                             Map<String, Object> effectiveParams) {
+                                                              String userInput,
+                                                              String suggestedTarget,
+                                                              Map<String, Object> effectiveParams) {
         if (procedureMemoryEngine == null) {
             return Optional.empty();
         }
@@ -45,6 +45,20 @@ public class ProceduralMemory {
                         match.score(),
                         match.reasons()
                 ));
+    }
+
+    public List<Procedure> listProcedures(String userId) {
+        if (procedureMemoryEngine == null) {
+            return List.of();
+        }
+        return procedureMemoryEngine.listProcedures(userId);
+    }
+
+    public boolean deleteProcedure(String userId, String procedureId) {
+        if (procedureMemoryEngine == null) {
+            return false;
+        }
+        return procedureMemoryEngine.deleteProcedure(userId, procedureId);
     }
 
     private TaskGraph materializeGraph(ProcedureTemplate template, Map<String, Object> effectiveParams) {

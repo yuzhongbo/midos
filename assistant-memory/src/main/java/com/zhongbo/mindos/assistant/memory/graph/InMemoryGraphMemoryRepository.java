@@ -39,6 +39,21 @@ public class InMemoryGraphMemoryRepository implements GraphMemoryRepository {
     }
 
     @Override
+    public boolean deleteNode(String userId, String nodeId) {
+        String normalizedUserId = safeUserId(userId);
+        UserGraph graph = graphs.get(normalizedUserId);
+        if (graph == null || nodeId == null || nodeId.isBlank()) {
+            return false;
+        }
+        MemoryNode removed = graph.nodes.remove(nodeId);
+        if (removed == null) {
+            return false;
+        }
+        graph.edges.entrySet().removeIf(entry -> nodeId.equals(entry.getValue().from()) || nodeId.equals(entry.getValue().to()));
+        return true;
+    }
+
+    @Override
     public Optional<MemoryNode> findNode(String userId, String nodeId) {
         return Optional.ofNullable(graphs.getOrDefault(safeUserId(userId), UserGraph.empty()).nodes.get(nodeId));
     }

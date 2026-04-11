@@ -8,6 +8,10 @@ public interface GraphMemoryGateway {
 
     MemoryEdge upsertEdge(String userId, MemoryEdge edge);
 
+    default boolean deleteNode(String userId, String nodeId) {
+        return false;
+    }
+
     default MemoryEdge link(String userId,
                             String from,
                             String relation,

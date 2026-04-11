@@ -17,4 +17,8 @@ public interface ProcedureMemoryEngine {
                                         String userInput,
                                         String suggestedTarget,
                                         int limit);
+
+    List<Procedure> listProcedures(String userId);
+
+    boolean deleteProcedure(String userId, String procedureId);
 }

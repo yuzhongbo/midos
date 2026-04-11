@@ -9,6 +9,8 @@ public interface GraphMemoryRepository {
 
     MemoryEdge saveEdge(String userId, MemoryEdge edge);
 
+    boolean deleteNode(String userId, String nodeId);
+
     Optional<MemoryNode> findNode(String userId, String nodeId);
 
     List<MemoryNode> listNodes(String userId);

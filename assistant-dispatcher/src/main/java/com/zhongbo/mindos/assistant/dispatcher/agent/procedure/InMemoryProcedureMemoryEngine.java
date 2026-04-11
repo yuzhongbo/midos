@@ -71,6 +71,45 @@ public class InMemoryProcedureMemoryEngine implements ProcedureMemoryEngine {
     }
 
     @Override
+    public List<Procedure> listProcedures(String userId) {
+        return templatesByUser.getOrDefault(safeUserId(userId), Map.of()).values().stream()
+                .map(this::toProcedure)
+                .sorted((left, right) -> {
+                    int successCompare = Double.compare(right.successRate(), left.successRate());
+                    if (successCompare != 0) {
+                        return successCompare;
+                    }
+                    int reuseCompare = Integer.compare(right.reuseCount(), left.reuseCount());
+                    if (reuseCompare != 0) {
+                        return reuseCompare;
+                    }
+                    return left.id().compareTo(right.id());
+                })
+                .toList();
+    }
+
+    @Override
+    public boolean deleteProcedure(String userId, String procedureId) {
+        String normalizedUserId = safeUserId(userId);
+        String normalizedProcedureId = safeText(procedureId);
+        if (normalizedUserId.isBlank() || normalizedProcedureId.isBlank()) {
+            return false;
+        }
+        Map<String, ProcedureTemplate> userTemplates = templatesByUser.get(normalizedUserId);
+        if (userTemplates == null) {
+            return false;
+        }
+        ProcedureTemplate removed = userTemplates.remove(normalizedProcedureId);
+        if (removed == null) {
+            return false;
+        }
+        if (graphMemoryGateway != null) {
+            graphMemoryGateway.deleteNode(userId, "procedure:" + normalizedProcedureId);
+        }
+        return true;
+    }
+
+    @Override
     public List<ProcedureMatch> matchTemplates(String userId, String userInput, String suggestedTarget, int limit) {
         String normalizedInput = normalize(userInput);
         List<ProcedureMatch> matches = new ArrayList<>();

@@ -136,6 +136,11 @@ public class GraphMemoryService implements GraphMemoryView, GraphMemoryGateway {
     }
 
     @Override
+    public boolean deleteNode(String userId, String nodeId) {
+        return repository.deleteNode(userId, nodeId);
+    }
+
+    @Override
     public GraphMemorySnapshot snapshot(String userId) {
         return new GraphMemorySnapshot(repository.listNodes(userId), repository.listEdges(userId));
     }
