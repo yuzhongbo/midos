@@ -54,6 +54,8 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
     private final ParamValidator paramValidator;
     private final ConversationLoop conversationLoop;
     private final FallbackPlan fallbackPlan;
+    private final CandidateChainBuilder candidateChainBuilder;
+    private final FailureNormalizer failureNormalizer;
     private final SkillExecutionGateway skillExecutionGateway;
     private final MemoryGateway memoryGateway;
     private final PostExecutionMemoryRecorder memoryRecorder;
@@ -91,6 +93,8 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
         this.paramValidator = paramValidator;
         this.conversationLoop = conversationLoop;
         this.fallbackPlan = fallbackPlan;
+        this.candidateChainBuilder = new CandidateChainBuilder(candidatePlanner, fallbackPlan);
+        this.failureNormalizer = new FailureNormalizer();
         this.skillExecutionGateway = skillExecutionGateway;
         this.memoryGateway = memoryGateway;
         this.memoryRecorder = memoryRecorder;
@@ -164,9 +168,14 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
                     .filter(channel -> channel != null && !channel.isBlank())
                     .distinct()
                     .toList();
-            return unifiedFailureResult(userInput, intent, attemptedCandidates, outcome.result());
+            return failureNormalizer.unifiedFailureResult(userInput, intent, attemptedCandidates, outcome.result());
         }
-        return unifiedFailureResult(userInput, intent, List.of(), SkillResult.failure("decision.orchestrator", "all candidates failed"));
+        return failureNormalizer.unifiedFailureResult(
+                userInput,
+                intent,
+                List.of(),
+                SkillResult.failure("decision.orchestrator", "all candidates failed")
+        );
     }
 
     @Override
@@ -414,9 +423,9 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
                                                      OrchestrationRequest request,
                                                      boolean allowParallelMcp,
                                                      String traceId) {
-        List<ScoredCandidate> plannedCandidates = buildCandidateChain(suggestedTarget, request);
+        List<ScoredCandidate> plannedCandidates = candidateChainBuilder.build(suggestedTarget, request);
         if (plannedCandidates.isEmpty()) {
-            plannedCandidates = List.of(new ScoredCandidate(suggestedTarget, 1.0, 0.0, 0.0, 0.5, List.of("explicit-target")));
+            plannedCandidates = List.of(candidateChainBuilder.explicitTarget(suggestedTarget));
         }
         traceEvent(traceId, "planner", "candidate-chain", Map.of(
                 "suggestedTarget", suggestedTarget == null ? "" : suggestedTarget,
@@ -683,43 +692,6 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
         );
     }
 
-    private List<ScoredCandidate> buildCandidateChain(String suggestedTarget, OrchestrationRequest request) {
-        Map<String, ScoredCandidate> ordered = new LinkedHashMap<>();
-        if (suggestedTarget != null && !suggestedTarget.isBlank()) {
-            ordered.put(suggestedTarget, new ScoredCandidate(suggestedTarget, 1.0, 0.0, 0.0, 0.5, List.of("explicit-target")));
-        }
-        candidatePlanner.plan(suggestedTarget, request).forEach(candidate -> ordered.putIfAbsent(candidate.skillName(), candidate));
-        if (suggestedTarget != null && !suggestedTarget.isBlank()) {
-            fallbackPlan.fallbacks(suggestedTarget).forEach(fallback ->
-                    ordered.putIfAbsent(fallback, new ScoredCandidate(fallback, 0.35, 0.0, 0.0, 0.5, List.of("configured-fallback"))));
-        }
-        return List.copyOf(ordered.values());
-    }
-
-    private SkillResult unifiedFailureResult(String userInput,
-                                             String intent,
-                                             List<String> attemptedCandidates,
-                                             SkillResult failure) {
-        String safeIntent = escapeJson(intent);
-        String safeInput = escapeJson(userInput);
-        String safeMessage = escapeJson(failure == null ? "all candidates failed" : failure.output());
-        String safeLastSkill = escapeJson(failure == null ? "decision.orchestrator" : failure.skillName());
-        String candidatesJson = attemptedCandidates == null || attemptedCandidates.isEmpty()
-                ? "[]"
-                : attemptedCandidates.stream()
-                .map(candidate -> "\"" + escapeJson(candidate) + "\"")
-                .collect(java.util.stream.Collectors.joining(",", "[", "]"));
-        String payload = "{"
-                + "\"status\":\"failed\","
-                + "\"intent\":\"" + safeIntent + "\","
-                + "\"userInput\":\"" + safeInput + "\","
-                + "\"attemptedCandidates\":" + candidatesJson + ","
-                + "\"lastSkill\":\"" + safeLastSkill + "\","
-                + "\"message\":\"" + safeMessage + "\""
-                + "}";
-        return SkillResult.failure("decision.orchestrator", payload);
-    }
-
     private boolean shouldRunMcpParallel(List<CandidateExecution> candidates) {
         if (!mcpParallelEnabled) {
             return false;
@@ -860,7 +832,7 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
                 || isMcpSkill(decision.target())) {
             return new TaskPlan(List.of());
         }
-        List<ScoredCandidate> candidates = buildCandidateChain(decision.target(), request).stream()
+        List<ScoredCandidate> candidates = candidateChainBuilder.build(decision.target(), request).stream()
                 .filter(candidate -> candidate != null && candidate.skillName() != null && !candidate.skillName().isBlank())
                 .filter(candidate -> !isMcpSkill(candidate.skillName()))
                 .filter(candidate -> excludeSkill == null || excludeSkill.isBlank() || !excludeSkill.equals(candidate.skillName()))
@@ -908,7 +880,7 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
                 || isMcpSkill(decision.target())) {
             return new TaskGraph(List.of(), List.of());
         }
-        List<ScoredCandidate> candidates = buildCandidateChain(decision.target(), request).stream()
+        List<ScoredCandidate> candidates = candidateChainBuilder.build(decision.target(), request).stream()
                 .filter(candidate -> candidate != null && candidate.skillName() != null && !candidate.skillName().isBlank())
                 .filter(candidate -> !isMcpSkill(candidate.skillName()))
                 .filter(candidate -> excludeSkill == null || excludeSkill.isBlank() || !excludeSkill.equals(candidate.skillName()))
@@ -1348,10 +1320,4 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
         }
     }
 
-    private String escapeJson(String value) {
-        if (value == null) {
-            return "";
-        }
-        return value.replace("\\", "\\\\").replace("\"", "\\\"");
-    }
 }
