@@ -36,6 +36,17 @@ public class SkillRegistry {
         skills.put(skill.name(), skill);
     }
 
+    public synchronized boolean unregister(String skillName) {
+        if (skillName == null || skillName.isBlank()) {
+            return false;
+        }
+        return skills.remove(skillName) != null;
+    }
+
+    public synchronized boolean containsSkill(String skillName) {
+        return skillName != null && skills.containsKey(skillName);
+    }
+
     public synchronized int unregisterByPrefix(String prefix) {
         if (prefix == null || prefix.isBlank()) {
             return 0;
@@ -57,6 +68,10 @@ public class SkillRegistry {
 
     public synchronized Collection<Skill> getAllSkills() {
         return List.copyOf(skills.values());
+    }
+
+    public synchronized int size() {
+        return skills.size();
     }
 
     public synchronized List<String> resolvedRoutingKeywords(String skillName) {

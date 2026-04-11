@@ -2,6 +2,7 @@ package com.zhongbo.mindos.assistant.dispatcher.orchestrator;
 
 import com.zhongbo.mindos.assistant.common.SkillCostTelemetry;
 import com.zhongbo.mindos.assistant.common.dto.CostModel;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.step5.PlannerLearningStore;
 import com.zhongbo.mindos.assistant.memory.MemoryGateway;
 import com.zhongbo.mindos.assistant.memory.graph.GraphMemory;
 import com.zhongbo.mindos.assistant.memory.model.SkillUsageStats;
@@ -28,6 +29,7 @@ public class AdaptiveCandidatePlanner implements CandidatePlanner {
     protected final MemoryGateway memoryGateway;
     protected final GraphMemory graphMemory;
     protected final SkillCostTelemetry skillCostTelemetry;
+    protected final PlannerLearningStore plannerLearningStore;
     protected final int maxCandidates;
     protected final double explicitWeight;
     protected final double keywordWeight;
@@ -38,7 +40,7 @@ public class AdaptiveCandidatePlanner implements CandidatePlanner {
     protected final double memorySaturation;
 
     public AdaptiveCandidatePlanner() {
-        this(null, null, null, (SkillCostTelemetry) null, 3, 0.40, 0.35, 0.15, 0.10, DEFAULT_LATENCY_WEIGHT, DEFAULT_LEARNING_RATE, DEFAULT_MEMORY_SATURATION);
+        this((SkillEngine) null, (MemoryGateway) null, (GraphMemory) null, (SkillCostTelemetry) null, (PlannerLearningStore) null, 3, 0.40, 0.35, 0.15, 0.10, DEFAULT_LATENCY_WEIGHT, DEFAULT_LEARNING_RATE, DEFAULT_MEMORY_SATURATION);
     }
 
     public AdaptiveCandidatePlanner(SkillEngine skillEngine,
@@ -48,7 +50,7 @@ public class AdaptiveCandidatePlanner implements CandidatePlanner {
                                     double keywordWeight,
                                     double memoryWeight,
                                     double successWeight) {
-        this(skillEngine, memoryGateway, null, (SkillCostTelemetry) null, maxCandidates, explicitWeight, keywordWeight, memoryWeight, successWeight, DEFAULT_LATENCY_WEIGHT, DEFAULT_LEARNING_RATE, DEFAULT_MEMORY_SATURATION);
+        this(skillEngine, memoryGateway, null, (SkillCostTelemetry) null, (PlannerLearningStore) null, maxCandidates, explicitWeight, keywordWeight, memoryWeight, successWeight, DEFAULT_LATENCY_WEIGHT, DEFAULT_LEARNING_RATE, DEFAULT_MEMORY_SATURATION);
     }
 
     public AdaptiveCandidatePlanner(SkillEngine skillEngine,
@@ -59,7 +61,7 @@ public class AdaptiveCandidatePlanner implements CandidatePlanner {
                                     double keywordWeight,
                                     double memoryWeight,
                                     double successWeight) {
-        this(skillEngine, memoryGateway, graphMemory, (SkillCostTelemetry) null, maxCandidates, explicitWeight, keywordWeight, memoryWeight, successWeight, DEFAULT_LATENCY_WEIGHT, DEFAULT_LEARNING_RATE, DEFAULT_MEMORY_SATURATION);
+        this(skillEngine, memoryGateway, graphMemory, (SkillCostTelemetry) null, (PlannerLearningStore) null, maxCandidates, explicitWeight, keywordWeight, memoryWeight, successWeight, DEFAULT_LATENCY_WEIGHT, DEFAULT_LEARNING_RATE, DEFAULT_MEMORY_SATURATION);
     }
 
     public AdaptiveCandidatePlanner(SkillEngine skillEngine,
@@ -71,13 +73,14 @@ public class AdaptiveCandidatePlanner implements CandidatePlanner {
                                     double keywordWeight,
                                     double memoryWeight,
                                     double successWeight) {
-        this(skillEngine, memoryGateway, graphMemory, skillCostTelemetry, maxCandidates, explicitWeight, keywordWeight, memoryWeight, successWeight, DEFAULT_LATENCY_WEIGHT, DEFAULT_LEARNING_RATE, DEFAULT_MEMORY_SATURATION);
+        this(skillEngine, memoryGateway, graphMemory, skillCostTelemetry, null, maxCandidates, explicitWeight, keywordWeight, memoryWeight, successWeight, DEFAULT_LATENCY_WEIGHT, DEFAULT_LEARNING_RATE, DEFAULT_MEMORY_SATURATION);
     }
 
     protected AdaptiveCandidatePlanner(SkillEngine skillEngine,
                                        MemoryGateway memoryGateway,
                                        GraphMemory graphMemory,
                                        SkillCostTelemetry skillCostTelemetry,
+                                       PlannerLearningStore plannerLearningStore,
                                        int maxCandidates,
                                        double explicitWeight,
                                        double keywordWeight,
@@ -90,6 +93,7 @@ public class AdaptiveCandidatePlanner implements CandidatePlanner {
         this.memoryGateway = memoryGateway;
         this.graphMemory = graphMemory;
         this.skillCostTelemetry = skillCostTelemetry;
+        this.plannerLearningStore = plannerLearningStore;
         this.maxCandidates = Math.max(1, Math.min(3, maxCandidates));
         this.explicitWeight = clamp01(explicitWeight);
         this.keywordWeight = clamp01(keywordWeight);
@@ -105,6 +109,7 @@ public class AdaptiveCandidatePlanner implements CandidatePlanner {
                                     MemoryGateway memoryGateway,
                                     GraphMemory graphMemory,
                                     ObjectProvider<SkillCostTelemetry> skillCostTelemetryProvider,
+                                    ObjectProvider<PlannerLearningStore> plannerLearningStoreProvider,
                                     @Value("${mindos.dispatcher.candidate-planner.max-candidates:3}") int maxCandidates,
                                     @Value("${mindos.dispatcher.candidate-planner.explicit-weight:0.40}") double explicitWeight,
                                     @Value("${mindos.dispatcher.candidate-planner.keyword-weight:0.35}") double keywordWeight,
@@ -115,6 +120,7 @@ public class AdaptiveCandidatePlanner implements CandidatePlanner {
                                     @Value("${mindos.dispatcher.candidate-planner.memory-saturation:8.0}") double memorySaturation) {
         this(skillEngine, memoryGateway, graphMemory,
                 skillCostTelemetryProvider == null ? null : skillCostTelemetryProvider.getIfAvailable(),
+                plannerLearningStoreProvider == null ? null : plannerLearningStoreProvider.getIfAvailable(),
                 maxCandidates,
                 explicitWeight,
                 keywordWeight,
@@ -154,13 +160,15 @@ public class AdaptiveCandidatePlanner implements CandidatePlanner {
 
             SkillUsageStats stats = usageStats.get(skillName);
             CostModel costModel = costModels.get(skillName);
+            PlannerLearningStore.LearningSnapshot learning = lookupPlannerLearning(userId, skillName);
             double graphScore = graphScores.getOrDefault(skillName, 0.0);
-            double memorySignal = buildMemorySignal(stats, maxUsageCount, graphScore);
+            double rewardSignal = learning.rewardScore();
+            double memorySignal = buildMemorySignal(stats, maxUsageCount, graphScore, rewardSignal);
             double successRate = resolveSuccessRate(stats, costModel);
             double failureRate = resolveFailureRate(stats, successRate);
             double latencySignal = resolveLatencySignal(skillName, averageLatencies, costModel);
             double averageLatencyMs = averageLatencies.getOrDefault(skillName, -1.0);
-            WeightProfile weights = adaptWeights(stats, successRate, failureRate, memorySignal, latencySignal, explicitTarget);
+            WeightProfile weights = adaptWeights(stats, successRate, failureRate, memorySignal, latencySignal, rewardSignal, explicitTarget);
             double finalScore = clamp01(
                     weights.keywordWeight() * keywordFeature
                             + weights.successWeight() * successRate
@@ -179,7 +187,8 @@ public class AdaptiveCandidatePlanner implements CandidatePlanner {
                     latencySignal,
                     averageLatencyMs,
                     costModel,
-                    weights
+                    weights,
+                    learning
             );
             scored.add(new ScoredCandidate(
                     skillName,
@@ -232,6 +241,13 @@ public class AdaptiveCandidatePlanner implements CandidatePlanner {
         Map<String, CostModel> models = new LinkedHashMap<>();
         skillCostTelemetry.costModels(userId).forEach(models::put);
         return Map.copyOf(models);
+    }
+
+    protected PlannerLearningStore.LearningSnapshot lookupPlannerLearning(String userId, String skillName) {
+        if (plannerLearningStore == null || userId == null || userId.isBlank() || skillName == null || skillName.isBlank()) {
+            return PlannerLearningStore.LearningSnapshot.neutral();
+        }
+        return plannerLearningStore.snapshot(userId, skillName);
     }
 
     protected Map<String, Double> lookupGraphScores(String userId,
@@ -319,8 +335,13 @@ public class AdaptiveCandidatePlanner implements CandidatePlanner {
     }
 
     protected double buildMemorySignal(SkillUsageStats stats, long maxUsageCount, double graphScore) {
+        return buildMemorySignal(stats, maxUsageCount, graphScore, 0.5);
+    }
+
+    protected double buildMemorySignal(SkillUsageStats stats, long maxUsageCount, double graphScore, double rewardSignal) {
         double usageSignal = normalizeMemoryScore(stats, maxUsageCount);
-        return clamp01(0.58 * usageSignal + 0.42 * clamp01(graphScore));
+        double rewardBias = clamp01(rewardSignal) - 0.5;
+        return clamp01(0.58 * usageSignal + 0.42 * clamp01(graphScore) + 0.18 * rewardBias);
     }
 
     protected WeightProfile adaptWeights(SkillUsageStats stats,
@@ -328,16 +349,18 @@ public class AdaptiveCandidatePlanner implements CandidatePlanner {
                                          double failureRate,
                                          double memorySignal,
                                          double latencySignal,
+                                         double rewardSignal,
                                          boolean explicitTarget) {
         double totalCount = stats == null ? 0.0 : stats.totalCount();
         double historyFactor = clamp01(totalCount / memorySaturation);
-        double keywordRaw = keywordWeight * (1.0 + failureRate * learningRate * 0.35 + (historyFactor < 0.25 ? 0.10 : 0.0));
+        double rewardBias = rewardSignal - 0.5;
+        double keywordRaw = keywordWeight * (1.0 + failureRate * learningRate * 0.30 + (historyFactor < 0.25 ? 0.10 : 0.0) + Math.max(0.0, -rewardBias) * 0.10);
         if (explicitTarget) {
             keywordRaw += explicitWeight * 0.10;
         }
-        double successRaw = successWeight * (1.0 + successRate * learningRate * 0.90 - failureRate * learningRate * 0.55);
-        double memoryRaw = memoryWeight * (1.0 + historyFactor * 0.55 + successRate * learningRate * 0.45 - failureRate * learningRate * 0.35);
-        double latencyRaw = latencyWeight * (1.0 + latencySignal * learningRate * 0.85 + successRate * learningRate * 0.20 - failureRate * learningRate * 0.25);
+        double successRaw = successWeight * (1.0 + successRate * learningRate * 0.90 - failureRate * learningRate * 0.55 + rewardBias * 0.30);
+        double memoryRaw = memoryWeight * (1.0 + historyFactor * 0.50 + successRate * learningRate * 0.35 - failureRate * learningRate * 0.25 + rewardBias * 0.25);
+        double latencyRaw = latencyWeight * (1.0 + latencySignal * learningRate * 0.85 + successRate * learningRate * 0.20 - failureRate * learningRate * 0.25 + Math.max(0.0, rewardBias) * 0.15);
         double sum = keywordRaw + successRaw + memoryRaw + latencyRaw;
         if (sum <= 0.0) {
             return new WeightProfile(keywordWeight, successWeight, memoryWeight, latencyWeight, List.of("neutral-weights"));
@@ -348,6 +371,7 @@ public class AdaptiveCandidatePlanner implements CandidatePlanner {
         reasons.add("failureRate=" + round(failureRate));
         reasons.add("memorySignal=" + round(memorySignal));
         reasons.add("latencySignal=" + round(latencySignal));
+        reasons.add("rewardSignal=" + round(rewardSignal));
         return new WeightProfile(
                 clamp01(keywordRaw / sum),
                 clamp01(successRaw / sum),
@@ -368,7 +392,8 @@ public class AdaptiveCandidatePlanner implements CandidatePlanner {
                                         double latencySignal,
                                         double averageLatencyMs,
                                         CostModel costModel,
-                                        WeightProfile weights) {
+                                        WeightProfile weights,
+                                        PlannerLearningStore.LearningSnapshot learning) {
         List<String> reasons = new ArrayList<>();
         if (skillName.equals(suggestedTarget)) {
             reasons.add("explicit-target");
@@ -391,6 +416,12 @@ public class AdaptiveCandidatePlanner implements CandidatePlanner {
         }
         reasons.add("memorySignal=" + round(memorySignal));
         reasons.add("latencySignal=" + round(latencySignal));
+        if (learning != null && learning.sampleCount() > 0L) {
+            reasons.add("plannerLearningScore=" + round(learning.score()));
+            reasons.add("rewardScore=" + round(learning.rewardScore()));
+            reasons.add("averageReward=" + round(learning.averageReward()));
+            reasons.add("preferredRoute=" + learning.preferredRoute());
+        }
         reasons.add("adaptiveWeights=keyword:" + round(weights.keywordWeight())
                 + ",success:" + round(weights.successWeight())
                 + ",memory:" + round(weights.memoryWeight())

@@ -54,6 +54,22 @@ class DefaultAgentRouterTest {
         assertEquals("needs external data", routeDecision.reason());
     }
 
+    @Test
+    void shouldRouteLearnedLocalPreferenceWhenRewardIsStrong() {
+        InMemoryPlannerLearningStore store = new InMemoryPlannerLearningStore();
+        store.observe("u1", "skill.learned", "local", true, 120L, 24, false, 1.0);
+        DefaultAgentRouter learnedRouter = new DefaultAgentRouter(null, store);
+
+        Decision decision = new Decision("remember", "skill.learned", Map.of(), 0.82, false);
+        ScoredCandidate candidate = new ScoredCandidate("skill.learned", 0.84, 0.78, 0.42, 0.88, List.of("keyword"));
+        DecisionOrchestrator.OrchestrationRequest request = request("帮我记一下会议时间");
+
+        AgentRouter.RouteDecision routeDecision = learnedRouter.decide(decision, request, candidate, Map.of());
+
+        assertEquals(AgentRouter.RouteType.LOCAL, routeDecision.routeType());
+        assertEquals("learned local preference", routeDecision.reason());
+    }
+
     private DecisionOrchestrator.OrchestrationRequest request(String input) {
         return new DecisionOrchestrator.OrchestrationRequest("u1", input, new SkillContext("u1", input, Map.of()), Map.of());
     }

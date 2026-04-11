@@ -16,6 +16,8 @@ import java.util.List;
 import java.util.Map;
 
 import static org.hamcrest.Matchers.hasItem;
+import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.startsWith;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -70,6 +72,18 @@ class SkillControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("ok"))
                 .andExpect(jsonPath("$.reloaded").isNumber());
+    }
+
+    @Test
+    void shouldGenerateAndRegisterSkill() throws Exception {
+        mockMvc.perform(post("/api/skills/generate")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"request\":\"抓取某网站数据\",\"skillName\":\"web.scrape\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("ok"))
+                .andExpect(jsonPath("$.kind").value("WEB_SCRAPER"))
+                .andExpect(jsonPath("$.skillName", startsWith("generated.web.scrape.")))
+                .andExpect(jsonPath("$.source", containsString("HttpClient")));
     }
 
     @Test
@@ -135,4 +149,3 @@ class SkillControllerTest {
         return objectMapper.writeValueAsString(value).getBytes(StandardCharsets.UTF_8);
     }
 }
-

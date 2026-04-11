@@ -29,13 +29,9 @@ public class DefaultExecutorAgent implements ExecutorAgent {
     }
 
     @Override
-    public boolean supports(AgentTaskType type) {
-        return type == AgentTaskType.EXECUTE_GRAPH;
-    }
-
-    @Override
-    public AgentResponse handle(AgentMessage message, AgentContext context) {
-        TaskGraph graph = objectValue(message == null ? null : message.payload().get("graph"), TaskGraph.class);
+    public AgentResponse execute(AgentMessage message, AgentContext context) {
+        Map<String, Object> payload = message == null ? Map.of() : message.payloadMap();
+        TaskGraph graph = objectValue(payload.get("graph"), TaskGraph.class);
         if (graph == null || graph.isEmpty()) {
             return AgentResponse.completed(
                     name(),
@@ -47,7 +43,7 @@ public class DefaultExecutorAgent implements ExecutorAgent {
             );
         }
 
-        String graphId = firstNonBlank(stringValue(message.payload().get("graphId")), message.taskId());
+        String graphId = firstNonBlank(stringValue(payload.get("graphId")), message.taskId());
         TaskGraphExecutionResult graphResult = taskGraphExecutor.execute(graph, context.mergedSkillContext(), (node, nodeContext) ->
                 executeNode(message, context, node, nodeContext, graphId)
         );
@@ -77,8 +73,7 @@ public class DefaultExecutorAgent implements ExecutorAgent {
                 message,
                 name(),
                 "memory-agent",
-                AgentTask.of(AgentTaskType.MEMORY_WRITE, context.userId(), context.userInput(), memoryPayload),
-                Map.of("graphId", graphId, "finalSuccess", finalResult.success())
+                AgentTask.of(AgentTaskType.MEMORY_WRITE, context.userId(), context.userInput(), memoryPayload)
         ));
 
         return AgentResponse.completed(
@@ -89,6 +84,16 @@ public class DefaultExecutorAgent implements ExecutorAgent {
                 contextPatch,
                 finalResult.success() ? "graph executed" : "graph failed"
         );
+    }
+
+    @Override
+    public AgentResponse plan(AgentMessage message, AgentContext context) {
+        return AgentResponse.unsupported(name(), "plan");
+    }
+
+    @Override
+    public AgentResponse observe(AgentMessage message, AgentContext context) {
+        return AgentResponse.unsupported(name(), "observe");
     }
 
     private DAGExecutor.NodeExecution executeNode(AgentMessage parentMessage,
@@ -113,8 +118,7 @@ public class DefaultExecutorAgent implements ExecutorAgent {
                 parentMessage,
                 name(),
                 "tool-agent",
-                AgentTask.of(AgentTaskType.TOOL_CALL, context.userId(), context.userInput(), payload),
-                Map.of("nodeId", node.id(), "graphId", graphId)
+                AgentTask.of(AgentTaskType.TOOL_CALL, context.userId(), context.userInput(), payload)
         );
         AgentResponse toolResponse = context.gateway().send(toolMessage);
         if (toolResponse != null && context.gateway() != null && !toolResponse.outboundMessages().isEmpty()) {

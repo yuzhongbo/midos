@@ -115,6 +115,8 @@ public class DefaultAgentRouter implements AgentRouter {
         reasons.add("mcpCost=" + round(routeCosts.getOrDefault("mcp", routeDecision.estimatedCost())));
         reasons.add("score=" + round(candidateScore));
         reasons.add("learning=" + round(learning.score()));
+        reasons.add("rewardScore=" + round(learning.rewardScore()));
+        reasons.add("averageReward=" + round(learning.averageReward()));
         if (!learning.preferredRoute().isBlank()) {
             reasons.add("preferredRoute=" + learning.preferredRoute());
         }
@@ -243,6 +245,8 @@ public class DefaultAgentRouter implements AgentRouter {
         }
         patch.put("routeReasons", reasons == null ? List.of() : List.copyOf(reasons));
         patch.put("plannerLearningScore", learning == null ? 0.5 : learning.score());
+        patch.put("plannerRewardScore", learning == null ? 0.5 : learning.rewardScore());
+        patch.put("plannerAverageReward", learning == null ? 0.0 : learning.averageReward());
         patch.put("plannerPreferredRoute", learning == null ? "auto" : learning.preferredRoute());
         if (provider != null && !provider.isBlank()) {
             patch.put("llmProvider", provider);

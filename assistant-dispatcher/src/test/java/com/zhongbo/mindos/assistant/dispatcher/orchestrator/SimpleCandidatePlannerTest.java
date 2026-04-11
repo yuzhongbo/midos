@@ -14,6 +14,7 @@ import com.zhongbo.mindos.assistant.memory.model.PreferenceProfile;
 import com.zhongbo.mindos.assistant.memory.model.ProceduralMemoryEntry;
 import com.zhongbo.mindos.assistant.memory.model.SemanticMemoryEntry;
 import com.zhongbo.mindos.assistant.memory.model.SkillUsageStats;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.step5.InMemoryPlannerLearningStore;
 import com.zhongbo.mindos.assistant.skill.Skill;
 import com.zhongbo.mindos.assistant.skill.SkillDslExecutor;
 import com.zhongbo.mindos.assistant.skill.SkillEngine;
@@ -111,6 +112,41 @@ class SimpleCandidatePlannerTest {
         assertEquals(2, candidates.size());
         assertEquals("skill.fast", candidates.get(0).skillName());
         assertTrue(candidates.get(0).reasons().stream().anyMatch(reason -> reason.contains("cost=")));
+    }
+
+    @Test
+    void shouldRankHigherRewardCandidateFirst() {
+        SkillEngine skillEngine = new SkillEngine(
+                new SkillRegistry(List.of(
+                        scoredSkill("skill.good", 900),
+                        scoredSkill("skill.bad", 900)
+                )),
+                new SkillDslExecutor(new SkillRegistry(List.of(
+                        scoredSkill("skill.good", 900),
+                        scoredSkill("skill.bad", 900)
+                )))
+        );
+        MemoryGateway memoryGateway = gateway(
+                List.of(),
+                List.of(
+                        new SkillUsageStats("skill.good", 4, 4, 0),
+                        new SkillUsageStats("skill.bad", 4, 4, 0)
+                )
+        );
+        GraphMemory graphMemory = new GraphMemory();
+        InMemoryPlannerLearningStore learningStore = new InMemoryPlannerLearningStore();
+        learningStore.observe("u1", "skill.good", "local", true, 120L, 24, false, 1.0);
+        learningStore.observe("u1", "skill.bad", "local", true, 120L, 24, false, -1.0);
+        SimpleCandidatePlanner planner = new SimpleCandidatePlanner(skillEngine, memoryGateway, graphMemory, null, learningStore, 3, 0.40, 0.35, 0.15, 0.10);
+
+        List<ScoredCandidate> candidates = planner.plan(
+                "",
+                new DecisionOrchestrator.OrchestrationRequest("u1", "any input", new SkillContext("u1", "any input", Map.of()), Map.of())
+        );
+
+        assertEquals(2, candidates.size());
+        assertEquals("skill.good", candidates.get(0).skillName());
+        assertTrue(candidates.get(0).reasons().stream().anyMatch(reason -> reason.contains("rewardScore=")));
     }
 
     private Skill scoredSkill(String name, int routingScore) {

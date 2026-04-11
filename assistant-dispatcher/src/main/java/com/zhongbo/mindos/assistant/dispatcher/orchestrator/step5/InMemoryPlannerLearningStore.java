@@ -8,6 +8,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.concurrent.atomic.DoubleAdder;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.LongAdder;
 
@@ -23,7 +24,8 @@ public class InMemoryPlannerLearningStore implements PlannerLearningStore {
                                     boolean success,
                                     long latencyMs,
                                     int tokenEstimate,
-                                    boolean usedFallback) {
+                                    boolean usedFallback,
+                                    double reward) {
         String normalizedUser = normalize(userId);
         String normalizedSkill = normalize(skillName);
         if (normalizedUser.isBlank() || normalizedSkill.isBlank()) {
@@ -32,7 +34,7 @@ public class InMemoryPlannerLearningStore implements PlannerLearningStore {
         SkillLearningStats stats = statsByUser
                 .computeIfAbsent(normalizedUser, ignored -> new ConcurrentHashMap<>())
                 .computeIfAbsent(normalizedSkill, ignored -> new SkillLearningStats());
-        stats.observe(routeType, success, latencyMs, tokenEstimate, usedFallback);
+        stats.observe(routeType, success, latencyMs, tokenEstimate, usedFallback, reward);
         return snapshot(userId, skillName);
     }
 
@@ -52,10 +54,12 @@ public class InMemoryPlannerLearningStore implements PlannerLearningStore {
         double successRate = ratio(stats.successCount(), stats.totalCount());
         double averageLatency = stats.averageLatencyMs();
         double averageTokens = stats.averageTokenEstimate();
+        double averageReward = stats.averageReward();
         double latencyScore = inverseNormalized(averageLatency, 1_200.0);
         double tokenScore = inverseNormalized(averageTokens, 220.0);
+        double rewardScore = normalizeReward(averageReward);
         double fallbackPenalty = Math.min(0.12, ratio(stats.fallbackCount(), stats.totalCount()) * 0.12);
-        double score = clamp(0.55 * successRate + 0.25 * latencyScore + 0.20 * tokenScore - fallbackPenalty);
+        double score = clamp(0.40 * successRate + 0.18 * latencyScore + 0.10 * tokenScore + 0.32 * rewardScore - fallbackPenalty);
         String preferredRoute = stats.preferredRoute();
 
         List<String> reasons = new ArrayList<>();
@@ -63,6 +67,8 @@ public class InMemoryPlannerLearningStore implements PlannerLearningStore {
         reasons.add("successRate=" + round(successRate));
         reasons.add("latencyMs=" + Math.round(averageLatency));
         reasons.add("tokenEstimate=" + Math.round(averageTokens));
+        reasons.add("rewardAverage=" + round(averageReward));
+        reasons.add("rewardScore=" + round(rewardScore));
         reasons.add("preferredRoute=" + preferredRoute);
         if (stats.fallbackCount() > 0L) {
             reasons.add("fallbackCount=" + stats.fallbackCount());
@@ -72,6 +78,8 @@ public class InMemoryPlannerLearningStore implements PlannerLearningStore {
                 successRate,
                 latencyScore,
                 tokenScore,
+                rewardScore,
+                averageReward,
                 preferredRoute,
                 stats.totalCount(),
                 reasons
@@ -107,6 +115,10 @@ public class InMemoryPlannerLearningStore implements PlannerLearningStore {
         return Math.round(value * 1000.0) / 1000.0;
     }
 
+    private static double normalizeReward(double averageReward) {
+        return Math.max(0.0, Math.min(1.0, 0.5 + averageReward / 3.0));
+    }
+
     private static final class SkillLearningStats {
         private final LongAdder total = new LongAdder();
         private final LongAdder success = new LongAdder();
@@ -114,13 +126,15 @@ public class InMemoryPlannerLearningStore implements PlannerLearningStore {
         private final LongAdder fallback = new LongAdder();
         private final LongAdder totalLatency = new LongAdder();
         private final LongAdder totalTokens = new LongAdder();
+        private final DoubleAdder totalReward = new DoubleAdder();
         private final Map<String, RouteLearningStats> routeStats = new ConcurrentHashMap<>();
 
         private void observe(String routeType,
                              boolean succeeded,
                              long latencyMs,
                              int tokenEstimate,
-                             boolean usedFallback) {
+                             boolean usedFallback,
+                             double reward) {
             total.increment();
             if (succeeded) {
                 success.increment();
@@ -132,10 +146,11 @@ public class InMemoryPlannerLearningStore implements PlannerLearningStore {
             }
             totalLatency.add(Math.max(0L, latencyMs));
             totalTokens.add(Math.max(0L, tokenEstimate));
+            totalReward.add(reward);
             routeStats.computeIfAbsent(routeType == null || routeType.isBlank()
                     ? "auto"
                     : routeType.trim().toLowerCase(Locale.ROOT), ignored -> new RouteLearningStats())
-                    .observe(succeeded, latencyMs, tokenEstimate, usedFallback);
+                    .observe(succeeded, latencyMs, tokenEstimate, usedFallback, reward);
         }
 
         private long totalCount() {
@@ -160,6 +175,11 @@ public class InMemoryPlannerLearningStore implements PlannerLearningStore {
             return count <= 0L ? 0.0 : totalTokens.sum() / (double) count;
         }
 
+        private double averageReward() {
+            long count = totalCount();
+            return count <= 0L ? 0.0 : totalReward.sum() / (double) count;
+        }
+
         private String preferredRoute() {
             return routeStats.entrySet().stream()
                     .map(entry -> Map.entry(entry.getKey(), entry.getValue().score()))
@@ -176,11 +196,13 @@ public class InMemoryPlannerLearningStore implements PlannerLearningStore {
         private final LongAdder fallback = new LongAdder();
         private final LongAdder totalLatency = new LongAdder();
         private final LongAdder totalTokens = new LongAdder();
+        private final DoubleAdder totalReward = new DoubleAdder();
 
         private void observe(boolean succeeded,
                              long latencyMs,
                              int tokenEstimate,
-                             boolean usedFallback) {
+                             boolean usedFallback,
+                             double reward) {
             total.increment();
             if (succeeded) {
                 success.increment();
@@ -190,6 +212,7 @@ public class InMemoryPlannerLearningStore implements PlannerLearningStore {
             }
             totalLatency.add(Math.max(0L, latencyMs));
             totalTokens.add(Math.max(0L, tokenEstimate));
+            totalReward.add(reward);
         }
 
         private double score() {
@@ -200,8 +223,9 @@ public class InMemoryPlannerLearningStore implements PlannerLearningStore {
             double successRate = success.sum() / (double) count;
             double latencyScore = 1.0 / (1.0 + averageLatencyMs() / 900.0);
             double tokenScore = 1.0 / (1.0 + averageTokenEstimate() / 200.0);
+            double rewardScore = normalizeReward(averageReward());
             double fallbackPenalty = Math.min(0.08, fallback.sum() / (double) count * 0.08);
-            return Math.max(0.0, Math.min(1.0, 0.70 * successRate + 0.18 * latencyScore + 0.12 * tokenScore - fallbackPenalty));
+            return Math.max(0.0, Math.min(1.0, 0.56 * successRate + 0.16 * latencyScore + 0.10 * tokenScore + 0.18 * rewardScore - fallbackPenalty));
         }
 
         private double averageLatencyMs() {
@@ -212,6 +236,11 @@ public class InMemoryPlannerLearningStore implements PlannerLearningStore {
         private double averageTokenEstimate() {
             long count = total.sum();
             return count <= 0L ? 0.0 : totalTokens.sum() / (double) count;
+        }
+
+        private double averageReward() {
+            long count = total.sum();
+            return count <= 0L ? 0.0 : totalReward.sum() / (double) count;
         }
     }
 }

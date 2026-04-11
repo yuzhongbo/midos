@@ -12,7 +12,8 @@ public interface PlannerLearningStore {
                              boolean success,
                              long latencyMs,
                              int tokenEstimate,
-                             boolean usedFallback);
+                             boolean usedFallback,
+                             double reward);
 
     LearningSnapshot snapshot(String userId, String skillName);
 
@@ -20,6 +21,8 @@ public interface PlannerLearningStore {
                             double successRate,
                             double latencyScore,
                             double tokenScore,
+                            double rewardScore,
+                            double averageReward,
                             String preferredRoute,
                             long sampleCount,
                             List<String> reasons) {
@@ -29,12 +32,16 @@ public interface PlannerLearningStore {
             successRate = clamp(successRate);
             latencyScore = clamp(latencyScore);
             tokenScore = clamp(tokenScore);
+            rewardScore = clamp(rewardScore);
+            if (Double.isNaN(averageReward) || Double.isInfinite(averageReward)) {
+                averageReward = 0.0;
+            }
             preferredRoute = normalize(preferredRoute);
             reasons = reasons == null ? List.of() : List.copyOf(reasons);
         }
 
         public static LearningSnapshot neutral() {
-            return new LearningSnapshot(0.5, 0.5, 0.5, 0.5, "auto", 0L, List.of("neutral"));
+            return new LearningSnapshot(0.5, 0.5, 0.5, 0.5, 0.5, 0.0, "auto", 0L, List.of("neutral"));
         }
 
         public Map<String, Object> asMap() {
@@ -43,6 +50,8 @@ public interface PlannerLearningStore {
                     "successRate", successRate,
                     "latencyScore", latencyScore,
                     "tokenScore", tokenScore,
+                    "rewardScore", rewardScore,
+                    "averageReward", averageReward,
                     "preferredRoute", preferredRoute,
                     "sampleCount", sampleCount,
                     "reasons", reasons

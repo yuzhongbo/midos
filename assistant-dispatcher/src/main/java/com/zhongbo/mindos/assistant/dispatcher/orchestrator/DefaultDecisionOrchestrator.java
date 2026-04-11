@@ -11,6 +11,8 @@ import com.zhongbo.mindos.assistant.dispatcher.agent.procedure.ProceduralMemory;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.step5.AgentRouter;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.step5.RecoveryAction;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.step5.PlannerLearningStore;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.step5.PolicyUpdater;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.step5.RewardModel;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.step5.RecoveryManager;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.step5.TraceLogger;
 import com.zhongbo.mindos.assistant.common.SkillContext;
@@ -69,6 +71,7 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
     private SearchPlanner searchPlanner;
     private ProceduralMemory proceduralMemory;
     private PlannerLearningStore plannerLearningStore;
+    private PolicyUpdater policyUpdater;
     private AgentRouter agentRouter;
     private RecoveryManager recoveryManager;
     private TraceLogger traceLogger;
@@ -118,6 +121,11 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
     @Autowired(required = false)
     void setPlannerLearningStore(PlannerLearningStore plannerLearningStore) {
         this.plannerLearningStore = plannerLearningStore;
+    }
+
+    @Autowired(required = false)
+    void setPolicyUpdater(PolicyUpdater policyUpdater) {
+        this.policyUpdater = policyUpdater;
     }
 
     @Autowired(required = false)
@@ -1264,27 +1272,57 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
                                  SkillResult result,
                                  long durationMs,
                                  String traceId) {
-        if (plannerLearningStore == null || request == null || execution == null) {
+        if (request == null || execution == null) {
             return;
         }
         int tokenEstimate = estimateTokens(request.userInput())
                 + estimateTokens(execution.params() == null ? "" : execution.params().toString())
                 + estimateTokens(result == null ? "" : result.output());
-        plannerLearningStore.observe(
-                request.userId(),
-                execution.skillName(),
-                routeDecision == null ? "unknown" : routeDecision.routeType().name(),
-                result != null && result.success(),
-                durationMs,
-                tokenEstimate,
-                execution.usedFallback()
-        );
+        String routeType = routeDecision == null ? "unknown" : routeDecision.routeType().name();
+        boolean success = result != null && result.success();
+        RewardModel rewardModel;
+        if (policyUpdater != null) {
+            rewardModel = policyUpdater.update(
+                    request.userId(),
+                    execution.skillName(),
+                    routeType,
+                    success,
+                    durationMs,
+                    tokenEstimate,
+                    execution.usedFallback()
+            );
+        } else {
+            rewardModel = RewardModel.evaluate(
+                    execution.skillName(),
+                    routeType,
+                    success,
+                    durationMs,
+                    tokenEstimate,
+                    execution.usedFallback(),
+                    1800L
+            );
+            if (plannerLearningStore != null) {
+                plannerLearningStore.observe(
+                        request.userId(),
+                        execution.skillName(),
+                        routeType,
+                        success,
+                        durationMs,
+                        tokenEstimate,
+                        execution.usedFallback(),
+                        rewardModel.reward()
+                );
+            }
+        }
         traceEvent(traceId, "learning", "observe", Map.of(
                 "skill", execution.skillName(),
-                "success", result != null && result.success(),
+                "success", success,
                 "durationMs", durationMs,
                 "tokenEstimate", tokenEstimate,
-                "routeType", routeDecision == null ? "unknown" : routeDecision.routeType().name()
+                "routeType", routeType,
+                "reward", rewardModel.reward(),
+                "rewardScore", rewardModel.normalizedReward(),
+                "rewardReasons", rewardModel.reasons()
         ));
     }
 

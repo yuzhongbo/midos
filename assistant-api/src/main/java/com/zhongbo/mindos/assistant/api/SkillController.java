@@ -5,6 +5,9 @@ import com.zhongbo.mindos.assistant.skill.cloudapi.CloudApiSkillLoader;
 import com.zhongbo.mindos.assistant.skill.loader.CustomSkillLoader;
 import com.zhongbo.mindos.assistant.skill.loader.ExternalSkillLoader;
 import com.zhongbo.mindos.assistant.skill.mcp.McpSkillLoader;
+import com.zhongbo.mindos.assistant.skill.learning.GeneratedSkillDeployment;
+import com.zhongbo.mindos.assistant.skill.learning.ToolGenerationRequest;
+import com.zhongbo.mindos.assistant.skill.learning.ToolLearningService;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -26,6 +29,7 @@ import java.util.Map;
  * POST /api/skills/reload-mcp      — reload MCP skills from configured servers
  * POST /api/skills/load-mcp        — load one MCP server on demand
  * POST /api/skills/reload-cloud    — hot-reload cloud API skills from configured directory
+ * POST /api/skills/generate        — generate and register a skill from a user request
  */
 @RestController
 @RequestMapping("/api/skills")
@@ -36,6 +40,7 @@ public class SkillController {
     private final ExternalSkillLoader externalSkillLoader;
     private final McpSkillLoader mcpSkillLoader;
     private final CloudApiSkillLoader cloudApiSkillLoader;
+    private final ToolLearningService toolLearningService;
     private final SecurityPolicyGuard securityPolicyGuard;
 
     public SkillController(SkillRegistry skillRegistry,
@@ -43,12 +48,14 @@ public class SkillController {
                            ExternalSkillLoader externalSkillLoader,
                            McpSkillLoader mcpSkillLoader,
                            CloudApiSkillLoader cloudApiSkillLoader,
+                           ToolLearningService toolLearningService,
                            SecurityPolicyGuard securityPolicyGuard) {
         this.skillRegistry = skillRegistry;
         this.customSkillLoader = customSkillLoader;
         this.externalSkillLoader = externalSkillLoader;
         this.mcpSkillLoader = mcpSkillLoader;
         this.cloudApiSkillLoader = cloudApiSkillLoader;
+        this.toolLearningService = toolLearningService;
         this.securityPolicyGuard = securityPolicyGuard;
     }
 
@@ -170,6 +177,44 @@ public class SkillController {
         );
     }
 
+    /**
+     * Generates a new skill from the request, compiles it, and registers it dynamically.
+     */
+    @PostMapping("/generate")
+    public Map<String, Object> generateSkill(@RequestBody Map<String, Object> request,
+                                             HttpServletRequest servletRequest) {
+        String prompt = request == null ? null : asTrimmedString(request.get("request"));
+        securityPolicyGuard.verifyRiskyOperationApproval(
+                servletRequest,
+                "skills.generate",
+                prompt == null ? "" : prompt,
+                "system"
+        );
+        if (prompt == null || prompt.isBlank()) {
+            return Map.of("status", "error", "error", "Field 'request' is required.");
+        }
+
+        String skillName = request == null ? null : asTrimmedString(request.get("skillName"));
+        String userId = request == null ? null : asTrimmedString(request.get("userId"));
+        Map<String, Object> hints = extractObjectMap(request == null ? null : request.get("hints"));
+        GeneratedSkillDeployment deployment = toolLearningService.generateAndRegister(
+                new ToolGenerationRequest(userId, prompt, skillName, hints)
+        );
+
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("status", "ok");
+        response.put("skillName", deployment.registeredSkillName());
+        response.put("kind", deployment.artifact().kind().name());
+        response.put("replaced", deployment.replaced());
+        response.put("description", deployment.artifact().description());
+        response.put("keywords", deployment.artifact().routingKeywords());
+        response.put("packageName", deployment.artifact().packageName());
+        response.put("className", deployment.artifact().className());
+        response.put("source", deployment.artifact().sourceCode());
+        response.put("rationale", deployment.artifact().rationale());
+        return response;
+    }
+
     private String asTrimmedString(Object rawValue) {
         if (rawValue == null) {
             return null;
@@ -193,5 +238,20 @@ public class SkillController {
         }
         return parsed.isEmpty() ? Map.of() : Map.copyOf(parsed);
     }
-}
 
+    private Map<String, Object> extractObjectMap(Object rawValue) {
+        if (!(rawValue instanceof Map<?, ?> rawMap)) {
+            return Map.of();
+        }
+        Map<String, Object> parsed = new LinkedHashMap<>();
+        for (Map.Entry<?, ?> entry : rawMap.entrySet()) {
+            String key = asTrimmedString(entry.getKey());
+            Object value = entry.getValue();
+            if (key == null || value == null) {
+                continue;
+            }
+            parsed.put(key, value);
+        }
+        return parsed.isEmpty() ? Map.of() : Map.copyOf(parsed);
+    }
+}

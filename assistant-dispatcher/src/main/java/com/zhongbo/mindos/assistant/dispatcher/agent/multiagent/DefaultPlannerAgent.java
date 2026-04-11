@@ -6,11 +6,9 @@ import com.zhongbo.mindos.assistant.dispatcher.decision.Decision;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
-import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 
 @Component
 public class DefaultPlannerAgent implements PlannerAgent {
@@ -33,12 +31,7 @@ public class DefaultPlannerAgent implements PlannerAgent {
     }
 
     @Override
-    public boolean supports(AgentTaskType type) {
-        return type == AgentTaskType.PLAN_REQUEST;
-    }
-
-    @Override
-    public AgentResponse handle(AgentMessage message, AgentContext context) {
+    public AgentResponse plan(AgentMessage message, AgentContext context) {
         Decision baseDecision = context == null ? null : context.decision();
         if (baseDecision == null) {
             return AgentResponse.completed(
@@ -54,6 +47,9 @@ public class DefaultPlannerAgent implements PlannerAgent {
         Map<String, Object> mergedParams = new LinkedHashMap<>();
         if (baseDecision.params() != null) {
             mergedParams.putAll(baseDecision.params());
+        }
+        if (message != null) {
+            mergedParams.putAll(message.payloadMap());
         }
         context.memorySnapshot().ifPresent(snapshot -> mergedParams.putAll(snapshot.inferredFacts()));
         Decision planningDecision = new Decision(
@@ -92,8 +88,7 @@ public class DefaultPlannerAgent implements PlannerAgent {
                 message,
                 name(),
                 "executor-agent",
-                AgentTask.of(AgentTaskType.EXECUTE_GRAPH, context.userId(), context.userInput(), payload),
-                Map.of("planner.rationale", safeRationale)
+                AgentTask.of(AgentTaskType.EXECUTE_GRAPH, context.userId(), context.userInput(), payload)
         );
 
         Map<String, Object> patch = new LinkedHashMap<>();
@@ -108,6 +103,16 @@ public class DefaultPlannerAgent implements PlannerAgent {
                 List.of(executeMessage),
                 patch
         );
+    }
+
+    @Override
+    public AgentResponse execute(AgentMessage message, AgentContext context) {
+        return AgentResponse.unsupported(name(), "execute");
+    }
+
+    @Override
+    public AgentResponse observe(AgentMessage message, AgentContext context) {
+        return AgentResponse.unsupported(name(), "observe");
     }
 
     private String firstNonBlank(String first, String second) {

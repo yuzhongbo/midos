@@ -34,13 +34,8 @@ public class DefaultToolAgent implements ToolAgent {
     }
 
     @Override
-    public boolean supports(AgentTaskType type) {
-        return type == AgentTaskType.TOOL_CALL;
-    }
-
-    @Override
-    public AgentResponse handle(AgentMessage message, AgentContext context) {
-        Map<String, Object> payload = message == null ? Map.of() : message.payload();
+    public AgentResponse execute(AgentMessage message, AgentContext context) {
+        Map<String, Object> payload = message == null ? Map.of() : message.payloadMap();
         String skillName = firstNonBlank(stringValue(payload.get("skillName")), message == null ? "" : message.to());
         Map<String, Object> params = mapValue(payload.get("params"));
         boolean usedFallback = booleanValue(payload.get("usedFallback"));
@@ -80,8 +75,7 @@ public class DefaultToolAgent implements ToolAgent {
                 message,
                 name(),
                 "memory-agent",
-                AgentTask.of(AgentTaskType.MEMORY_WRITE, context.userId(), context.userInput(), memoryPayload),
-                Map.of("skillName", skillName, "success", result.success())
+                AgentTask.of(AgentTaskType.MEMORY_WRITE, context.userId(), context.userInput(), memoryPayload)
         );
 
         Map<String, Object> patch = new LinkedHashMap<>();
@@ -97,6 +91,16 @@ public class DefaultToolAgent implements ToolAgent {
                 patch,
                 result.success() ? "tool success" : "tool failed"
         );
+    }
+
+    @Override
+    public AgentResponse plan(AgentMessage message, AgentContext context) {
+        return AgentResponse.unsupported(name(), "plan");
+    }
+
+    @Override
+    public AgentResponse observe(AgentMessage message, AgentContext context) {
+        return AgentResponse.unsupported(name(), "observe");
     }
 
     private Map<String, Object> mapValue(Object value) {

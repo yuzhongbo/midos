@@ -47,12 +47,7 @@ public class DefaultMemoryAgent implements MemoryAgent {
     }
 
     @Override
-    public boolean supports(AgentTaskType type) {
-        return type == AgentTaskType.MEMORY_READ || type == AgentTaskType.MEMORY_WRITE;
-    }
-
-    @Override
-    public AgentResponse handle(AgentMessage message, AgentContext context) {
+    public AgentResponse observe(AgentMessage message, AgentContext context) {
         if (message == null || message.type() == null) {
             return AgentResponse.completed(
                     name(),
@@ -66,20 +61,23 @@ public class DefaultMemoryAgent implements MemoryAgent {
         return switch (message.type()) {
             case MEMORY_READ -> handleRead(message, context);
             case MEMORY_WRITE -> handleWrite(message, context);
-            default -> AgentResponse.completed(
-                    name(),
-                    SkillResult.failure(name(), "unsupported memory task"),
-                    false,
-                    List.of(),
-                    Map.of(),
-                    "unsupported memory task"
-            );
+            default -> AgentResponse.unsupported(name(), "observe");
         };
+    }
+
+    @Override
+    public AgentResponse plan(AgentMessage message, AgentContext context) {
+        return AgentResponse.unsupported(name(), "plan");
+    }
+
+    @Override
+    public AgentResponse execute(AgentMessage message, AgentContext context) {
+        return AgentResponse.unsupported(name(), "execute");
     }
 
     private AgentResponse handleRead(AgentMessage message, AgentContext context) {
         String userId = firstNonBlank(message.userId(), context.userId());
-        Map<String, Object> payload = message.payload();
+        Map<String, Object> payload = message.payloadMap();
         String focusKey = firstNonBlank(stringValue(payload.get("focusKey")), firstNonBlank(context.decision() == null ? "" : context.decision().target(), context.decision() == null ? "" : context.decision().intent()));
         List<String> requestedKeys = toStringList(payload.get("requestedKeys"));
         Map<String, Object> effectiveParams = mapValue(payload.get("effectiveParams"));
@@ -135,7 +133,7 @@ public class DefaultMemoryAgent implements MemoryAgent {
 
     private AgentResponse handleWrite(AgentMessage message, AgentContext context) {
         String userId = firstNonBlank(message.userId(), context.userId());
-        Map<String, Object> payload = message.payload();
+        Map<String, Object> payload = message.payloadMap();
         String kind = firstNonBlank(stringValue(payload.get("kind")), "skill-usage");
         SkillResult result = skillResult(payload.get("result"));
         if (result == null) {

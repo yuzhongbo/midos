@@ -50,5 +50,12 @@ class SkillControllerSecurityTest {
                         .content("{\"alias\":\"docs\",\"url\":\"https://example.com/mcp\"}"))
                 .andExpect(status().isForbidden());
     }
-}
 
+    @Test
+    void shouldRejectSkillGenerationWithoutApprovalHeaders() throws Exception {
+        mockMvc.perform(post("/api/skills/generate")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"request\":\"抓取某网站数据\"}"))
+                .andExpect(status().isForbidden());
+    }
+}
