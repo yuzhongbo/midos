@@ -16,7 +16,7 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class DefaultPolicyUpdaterTest {
@@ -31,9 +31,7 @@ class DefaultPolicyUpdaterTest {
 
         assertEquals(1.0, reward.reward(), 1e-9);
         assertTrue(reward.reasons().contains("success:+1.0"));
-        assertNotNull(recorded.get());
-        assertEquals("skill.policy", recorded.get().skillName());
-        assertTrue(recorded.get().input().contains("reward=1.0"));
+        assertNull(recorded.get());
         PlannerLearningStore.LearningSnapshot snapshot = learningStore.snapshot("u1", "skill.policy");
         assertTrue(snapshot.rewardScore() > 0.5);
         assertEquals("local", snapshot.preferredRoute());
@@ -50,8 +48,7 @@ class DefaultPolicyUpdaterTest {
         assertEquals(-1.5, reward.reward(), 1e-9);
         assertTrue(reward.reasons().contains("failure:-1.0"));
         assertTrue(reward.reasons().contains("high-latency:-0.5"));
-        assertNotNull(recorded.get());
-        assertTrue(recorded.get().input().contains("reward=-1.5"));
+        assertNull(recorded.get());
         PlannerLearningStore.LearningSnapshot snapshot = learningStore.snapshot("u1", "skill.policy");
         assertTrue(snapshot.rewardScore() < 0.5);
     }

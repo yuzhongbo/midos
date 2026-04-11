@@ -2683,7 +2683,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
     private Optional<String> preferredSkillFromHistory(List<ProceduralMemoryEntry> history) {
         for (int i = history.size() - 1; i >= 0; i--) {
             ProceduralMemoryEntry entry = history.get(i);
-            if (entry.success() && entry.skillName() != null && !entry.skillName().isBlank()) {
+            if (entry != null && entry.success() && isHabitEligibleSkill(entry.skillName())) {
                 return Optional.of(entry.skillName());
             }
         }
@@ -2727,6 +2727,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
 
     private boolean passesStatsThreshold(String userId, String skillName) {
         return activeDispatcherMemoryFacade().getSkillUsageStats(userId).stream()
+                .filter(stats -> isHabitEligibleSkill(stats.skillName()))
                 .filter(stats -> skillName.equals(stats.skillName()))
                 .anyMatch(stats -> stats.totalCount() >= habitRoutingMinTotalCount
                         && stats.successCount() * 1.0 / Math.max(1, stats.totalCount()) >= habitRoutingMinSuccessRate);
@@ -2734,7 +2735,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
 
     private Optional<String> preferredSkillFromStats(String userId) {
         return activeDispatcherMemoryFacade().getSkillUsageStats(userId).stream()
-                .filter(stats -> stats.skillName() != null && !stats.skillName().isBlank())
+                .filter(stats -> isHabitEligibleSkill(stats.skillName()))
                 .filter(stats -> stats.totalCount() >= habitRoutingMinTotalCount)
                 .filter(stats -> stats.successCount() * 1.0 / Math.max(1, stats.totalCount()) >= habitRoutingMinSuccessRate)
                 .max(Comparator.comparingLong(SkillUsageStats::successCount))
@@ -4930,7 +4931,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
             return;
         }
         String channel = normalize(result.skillName());
-        if (channel.isBlank() || "llm".equals(channel) || "security.guard".equals(channel)) {
+        if (!isHabitEligibleSkill(channel)) {
             return;
         }
         String profile = buildBehaviorProfileSummary(userId);
@@ -4956,7 +4957,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         List<ProceduralMemoryEntry> window = new ArrayList<>();
         for (int i = history.size() - 1; i >= 0 && window.size() < behaviorLearningWindowSize; i--) {
             ProceduralMemoryEntry entry = history.get(i);
-            if (entry != null && entry.success() && entry.skillName() != null && !entry.skillName().isBlank()) {
+            if (entry != null && entry.success() && isHabitEligibleSkill(entry.skillName())) {
                 window.add(0, entry);
             }
         }
@@ -5001,6 +5002,23 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
             summary.append(", sequence=").append(topSequence.getKey()).append("(").append(topSequence.getValue()).append(")");
         }
         return capText(summary.toString(), 360);
+    }
+
+    private boolean isHabitEligibleSkill(String skillName) {
+        String normalized = normalize(skillName);
+        if (normalized.isBlank()) {
+            return false;
+        }
+        if ("llm".equals(normalized) || "security.guard".equals(normalized) || "reflection".equals(normalized)) {
+            return false;
+        }
+        return !normalized.startsWith("memory.")
+                && !normalized.startsWith("semantic.")
+                && !normalized.startsWith("policy.")
+                && !normalized.startsWith("planner.")
+                && !normalized.startsWith("reflection.")
+                && !normalized.startsWith("strategy.")
+                && !normalized.startsWith("autonomous.");
     }
 
     private String inferMemoryBucketBySkill(String skillName) {

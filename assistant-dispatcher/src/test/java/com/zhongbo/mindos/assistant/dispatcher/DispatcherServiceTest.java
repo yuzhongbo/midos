@@ -1155,6 +1155,35 @@ class DispatcherServiceTest {
     }
 
     @Test
+    void shouldIgnoreReflectionEntriesWhenRoutingContinuationByHabit() {
+        MemoryManager memoryManager = createMemoryManager();
+        MemoryFacade memoryFacade = new MemoryFacade(memoryManager);
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of("不应调用 llm"));
+        DispatcherService service = createDispatcher(memoryManager, llmClient, List.of(
+                scriptedSkill(
+                        "code.generate",
+                        "Generate code from task descriptions",
+                        List.of("generate code", "code"),
+                        context -> SkillResult.success("code.generate", "代码草稿已生成")
+                )
+        ), 2);
+
+        memoryFacade.logSkillUsage("reflection-habit-user", "code.generate", "generate code for order entity", true);
+        memoryFacade.logSkillUsage("reflection-habit-user", "reflection", "reflection | pattern=stable", true);
+        memoryFacade.logSkillUsage("reflection-habit-user", "code.generate", "generate code for order service", true);
+        memoryFacade.logSkillUsage("reflection-habit-user", "reflection", "reflection | pattern=stable", true);
+
+        DispatchResult result = service.dispatch("reflection-habit-user", "继续按之前方式");
+
+        assertEquals("code.generate", result.channel());
+        assertEquals("memory-habit", result.executionTrace().routing().route());
+        assertEquals("code.generate", result.executionTrace().routing().selectedSkill());
+        assertTrue(result.reply().contains("代码草稿已生成"));
+        assertEquals(0, llmClient.routingCallCount());
+        assertEquals(0, llmClient.fallbackCallCount());
+    }
+
+    @Test
     void shouldStoreRememberCommandFromChinesePrefixIntoTaskBucket() {
         MemoryManager memoryManager = createMemoryManager();
         RecordingLlmClient llmClient = new RecordingLlmClient(List.of("已记住"));

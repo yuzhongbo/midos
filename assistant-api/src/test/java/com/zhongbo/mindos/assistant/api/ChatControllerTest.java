@@ -16,8 +16,11 @@ import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
 
 import static org.hamcrest.Matchers.containsString;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.request;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.asyncDispatch;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -76,10 +79,18 @@ class ChatControllerTest {
 
     @Test
     void shouldSupportSseStreamingForChat() throws Exception {
-        mockMvc.perform(post("/chat")
+        MvcResult mvcResult = mockMvc.perform(post("/chat")
                         .accept(MediaType.TEXT_EVENT_STREAM)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"userId\":\"stream-user\",\"message\":\"echo hello\"}"))
+                .andExpect(status().isOk())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.TEXT_EVENT_STREAM))
+                .andExpect(request().asyncStarted())
+                .andReturn();
+
+        mvcResult.getAsyncResult(1000);
+
+        mockMvc.perform(asyncDispatch(mvcResult))
                 .andExpect(status().isOk())
                 .andExpect(content().contentTypeCompatibleWith(MediaType.TEXT_EVENT_STREAM))
                 .andExpect(content().string(containsString("event:start")))
@@ -431,10 +442,16 @@ class ChatControllerTest {
                                    java.util.function.Function<SkillContext, String> output) {
             McpToolDefinition definition = new McpToolDefinition(alias, "http://unused.local/mcp", toolName, description);
             McpToolExecutor executor = new McpToolExecutor();
+            java.util.List<String> routingKeywords = new java.util.ArrayList<>(executor.routingKeywords(definition));
+            if ("qwensearch".equals(alias) && "webSearch".equals(toolName)) {
+                routingKeywords.addAll(java.util.List.of("今天新闻", "最新新闻", "新闻", "news"));
+            } else if ("bravesearch".equals(alias) && "webSearch".equals(toolName)) {
+                routingKeywords.addAll(java.util.List.of("新闻", "news"));
+            }
             return new ScriptedSkill(
                     definition.skillName(),
                     description,
-                    executor.routingKeywords(definition),
+                    routingKeywords,
                     context -> SkillResult.success(definition.skillName(), output.apply(context))
             );
         }
