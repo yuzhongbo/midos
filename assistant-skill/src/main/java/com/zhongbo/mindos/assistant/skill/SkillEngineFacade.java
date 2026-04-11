@@ -7,7 +7,7 @@ public interface SkillEngineFacade {
 
     Optional<String> detectSkillName(String input);
 
-    List<SkillEngine.SkillCandidate> detectSkillCandidates(String input, int limit);
+    List<SkillCandidate> detectSkillCandidates(String input, int limit);
 
     Optional<SkillDescriptor> describeSkill(String skillName);
 

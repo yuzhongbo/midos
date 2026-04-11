@@ -4,6 +4,8 @@ import com.zhongbo.mindos.assistant.common.LlmClient;
 import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.skill.Skill;
+import com.zhongbo.mindos.assistant.skill.SkillDescriptor;
+import com.zhongbo.mindos.assistant.skill.SkillDescriptorProvider;
 import org.springframework.stereotype.Component;
 
 import java.time.ZoneId;
@@ -19,7 +21,7 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 
 @Component
-public class TimeSkill implements Skill {
+public class TimeSkill implements Skill, SkillDescriptorProvider {
     private static final Logger LOGGER = Logger.getLogger(TimeSkill.class.getName());
     private final LlmClient llmClient;
 
@@ -42,21 +44,8 @@ public class TimeSkill implements Skill {
     }
 
     @Override
-    public List<String> routingKeywords() {
-        return List.of("time", "clock", "what time", "几点", "时间", "现在几点了");
-    }
-
-    @Override
-    public boolean supports(String input) {
-        if (input == null) {
-            return false;
-        }
-        String normalized = input.toLowerCase();
-        return normalized.contains("time")
-                || normalized.contains("clock")
-                || normalized.contains("几点")
-                || normalized.contains("时间")
-                || normalized.contains("what time");
+    public SkillDescriptor skillDescriptor() {
+        return new SkillDescriptor(name(), description(), List.of("time", "clock", "what time", "几点", "时间", "现在几点了"));
     }
 
     @Override

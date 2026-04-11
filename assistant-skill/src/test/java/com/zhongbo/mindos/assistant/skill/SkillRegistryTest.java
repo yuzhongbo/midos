@@ -68,7 +68,7 @@ class SkillRegistryTest {
         }
     }
 
-    private static final class KeywordSkill implements Skill {
+    private static final class KeywordSkill implements Skill, SkillDescriptorProvider {
         @Override
         public String name() {
             return "demo.skill";
@@ -80,8 +80,8 @@ class SkillRegistryTest {
         }
 
         @Override
-        public List<String> routingKeywords() {
-            return List.of("原始关键词");
+        public SkillDescriptor skillDescriptor() {
+            return new SkillDescriptor(name(), description(), List.of("原始关键词"));
         }
 
         @Override
@@ -90,15 +90,15 @@ class SkillRegistryTest {
         }
     }
 
-    private record DescriptorSkill(String name, String description) implements Skill {
+    private record DescriptorSkill(String name, String description) implements Skill, SkillDescriptorProvider {
         @Override
         public SkillResult run(SkillContext context) {
             return SkillResult.success(name, name);
         }
 
         @Override
-        public List<String> routingKeywords() {
-            return List.of("todo", name.replace('.', ' '));
+        public SkillDescriptor skillDescriptor() {
+            return new SkillDescriptor(name, description, List.of("todo", name.replace('.', ' ')));
         }
     }
 }

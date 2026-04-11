@@ -23,9 +23,6 @@ import com.zhongbo.mindos.assistant.common.dto.ExecutionTraceDto;
 import com.zhongbo.mindos.assistant.common.dto.PlanStepDto;
 import com.zhongbo.mindos.assistant.dispatcher.decision.Decision;
 import com.zhongbo.mindos.assistant.memory.MemoryGateway;
-import com.zhongbo.mindos.assistant.memory.model.LongTask;
-import com.zhongbo.mindos.assistant.memory.model.LongTaskStatus;
-import com.zhongbo.mindos.assistant.memory.model.PreferenceProfile;
 import com.zhongbo.mindos.assistant.skill.SkillExecutionGateway;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -224,65 +221,6 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
     @Override
     public void recordOutcome(String userId, String userInput, SkillResult result, ExecutionTraceDto trace) {
         memoryRecorder.record(userId, userInput, result, trace);
-    }
-
-    @Override
-    public void appendUserConversation(String userId, String message) {
-        if (memoryGateway != null) {
-            memoryGateway.appendUserConversation(userId, message);
-        }
-    }
-
-    @Override
-    public void appendAssistantConversation(String userId, String message) {
-        if (memoryGateway != null) {
-            memoryGateway.appendAssistantConversation(userId, message);
-        }
-    }
-
-    @Override
-    public void writeSemantic(String userId, String text, List<Double> embedding, String bucket) {
-        if (memoryGateway != null) {
-            memoryGateway.writeSemantic(userId, text, embedding, bucket);
-        }
-    }
-
-    @Override
-    public PreferenceProfile updatePreferenceProfile(String userId, PreferenceProfile profile) {
-        return memoryGateway == null ? PreferenceProfile.empty() : memoryGateway.updatePreferenceProfile(userId, profile);
-    }
-
-    @Override
-    public LongTask createLongTask(String userId,
-                                   String title,
-                                   String objective,
-                                   List<String> steps,
-                                   Instant dueAt,
-                                   Instant nextCheckAt) {
-        return memoryGateway == null ? null : memoryGateway.createLongTask(userId, title, objective, steps, dueAt, nextCheckAt);
-    }
-
-    @Override
-    public LongTask updateLongTaskProgress(String userId,
-                                           String taskId,
-                                           String workerId,
-                                           String completedStep,
-                                           String note,
-                                           String blockedReason,
-                                           Instant nextCheckAt,
-                                           boolean markCompleted) {
-        return memoryGateway == null
-                ? null
-                : memoryGateway.updateLongTaskProgress(userId, taskId, workerId, completedStep, note, blockedReason, nextCheckAt, markCompleted);
-    }
-
-    @Override
-    public LongTask updateLongTaskStatus(String userId,
-                                         String taskId,
-                                         LongTaskStatus status,
-                                         String note,
-                                         Instant nextCheckAt) {
-        return memoryGateway == null ? null : memoryGateway.updateLongTaskStatus(userId, taskId, status, note, nextCheckAt);
     }
 
     private OrchestrationOutcome fastPath(Decision decision,

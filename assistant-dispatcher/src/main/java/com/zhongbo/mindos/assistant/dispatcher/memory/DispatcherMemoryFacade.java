@@ -351,7 +351,7 @@ public class DispatcherMemoryFacade {
         if (source.isBlank()) {
             return "";
         }
-        MemoryCompressionPlan plan = memoryManager.buildMemoryCompressionPlan(
+        MemoryCompressionPlan plan = memoryFacade.buildMemoryCompressionPlan(
                 userId,
                 source,
                 new MemoryStyleProfile("concise", "direct", "bullet"),

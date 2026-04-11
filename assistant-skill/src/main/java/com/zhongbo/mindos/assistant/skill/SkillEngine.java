@@ -15,9 +15,6 @@ import java.util.stream.Collectors;
 @Service
 public class SkillEngine implements SkillEngineFacade {
 
-    public record SkillCandidate(String skillName, int score) {
-    }
-
     private final SkillRegistry skillRegistry;
     private final McpToolCatalog mcpToolCatalog;
 
@@ -38,6 +35,7 @@ public class SkillEngine implements SkillEngineFacade {
         return detectSkillCandidates(input, 1).stream().findFirst().map(SkillCandidate::skillName);
     }
 
+    @Override
     public List<SkillCandidate> detectSkillCandidates(String input, int limit) {
         if (input == null || input.isBlank() || limit <= 0) {
             return List.of();

@@ -629,7 +629,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
             java.util.concurrent.atomic.AtomicBoolean memoryDirectBypassedRef = new java.util.concurrent.atomic.AtomicBoolean(false);
             RoutingReplayProbe replayProbe = new RoutingReplayProbe();
 
-            decisionOrchestrator.appendUserConversation(userId, userInput);
+            activeDispatcherMemoryFacade().appendUserConversation(userId, userInput);
             maybeStoreSemanticMemory(userId, userInput);
 
             // Fast-path: short conversational acknowledgements should avoid expensive routing.
@@ -645,7 +645,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
 
         if (isPromptInjectionAttempt(userInput)) {
             LOGGER.warning("Dispatcher guard=prompt-injection, userId=" + userId + ", input=" + clip(userInput));
-            decisionOrchestrator.appendAssistantConversation(userId, promptInjectionSafeReply);
+            activeDispatcherMemoryFacade().appendAssistantConversation(userId, promptInjectionSafeReply);
             routingDecisionRef.set(new RoutingDecisionDto(
                     "security.guard",
                     "security.guard",
@@ -798,7 +798,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                     ExecutionTraceDto trace = enrichTraceWithRouting(orchestration.trace(), routingWithObservability);
                     finalResultSuccessRef.set(result.success());
                     decisionOrchestrator.recordOutcome(userId, userInput, result, trace);
-                    decisionOrchestrator.appendAssistantConversation(userId, result.output());
+                    activeDispatcherMemoryFacade().appendAssistantConversation(userId, result.output());
                     maybeStoreBehaviorProfile(userId, result);
                     personaCoreService.learnFromTurn(userId, resolvedProfileContext, result);
                     recordRoutingReplaySample(userInput, routingDecisionRef.get(), replayProbe, promptMemoryContext, result.skillName());
@@ -850,7 +850,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
             java.util.concurrent.atomic.AtomicBoolean memoryDirectBypassedRef = new java.util.concurrent.atomic.AtomicBoolean(false);
             RoutingReplayProbe replayProbe = new RoutingReplayProbe();
 
-            decisionOrchestrator.appendUserConversation(userId, userInput);
+            activeDispatcherMemoryFacade().appendUserConversation(userId, userInput);
             maybeStoreSemanticMemory(userId, userInput);
 
         // Fast-path: short conversational acknowledgements should avoid expensive routing
@@ -864,7 +864,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
 
         if (isPromptInjectionAttempt(userInput)) {
             String safeReply = promptInjectionSafeReply;
-            decisionOrchestrator.appendAssistantConversation(userId, safeReply);
+            activeDispatcherMemoryFacade().appendAssistantConversation(userId, safeReply);
             RoutingDecisionDto decision = new RoutingDecisionDto(
                     "security.guard",
                     "security.guard",
@@ -978,7 +978,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                     );
                     ExecutionTraceDto trace = new ExecutionTraceDto("stream-single-pass", 0, null, List.of(), routingWithObservability);
                     finalResultSuccessRef.set(normalized.success());
-                    decisionOrchestrator.appendAssistantConversation(userId, normalized.output());
+                    activeDispatcherMemoryFacade().appendAssistantConversation(userId, normalized.output());
                     decisionOrchestrator.recordOutcome(userId, userInput, normalized, trace);
                     maybeStoreBehaviorProfile(userId, normalized);
                     personaCoreService.learnFromTurn(userId, resolvedProfileContext, normalized);
@@ -1113,7 +1113,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                     : enrichTraceWithRouting(orchestration.trace(), routingWithObservability);
             finalResultSuccessRef.set(result.success());
             decisionOrchestrator.recordOutcome(userId, userInput, result, trace);
-            decisionOrchestrator.appendAssistantConversation(userId, result.output());
+            activeDispatcherMemoryFacade().appendAssistantConversation(userId, result.output());
             maybeStoreBehaviorProfile(userId, result);
             personaCoreService.learnFromTurn(userId, resolvedProfileContext, result);
             recordRoutingReplaySample(userInput, routingDecisionRef.get(), replayProbe, promptMemoryContext, result.skillName());
@@ -2663,7 +2663,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
             return Optional.empty();
         }
 
-        List<ProceduralMemoryEntry> history = memoryManager.getSkillUsageHistory(userId);
+        List<ProceduralMemoryEntry> history = activeDispatcherMemoryFacade().getSkillUsageHistory(userId);
         Optional<String> preferredSkill = preferredSkillFromHistory(history)
                 .or(() -> preferredSkillFromStats(userId));
         if (preferredSkill.isEmpty()) {
@@ -2725,14 +2725,14 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
     }
 
     private boolean passesStatsThreshold(String userId, String skillName) {
-        return memoryManager.getSkillUsageStats(userId).stream()
+        return activeDispatcherMemoryFacade().getSkillUsageStats(userId).stream()
                 .filter(stats -> skillName.equals(stats.skillName()))
                 .anyMatch(stats -> stats.totalCount() >= habitRoutingMinTotalCount
                         && stats.successCount() * 1.0 / Math.max(1, stats.totalCount()) >= habitRoutingMinSuccessRate);
     }
 
     private Optional<String> preferredSkillFromStats(String userId) {
-        return memoryManager.getSkillUsageStats(userId).stream()
+        return activeDispatcherMemoryFacade().getSkillUsageStats(userId).stream()
                 .filter(stats -> stats.skillName() != null && !stats.skillName().isBlank())
                 .filter(stats -> stats.totalCount() >= habitRoutingMinTotalCount)
                 .filter(stats -> stats.successCount() * 1.0 / Math.max(1, stats.totalCount()) >= habitRoutingMinSuccessRate)
@@ -2802,7 +2802,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
     }
 
     private Optional<String> findLastSuccessfulSkillInput(String userId, String skillName) {
-        List<ProceduralMemoryEntry> history = memoryManager.getSkillUsageHistory(userId);
+        List<ProceduralMemoryEntry> history = activeDispatcherMemoryFacade().getSkillUsageHistory(userId);
         for (int i = history.size() - 1; i >= 0; i--) {
             ProceduralMemoryEntry entry = history.get(i);
             if (entry.success()
@@ -3519,7 +3519,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         if (isSearchLikeSkill(skillName)) {
             return false;
         }
-        List<ProceduralMemoryEntry> history = memoryManager.getSkillUsageHistory(userId);
+        List<ProceduralMemoryEntry> history = activeDispatcherMemoryFacade().getSkillUsageHistory(userId);
         if (isConsecutiveSkillLoop(history, skillName)) {
             return true;
         }
@@ -4108,7 +4108,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                 (double) ((Integer) embeddingSeed.get("length")),
                 ((Integer) embeddingSeed.get("hash")) / 1000.0
         );
-        decisionOrchestrator.writeSemantic(userId, knowledge, embedding, memoryBucket);
+        activeDispatcherMemoryFacade().writeSemantic(userId, knowledge, embedding, memoryBucket);
     }
 
     private void appendContextSection(StringBuilder builder, String title, String content, int budget) {
@@ -4251,7 +4251,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         Set<String> inputTokens = routingTokens(userInput);
         String memoryBucket = inferMemoryBucket(userInput);
         Optional<String> preferredFromStats = preferredSkillFromStats(userId);
-        Optional<String> preferredFromHistory = preferredSkillFromHistory(memoryManager.getSkillUsageHistory(userId));
+        Optional<String> preferredFromHistory = preferredSkillFromHistory(activeDispatcherMemoryFacade().getSkillUsageHistory(userId));
 
         List<SkillRoutingCandidate> rankedCandidates = summaries.stream()
                 .map(summary -> new SkillRoutingCandidate(summary, skillRoutingScore(
@@ -4301,7 +4301,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         Set<String> inputTokens = routingTokens(userInput);
         String memoryBucket = inferMemoryBucket(userInput);
         Optional<String> preferredFromStats = preferredSkillFromStats(userId);
-        Optional<String> preferredFromHistory = preferredSkillFromHistory(memoryManager.getSkillUsageHistory(userId));
+        Optional<String> preferredFromHistory = preferredSkillFromHistory(activeDispatcherMemoryFacade().getSkillUsageHistory(userId));
 
         String normalizedInput = normalize(userInput);
         int best = 0;
@@ -4458,7 +4458,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
             reply = "你好！有什么我可以帮你的吗？";
         }
         // Persist assistant reply to conversation history for consistency
-        decisionOrchestrator.appendAssistantConversation(userId, reply == null ? "" : reply);
+        activeDispatcherMemoryFacade().appendAssistantConversation(userId, reply == null ? "" : reply);
         RoutingDecisionDto decision = new RoutingDecisionDto(
                 "conversational-bypass",
                 "conversational-bypass",
@@ -4760,7 +4760,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                 (double) memoryText.length(),
                 Math.abs(memoryText.hashCode() % 1000) / 1000.0
         );
-        decisionOrchestrator.writeSemantic(userId, memoryText, embedding, inferMemoryBucket(userInput));
+        activeDispatcherMemoryFacade().writeSemantic(userId, memoryText, embedding, inferMemoryBucket(userInput));
     }
 
     private void completeSemanticPayloadFromMemory(String userId,
@@ -4780,7 +4780,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         String summary = semanticAnalysis.summary() == null ? "" : semanticAnalysis.summary().trim();
         String routingInput = semanticAnalysis.routingInput(originalInput);
         String memoryQuery = summary.isBlank() ? routingInput : summary;
-        List<SemanticMemoryEntry> related = memoryManager.searchKnowledge(
+        List<SemanticMemoryEntry> related = activeDispatcherMemoryFacade().searchKnowledge(
                 userId,
                 memoryQuery,
                 3,
@@ -4854,7 +4854,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
     }
 
     private Map<String, String> inferDefaultParamsFromHistory(String userId, String skillName) {
-        List<ProceduralMemoryEntry> history = memoryManager.getSkillUsageHistory(userId);
+        List<ProceduralMemoryEntry> history = activeDispatcherMemoryFacade().getSkillUsageHistory(userId);
         if (history.isEmpty()) {
             return Map.of();
         }
@@ -4937,18 +4937,18 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
             return;
         }
         String bucket = inferMemoryBucketBySkill(channel);
-        List<SemanticMemoryEntry> recent = memoryManager.searchKnowledge(userId, "behavior-profile", 1, bucket);
+        List<SemanticMemoryEntry> recent = activeDispatcherMemoryFacade().searchKnowledge(userId, "behavior-profile", 1, bucket);
         if (!recent.isEmpty() && profile.equals(recent.get(0).text())) {
             return;
         }
         // Log that we are storing an updated behavior profile for observability
         LOGGER.info(() -> "behavior-learning.store userId=" + userId + ", bucket=" + bucket + ", profileSummary=" + capText(profile, 200));
         List<Double> embedding = List.of((double) profile.length(), Math.abs(profile.hashCode() % 1000) / 1000.0);
-        decisionOrchestrator.writeSemantic(userId, profile, embedding, bucket);
+        activeDispatcherMemoryFacade().writeSemantic(userId, profile, embedding, bucket);
     }
 
     private String buildBehaviorProfileSummary(String userId) {
-        List<ProceduralMemoryEntry> history = memoryManager.getSkillUsageHistory(userId);
+        List<ProceduralMemoryEntry> history = activeDispatcherMemoryFacade().getSkillUsageHistory(userId);
         if (history.isEmpty()) {
             return "";
         }

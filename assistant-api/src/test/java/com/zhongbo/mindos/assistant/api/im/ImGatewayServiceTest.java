@@ -59,48 +59,6 @@ class ImGatewayServiceTest {
             @Override
             public void recordOutcome(String userId, String userInput, SkillResult result, ExecutionTraceDto trace) {
             }
-
-            @Override
-            public void appendUserConversation(String userId, String message) {
-                memoryGateway.appendUserConversation(userId, message);
-            }
-
-            @Override
-            public void appendAssistantConversation(String userId, String message) {
-                memoryGateway.appendAssistantConversation(userId, message);
-            }
-
-            @Override
-            public void writeSemantic(String userId, String text, List<Double> embedding, String bucket) {
-                memoryGateway.writeSemantic(userId, text, embedding, bucket);
-            }
-
-            @Override
-            public PreferenceProfile updatePreferenceProfile(String userId, PreferenceProfile profile) {
-                return memoryGateway.updatePreferenceProfile(userId, profile);
-            }
-
-            @Override
-            public LongTask createLongTask(String userId, String title, String objective, List<String> steps, Instant dueAt, Instant nextCheckAt) {
-                return memoryGateway.createLongTask(userId, title, objective, steps, dueAt, nextCheckAt);
-            }
-
-            @Override
-            public LongTask updateLongTaskProgress(String userId,
-                                                   String taskId,
-                                                   String workerId,
-                                                   String completedStep,
-                                                   String note,
-                                                   String blockedReason,
-                                                   Instant nextCheckAt,
-                                                   boolean markCompleted) {
-                return memoryGateway.updateLongTaskProgress(userId, taskId, workerId, completedStep, note, blockedReason, nextCheckAt, markCompleted);
-            }
-
-            @Override
-            public LongTask updateLongTaskStatus(String userId, String taskId, LongTaskStatus status, String note, Instant nextCheckAt) {
-                return memoryGateway.updateLongTaskStatus(userId, taskId, status, note, nextCheckAt);
-            }
         };
     }
 

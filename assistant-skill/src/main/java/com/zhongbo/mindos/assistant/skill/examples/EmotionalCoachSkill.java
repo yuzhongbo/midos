@@ -3,6 +3,8 @@ package com.zhongbo.mindos.assistant.skill.examples;
 import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.skill.Skill;
+import com.zhongbo.mindos.assistant.skill.SkillDescriptor;
+import com.zhongbo.mindos.assistant.skill.SkillDescriptorProvider;
 import org.springframework.stereotype.Component;
 
 import java.util.Arrays;
@@ -14,7 +16,7 @@ import java.util.Set;
 import java.util.regex.Pattern;
 
 @Component
-public class EmotionalCoachSkill implements Skill {
+public class EmotionalCoachSkill implements Skill, SkillDescriptorProvider {
 
     private static final String RISK_HIGH_TERMS_PROP = "mindos.eq.coach.risk.high-terms";
     private static final String RISK_MEDIUM_TERMS_PROP = "mindos.eq.coach.risk.medium-terms";
@@ -40,30 +42,12 @@ public class EmotionalCoachSkill implements Skill {
     }
 
     @Override
-    public List<String> routingKeywords() {
-        return List.of("情商", "沟通", "怎么说", "高情商", "心理分析", "事情分析", "分析这件事", "道歉", "安慰", "冲突", "拒绝", "怎么回复", "回什么", "话术");
-    }
-
-    @Override
-    public boolean supports(String input) {
-        if (input == null || input.isBlank()) {
-            return false;
-        }
-        String normalized = input.toLowerCase(Locale.ROOT);
-        return normalized.contains("情商")
-                || normalized.contains("沟通")
-                || normalized.contains("怎么说")
-                || normalized.contains("高情商")
-                || normalized.contains("心理分析")
-                || normalized.contains("事情分析")
-                || normalized.contains("分析这件事")
-                || normalized.contains("道歉")
-                || normalized.contains("安慰")
-                || normalized.contains("冲突")
-                || normalized.contains("拒绝")
-                || normalized.contains("怎么回复")
-                || normalized.contains("回什么")
-                || normalized.contains("话术");
+    public SkillDescriptor skillDescriptor() {
+        return new SkillDescriptor(
+                name(),
+                description(),
+                List.of("情商", "沟通", "怎么说", "高情商", "心理分析", "事情分析", "分析这件事", "道歉", "安慰", "冲突", "拒绝", "怎么回复", "回什么", "话术")
+        );
     }
 
     @Override

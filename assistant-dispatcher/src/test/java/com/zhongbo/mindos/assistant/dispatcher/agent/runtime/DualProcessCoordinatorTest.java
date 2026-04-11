@@ -37,13 +37,6 @@ class DualProcessCoordinatorTest {
             }
 
             @Override public void recordOutcome(String userId, String userInput, SkillResult result, com.zhongbo.mindos.assistant.common.dto.ExecutionTraceDto trace) {}
-            @Override public void appendUserConversation(String userId, String message) {}
-            @Override public void appendAssistantConversation(String userId, String message) {}
-            @Override public void writeSemantic(String userId, String text, List<Double> embedding, String bucket) {}
-            @Override public com.zhongbo.mindos.assistant.memory.model.PreferenceProfile updatePreferenceProfile(String userId, com.zhongbo.mindos.assistant.memory.model.PreferenceProfile profile) { return com.zhongbo.mindos.assistant.memory.model.PreferenceProfile.empty(); }
-            @Override public com.zhongbo.mindos.assistant.memory.model.LongTask createLongTask(String userId, String title, String objective, List<String> steps, java.time.Instant dueAt, java.time.Instant nextCheckAt) { return null; }
-            @Override public com.zhongbo.mindos.assistant.memory.model.LongTask updateLongTaskProgress(String userId, String taskId, String workerId, String completedStep, String note, String blockedReason, java.time.Instant nextCheckAt, boolean markCompleted) { return null; }
-            @Override public com.zhongbo.mindos.assistant.memory.model.LongTask updateLongTaskStatus(String userId, String taskId, com.zhongbo.mindos.assistant.memory.model.LongTaskStatus status, String note, java.time.Instant nextCheckAt) { return null; }
         };
 
         DualProcessCoordinator coordinator = new DualProcessCoordinator(

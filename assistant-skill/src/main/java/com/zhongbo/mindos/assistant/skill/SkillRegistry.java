@@ -105,7 +105,7 @@ public class SkillRegistry {
         LinkedHashSet<String> merged = new LinkedHashSet<>();
         merged.add(skill.name());
         merged.add(splitSkillName(skill.name()));
-        merged.addAll(skill.routingKeywords());
+        merged.addAll(descriptorFor(skill).routingKeywords());
         merged.addAll(configuredKeywords(skill.name()));
         return merged.stream()
                 .map(this::normalize)
@@ -118,9 +118,8 @@ public class SkillRegistry {
         if (skill == null) {
             return Integer.MIN_VALUE;
         }
-        int customScore = skill.routingScore(input);
         int keywordScore = keywordRoutingScore(skill.name(), input);
-        return Math.max(customScore, keywordScore);
+        return keywordScore;
     }
 
     public synchronized Optional<Skill> detect(String input) {
@@ -190,6 +189,13 @@ public class SkillRegistry {
             }
         }
         return List.copyOf(values);
+    }
+
+    private SkillDescriptor descriptorFor(Skill skill) {
+        if (skill instanceof SkillDescriptorProvider provider && provider.skillDescriptor() != null) {
+            return provider.skillDescriptor();
+        }
+        return new SkillDescriptor(skill.name(), skill.description(), List.of());
     }
 
     private int keywordRoutingScore(String skillName, String input) {

@@ -189,6 +189,11 @@ public class MemoryFacade {
     }
 
     public MemoryStyleProfile updateMemoryStyleProfile(String userId,
+                                                       MemoryStyleProfile profile) {
+        return requireMemoryManager().updateMemoryStyleProfile(userId, profile);
+    }
+
+    public MemoryStyleProfile updateMemoryStyleProfile(String userId,
                                                        MemoryStyleProfile profile,
                                                        boolean autoTune,
                                                        String sampleText) {
@@ -197,6 +202,12 @@ public class MemoryFacade {
 
     public MemoryStyleProfile getMemoryStyleProfile(String userId) {
         return requireMemoryManager().getMemoryStyleProfile(userId);
+    }
+
+    public MemoryCompressionPlan buildMemoryCompressionPlan(String userId,
+                                                            String sourceText,
+                                                            MemoryStyleProfile styleOverride) {
+        return requireMemoryManager().buildMemoryCompressionPlan(userId, sourceText, styleOverride);
     }
 
     public MemoryCompressionPlan buildMemoryCompressionPlan(String userId,

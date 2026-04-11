@@ -1,7 +1,6 @@
 package com.zhongbo.mindos.assistant.dispatcher;
 
 import com.zhongbo.mindos.assistant.common.SkillResult;
-import com.zhongbo.mindos.assistant.dispatcher.orchestrator.DecisionOrchestrator;
 import com.zhongbo.mindos.assistant.memory.MemoryFacade;
 import com.zhongbo.mindos.assistant.memory.model.PreferenceProfile;
 import com.zhongbo.mindos.assistant.memory.model.ProceduralMemoryEntry;
@@ -19,18 +18,15 @@ import java.util.Set;
 public class PersonaCoreService {
 
     private final MemoryFacade memoryFacade;
-    private final DecisionOrchestrator decisionOrchestrator;
     private final boolean enabled;
     private final int preferredChannelMinConsecutiveSuccess;
     private final Set<String> ignoredProfileTerms;
 
     public PersonaCoreService(MemoryFacade memoryFacade,
-                              DecisionOrchestrator decisionOrchestrator,
                               @Value("${mindos.dispatcher.persona-core.enabled:true}") boolean enabled,
                               @Value("${mindos.dispatcher.persona-core.preferred-channel.min-consecutive-success:2}") int preferredChannelMinConsecutiveSuccess,
                               @Value("${mindos.dispatcher.persona-core.ignored-profile-terms:unknown,null,n/a,na,tbd,todo,随便,不知道,待定}") String ignoredProfileTerms) {
         this.memoryFacade = memoryFacade;
-        this.decisionOrchestrator = decisionOrchestrator;
         this.enabled = enabled;
         this.preferredChannelMinConsecutiveSuccess = Math.max(1, preferredChannelMinConsecutiveSuccess);
         this.ignoredProfileTerms = parseIgnoredTerms(ignoredProfileTerms);
@@ -72,7 +68,7 @@ public class PersonaCoreService {
         if (incoming.equals(PreferenceProfile.empty())) {
             return;
         }
-        decisionOrchestrator.updatePreferenceProfile(userId, incoming);
+        memoryFacade.updatePreferenceProfile(userId, incoming);
     }
 
     private void putIfAbsent(Map<String, Object> target, String key, String value) {
