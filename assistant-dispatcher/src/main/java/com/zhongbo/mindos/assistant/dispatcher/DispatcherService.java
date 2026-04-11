@@ -19,9 +19,6 @@ import com.zhongbo.mindos.assistant.common.dto.RoutingDecisionDto;
 import com.zhongbo.mindos.assistant.common.dto.CritiqueReportDto;
 import com.zhongbo.mindos.assistant.common.dto.SkillPreAnalyzeMetricsDto;
 import com.zhongbo.mindos.assistant.memory.MemoryManager;
-import com.zhongbo.mindos.assistant.memory.model.MemoryCompressionPlan;
-import com.zhongbo.mindos.assistant.memory.model.MemoryStyleProfile;
-import com.zhongbo.mindos.assistant.memory.model.ConversationTurn;
 import com.zhongbo.mindos.assistant.memory.model.ProceduralMemoryEntry;
 import com.zhongbo.mindos.assistant.memory.model.SemanticMemoryEntry;
 import com.zhongbo.mindos.assistant.memory.model.SkillUsageStats;
@@ -264,6 +261,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
     private final DecisionOrchestrator decisionOrchestrator;
     private final ParamValidator paramValidator;
     private final MemoryGateway memoryGateway;
+    private final DispatcherMemoryFacade defaultDispatcherMemoryFacade;
     private MasterOrchestrator masterOrchestrator;
     private RoutingCoordinator routingCoordinator;
     private DispatcherMemoryFacade dispatcherMemoryFacade;
@@ -576,6 +574,14 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         this.parallelDetectedSkillRoutingEnabled = parallelDetectedSkillRoutingEnabled;
         this.parallelDetectedSkillRoutingMaxCandidates = Math.max(1, parallelDetectedSkillRoutingMaxCandidates);
         this.parallelDetectedSkillRoutingTimeoutMs = Math.max(100L, parallelDetectedSkillRoutingTimeoutMs);
+        this.defaultDispatcherMemoryFacade = new DispatcherMemoryFacade(
+                memoryManager,
+                CONTEXT_HISTORY_LIMIT,
+                CONTEXT_KNOWLEDGE_LIMIT,
+                HABIT_SKILL_STATS_LIMIT,
+                this.memoryContextKeepRecentTurns,
+                this.memoryContextHistorySummaryMinTurns
+        );
     }
 
     @Autowired(required = false)
@@ -591,6 +597,10 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
     @Autowired(required = false)
     void setDispatcherMemoryFacade(DispatcherMemoryFacade dispatcherMemoryFacade) {
         this.dispatcherMemoryFacade = dispatcherMemoryFacade;
+    }
+
+    private DispatcherMemoryFacade activeDispatcherMemoryFacade() {
+        return dispatcherMemoryFacade == null ? defaultDispatcherMemoryFacade : dispatcherMemoryFacade;
     }
 
     public DispatchResult dispatch(String userId, String userInput) {
@@ -655,22 +665,27 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                 profileContext == null ? Map.of() : profileContext
         );
         activeDispatchCount.incrementAndGet();
-        String memoryContext = dispatcherMemoryFacade == null
-                ? buildMemoryContext(userId, userInput)
-                : dispatcherMemoryFacade.buildMemoryContext(
-                        userId,
-                        userInput,
-                        memoryContextMaxChars,
-                        stats -> recordContextCompressionMetrics(
-                                stats.rawChars(),
-                                stats.finalChars(),
-                                stats.compressed(),
-                                stats.summarizedTurns()
-                        )
-                );
-        PromptMemoryContextDto promptMemoryContext = dispatcherMemoryFacade == null
-                ? memoryManager.buildPromptMemoryContext(userId, userInput, memoryContextMaxChars, resolvedProfileContext)
-                : dispatcherMemoryFacade.buildPromptMemoryContext(userId, userInput, memoryContextMaxChars, resolvedProfileContext);
+        DispatcherMemoryFacade memoryFacade = activeDispatcherMemoryFacade();
+        List<String> availableSkillSummaries = routingCoordinator == null
+                ? skillEngine.listAvailableSkillSummaries()
+                : routingCoordinator.skillSummaries();
+        String memoryContext = memoryFacade.buildMemoryContext(
+                userId,
+                userInput,
+                memoryContextMaxChars,
+                stats -> recordContextCompressionMetrics(
+                        stats.rawChars(),
+                        stats.finalChars(),
+                        stats.compressed(),
+                        stats.summarizedTurns()
+                )
+        );
+        PromptMemoryContextDto promptMemoryContext = memoryFacade.buildPromptMemoryContext(
+                userId,
+                userInput,
+                memoryContextMaxChars,
+                resolvedProfileContext
+        );
         SemanticAnalysisResult semanticAnalysis = shouldSkipSemanticAnalysis(userInput)
                 ? SemanticAnalysisResult.empty()
                 : semanticAnalysisService.analyze(
@@ -678,38 +693,49 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                         userInput,
                         memoryContext,
                         resolvedProfileContext,
-                        routingCoordinator == null ? skillEngine.listAvailableSkillSummaries() : routingCoordinator.skillSummaries()
+                        availableSkillSummaries
                 );
         maybeStoreSemanticSummary(userId, userInput, semanticAnalysis);
         boolean realtimeIntentInput = isRealtimeIntent(userInput, semanticAnalysis);
         realtimeLookupRef.set(realtimeIntentInput || isRealtimeLikeInput(userInput, semanticAnalysis));
         String routingInput = semanticAnalysis.routingInput(userInput);
-        String effectiveMemoryContext = enrichMemoryContextWithSemanticAnalysis(memoryContext, semanticAnalysis);
-        List<Map<String, Object>> chatHistory = dispatcherMemoryFacade == null
-                ? buildChatHistory(userId)
-                : dispatcherMemoryFacade.buildChatHistory(userId);
-        Map<String, Object> skillAttributes = new LinkedHashMap<>(resolvedProfileContext);
-        skillAttributes.put("originalInput", userInput);
-        skillAttributes.put("memoryContext", memoryContext);
-        skillAttributes.put("chatHistory", chatHistory);
-        skillAttributes.putAll(semanticAnalysis.asAttributes());
-        SkillContext context = new SkillContext(userId, routingInput, skillAttributes);
-        Map<String, Object> llmContext = new LinkedHashMap<>();
-        llmContext.put("userId", userId);
-        populateFallbackMemoryContext(llmContext, effectiveMemoryContext, promptMemoryContext, realtimeIntentInput);
-        llmContext.put("input", routingInput);
-        llmContext.put("originalInput", userInput);
-        llmContext.put("semanticAnalysis", semanticAnalysis.asAttributes());
-        llmContext.put("routeStage", "llm-fallback");
-        llmContext.put("profile", resolvedProfileContext);
+        String effectiveMemoryContext = memoryFacade.enrichMemoryContextWithSemanticAnalysis(
+                memoryContext,
+                semanticAnalysis,
+                SEMANTIC_CONTEXT_MIN_CONFIDENCE,
+                memoryContextMaxChars,
+                SEMANTIC_SUMMARY_MIN_CHARS
+        );
+        List<Map<String, Object>> chatHistory = memoryFacade.buildChatHistory(userId);
+        SkillContext context = memoryFacade.buildSkillContext(
+                userId,
+                routingInput,
+                userInput,
+                resolvedProfileContext,
+                memoryContext,
+                chatHistory,
+                semanticAnalysis
+        );
+        Map<String, Object> llmContext = memoryFacade.buildFallbackLlmContext(
+                userId,
+                routingInput,
+                userInput,
+                resolvedProfileContext,
+                semanticAnalysis,
+                effectiveMemoryContext,
+                promptMemoryContext,
+                chatHistory,
+                realtimeIntentInput,
+                realtimeIntentMemoryShrinkEnabled,
+                realtimeIntentMemoryShrinkIncludePersona,
+                realtimeIntentMemoryShrinkMaxChars,
+                "llm-fallback"
+        );
         copyEscalationHints(profileContext, llmContext);
         copyEscalationHints(resolvedProfileContext, llmContext);
         copyInteractionContext(resolvedProfileContext, llmContext);
         applyStageLlmRoute("llm-fallback", resolvedProfileContext, llmContext);
         intentModelRoutingPolicy.applyForFallback(userInput, promptMemoryContext, realtimeIntentInput, resolvedProfileContext, llmContext);
-        if (!chatHistory.isEmpty()) {
-            llmContext.put("chatHistory", chatHistory);
-        }
 
         DispatchPlan routingPlan = routingCoordinator == null
                 ? null
@@ -855,8 +881,22 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                 profileContext == null ? Map.of() : profileContext
         );
         activeDispatchCount.incrementAndGet();
-        String memoryContext = buildMemoryContext(userId, userInput);
-        PromptMemoryContextDto promptMemoryContext = memoryManager.buildPromptMemoryContext(
+        DispatcherMemoryFacade memoryFacade = activeDispatcherMemoryFacade();
+        List<String> availableSkillSummaries = routingCoordinator == null
+                ? skillEngine.listAvailableSkillSummaries()
+                : routingCoordinator.skillSummaries();
+        String memoryContext = memoryFacade.buildMemoryContext(
+                userId,
+                userInput,
+                memoryContextMaxChars,
+                stats -> recordContextCompressionMetrics(
+                        stats.rawChars(),
+                        stats.finalChars(),
+                        stats.compressed(),
+                        stats.summarizedTurns()
+                )
+        );
+        PromptMemoryContextDto promptMemoryContext = memoryFacade.buildPromptMemoryContext(
                 userId,
                 userInput,
                 memoryContextMaxChars,
@@ -869,25 +909,44 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                         userInput,
                         memoryContext,
                         resolvedProfileContext,
-                        skillEngine.listAvailableSkillSummaries()
+                        availableSkillSummaries
                 );
         maybeStoreSemanticSummary(userId, userInput, semanticAnalysis);
         boolean realtimeIntentInput = isRealtimeIntent(userInput, semanticAnalysis);
         realtimeLookupRef.set(realtimeIntentInput || isRealtimeLikeInput(userInput, semanticAnalysis));
         String routingInput = semanticAnalysis.routingInput(userInput);
-        String effectiveMemoryContext = enrichMemoryContextWithSemanticAnalysis(memoryContext, semanticAnalysis);
-        Map<String, Object> contextAttributes = new LinkedHashMap<>(resolvedProfileContext);
-        contextAttributes.put("originalInput", userInput);
-        contextAttributes.putAll(semanticAnalysis.asAttributes());
-        SkillContext context = new SkillContext(userId, routingInput, contextAttributes);
-        Map<String, Object> llmContext = new LinkedHashMap<>();
-        llmContext.put("userId", userId);
-        populateFallbackMemoryContext(llmContext, effectiveMemoryContext, promptMemoryContext, realtimeIntentInput);
-        llmContext.put("input", routingInput);
-        llmContext.put("originalInput", userInput);
-        llmContext.put("semanticAnalysis", semanticAnalysis.asAttributes());
-        llmContext.put("routeStage", "llm-fallback");
-        llmContext.put("profile", resolvedProfileContext);
+        String effectiveMemoryContext = memoryFacade.enrichMemoryContextWithSemanticAnalysis(
+                memoryContext,
+                semanticAnalysis,
+                SEMANTIC_CONTEXT_MIN_CONFIDENCE,
+                memoryContextMaxChars,
+                SEMANTIC_SUMMARY_MIN_CHARS
+        );
+        List<Map<String, Object>> chatHistory = memoryFacade.buildChatHistory(userId);
+        SkillContext context = memoryFacade.buildSkillContext(
+                userId,
+                routingInput,
+                userInput,
+                resolvedProfileContext,
+                memoryContext,
+                chatHistory,
+                semanticAnalysis
+        );
+        Map<String, Object> llmContext = memoryFacade.buildFallbackLlmContext(
+                userId,
+                routingInput,
+                userInput,
+                resolvedProfileContext,
+                semanticAnalysis,
+                effectiveMemoryContext,
+                promptMemoryContext,
+                chatHistory,
+                realtimeIntentInput,
+                realtimeIntentMemoryShrinkEnabled,
+                realtimeIntentMemoryShrinkIncludePersona,
+                realtimeIntentMemoryShrinkMaxChars,
+                "llm-fallback"
+        );
         copyEscalationHints(profileContext, llmContext);
         copyEscalationHints(resolvedProfileContext, llmContext);
         copyInteractionContext(resolvedProfileContext, llmContext);
@@ -3183,7 +3242,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         llmContext.put("input", userInput);
         llmContext.put("routeStage", "llm-dsl");
         applyStageLlmRoute("llm-dsl", profileContext, llmContext);
-        List<Map<String, Object>> chatHistory = buildChatHistory(userId);
+        List<Map<String, Object>> chatHistory = activeDispatcherMemoryFacade().buildChatHistory(userId);
         if (!chatHistory.isEmpty()) {
             llmContext.put("chatHistory", chatHistory);
         }
@@ -3324,82 +3383,6 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
     }
 
 
-    private String buildMemoryContext(String userId, String userInput) {
-        memoryHitRequestCount.incrementAndGet();
-        String memoryBucket = inferMemoryBucket(userInput);
-        List<ConversationTurn> recentConversation = memoryManager.getRecentConversation(userId, CONTEXT_HISTORY_LIMIT);
-        List<SemanticMemoryEntry> conversationRollups = memoryManager.searchKnowledge(
-                userId,
-                userInput,
-                1,
-                "conversation-rollup"
-        );
-        List<SemanticMemoryEntry> knowledge = memoryManager.searchKnowledge(
-                userId,
-                userInput,
-                CONTEXT_KNOWLEDGE_LIMIT,
-                memoryBucket
-        );
-        List<SkillUsageStats> usageStats = memoryManager.getSkillUsageStats(userId).stream()
-                .sorted(Comparator.comparingLong(SkillUsageStats::successCount).reversed())
-                .limit(HABIT_SKILL_STATS_LIMIT)
-                .toList();
-
-        if (!conversationRollups.isEmpty()) {
-            memoryHitRollupCount.incrementAndGet();
-        }
-        if (!knowledge.isEmpty()) {
-            memoryHitSemanticCount.incrementAndGet();
-        }
-        if (!usageStats.isEmpty()) {
-            memoryHitProceduralCount.incrementAndGet();
-        }
-
-        int historyBudget = Math.max(160, (int) (memoryContextMaxChars * 0.5));
-        int knowledgeBudget = Math.max(120, (int) (memoryContextMaxChars * 0.3));
-        int habitsBudget = Math.max(80, memoryContextMaxChars - historyBudget - knowledgeBudget);
-
-        String rawConversationContext = buildRawConversationContext(recentConversation);
-        String compressedConversationContext = buildConversationContext(userId, recentConversation, conversationRollups);
-        String rawKnowledgeContext = buildKnowledgeContext(knowledge);
-        String rawHabitContext = buildHabitContext(usageStats);
-
-        StringBuilder builder = new StringBuilder();
-        appendContextSection(builder, "Recent conversation", compressedConversationContext, historyBudget);
-        appendContextSection(builder, "Relevant knowledge", rawKnowledgeContext, knowledgeBudget);
-        appendContextSection(builder, "User skill habits", rawHabitContext, habitsBudget);
-        String finalContext = capText(builder.toString(), memoryContextMaxChars);
-        recordContextCompressionMetrics(
-                rawConversationContext.length(),
-                compressedConversationContext.length(),
-                compressedConversationContext.length() < rawConversationContext.length() || !conversationRollups.isEmpty(),
-                Math.max(0, recentConversation.size() - memoryContextKeepRecentTurns)
-        );
-        return finalContext;
-    }
-
-    private List<Map<String, Object>> buildChatHistory(String userId) {
-        List<ConversationTurn> recentConversation = memoryManager.getRecentConversation(userId, CONTEXT_HISTORY_LIMIT);
-        if (recentConversation == null || recentConversation.isEmpty()) {
-            return List.of();
-        }
-        List<Map<String, Object>> history = new java.util.ArrayList<>();
-        for (ConversationTurn turn : recentConversation) {
-            if (turn == null || turn.content() == null || turn.content().isBlank()) {
-                continue;
-            }
-            String role = turn.role() == null || turn.role().isBlank() ? "assistant" : turn.role();
-            Map<String, Object> item = new LinkedHashMap<>();
-            item.put("role", role);
-            item.put("content", turn.content());
-            if (turn.createdAt() != null) {
-                item.put("createdAt", turn.createdAt().toString());
-            }
-            history.add(item);
-        }
-        return List.copyOf(history);
-    }
-
     private String buildFallbackPrompt(String memoryContext,
                                        PromptMemoryContextDto promptMemoryContext,
                                        String userInput,
@@ -3492,20 +3475,6 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                 || normalized.contains("如何设计");
     }
 
-    private String enrichMemoryContextWithSemanticAnalysis(String memoryContext, SemanticAnalysisResult semanticAnalysis) {
-        if (semanticAnalysis == null || semanticAnalysis.confidence() < SEMANTIC_CONTEXT_MIN_CONFIDENCE) {
-            return memoryContext;
-        }
-        String summary = semanticAnalysis.toPromptSummary();
-        if (summary.isBlank()) {
-            return memoryContext;
-        }
-        String semanticSection = "Semantic analysis:\n"
-                + capText(summary, Math.max(SEMANTIC_SUMMARY_MIN_CHARS, memoryContextMaxChars / 3));
-        String baseContext = memoryContext == null ? "" : memoryContext;
-        return capText(semanticSection + "\n" + baseContext, memoryContextMaxChars);
-    }
-
     private boolean shouldApplyRealtimeMemoryShrink(boolean realtimeIntentInput) {
         return realtimeIntentInput && realtimeIntentMemoryShrinkEnabled;
     }
@@ -3522,29 +3491,6 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         prompt.append("User input: ")
                 .append(capText(userInput, 400));
         return capText(prompt.toString(), Math.min(promptMaxChars, realtimeIntentMemoryShrinkMaxChars + 220));
-    }
-
-    private void populateFallbackMemoryContext(Map<String, Object> llmContext,
-                                               String memoryContext,
-                                               PromptMemoryContextDto promptMemoryContext,
-                                               boolean realtimeIntentInput) {
-        if (shouldApplyRealtimeMemoryShrink(realtimeIntentInput)) {
-            llmContext.put("memoryContext", "");
-            llmContext.put("memory.recent", "");
-            llmContext.put("memory.semantic", "");
-            llmContext.put("memory.procedural", "");
-            Object persona = realtimeIntentMemoryShrinkIncludePersona && promptMemoryContext != null
-                    ? promptMemoryContext.personaSnapshot()
-                    : Map.of();
-            llmContext.put("memory.persona", persona == null ? Map.of() : persona);
-            llmContext.put("memory.shrinkApplied", true);
-            return;
-        }
-        llmContext.put("memoryContext", memoryContext);
-        llmContext.put("memory.recent", promptMemoryContext == null ? "" : promptMemoryContext.recentConversation());
-        llmContext.put("memory.semantic", promptMemoryContext == null ? "" : promptMemoryContext.semanticContext());
-        llmContext.put("memory.procedural", promptMemoryContext == null ? "" : promptMemoryContext.proceduralHints());
-        llmContext.put("memory.persona", promptMemoryContext == null ? Map.of() : promptMemoryContext.personaSnapshot());
     }
 
     private String buildStructuredMemoryPromptContext(PromptMemoryContextDto promptMemoryContext) {
@@ -4163,119 +4109,6 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                 ((Integer) embeddingSeed.get("hash")) / 1000.0
         );
         decisionOrchestrator.writeSemantic(userId, knowledge, embedding, memoryBucket);
-    }
-
-    private String buildConversationContext(String userId,
-                                            List<ConversationTurn> recentConversation,
-                                            List<SemanticMemoryEntry> conversationRollups) {
-        if (recentConversation.isEmpty()) {
-            return buildConversationRollupPrefix(conversationRollups) + "- none\n";
-        }
-        int keepRecent = Math.min(memoryContextKeepRecentTurns, recentConversation.size());
-        int splitIndex = Math.max(0, recentConversation.size() - keepRecent);
-        List<ConversationTurn> olderTurns = recentConversation.size() >= memoryContextHistorySummaryMinTurns
-                ? recentConversation.subList(0, splitIndex)
-                : List.of();
-        List<ConversationTurn> preservedTurns = recentConversation.subList(splitIndex, recentConversation.size());
-
-        StringBuilder builder = new StringBuilder(buildConversationRollupPrefix(conversationRollups));
-        String olderSummary = summarizeOlderConversation(userId, olderTurns);
-        if (!olderSummary.isBlank()) {
-            builder.append("- earlier summary: ").append(olderSummary).append('\n');
-        }
-        for (ConversationTurn turn : preservedTurns) {
-            builder.append("- ").append(turn.role()).append(": ").append(turn.content()).append('\n');
-        }
-        return builder.toString();
-    }
-
-    private String buildConversationRollupPrefix(List<SemanticMemoryEntry> conversationRollups) {
-        if (conversationRollups == null || conversationRollups.isEmpty()) {
-            return "";
-        }
-        return conversationRollups.stream()
-                .map(SemanticMemoryEntry::text)
-                .filter(text -> text != null && !text.isBlank())
-                .findFirst()
-                .map(text -> "- persisted rollup: " + text + '\n')
-                .orElse("");
-    }
-
-    private String buildRawConversationContext(List<ConversationTurn> recentConversation) {
-        if (recentConversation.isEmpty()) {
-            return "- none\n";
-        }
-        StringBuilder builder = new StringBuilder();
-        for (ConversationTurn turn : recentConversation) {
-            builder.append("- ").append(turn.role()).append(": ").append(turn.content()).append('\n');
-        }
-        return builder.toString();
-    }
-
-    private String summarizeOlderConversation(String userId, List<ConversationTurn> olderTurns) {
-        if (olderTurns == null || olderTurns.isEmpty()) {
-            return "";
-        }
-        String source = olderTurns.stream()
-                .map(turn -> turn.role() + ": " + turn.content())
-                .reduce((left, right) -> left + "\n" + right)
-                .orElse("");
-        if (source.isBlank()) {
-            return "";
-        }
-        MemoryCompressionPlan plan = memoryManager.buildMemoryCompressionPlan(
-                userId,
-                source,
-                new MemoryStyleProfile("concise", "direct", "bullet"),
-                "review"
-        );
-        return plan.steps().stream()
-                .filter(step -> "BRIEF".equals(step.stage()))
-                .map(step -> step.content().replace('\n', ' '))
-                .filter(value -> !value.isBlank())
-                .findFirst()
-                .orElse("");
-    }
-
-    private String buildKnowledgeContext(List<SemanticMemoryEntry> knowledge) {
-        if (knowledge.isEmpty()) {
-            return "- none\n";
-        }
-        LinkedHashSet<String> unique = new LinkedHashSet<>();
-        for (SemanticMemoryEntry entry : knowledge) {
-            if (entry != null && entry.text() != null && !entry.text().isBlank()) {
-                unique.add(entry.text());
-            }
-        }
-        if (unique.isEmpty()) {
-            return "- none\n";
-        }
-        StringBuilder builder = new StringBuilder();
-        for (String text : unique) {
-            builder.append("- ").append(text).append('\n');
-        }
-        return builder.toString();
-    }
-
-    private String buildHabitContext(List<SkillUsageStats> usageStats) {
-        if (usageStats.isEmpty()) {
-            return "- none\n";
-        }
-        StringBuilder builder = new StringBuilder();
-        for (SkillUsageStats stats : usageStats) {
-            long total = Math.max(1L, stats.totalCount());
-            long successRate = Math.round(stats.successCount() * 100.0 / total);
-            builder.append("- ")
-                    .append(stats.skillName())
-                    .append(" (success=")
-                    .append(stats.successCount())
-                    .append("/")
-                    .append(stats.totalCount())
-                    .append(", rate=")
-                    .append(successRate)
-                    .append("%)\n");
-        }
-        return builder.toString();
     }
 
     private void appendContextSection(StringBuilder builder, String title, String content, int budget) {

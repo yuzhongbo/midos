@@ -2,7 +2,7 @@ package com.zhongbo.mindos.assistant.dispatcher;
 
 import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.DecisionOrchestrator;
-import com.zhongbo.mindos.assistant.memory.MemoryManager;
+import com.zhongbo.mindos.assistant.memory.MemoryFacade;
 import com.zhongbo.mindos.assistant.memory.model.PreferenceProfile;
 import com.zhongbo.mindos.assistant.memory.model.ProceduralMemoryEntry;
 import org.springframework.beans.factory.annotation.Value;
@@ -18,18 +18,18 @@ import java.util.Set;
 @Service
 public class PersonaCoreService {
 
-    private final MemoryManager memoryManager;
+    private final MemoryFacade memoryFacade;
     private final DecisionOrchestrator decisionOrchestrator;
     private final boolean enabled;
     private final int preferredChannelMinConsecutiveSuccess;
     private final Set<String> ignoredProfileTerms;
 
-    public PersonaCoreService(MemoryManager memoryManager,
+    public PersonaCoreService(MemoryFacade memoryFacade,
                               DecisionOrchestrator decisionOrchestrator,
                               @Value("${mindos.dispatcher.persona-core.enabled:true}") boolean enabled,
                               @Value("${mindos.dispatcher.persona-core.preferred-channel.min-consecutive-success:2}") int preferredChannelMinConsecutiveSuccess,
                               @Value("${mindos.dispatcher.persona-core.ignored-profile-terms:unknown,null,n/a,na,tbd,todo,随便,不知道,待定}") String ignoredProfileTerms) {
-        this.memoryManager = memoryManager;
+        this.memoryFacade = memoryFacade;
         this.decisionOrchestrator = decisionOrchestrator;
         this.enabled = enabled;
         this.preferredChannelMinConsecutiveSuccess = Math.max(1, preferredChannelMinConsecutiveSuccess);
@@ -45,7 +45,7 @@ public class PersonaCoreService {
             return merged;
         }
 
-        PreferenceProfile saved = memoryManager.getPreferenceProfile(userId);
+        PreferenceProfile saved = memoryFacade.getPreferenceProfile(userId);
         putIfAbsent(merged, "assistantName", saved.assistantName());
         putIfAbsent(merged, "role", saved.role());
         putIfAbsent(merged, "style", saved.style());
@@ -113,7 +113,7 @@ public class PersonaCoreService {
     }
 
     private int countConsecutiveSkillSuccess(String userId, String skillName) {
-        List<ProceduralMemoryEntry> history = memoryManager.getSkillUsageHistory(userId);
+        List<ProceduralMemoryEntry> history = memoryFacade.getSkillUsageHistory(userId);
         int streak = 0;
         for (int i = history.size() - 1; i >= 0; i--) {
             ProceduralMemoryEntry entry = history.get(i);

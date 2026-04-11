@@ -1,6 +1,7 @@
 package com.zhongbo.mindos.assistant.dispatcher.orchestrator;
 
 import com.zhongbo.mindos.assistant.memory.MemoryGateway;
+import com.zhongbo.mindos.assistant.memory.MemoryFacade;
 import com.zhongbo.mindos.assistant.memory.MemoryManager;
 import com.zhongbo.mindos.assistant.memory.model.ConversationTurn;
 import com.zhongbo.mindos.assistant.memory.model.LongTask;
@@ -19,17 +20,21 @@ import java.util.List;
 @Component
 public class DefaultMemoryGateway implements MemoryGateway {
 
-    private final MemoryManager memoryManager;
+    private final MemoryFacade memoryFacade;
     private final int historyWindow;
 
     public DefaultMemoryGateway(MemoryManager memoryManager) {
-        this(memoryManager, 12);
+        this(new MemoryFacade(memoryManager), 12);
+    }
+
+    public DefaultMemoryGateway(MemoryFacade memoryFacade) {
+        this(memoryFacade, 12);
     }
 
     @Autowired
-    public DefaultMemoryGateway(MemoryManager memoryManager,
+    public DefaultMemoryGateway(MemoryFacade memoryFacade,
                                 @Value("${mindos.dispatcher.memory.history.recent-turns:12}") int historyWindow) {
-        this.memoryManager = memoryManager;
+        this.memoryFacade = memoryFacade;
         this.historyWindow = Math.max(0, historyWindow);
     }
 
@@ -38,7 +43,7 @@ public class DefaultMemoryGateway implements MemoryGateway {
         if (userId == null || userId.isBlank() || historyWindow <= 0) {
             return List.of();
         }
-        return memoryManager.getRecentConversation(userId, historyWindow);
+        return memoryFacade.getRecentConversation(userId, historyWindow);
     }
 
     @Override
@@ -46,7 +51,7 @@ public class DefaultMemoryGateway implements MemoryGateway {
         if (userId == null || userId.isBlank()) {
             return List.of();
         }
-        return memoryManager.getSkillUsageStats(userId);
+        return memoryFacade.getSkillUsageStats(userId);
     }
 
     @Override
@@ -54,7 +59,7 @@ public class DefaultMemoryGateway implements MemoryGateway {
         if (userId == null || userId.isBlank()) {
             return;
         }
-        memoryManager.storeUserConversation(userId, message);
+        memoryFacade.storeUserConversation(userId, message);
     }
 
     @Override
@@ -62,7 +67,7 @@ public class DefaultMemoryGateway implements MemoryGateway {
         if (userId == null || userId.isBlank()) {
             return;
         }
-        memoryManager.storeAssistantConversation(userId, message);
+        memoryFacade.storeAssistantConversation(userId, message);
     }
 
     @Override
@@ -70,7 +75,7 @@ public class DefaultMemoryGateway implements MemoryGateway {
         if (userId == null || userId.isBlank()) {
             return;
         }
-        memoryManager.logSkillUsage(userId, skillName, input, success);
+        memoryFacade.logSkillUsage(userId, skillName, input, success);
     }
 
     @Override
@@ -81,7 +86,7 @@ public class DefaultMemoryGateway implements MemoryGateway {
         if (entry.skillName() == null || entry.skillName().isBlank()) {
             return;
         }
-        memoryManager.logSkillUsage(userId, entry.skillName(), entry.input(), entry.success());
+        memoryFacade.logSkillUsage(userId, entry.skillName(), entry.input(), entry.success());
     }
 
     @Override
@@ -97,7 +102,7 @@ public class DefaultMemoryGateway implements MemoryGateway {
         if (text == null || text.isBlank()) {
             return;
         }
-        memoryManager.storeKnowledge(userId, text, embedding, bucket);
+        memoryFacade.storeKnowledge(userId, text, embedding, bucket);
     }
 
     @Override
@@ -105,7 +110,7 @@ public class DefaultMemoryGateway implements MemoryGateway {
         if (userId == null || userId.isBlank()) {
             return PreferenceProfile.empty();
         }
-        return memoryManager.updatePreferenceProfile(userId, profile);
+        return memoryFacade.updatePreferenceProfile(userId, profile);
     }
 
     @Override
@@ -115,7 +120,7 @@ public class DefaultMemoryGateway implements MemoryGateway {
                                    List<String> steps,
                                    Instant dueAt,
                                    Instant nextCheckAt) {
-        return memoryManager.createLongTask(userId, title, objective, steps, dueAt, nextCheckAt);
+        return memoryFacade.createLongTask(userId, title, objective, steps, dueAt, nextCheckAt);
     }
 
     @Override
@@ -127,7 +132,7 @@ public class DefaultMemoryGateway implements MemoryGateway {
                                            String blockedReason,
                                            Instant nextCheckAt,
                                            boolean markCompleted) {
-        return memoryManager.updateLongTaskProgress(
+        return memoryFacade.updateLongTaskProgress(
                 userId,
                 taskId,
                 workerId,
@@ -145,6 +150,6 @@ public class DefaultMemoryGateway implements MemoryGateway {
                                          LongTaskStatus status,
                                          String note,
                                          Instant nextCheckAt) {
-        return memoryManager.updateLongTaskStatus(userId, taskId, status, note, nextCheckAt);
+        return memoryFacade.updateLongTaskStatus(userId, taskId, status, note, nextCheckAt);
     }
 }

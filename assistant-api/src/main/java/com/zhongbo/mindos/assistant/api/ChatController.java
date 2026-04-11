@@ -4,7 +4,7 @@ import com.zhongbo.mindos.assistant.common.dto.ChatRequestDto;
 import com.zhongbo.mindos.assistant.common.dto.ChatResponseDto;
 import com.zhongbo.mindos.assistant.dispatcher.DispatcherService;
 import com.zhongbo.mindos.assistant.dispatcher.DispatchResult;
-import com.zhongbo.mindos.assistant.memory.MemoryManager;
+import com.zhongbo.mindos.assistant.memory.MemoryFacade;
 import com.zhongbo.mindos.assistant.memory.model.ConversationTurn;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -25,11 +25,11 @@ import java.util.concurrent.CompletableFuture;
 public class ChatController {
 
     private final DispatcherService dispatcherService;
-    private final MemoryManager memoryManager;
+    private final MemoryFacade memoryFacade;
 
-    public ChatController(DispatcherService dispatcherService, MemoryManager memoryManager) {
+    public ChatController(DispatcherService dispatcherService, MemoryFacade memoryFacade) {
         this.dispatcherService = dispatcherService;
-        this.memoryManager = memoryManager;
+        this.memoryFacade = memoryFacade;
     }
 
     /**
@@ -76,7 +76,7 @@ public class ChatController {
 
     @GetMapping("/{userId}/history")
     public List<ConversationTurn> history(@PathVariable String userId) {
-        return memoryManager.getConversation(userId);
+        return memoryFacade.getConversation(userId);
     }
 
     private void putIfNotNull(Map<String, Object> target, String key, Object value) {
@@ -107,4 +107,3 @@ public class ChatController {
         }
     }
 }
-

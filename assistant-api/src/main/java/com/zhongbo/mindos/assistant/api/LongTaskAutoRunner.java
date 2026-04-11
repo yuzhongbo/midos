@@ -1,7 +1,7 @@
 package com.zhongbo.mindos.assistant.api;
 
 import com.zhongbo.mindos.assistant.memory.LongTaskService;
-import com.zhongbo.mindos.assistant.memory.MemoryManager;
+import com.zhongbo.mindos.assistant.memory.MemoryFacade;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -14,20 +14,20 @@ public class LongTaskAutoRunner {
 
     private static final Logger LOGGER = Logger.getLogger(LongTaskAutoRunner.class.getName());
 
-    private final MemoryManager memoryManager;
+    private final MemoryFacade memoryFacade;
     private final boolean enabled;
     private final String workerId;
     private final int claimLimit;
     private final long leaseSeconds;
     private final long nextCheckDelaySeconds;
 
-    public LongTaskAutoRunner(MemoryManager memoryManager,
+    public LongTaskAutoRunner(MemoryFacade memoryFacade,
                               @Value("${mindos.tasks.auto-run.enabled:false}") boolean enabled,
                               @Value("${mindos.tasks.auto-run.worker-id:auto-runner}") String workerId,
                               @Value("${mindos.tasks.auto-run.claim-limit:2}") int claimLimit,
                               @Value("${mindos.tasks.auto-run.lease-seconds:180}") long leaseSeconds,
                               @Value("${mindos.tasks.auto-run.next-check-delay-seconds:120}") long nextCheckDelaySeconds) {
-        this.memoryManager = memoryManager;
+        this.memoryFacade = memoryFacade;
         this.enabled = enabled;
         this.workerId = workerId;
         this.claimLimit = Math.max(1, claimLimit);
@@ -40,13 +40,13 @@ public class LongTaskAutoRunner {
         if (!enabled) {
             return;
         }
-        for (String userId : memoryManager.listLongTaskUsers()) {
+        for (String userId : memoryFacade.listLongTaskUsers()) {
             runOnceForUser(userId);
         }
     }
 
     public LongTaskService.AutoAdvanceResult runOnceForUser(String userId) {
-        LongTaskService.AutoAdvanceResult result = memoryManager.autoAdvanceLongTasks(
+        LongTaskService.AutoAdvanceResult result = memoryFacade.autoAdvanceLongTasks(
                 userId,
                 workerId,
                 claimLimit,
@@ -64,12 +64,11 @@ public class LongTaskAutoRunner {
     }
 
     public List<String> listUsers() {
-        return memoryManager.listLongTaskUsers();
+        return memoryFacade.listLongTaskUsers();
     }
 
     public String workerId() {
         return workerId;
     }
 }
-
 

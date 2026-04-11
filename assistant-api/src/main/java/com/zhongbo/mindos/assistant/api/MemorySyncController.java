@@ -13,7 +13,7 @@ import com.zhongbo.mindos.assistant.common.dto.PersonaProfileExplainDto;
 import com.zhongbo.mindos.assistant.common.dto.PersonaProfileDto;
 import com.zhongbo.mindos.assistant.common.dto.ProceduralMemoryEntryDto;
 import com.zhongbo.mindos.assistant.common.dto.SemanticMemoryEntryDto;
-import com.zhongbo.mindos.assistant.memory.MemoryManager;
+import com.zhongbo.mindos.assistant.memory.MemoryFacade;
 import com.zhongbo.mindos.assistant.memory.model.MemoryCompressionPlan;
 import com.zhongbo.mindos.assistant.memory.model.MemoryCompressionStep;
 import com.zhongbo.mindos.assistant.memory.model.MemoryStyleProfile;
@@ -46,16 +46,16 @@ import java.util.Map;
 @RequestMapping("/api/memory")
 public class MemorySyncController {
 
-    private final MemoryManager memoryManager;
+    private final MemoryFacade memoryFacade;
     private final boolean retrievePreviewRequireAdminToken;
     private final String adminTokenHeader;
     private final String adminToken;
 
-    public MemorySyncController(MemoryManager memoryManager,
+    public MemorySyncController(MemoryFacade memoryFacade,
                                 @Value("${mindos.security.memory.retrieve-preview.require-admin-token:false}") boolean retrievePreviewRequireAdminToken,
                                 @Value("${mindos.security.risky-ops.admin-token-header:X-MindOS-Admin-Token}") String adminTokenHeader,
                                 @Value("${mindos.security.risky-ops.admin-token:}") String adminToken) {
-        this.memoryManager = memoryManager;
+        this.memoryFacade = memoryFacade;
         this.retrievePreviewRequireAdminToken = retrievePreviewRequireAdminToken;
         this.adminTokenHeader = adminTokenHeader == null || adminTokenHeader.isBlank()
                 ? "X-MindOS-Admin-Token"
@@ -67,7 +67,7 @@ public class MemorySyncController {
     public MemorySyncResponseDto fetchUpdates(@PathVariable String userId,
                                               @RequestParam(defaultValue = "0") long since,
                                               @RequestParam(defaultValue = "100") int limit) {
-        MemorySyncSnapshot snapshot = memoryManager.fetchIncrementalUpdates(userId, since, limit);
+        MemorySyncSnapshot snapshot = memoryFacade.fetchIncrementalUpdates(userId, since, limit);
         return toResponse(snapshot, 0, 0, 0, 0, 0);
     }
 
@@ -75,13 +75,13 @@ public class MemorySyncController {
     public MemorySyncResponseDto applyUpdates(@PathVariable String userId,
                                               @RequestBody MemorySyncRequestDto request,
                                               @RequestParam(defaultValue = "100") int limit) {
-        MemoryApplyResult applyResult = memoryManager.applyIncrementalUpdates(userId, new MemorySyncBatch(
+        MemoryApplyResult applyResult = memoryFacade.applyIncrementalUpdates(userId, new MemorySyncBatch(
                 request.eventId(),
                 toConversationTurns(request.episodic()),
                 toSemanticEntries(request.semantic()),
                 toProceduralEntries(request.procedural())
         ));
-        MemorySyncSnapshot snapshot = memoryManager.fetchIncrementalUpdates(userId, 0L, limit);
+        MemorySyncSnapshot snapshot = memoryFacade.fetchIncrementalUpdates(userId, 0L, limit);
         return toResponse(snapshot,
                 applyResult.acceptedCount(),
                 applyResult.skippedCount(),
@@ -105,7 +105,7 @@ public class MemorySyncController {
         putIfPresent(profileContext, "timezone", timezone);
         putIfPresent(profileContext, "style", style);
         putIfPresent(profileContext, "role", role);
-        return memoryManager.buildPromptMemoryContext(userId, query, maxChars, profileContext);
+        return memoryFacade.buildPromptMemoryContext(userId, query, maxChars, profileContext);
     }
 
     private void validateRetrievePreviewToken(HttpServletRequest request) {
@@ -123,17 +123,17 @@ public class MemorySyncController {
 
     @GetMapping("/{userId}/persona")
     public PersonaProfileDto getPersonaProfile(@PathVariable String userId) {
-        return toDto(memoryManager.getPreferenceProfile(userId));
+        return toDto(memoryFacade.getPreferenceProfile(userId));
     }
 
     @GetMapping("/{userId}/persona/explain")
     public PersonaProfileExplainDto getPersonaProfileExplain(@PathVariable String userId) {
-        return toDto(memoryManager.getPreferenceProfileExplain(userId));
+        return toDto(memoryFacade.getPreferenceProfileExplain(userId));
     }
 
     @GetMapping("/{userId}/style")
     public MemoryStyleProfileDto getMemoryStyle(@PathVariable String userId) {
-        return toDto(memoryManager.getMemoryStyleProfile(userId));
+        return toDto(memoryFacade.getMemoryStyleProfile(userId));
     }
 
     @PostMapping("/{userId}/style")
@@ -141,7 +141,7 @@ public class MemorySyncController {
                                                    @RequestBody MemoryStyleProfileDto request,
                                                    @RequestParam(defaultValue = "false") boolean autoTune,
                                                    @RequestParam(required = false) String sampleText) {
-        MemoryStyleProfile updated = memoryManager.updateMemoryStyleProfile(userId, toModel(request), autoTune, sampleText);
+        MemoryStyleProfile updated = memoryFacade.updateMemoryStyleProfile(userId, toModel(request), autoTune, sampleText);
         return toDto(updated);
     }
 
@@ -151,12 +151,12 @@ public class MemorySyncController {
         MemoryStyleProfile overrideStyle = new MemoryStyleProfile(request.styleName(), request.tone(), request.outputFormat());
         String sourceText = request.sourceText();
         if (sourceText == null || sourceText.isBlank()) {
-            sourceText = memoryManager.getRecentConversation(userId, 8).stream()
+            sourceText = memoryFacade.getRecentConversation(userId, 8).stream()
                     .map(turn -> turn.role() + ": " + turn.content())
                     .reduce((a, b) -> a + "\n" + b)
                     .orElse("暂无可压缩记忆");
         }
-        MemoryCompressionPlan plan = memoryManager.buildMemoryCompressionPlan(userId, sourceText, overrideStyle, request.focus());
+        MemoryCompressionPlan plan = memoryFacade.buildMemoryCompressionPlan(userId, sourceText, overrideStyle, request.focus());
         return toDto(plan);
     }
 
@@ -269,4 +269,3 @@ public class MemorySyncController {
         }
     }
 }
-

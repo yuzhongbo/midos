@@ -1,6 +1,7 @@
 package com.zhongbo.mindos.assistant.dispatcher.memory;
 
 import com.zhongbo.mindos.assistant.common.dto.PromptMemoryContextDto;
+import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.memory.MemoryManager;
 import com.zhongbo.mindos.assistant.memory.model.ConversationTurn;
 import com.zhongbo.mindos.assistant.memory.model.MemoryCompressionPlan;
@@ -8,6 +9,7 @@ import com.zhongbo.mindos.assistant.memory.model.MemoryCompressionStep;
 import com.zhongbo.mindos.assistant.memory.model.MemoryStyleProfile;
 import com.zhongbo.mindos.assistant.memory.model.SemanticMemoryEntry;
 import com.zhongbo.mindos.assistant.memory.model.SkillUsageStats;
+import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalysisResult;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
@@ -82,6 +84,72 @@ class DispatcherMemoryFacadeTest {
         assertNotNull(statsRef.get());
         assertTrue(statsRef.get().compressed());
         assertEquals(2, statsRef.get().summarizedTurns());
+    }
+
+    @Test
+    void shouldBuildUnifiedSkillAndFallbackContexts() {
+        TestMemoryManager memoryManager = new TestMemoryManager(
+                List.of(
+                        new ConversationTurn("user", "旧对话一", Instant.parse("2024-01-01T00:00:00Z")),
+                        new ConversationTurn("assistant", "旧对话二", Instant.parse("2024-01-01T00:01:00Z"))
+                ),
+                List.of(),
+                List.of(),
+                List.of(),
+                null,
+                new PromptMemoryContextDto("recent", "semantic", "procedural", Map.of("tone", "direct"), List.of())
+        );
+        DispatcherMemoryFacade facade = new DispatcherMemoryFacade(memoryManager, 4, 2, 2, 2, 3);
+        SemanticAnalysisResult semanticAnalysis = new SemanticAnalysisResult(
+                "semantic",
+                "create.todo",
+                "rewritten input",
+                "todo.create",
+                Map.of("priority", "high"),
+                List.of("task"),
+                "用户要创建待办",
+                0.82
+        );
+
+        String enriched = facade.enrichMemoryContextWithSemanticAnalysis("base context", semanticAnalysis, 0.45, 500, 120);
+        List<Map<String, Object>> history = facade.buildChatHistory("u1");
+        SkillContext skillContext = facade.buildSkillContext(
+                "u1",
+                semanticAnalysis.routingInput("原始输入"),
+                "原始输入",
+                Map.of("profile", "direct"),
+                enriched,
+                history,
+                semanticAnalysis
+        );
+        Map<String, Object> llmContext = facade.buildFallbackLlmContext(
+                "u1",
+                semanticAnalysis.routingInput("原始输入"),
+                "原始输入",
+                Map.of("profile", "direct"),
+                semanticAnalysis,
+                enriched,
+                new PromptMemoryContextDto("recent", "semantic", "procedural", Map.of("tone", "direct"), List.of()),
+                history,
+                true,
+                true,
+                true,
+                200,
+                "llm-fallback"
+        );
+
+        assertTrue(enriched.contains("Semantic analysis:"));
+        assertEquals("u1", skillContext.userId());
+        assertEquals("rewritten input", skillContext.input());
+        assertEquals(enriched, skillContext.attributes().get("memoryContext"));
+        assertEquals("原始输入", skillContext.attributes().get("originalInput"));
+        assertEquals(history, skillContext.attributes().get("chatHistory"));
+        assertEquals("u1", llmContext.get("userId"));
+        assertEquals("rewritten input", llmContext.get("input"));
+        assertEquals("llm-fallback", llmContext.get("routeStage"));
+        assertEquals(Boolean.TRUE, llmContext.get("memory.shrinkApplied"));
+        assertEquals("", llmContext.get("memoryContext"));
+        assertEquals(Map.of("tone", "direct"), llmContext.get("memory.persona"));
     }
 
     private static final class TestMemoryManager extends MemoryManager {

@@ -1,6 +1,6 @@
 package com.zhongbo.mindos.assistant.api;
 
-import com.zhongbo.mindos.assistant.memory.MemoryManager;
+import com.zhongbo.mindos.assistant.memory.MemoryFacade;
 import com.zhongbo.mindos.assistant.dispatcher.DispatcherService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -19,12 +19,12 @@ public class AdminController {
     private static final Logger LOGGER = Logger.getLogger(AdminController.class.getName());
 
     private final InflightRequestTracker tracker;
-    private final MemoryManager memoryManager;
+    private final MemoryFacade memoryFacade;
     private final DispatcherService dispatcherService;
 
-    public AdminController(InflightRequestTracker tracker, MemoryManager memoryManager, DispatcherService dispatcherService) {
+    public AdminController(InflightRequestTracker tracker, MemoryFacade memoryFacade, DispatcherService dispatcherService) {
         this.tracker = tracker;
-        this.memoryManager = memoryManager;
+        this.memoryFacade = memoryFacade;
         this.dispatcherService = dispatcherService;
     }
 
@@ -36,7 +36,7 @@ public class AdminController {
         boolean quiesced = tracker.waitForZero(Math.max(0L, deadline - System.currentTimeMillis()));
         boolean dispatcherQuiesced = dispatcherService.waitForActiveDispatches(Math.max(0L, deadline - System.currentTimeMillis()));
         try {
-            memoryManager.persistPending();
+            memoryFacade.persistPending();
         } catch (Exception ex) {
             LOGGER.warning("persistPending failed during drain: " + ex.getMessage());
             return ResponseEntity.status(500).body(Map.of(
@@ -63,4 +63,3 @@ public class AdminController {
                 "acceptingRequests", dispatcherService.isAcceptingRequests()));
     }
 }
-
