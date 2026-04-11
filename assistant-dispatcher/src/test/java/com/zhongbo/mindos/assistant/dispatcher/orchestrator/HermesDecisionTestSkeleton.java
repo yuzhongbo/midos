@@ -470,11 +470,6 @@ class HermesDecisionTestSkeleton {
                             invocationLog.add(kind + " invoke " + entry.getKey() + " attrs=" + context.attributes());
                             return entry.getValue();
                         }
-
-                        @Override
-                        public int routingScore(String input) {
-                            return 900;
-                        }
                     })
                     .toList();
             SkillRegistry registry = new SkillRegistry(skills);

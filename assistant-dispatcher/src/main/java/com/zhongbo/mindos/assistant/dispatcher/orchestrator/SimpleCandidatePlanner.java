@@ -4,7 +4,7 @@ import com.zhongbo.mindos.assistant.common.SkillCostTelemetry;
 import com.zhongbo.mindos.assistant.memory.MemoryGateway;
 import com.zhongbo.mindos.assistant.memory.graph.GraphMemory;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.step5.PlannerLearningStore;
-import com.zhongbo.mindos.assistant.skill.SkillEngine;
+import com.zhongbo.mindos.assistant.skill.SkillEngineFacade;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -17,7 +17,7 @@ public class SimpleCandidatePlanner extends AdaptiveCandidatePlanner {
         super();
     }
 
-    public SimpleCandidatePlanner(SkillEngine skillEngine,
+    public SimpleCandidatePlanner(SkillEngineFacade skillEngine,
                                   MemoryGateway memoryGateway,
                                   int maxCandidates,
                                   double explicitWeight,
@@ -27,7 +27,7 @@ public class SimpleCandidatePlanner extends AdaptiveCandidatePlanner {
         super(skillEngine, memoryGateway, maxCandidates, explicitWeight, keywordWeight, memoryWeight, successWeight);
     }
 
-    public SimpleCandidatePlanner(SkillEngine skillEngine,
+    public SimpleCandidatePlanner(SkillEngineFacade skillEngine,
                                   MemoryGateway memoryGateway,
                                   GraphMemory graphMemory,
                                   int maxCandidates,
@@ -38,7 +38,7 @@ public class SimpleCandidatePlanner extends AdaptiveCandidatePlanner {
         super(skillEngine, memoryGateway, graphMemory, maxCandidates, explicitWeight, keywordWeight, memoryWeight, successWeight);
     }
 
-    public SimpleCandidatePlanner(SkillEngine skillEngine,
+    public SimpleCandidatePlanner(SkillEngineFacade skillEngine,
                                   MemoryGateway memoryGateway,
                                   GraphMemory graphMemory,
                                   SkillCostTelemetry skillCostTelemetry,
@@ -50,7 +50,7 @@ public class SimpleCandidatePlanner extends AdaptiveCandidatePlanner {
         this(skillEngine, memoryGateway, graphMemory, skillCostTelemetry, null, maxCandidates, explicitWeight, keywordWeight, memoryWeight, successWeight);
     }
 
-    public SimpleCandidatePlanner(SkillEngine skillEngine,
+    public SimpleCandidatePlanner(SkillEngineFacade skillEngine,
                                   MemoryGateway memoryGateway,
                                   GraphMemory graphMemory,
                                   SkillCostTelemetry skillCostTelemetry,
@@ -64,7 +64,7 @@ public class SimpleCandidatePlanner extends AdaptiveCandidatePlanner {
     }
 
     @Autowired
-    public SimpleCandidatePlanner(SkillEngine skillEngine,
+    public SimpleCandidatePlanner(SkillEngineFacade skillEngine,
                                   MemoryGateway memoryGateway,
                                   GraphMemory graphMemory,
                                   ObjectProvider<SkillCostTelemetry> skillCostTelemetryProvider,

@@ -5,6 +5,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.skill.Skill;
+import com.zhongbo.mindos.assistant.skill.SkillDescriptor;
+import com.zhongbo.mindos.assistant.skill.SkillDescriptorProvider;
 import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalysisResult;
 import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalysisService;
 import org.springframework.stereotype.Component;
@@ -16,7 +18,7 @@ import java.util.Locale;
 import java.util.Map;
 
 @Component
-public class SemanticAnalyzeSkill implements Skill {
+public class SemanticAnalyzeSkill implements Skill, SkillDescriptorProvider {
 
     private final SemanticAnalysisService semanticAnalysisService;
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -36,20 +38,8 @@ public class SemanticAnalyzeSkill implements Skill {
     }
 
     @Override
-    public List<String> routingKeywords() {
-        return List.of("semantic", "semantic.analyze", "语义分析", "分析我的语义");
-    }
-
-    @Override
-    public boolean supports(String input) {
-        if (input == null || input.isBlank()) {
-            return false;
-        }
-        String normalized = input.trim().toLowerCase();
-        return normalized.startsWith("semantic ")
-                || normalized.startsWith("semantic.analyze")
-                || normalized.contains("语义分析")
-                || normalized.contains("分析我的语义");
+    public SkillDescriptor skillDescriptor() {
+        return new SkillDescriptor(name(), description(), List.of("semantic", "semantic.analyze", "语义分析", "分析我的语义"));
     }
 
     @Override

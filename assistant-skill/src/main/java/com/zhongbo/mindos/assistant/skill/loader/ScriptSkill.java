@@ -4,6 +4,8 @@ import com.zhongbo.mindos.assistant.common.LlmClient;
 import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.skill.Skill;
+import com.zhongbo.mindos.assistant.skill.SkillDescriptor;
+import com.zhongbo.mindos.assistant.skill.SkillDescriptorProvider;
 
 import java.util.List;
 import java.util.Map;
@@ -15,7 +17,7 @@ import java.util.Map;
  *   "llm"      — routes input to the LlmClient
  *   otherwise  — static template; {{input}} and {{user}} are expanded
  */
-public class ScriptSkill implements Skill {
+public class ScriptSkill implements Skill, SkillDescriptorProvider {
 
     private final ScriptSkillDefinition definition;
     private final LlmClient llmClient;
@@ -36,18 +38,8 @@ public class ScriptSkill implements Skill {
     }
 
     @Override
-    public List<String> routingKeywords() {
-        return definition.triggers();
-    }
-
-    @Override
-    public boolean supports(String input) {
-        if (input == null || definition.triggers().isEmpty()) {
-            return false;
-        }
-        String normalized = input.toLowerCase();
-        return definition.triggers().stream()
-                .anyMatch(t -> normalized.contains(t.toLowerCase()));
+    public SkillDescriptor skillDescriptor() {
+        return new SkillDescriptor(name(), description(), definition.triggers());
     }
 
     @Override
@@ -74,4 +66,3 @@ public class ScriptSkill implements Skill {
         return SkillResult.success(name(), output);
     }
 }
-

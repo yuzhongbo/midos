@@ -10,6 +10,7 @@ import com.zhongbo.mindos.assistant.memory.LongTaskService;
 import com.zhongbo.mindos.assistant.memory.MemoryGateway;
 import com.zhongbo.mindos.assistant.memory.MemoryCompressionPlanningService;
 import com.zhongbo.mindos.assistant.memory.MemoryConsolidationService;
+import com.zhongbo.mindos.assistant.memory.MemoryFacade;
 import com.zhongbo.mindos.assistant.memory.MemoryManager;
 import com.zhongbo.mindos.assistant.memory.MemorySyncService;
 import com.zhongbo.mindos.assistant.memory.PreferenceProfileService;
@@ -32,6 +33,8 @@ import com.zhongbo.mindos.assistant.dispatcher.orchestrator.InMemoryParamSchemaR
 import com.zhongbo.mindos.assistant.common.dto.LocalEscalationMetricsDto;
 import com.zhongbo.mindos.assistant.skill.DefaultSkillExecutionGateway;
 import com.zhongbo.mindos.assistant.skill.Skill;
+import com.zhongbo.mindos.assistant.skill.SkillDescriptor;
+import com.zhongbo.mindos.assistant.skill.SkillDescriptorProvider;
 import com.zhongbo.mindos.assistant.skill.SkillDslExecutor;
 import com.zhongbo.mindos.assistant.skill.SkillEngine;
 import com.zhongbo.mindos.assistant.skill.SkillRegistry;
@@ -46,8 +49,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Locale;
 import java.util.Set;
+import java.util.function.Function;
 import java.util.logging.Handler;
 import java.util.logging.Level;
 import java.util.logging.LogRecord;
@@ -65,8 +68,18 @@ class DispatcherServiceTest {
         MemoryManager memoryManager = createMemoryManager();
         RecordingLlmClient llmClient = new RecordingLlmClient(List.of("不应走到 llm"));
         DispatcherService service = createDispatcher(memoryManager, llmClient, List.of(
-                newMcpSkill("mcp.qwensearch.webSearch", "Search latest web news", "qwen result"),
-                newMcpSkill("mcp.bravesearch.webSearch", "Brave latest web news search", "brave result")
+                scriptedSkill(
+                        "mcp.qwensearch.webSearch",
+                        "Search latest web news",
+                        List.of("今天新闻", "最新新闻", "新闻", "news"),
+                        context -> SkillResult.success("mcp.qwensearch.webSearch", "qwen result")
+                ),
+                scriptedSkill(
+                        "mcp.bravesearch.webSearch",
+                        "Brave latest web news search",
+                        List.of("新闻", "news"),
+                        context -> SkillResult.success("mcp.bravesearch.webSearch", "brave result")
+                )
         ), 2);
 
         DispatchResult result = service.dispatch("news-user", "今天新闻");
@@ -122,48 +135,8 @@ class DispatcherServiceTest {
                 memoryManager,
                 llmClient,
                 List.of(
-                        new Skill() {
-                            @Override
-                            public String name() {
-                                return "mcp.qwensearch.webSearch";
-                            }
-
-                            @Override
-                            public String description() {
-                                return "Search latest web news";
-                            }
-
-                            @Override
-                            public SkillResult run(SkillContext context) {
-                                return SkillResult.success(name(), "qwen result");
-                            }
-
-                            @Override
-                            public int routingScore(String input) {
-                                return input != null && input.contains("新闻") ? 920 : Integer.MIN_VALUE;
-                            }
-                        },
-                        new Skill() {
-                            @Override
-                            public String name() {
-                                return "mcp.bravesearch.webSearch";
-                            }
-
-                            @Override
-                            public String description() {
-                                return "Brave latest web news search";
-                            }
-
-                            @Override
-                            public SkillResult run(SkillContext context) {
-                                return SkillResult.success(name(), "brave result");
-                            }
-
-                            @Override
-                            public int routingScore(String input) {
-                                return input != null && input.contains("新闻") ? 800 : Integer.MIN_VALUE;
-                            }
-                        }
+                        newMcpSkill("mcp.qwensearch.webSearch", "Search latest web news", "qwen result"),
+                        newMcpSkill("mcp.bravesearch.webSearch", "Brave latest web news search", "brave result")
                 )
         );
 
@@ -444,32 +417,12 @@ class DispatcherServiceTest {
             DispatcherService braveService = createDispatcher(
                     braveMemoryManager,
                     braveLlmClient,
-                    List.of(new Skill() {
-                        @Override
-                        public String name() {
-                            return "mcp.bravesearch.webSearch";
-                        }
-
-                        @Override
-                        public String description() {
-                            return "Brave latest web news search";
-                        }
-
-                        @Override
-                        public SkillResult run(SkillContext context) {
-                            return SkillResult.failure(name(), "Brave timeout");
-                        }
-
-                        @Override
-                        public boolean supports(String input) {
-                            return input != null && input.contains("新闻");
-                        }
-
-                        @Override
-                        public int routingScore(String input) {
-                            return supports(input) ? 900 : Integer.MIN_VALUE;
-                        }
-                    }),
+                    List.of(scriptedSkill(
+                            "mcp.bravesearch.webSearch",
+                            "Brave latest web news search",
+                            List.of("新闻", "news", "search"),
+                            context -> SkillResult.failure("mcp.bravesearch.webSearch", "Brave timeout")
+                    )),
                     2,
                     "auto",
                     0,
@@ -960,27 +913,12 @@ class DispatcherServiceTest {
         MemoryManager memoryManager = createMemoryManager();
         RecordingLlmClient llmClient = new RecordingLlmClient(List.of("stub"));
         SkillRegistry registry = new SkillRegistry(List.of(
-                new Skill() {
-                    @Override
-                    public String name() {
-                        return "mcp.bravesearch.webSearch";
-                    }
-
-                    @Override
-                    public String description() {
-                        return "Brave weather search";
-                    }
-
-                    @Override
-                    public SkillResult run(SkillContext context) {
-                        return SkillResult.success(name(), "成都天气：今天多云，明天小雨");
-                    }
-
-                    @Override
-                    public int routingScore(String input) {
-                        return Integer.MIN_VALUE;
-                    }
-                }
+                scriptedSkill(
+                        "mcp.bravesearch.webSearch",
+                        "Brave weather search",
+                        List.of(),
+                        context -> SkillResult.success("mcp.bravesearch.webSearch", "成都天气：今天多云，明天小雨")
+                )
         ));
         SemanticAnalysisService semanticAnalysisService = new SemanticAnalysisService(llmClient, registry, true, false, true, "", "local", "cost", 120) {
             @Override
@@ -1157,27 +1095,12 @@ class DispatcherServiceTest {
         memoryManager.logSkillUsage("news-user", "news_search", "查看最新国际新闻", true);
         RecordingLlmClient llmClient = new RecordingLlmClient(List.of("不应走到 llm"));
         DispatcherService service = createDispatcher(memoryManager, llmClient, List.of(
-                new Skill() {
-                    @Override
-                    public String name() {
-                        return "news_search";
-                    }
-
-                    @Override
-                    public String description() {
-                        return "Latest news lookup";
-                    }
-
-                    @Override
-                    public SkillResult run(SkillContext context) {
-                        return SkillResult.success(name(), "news skill result");
-                    }
-
-                    @Override
-                    public boolean supports(String input) {
-                        return input != null && (input.contains("新闻") || input.contains("news"));
-                    }
-                }
+                scriptedSkill(
+                        "news_search",
+                        "Latest news lookup",
+                        List.of("新闻", "news"),
+                        context -> SkillResult.success("news_search", "news skill result")
+                )
         ), 2);
 
         DispatchResult result = service.dispatch("news-user", "查看最新国际新闻");
@@ -1210,32 +1133,12 @@ class DispatcherServiceTest {
         MemoryManager memoryManager = createMemoryManager();
         RecordingLlmClient llmClient = new RecordingLlmClient(List.of("不应调用 llm"));
         DispatcherService service = createDispatcher(memoryManager, llmClient, List.of(
-                new Skill() {
-                    @Override
-                    public String name() {
-                        return "todo.create";
-                    }
-
-                    @Override
-                    public String description() {
-                        return "Creates todo items from natural language";
-                    }
-
-                    @Override
-                    public SkillResult run(SkillContext context) {
-                        return SkillResult.success(name(), "待办已创建");
-                    }
-
-                    @Override
-                    public boolean supports(String input) {
-                        return input != null && input.contains("待办");
-                    }
-
-                    @Override
-                    public int routingScore(String input) {
-                        return supports(input) ? 900 : Integer.MIN_VALUE;
-                    }
-                }
+                scriptedSkill(
+                        "todo.create",
+                        "Creates todo items from natural language",
+                        List.of("待办", "todo"),
+                        context -> SkillResult.success("todo.create", "待办已创建")
+                )
         ), 2);
 
         service.dispatch("habit-user", "帮我创建待办：周五前提交周报");
@@ -1851,7 +1754,7 @@ class DispatcherServiceTest {
         MetaOrchestratorService metaOrchestratorService = new MetaOrchestratorService(false);
         SkillCapabilityPolicy capabilityPolicy = new SkillCapabilityPolicy(false, "fs.read,fs.write,exec,net", "");
         DefaultMemoryGateway memoryGateway = new DefaultMemoryGateway(memoryManager);
-        PersonaCoreService personaCoreService = new PersonaCoreService(memoryManager, decisionOrchestratorProxy(memoryGateway), false, 2, "unknown,null,n/a");
+        PersonaCoreService personaCoreService = new PersonaCoreService(new MemoryFacade(memoryManager), false, 2, "unknown,null,n/a");
         DispatcherLlmTuningProperties tuningProperties = new DispatcherLlmTuningProperties();
         InMemoryParamSchemaRegistry paramSchemaRegistry = new InMemoryParamSchemaRegistry();
         paramSchemaRegistry.registerDefaults();
@@ -1983,7 +1886,7 @@ class DispatcherServiceTest {
         MetaOrchestratorService metaOrchestratorService = new MetaOrchestratorService(false);
         SkillCapabilityPolicy capabilityPolicy = new SkillCapabilityPolicy(false, "fs.read,fs.write,exec,net", "");
         DefaultMemoryGateway memoryGateway = new DefaultMemoryGateway(memoryManager);
-        PersonaCoreService personaCoreService = new PersonaCoreService(memoryManager, decisionOrchestratorProxy(memoryGateway), false, 2, "unknown,null,n/a");
+        PersonaCoreService personaCoreService = new PersonaCoreService(new MemoryFacade(memoryManager), false, 2, "unknown,null,n/a");
         DispatcherLlmTuningProperties tuningProperties = new DispatcherLlmTuningProperties();
         InMemoryParamSchemaRegistry paramSchemaRegistry = new InMemoryParamSchemaRegistry();
         paramSchemaRegistry.registerDefaults();
@@ -2447,7 +2350,7 @@ class DispatcherServiceTest {
         MetaOrchestratorService metaOrchestratorService = new MetaOrchestratorService(false);
         SkillCapabilityPolicy capabilityPolicy = new SkillCapabilityPolicy(false, "fs.read,fs.write,exec,net", "");
         DefaultMemoryGateway memoryGateway = new DefaultMemoryGateway(memoryManager);
-        PersonaCoreService personaCoreService = new PersonaCoreService(memoryManager, decisionOrchestratorProxy(memoryGateway), false, 2, "unknown,null,n/a");
+        PersonaCoreService personaCoreService = new PersonaCoreService(new MemoryFacade(memoryManager), false, 2, "unknown,null,n/a");
         DispatcherLlmTuningProperties tuningProperties = new DispatcherLlmTuningProperties();
         tuningProperties.getLlmDsl().setProvider(llmDslProvider);
         tuningProperties.getLlmDsl().setPreset(llmDslPreset);
@@ -2605,7 +2508,7 @@ class DispatcherServiceTest {
         MetaOrchestratorService metaOrchestratorService = new MetaOrchestratorService(false);
         SkillCapabilityPolicy capabilityPolicy = new SkillCapabilityPolicy(false, "fs.read,fs.write,exec,net", "");
         DefaultMemoryGateway memoryGateway = new DefaultMemoryGateway(memoryManager);
-        PersonaCoreService personaCoreService = new PersonaCoreService(memoryManager, decisionOrchestratorProxy(memoryGateway), false, 2, "unknown,null,n/a");
+        PersonaCoreService personaCoreService = new PersonaCoreService(new MemoryFacade(memoryManager), false, 2, "unknown,null,n/a");
         InMemoryParamSchemaRegistry paramSchemaRegistry = new InMemoryParamSchemaRegistry();
         paramSchemaRegistry.registerDefaults();
         ParamValidator paramValidator = new SimpleParamValidator(paramSchemaRegistry, memoryGateway);
@@ -2787,7 +2690,7 @@ class DispatcherServiceTest {
         );
     }
 
-    private static final class SemanticTriggerSkill implements Skill {
+    private static final class SemanticTriggerSkill implements Skill, SkillDescriptorProvider {
         @Override
         public String name() {
             return "semantic.analyze";
@@ -2804,16 +2707,12 @@ class DispatcherServiceTest {
         }
 
         @Override
-        public boolean supports(String input) {
-            if (input == null) {
-                return false;
-            }
-            String normalized = input.stripLeading().toLowerCase(Locale.ROOT);
-            return normalized.startsWith("semantic");
+        public SkillDescriptor skillDescriptor() {
+            return new SkillDescriptor(name(), description(), List.of("semantic", "semantic analyze"));
         }
     }
 
-    private static final class FixedNamedSkill implements Skill {
+    private static final class FixedNamedSkill implements Skill, SkillDescriptorProvider {
         private final String name;
         private final String description;
         private final String output;
@@ -2835,18 +2734,8 @@ class DispatcherServiceTest {
         }
 
         @Override
-        public List<String> routingKeywords() {
-            return List.of(name, description);
-        }
-
-        @Override
-        public boolean supports(String input) {
-            if (input == null || input.isBlank()) {
-                return false;
-            }
-            String normalized = input.toLowerCase(Locale.ROOT);
-            return normalized.contains(name.toLowerCase(Locale.ROOT))
-                    || normalized.contains(description.toLowerCase(Locale.ROOT));
+        public SkillDescriptor skillDescriptor() {
+            return new SkillDescriptor(name, description, List.of(name, description));
         }
 
         @Override
@@ -2855,7 +2744,7 @@ class DispatcherServiceTest {
         }
     }
 
-    private static final class TestMcpLikeSkill implements Skill {
+    private static final class TestMcpLikeSkill implements Skill, SkillDescriptorProvider {
         private final McpToolDefinition toolDefinition;
         private final McpToolExecutor executor = new McpToolExecutor();
         private final String output;
@@ -2876,39 +2765,57 @@ class DispatcherServiceTest {
         }
 
         @Override
-        public List<String> routingKeywords() {
-            return executor.routingKeywords(toolDefinition);
-        }
-
-        @Override
-        public boolean supports(String input) {
-            return executor.supports(toolDefinition, input);
-        }
-
-        @Override
-        public int routingScore(String input) {
-            if (!supports(input)) {
-                return Integer.MIN_VALUE;
-            }
-            String normalized = input == null ? "" : input.toLowerCase(Locale.ROOT);
-            if (normalized.contains(toolDefinition.skillName().toLowerCase(Locale.ROOT))) {
-                return 1000;
-            }
-            if (toolDefinition.name().equalsIgnoreCase("searchDocs")) {
-                return normalized.contains("docs") || normalized.contains("文档") ? 960 : 880;
-            }
-            return switch (toolDefinition.serverAlias()) {
-                case "serper" -> 940;
-                case "qwensearch" -> 930;
-                case "serpapi" -> 920;
-                case "bravesearch", "brave" -> 900;
-                default -> 850;
-            };
+        public SkillDescriptor skillDescriptor() {
+            return new SkillDescriptor(name(), description(), executor.routingKeywords(toolDefinition));
         }
 
         @Override
         public SkillResult run(SkillContext context) {
             return SkillResult.success(toolDefinition.skillName(), output);
+        }
+    }
+
+    private Skill scriptedSkill(String name,
+                                String description,
+                                List<String> routingKeywords,
+                                Function<SkillContext, SkillResult> runner) {
+        return new ScriptedSkill(name, description, routingKeywords, runner);
+    }
+
+    private static final class ScriptedSkill implements Skill, SkillDescriptorProvider {
+        private final String name;
+        private final String description;
+        private final List<String> routingKeywords;
+        private final Function<SkillContext, SkillResult> runner;
+
+        private ScriptedSkill(String name,
+                              String description,
+                              List<String> routingKeywords,
+                              Function<SkillContext, SkillResult> runner) {
+            this.name = name;
+            this.description = description;
+            this.routingKeywords = routingKeywords == null ? List.of() : List.copyOf(routingKeywords);
+            this.runner = runner;
+        }
+
+        @Override
+        public String name() {
+            return name;
+        }
+
+        @Override
+        public String description() {
+            return description;
+        }
+
+        @Override
+        public SkillDescriptor skillDescriptor() {
+            return new SkillDescriptor(name, description, routingKeywords);
+        }
+
+        @Override
+        public SkillResult run(SkillContext context) {
+            return runner.apply(context);
         }
     }
 

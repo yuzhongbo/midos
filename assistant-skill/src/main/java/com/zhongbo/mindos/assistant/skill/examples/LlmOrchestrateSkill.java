@@ -4,6 +4,8 @@ import com.zhongbo.mindos.assistant.common.LlmClient;
 import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.skill.Skill;
+import com.zhongbo.mindos.assistant.skill.SkillDescriptor;
+import com.zhongbo.mindos.assistant.skill.SkillDescriptorProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -17,7 +19,7 @@ import java.util.Objects;
 import java.util.Set;
 
 @Component
-public class LlmOrchestrateSkill implements Skill {
+public class LlmOrchestrateSkill implements Skill, SkillDescriptorProvider {
 
     private final LlmClient llmClient;
     private final List<String> defaultProviders;
@@ -59,20 +61,8 @@ public class LlmOrchestrateSkill implements Skill {
     }
 
     @Override
-    public List<String> routingKeywords() {
-        return List.of("llm.orchestrate", "调用模型", "llm prompt", "模型总结", "模型回复");
-    }
-
-    @Override
-    public boolean supports(String input) {
-        if (input == null || input.isBlank()) {
-            return false;
-        }
-        String normalized = input.trim().toLowerCase();
-        return normalized.startsWith("llm.orchestrate")
-                || normalized.contains("调用模型")
-                || normalized.contains("模型总结")
-                || normalized.contains("模型回复");
+    public SkillDescriptor skillDescriptor() {
+        return new SkillDescriptor(name(), description(), List.of("llm.orchestrate", "调用模型", "llm prompt", "模型总结", "模型回复"));
     }
 
     @Override

@@ -4,6 +4,8 @@ import com.zhongbo.mindos.assistant.common.LlmClient;
 import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.skill.Skill;
+import com.zhongbo.mindos.assistant.skill.SkillDescriptor;
+import com.zhongbo.mindos.assistant.skill.SkillDescriptorProvider;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -19,7 +21,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 @Component
-public class FileSearchSkill implements Skill {
+public class FileSearchSkill implements Skill, SkillDescriptorProvider {
     private static final Logger LOGGER = Logger.getLogger(FileSearchSkill.class.getName());
     private static final Pattern PATH_ATTR_PATTERN = Pattern.compile("(?i)(?:路径|目录|path)\\s*[:：=]\\s*([`\"']?[^\\s,，。；;]+[`\"']?)");
     private static final Pattern KEYWORD_ATTR_PATTERN = Pattern.compile("(?i)(?:关键词|关键字|keyword|包含)\\s*[:：=]\\s*([`\"']?[^,，。；;]+[`\"']?)");
@@ -63,23 +65,8 @@ public class FileSearchSkill implements Skill {
     }
 
     @Override
-    public List<String> routingKeywords() {
-        return List.of("找文件", "查文件", "搜索文件", "search file", "grep", "目录", "路径");
-    }
-
-    @Override
-    public boolean supports(String input) {
-        if (input == null || input.isBlank()) {
-            return false;
-        }
-        String normalized = input.trim().toLowerCase(Locale.ROOT);
-        return normalized.contains("找文件")
-                || normalized.contains("查文件")
-                || normalized.contains("搜索文件")
-                || normalized.contains("search file")
-                || normalized.contains("grep")
-                || normalized.contains("路径")
-                || normalized.contains("目录");
+    public SkillDescriptor skillDescriptor() {
+        return new SkillDescriptor(name(), description(), List.of("找文件", "查文件", "搜索文件", "search file", "grep", "目录", "路径"));
     }
 
     @Override

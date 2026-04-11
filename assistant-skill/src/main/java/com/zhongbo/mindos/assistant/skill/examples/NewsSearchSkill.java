@@ -5,6 +5,8 @@ import com.zhongbo.mindos.assistant.common.LlmClient;
 import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.skill.Skill;
+import com.zhongbo.mindos.assistant.skill.SkillDescriptor;
+import com.zhongbo.mindos.assistant.skill.SkillDescriptorProvider;
 import com.zhongbo.mindos.assistant.skill.search.SearchProviderChain;
 import com.zhongbo.mindos.assistant.skill.search.SearchProviderRegistry;
 import com.zhongbo.mindos.assistant.skill.search.SearchRequest;
@@ -50,7 +52,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 @Component
-public class NewsSearchSkill implements Skill {
+public class NewsSearchSkill implements Skill, SkillDescriptorProvider {
 
     private static final Logger LOGGER = Logger.getLogger(NewsSearchSkill.class.getName());
     private static final DateTimeFormatter RFC1123 = DateTimeFormatter.RFC_1123_DATE_TIME;
@@ -257,27 +259,12 @@ public class NewsSearchSkill implements Skill {
     }
 
     @Override
-    public List<String> routingKeywords() {
-        return List.of("news_search", "news search", "36kr", "serper", "serpapi", "新闻检索", "新闻搜索", "查看新闻", "看新闻", "新闻");
-    }
-
-    @Override
-    public boolean supports(String input) {
-        if (!enabled || input == null || input.isBlank()) {
-            return false;
-        }
-        String normalized = input.trim().toLowerCase(Locale.ROOT);
-        return normalized.startsWith("news_search")
-                || normalized.startsWith("news search")
-                || normalized.contains("36kr")
-                || normalized.contains("serper")
-                || normalized.contains("serpapi")
-                || normalized.contains("新闻检索")
-                || normalized.contains("新闻搜索")
-                || normalized.contains("查看新闻")
-                || normalized.contains("看新闻")
-                || NATURAL_NEWS_TRIGGER_PATTERN.matcher(normalized).find()
-                || PLAIN_NEWS_REQUEST_PATTERN.matcher(normalized).find();
+    public SkillDescriptor skillDescriptor() {
+        return new SkillDescriptor(
+                name(),
+                description(),
+                List.of("news_search", "news search", "36kr", "serper", "serpapi", "新闻检索", "新闻搜索", "查看新闻", "看新闻", "新闻", "资讯", "头条", "热点", "热搜")
+        );
     }
 
     @Override

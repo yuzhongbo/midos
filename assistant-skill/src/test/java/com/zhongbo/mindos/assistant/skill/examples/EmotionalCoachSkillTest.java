@@ -2,6 +2,7 @@ package com.zhongbo.mindos.assistant.skill.examples;
 
 import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.common.SkillResult;
+import com.zhongbo.mindos.assistant.skill.SkillRegistry;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -13,14 +14,15 @@ class EmotionalCoachSkillTest {
     private static final String RISK_HIGH_TERMS_PROP = "mindos.eq.coach.risk.high-terms";
 
     private final EmotionalCoachSkill skill = new EmotionalCoachSkill();
+    private final SkillRegistry registry = new SkillRegistry(java.util.List.of(skill));
 
     @Test
     void shouldDetectEmotionalCoachingIntent() {
-        assertTrue(skill.supports("我想要一些高情商沟通建议"));
-        assertTrue(skill.supports("我该怎么说比较好"));
-        assertTrue(skill.supports("和同事有冲突，帮我理一下"));
-        assertTrue(skill.supports("请帮我做心理分析"));
-        assertFalse(skill.supports("echo hello"));
+        assertTrue(registry.detect("我想要一些高情商沟通建议").isPresent());
+        assertTrue(registry.detect("我该怎么说比较好").isPresent());
+        assertTrue(registry.detect("和同事有冲突，帮我理一下").isPresent());
+        assertTrue(registry.detect("请帮我做心理分析").isPresent());
+        assertTrue(registry.detect("echo hello").isEmpty());
     }
 
     @Test

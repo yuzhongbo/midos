@@ -2,8 +2,10 @@ package com.zhongbo.mindos.assistant.skill.examples;
 
 import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.common.SkillResult;
+import com.zhongbo.mindos.assistant.skill.SkillRegistry;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -86,10 +88,11 @@ class TeachingPlanSkillTest {
 
     @Test
     void shouldDetectNaturalLanguageIntent() {
-        assertTrue(skill.supports("请给我一个教学规划"));
-        assertTrue(skill.supports("need a study plan for java"));
-        assertTrue(skill.supports("帮我做一个英语冲刺计划"));
-        assertTrue(skill.supports("给我安排一个 Java 学习方案"));
+        SkillRegistry registry = new SkillRegistry(List.of(skill));
+        assertEquals("teaching.plan", registry.detect("请给我一个教学规划").map(found -> found.name()).orElse(""));
+        assertEquals("teaching.plan", registry.detect("need a study plan for java").map(found -> found.name()).orElse(""));
+        assertEquals("teaching.plan", registry.detect("帮我做一个英语冲刺计划").map(found -> found.name()).orElse(""));
+        assertEquals("teaching.plan", registry.detect("给我安排一个 Java 学习方案").map(found -> found.name()).orElse(""));
     }
 
     @Test

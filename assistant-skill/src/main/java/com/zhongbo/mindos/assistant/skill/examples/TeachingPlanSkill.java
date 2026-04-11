@@ -7,6 +7,8 @@ import com.zhongbo.mindos.assistant.common.LlmClient;
 import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.skill.Skill;
+import com.zhongbo.mindos.assistant.skill.SkillDescriptor;
+import com.zhongbo.mindos.assistant.skill.SkillDescriptorProvider;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -21,7 +23,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 @Component
-public class TeachingPlanSkill implements Skill {
+public class TeachingPlanSkill implements Skill, SkillDescriptorProvider {
 
     private static final Logger LOGGER = Logger.getLogger(TeachingPlanSkill.class.getName());
     private static final List<String> PLAN_INTENT_TERMS = List.of(
@@ -86,19 +88,8 @@ public class TeachingPlanSkill implements Skill {
     }
 
     @Override
-    public List<String> routingKeywords() {
-        return PLAN_INTENT_TERMS;
-    }
-
-    @Override
-    public boolean supports(String input) {
-        if (input == null || input.isBlank()) {
-            return false;
-        }
-        String normalized = normalize(input);
-        return routingKeywords().stream()
-                .map(this::normalize)
-                .anyMatch(term -> !term.isBlank() && normalized.contains(term));
+    public SkillDescriptor skillDescriptor() {
+        return new SkillDescriptor(name(), description(), PLAN_INTENT_TERMS);
     }
 
     @Override

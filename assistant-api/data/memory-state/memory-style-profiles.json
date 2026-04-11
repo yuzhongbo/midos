@@ -1,4 +1,9 @@
 {
+  "plan-user" : {
+    "styleName" : "action",
+    "tone" : "warm",
+    "outputFormat" : "bullet"
+  },
   "tune-user" : {
     "styleName" : "action",
     "tone" : "warm",
@@ -8,10 +13,5 @@
     "styleName" : "action",
     "tone" : "warm",
     "outputFormat" : "plain"
-  },
-  "plan-user" : {
-    "styleName" : "action",
-    "tone" : "warm",
-    "outputFormat" : "bullet"
   }
 }

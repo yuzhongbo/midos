@@ -6,7 +6,7 @@ import com.zhongbo.mindos.assistant.memory.MemoryGateway;
 import com.zhongbo.mindos.assistant.memory.graph.GraphMemoryView;
 import com.zhongbo.mindos.assistant.memory.graph.MemoryNode;
 import com.zhongbo.mindos.assistant.memory.model.SkillUsageStats;
-import com.zhongbo.mindos.assistant.skill.SkillEngine;
+import com.zhongbo.mindos.assistant.skill.SkillEngineFacade;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -23,12 +23,12 @@ public class BeamSearchCandidatePlanner implements SearchPlanner {
     private static final double MEMORY_WEIGHT = 0.20;
     private static final double PATH_COST_WEIGHT = 0.15;
 
-    private final SkillEngine skillEngine;
+    private final SkillEngineFacade skillEngine;
     private final MemoryGateway memoryGateway;
     private final GraphMemoryView graphMemoryView;
     private final ProcedureMemoryEngine procedureMemoryEngine;
 
-    public BeamSearchCandidatePlanner(SkillEngine skillEngine,
+    public BeamSearchCandidatePlanner(SkillEngineFacade skillEngine,
                                       MemoryGateway memoryGateway,
                                       GraphMemoryView graphMemoryView,
                                       ProcedureMemoryEngine procedureMemoryEngine) {

@@ -181,6 +181,8 @@ public class DefaultToolGenerator implements ToolGenerator {
                 import com.zhongbo.mindos.assistant.common.SkillContext;
                 import com.zhongbo.mindos.assistant.common.SkillResult;
                 import com.zhongbo.mindos.assistant.skill.Skill;
+                import com.zhongbo.mindos.assistant.skill.SkillDescriptor;
+                import com.zhongbo.mindos.assistant.skill.SkillDescriptorProvider;
 
                 import java.net.URI;
                 import java.net.http.HttpClient;
@@ -190,12 +192,11 @@ public class DefaultToolGenerator implements ToolGenerator {
                 import java.time.Duration;
                 import java.util.LinkedHashSet;
                 import java.util.List;
-                import java.util.Locale;
                 import java.util.Map;
                 import java.util.regex.Matcher;
                 import java.util.regex.Pattern;
 
-                public final class %s implements Skill {
+                public final class %s implements Skill, SkillDescriptorProvider {
                     private static final Pattern URL_PATTERN = Pattern.compile(%s);
                     private static final Pattern TITLE_PATTERN = Pattern.compile(%s);
                     private static final Pattern LINK_PATTERN = Pattern.compile(%s);
@@ -212,25 +213,8 @@ public class DefaultToolGenerator implements ToolGenerator {
                     }
 
                     @Override
-                    public List<String> routingKeywords() {
-                        return KEYWORDS;
-                    }
-
-                    @Override
-                    public boolean supports(String input) {
-                        if (input == null || input.isBlank()) {
-                            return false;
-                        }
-                        String normalized = input.toLowerCase(Locale.ROOT);
-                        if (normalized.contains("http://") || normalized.contains("https://")) {
-                            return true;
-                        }
-                        for (String keyword : KEYWORDS) {
-                            if (!keyword.isBlank() && normalized.contains(keyword.toLowerCase(Locale.ROOT))) {
-                                return true;
-                            }
-                        }
-                        return false;
+                    public SkillDescriptor skillDescriptor() {
+                        return new SkillDescriptor(name(), description(), KEYWORDS);
                     }
 
                     @Override
@@ -383,11 +367,12 @@ public class DefaultToolGenerator implements ToolGenerator {
                 import com.zhongbo.mindos.assistant.common.SkillContext;
                 import com.zhongbo.mindos.assistant.common.SkillResult;
                 import com.zhongbo.mindos.assistant.skill.Skill;
+                import com.zhongbo.mindos.assistant.skill.SkillDescriptor;
+                import com.zhongbo.mindos.assistant.skill.SkillDescriptorProvider;
 
                 import java.util.List;
-                import java.util.Locale;
 
-                public final class %s implements Skill {
+                public final class %s implements Skill, SkillDescriptorProvider {
                     private static final List<String> KEYWORDS = %s;
 
                     @Override
@@ -401,22 +386,8 @@ public class DefaultToolGenerator implements ToolGenerator {
                     }
 
                     @Override
-                    public List<String> routingKeywords() {
-                        return KEYWORDS;
-                    }
-
-                    @Override
-                    public boolean supports(String input) {
-                        if (input == null || input.isBlank()) {
-                            return false;
-                        }
-                        String normalized = input.toLowerCase(Locale.ROOT);
-                        for (String keyword : KEYWORDS) {
-                            if (!keyword.isBlank() && normalized.contains(keyword.toLowerCase(Locale.ROOT))) {
-                                return true;
-                            }
-                        }
-                        return normalized.contains(name().toLowerCase(Locale.ROOT));
+                    public SkillDescriptor skillDescriptor() {
+                        return new SkillDescriptor(name(), description(), KEYWORDS);
                     }
 
                     @Override

@@ -22,7 +22,8 @@ import com.zhongbo.mindos.assistant.memory.MemoryManager;
 import com.zhongbo.mindos.assistant.memory.model.ProceduralMemoryEntry;
 import com.zhongbo.mindos.assistant.memory.model.SemanticMemoryEntry;
 import com.zhongbo.mindos.assistant.memory.model.SkillUsageStats;
-import com.zhongbo.mindos.assistant.skill.SkillEngine;
+import com.zhongbo.mindos.assistant.skill.SkillCandidate;
+import com.zhongbo.mindos.assistant.skill.SkillEngineFacade;
 import com.zhongbo.mindos.assistant.dispatcher.decision.Decision;
 import com.zhongbo.mindos.assistant.dispatcher.decision.DecisionParser;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.CandidatePlanner;
@@ -138,7 +139,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
             "accuweather", "weather.com", "weathernews", "中国气象局", "全国天气网"
     );
 
-    private final SkillEngine skillEngine;
+    private final SkillEngineFacade skillEngine;
     private final SkillDslParser skillDslParser;
     private final IntentModelRoutingPolicy intentModelRoutingPolicy;
     private final MetaOrchestratorService metaOrchestratorService;
@@ -266,7 +267,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
     private RoutingCoordinator routingCoordinator;
     private DispatcherMemoryFacade dispatcherMemoryFacade;
 
-    public DispatcherService(SkillEngine skillEngine,
+    public DispatcherService(SkillEngineFacade skillEngine,
                              SkillDslParser skillDslParser,
                              ParamValidator paramValidator,
                              DecisionOrchestrator decisionOrchestrator,
@@ -410,7 +411,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
     // the new preferSuggestedSkill configuration parameters. Delegates to the
     // primary constructor with safe defaults (disabled).
     @Autowired
-    public DispatcherService(SkillEngine skillEngine,
+    public DispatcherService(SkillEngineFacade skillEngine,
                           SkillDslParser skillDslParser,
                           ParamValidator paramValidator,
                           DecisionOrchestrator decisionOrchestrator,
@@ -2032,10 +2033,10 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                                                                                   SkillContext context,
                                                                                   SemanticAnalysisResult semanticAnalysis,
                                                                                   List<String> rejectedReasons) {
-        List<SkillEngine.SkillCandidate> detectedSkillCandidates = parallelDetectedSkillRoutingEnabled
+        List<SkillCandidate> detectedSkillCandidates = parallelDetectedSkillRoutingEnabled
                 ? skillEngine.detectSkillCandidates(context.input(), parallelDetectedSkillRoutingMaxCandidates)
                 : skillEngine.detectSkillName(context.input())
-                .map(name -> List.of(new SkillEngine.SkillCandidate(name, 1)))
+                .map(name -> List.of(new SkillCandidate(name, 1)))
                 .orElse(List.of());
         if (!detectedSkillCandidates.isEmpty()) {
             if (!parallelDetectedSkillRoutingEnabled || detectedSkillCandidates.size() == 1) {
@@ -2050,7 +2051,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
             return Optional.of(routeDetectedSkillCandidatesInParallel(userId, userInput, context, detectedSkillCandidates, rejectedReasons));
         }
 
-        rejectedReasons.add("no registered skill.supports match");
+        rejectedReasons.add("no registered skill keyword match");
         boolean realtimeLikeInput = isRealtimeLikeInput(userInput, semanticAnalysis);
         Optional<SkillDsl> habitDsl = realtimeLikeInput
                 ? Optional.empty()
@@ -2122,7 +2123,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                 context,
                 "detected-skill",
                 0.92,
-                List.of("registered skill.supports matched the input"),
+                List.of("registered skill keywords matched the input"),
                 rejectedReasons
         ));
     }
@@ -2379,11 +2380,11 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
     private CompletableFuture<RoutingOutcome> routeDetectedSkillCandidatesInParallel(String userId,
                                                                                       String userInput,
                                                                                       SkillContext context,
-                                                                                      List<SkillEngine.SkillCandidate> candidates,
+                                                                                      List<SkillCandidate> candidates,
                                                                                       List<String> rejectedReasons) {
         List<ParallelSkillCandidateExecution> executions = new ArrayList<>();
         List<String> localRejected = new ArrayList<>(rejectedReasons);
-        for (SkillEngine.SkillCandidate candidate : candidates) {
+        for (SkillCandidate candidate : candidates) {
             prepareParallelDetectedExecution(userId, userInput, context, candidate, localRejected)
                     .ifPresent(executions::add);
         }
@@ -2413,7 +2414,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
     private Optional<ParallelSkillCandidateExecution> prepareParallelDetectedExecution(String userId,
                                                                                        String userInput,
                                                                                        SkillContext context,
-                                                                                       SkillEngine.SkillCandidate candidate,
+                                                                                       SkillCandidate candidate,
                                                                                        List<String> rejectedReasons) {
         String skillName = candidate.skillName();
         Optional<SkillResult> blocked = maybeBlockByCapability(skillName);
@@ -4502,7 +4503,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
             rejectedReasons.add("brave-first routing skipped because input is not realtime intent");
             return Optional.empty();
         }
-        List<SkillEngine.SkillCandidate> candidates = skillEngine.detectSkillCandidates(context.input(), Math.max(2, parallelDetectedSkillRoutingMaxCandidates));
+        List<SkillCandidate> candidates = skillEngine.detectSkillCandidates(context.input(), Math.max(2, parallelDetectedSkillRoutingMaxCandidates));
         if (candidates.isEmpty()) {
             rejectedReasons.add("brave-first routing enabled but no realtime search candidates were detected");
             return Optional.empty();

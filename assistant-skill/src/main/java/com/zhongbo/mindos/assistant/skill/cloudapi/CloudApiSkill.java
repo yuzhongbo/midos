@@ -5,6 +5,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.skill.Skill;
+import com.zhongbo.mindos.assistant.skill.SkillDescriptor;
+import com.zhongbo.mindos.assistant.skill.SkillDescriptorProvider;
 
 import java.io.IOException;
 import java.net.URI;
@@ -35,7 +37,7 @@ import java.util.logging.Logger;
  *   <li>{@code ${env.VAR_NAME}}    — system environment variable</li>
  * </ul>
  */
-public class CloudApiSkill implements Skill {
+public class CloudApiSkill implements Skill, SkillDescriptorProvider {
 
     private static final Logger LOGGER = Logger.getLogger(CloudApiSkill.class.getName());
     // Matches the dispatcher's llm-reply max-chars budget to stay within system-wide output limits
@@ -71,27 +73,8 @@ public class CloudApiSkill implements Skill {
     }
 
     @Override
-    public List<String> routingKeywords() {
-        return definition.keywords();
-    }
-
-    /**
-     * Returns {@code true} when the normalized input starts with the skill name or contains
-     * any of the configured semantic keywords.
-     */
-    @Override
-    public boolean supports(String input) {
-        if (input == null || input.isBlank()) {
-            return false;
-        }
-        String normalized = input.toLowerCase(Locale.ROOT);
-        String nameLower = name().toLowerCase(Locale.ROOT);
-        if (normalized.startsWith(nameLower + " ") || normalized.equals(nameLower)) {
-            return true;
-        }
-        return definition.keywords().stream()
-                .anyMatch(kw -> kw != null && !kw.isBlank()
-                        && normalized.contains(kw.toLowerCase(Locale.ROOT)));
+    public SkillDescriptor skillDescriptor() {
+        return new SkillDescriptor(name(), description(), definition.keywords());
     }
 
     @Override

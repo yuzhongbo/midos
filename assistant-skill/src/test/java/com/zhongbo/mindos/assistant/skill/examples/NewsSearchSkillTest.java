@@ -2,6 +2,7 @@ package com.zhongbo.mindos.assistant.skill.examples;
 
 import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.common.SkillResult;
+import com.zhongbo.mindos.assistant.skill.SkillRegistry;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.Test;
@@ -224,8 +225,9 @@ class NewsSearchSkillTest {
                 220
         );
 
-        assertTrue(skill.supports("查看新闻 AI 前五条，并总结"));
-        assertTrue(skill.supports("最近的国际新闻"));
+        SkillRegistry registry = new SkillRegistry(List.of(skill));
+        assertEquals("news_search", registry.detect("查看新闻 AI 前五条，并总结").map(found -> found.name()).orElse(""));
+        assertEquals("news_search", registry.detect("最近的国际新闻").map(found -> found.name()).orElse(""));
     }
 
     @Test

@@ -2,7 +2,6 @@ package com.zhongbo.mindos.assistant.dispatcher.orchestrator;
 
 import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.common.SkillCostTelemetry;
-import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.common.dto.CostModel;
 import com.zhongbo.mindos.assistant.memory.MemoryGateway;
 import com.zhongbo.mindos.assistant.memory.graph.GraphMemory;
@@ -15,15 +14,15 @@ import com.zhongbo.mindos.assistant.memory.model.ProceduralMemoryEntry;
 import com.zhongbo.mindos.assistant.memory.model.SemanticMemoryEntry;
 import com.zhongbo.mindos.assistant.memory.model.SkillUsageStats;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.step5.InMemoryPlannerLearningStore;
-import com.zhongbo.mindos.assistant.skill.Skill;
-import com.zhongbo.mindos.assistant.skill.SkillDslExecutor;
-import com.zhongbo.mindos.assistant.skill.SkillEngine;
-import com.zhongbo.mindos.assistant.skill.SkillRegistry;
+import com.zhongbo.mindos.assistant.skill.SkillCandidate;
+import com.zhongbo.mindos.assistant.skill.SkillDescriptor;
+import com.zhongbo.mindos.assistant.skill.SkillEngineFacade;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -32,20 +31,12 @@ class SimpleCandidatePlannerTest {
 
     @Test
     void shouldRankCandidatesByKeywordMemoryAndSuccessRate() {
-        SkillEngine skillEngine = new SkillEngine(
-                new SkillRegistry(List.of(
-                        scoredSkill("mcp.qwensearch.webSearch", 930),
-                        scoredSkill("mcp.bravesearch.webSearch", 900),
-                        scoredSkill("mcp.serper.webSearch", 880),
-                        scoredSkill("mcp.serpapi.webSearch", 860)
-                )),
-                new SkillDslExecutor(new SkillRegistry(List.of(
-                        scoredSkill("mcp.qwensearch.webSearch", 930),
-                        scoredSkill("mcp.bravesearch.webSearch", 900),
-                        scoredSkill("mcp.serper.webSearch", 880),
-                        scoredSkill("mcp.serpapi.webSearch", 860)
-                )))
-        );
+        SkillEngineFacade skillEngine = skillEngine(Map.of(
+                "mcp.qwensearch.webSearch", 930,
+                "mcp.bravesearch.webSearch", 900,
+                "mcp.serper.webSearch", 880,
+                "mcp.serpapi.webSearch", 860
+        ));
         MemoryGateway memoryGateway = gateway(
                 List.of(),
                 List.of(
@@ -71,16 +62,10 @@ class SimpleCandidatePlannerTest {
 
     @Test
     void shouldPreferLowerCostCandidateWhenCapabilityTies() {
-        SkillEngine skillEngine = new SkillEngine(
-                new SkillRegistry(List.of(
-                        scoredSkill("skill.fast", 900),
-                        scoredSkill("skill.slow", 900)
-                )),
-                new SkillDslExecutor(new SkillRegistry(List.of(
-                        scoredSkill("skill.fast", 900),
-                        scoredSkill("skill.slow", 900)
-                )))
-        );
+        SkillEngineFacade skillEngine = skillEngine(Map.of(
+                "skill.fast", 900,
+                "skill.slow", 900
+        ));
         MemoryGateway memoryGateway = gateway(
                 List.of(),
                 List.of(
@@ -116,16 +101,10 @@ class SimpleCandidatePlannerTest {
 
     @Test
     void shouldRankHigherRewardCandidateFirst() {
-        SkillEngine skillEngine = new SkillEngine(
-                new SkillRegistry(List.of(
-                        scoredSkill("skill.good", 900),
-                        scoredSkill("skill.bad", 900)
-                )),
-                new SkillDslExecutor(new SkillRegistry(List.of(
-                        scoredSkill("skill.good", 900),
-                        scoredSkill("skill.bad", 900)
-                )))
-        );
+        SkillEngineFacade skillEngine = skillEngine(Map.of(
+                "skill.good", 900,
+                "skill.bad", 900
+        ));
         MemoryGateway memoryGateway = gateway(
                 List.of(),
                 List.of(
@@ -149,26 +128,44 @@ class SimpleCandidatePlannerTest {
         assertTrue(candidates.get(0).reasons().stream().anyMatch(reason -> reason.contains("rewardScore=")));
     }
 
-    private Skill scoredSkill(String name, int routingScore) {
-        return new Skill() {
+    private SkillEngineFacade skillEngine(Map<String, Integer> scores) {
+        return new SkillEngineFacade() {
             @Override
-            public String name() {
-                return name;
+            public Optional<String> detectSkillName(String input) {
+                return detectSkillCandidates(input, 1).stream().findFirst().map(SkillCandidate::skillName);
             }
 
             @Override
-            public String description() {
-                return name;
+            public List<SkillCandidate> detectSkillCandidates(String input, int limit) {
+                return scores.entrySet().stream()
+                        .filter(entry -> entry.getValue() > Integer.MIN_VALUE)
+                        .sorted((left, right) -> Integer.compare(right.getValue(), left.getValue()))
+                        .limit(Math.max(0, limit))
+                        .map(entry -> new SkillCandidate(entry.getKey(), entry.getValue()))
+                        .toList();
             }
 
             @Override
-            public SkillResult run(SkillContext context) {
-                return SkillResult.success(name, name);
+            public Optional<SkillDescriptor> describeSkill(String skillName) {
+                return Optional.of(new SkillDescriptor(skillName, skillName, List.of(skillName)));
             }
 
             @Override
-            public int routingScore(String input) {
-                return routingScore;
+            public List<SkillDescriptor> listSkillDescriptors() {
+                return scores.keySet().stream()
+                        .sorted()
+                        .map(name -> new SkillDescriptor(name, name, List.of(name)))
+                        .toList();
+            }
+
+            @Override
+            public String describeAvailableSkills() {
+                return String.join(", ", scores.keySet());
+            }
+
+            @Override
+            public List<String> listAvailableSkillSummaries() {
+                return scores.keySet().stream().sorted().toList();
             }
         };
     }

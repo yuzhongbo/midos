@@ -163,11 +163,6 @@ class DefaultDecisionOrchestratorTest {
                 }
                 return SkillResult.success(name(), "recovered on call " + calls);
             }
-
-            @Override
-            public int routingScore(String input) {
-                return 900;
-            }
         };
         SkillRegistry skillRegistry = new SkillRegistry(List.of(retryingSkill));
         SkillDslExecutor dslExecutor = new SkillDslExecutor(skillRegistry);
@@ -535,11 +530,6 @@ class DefaultDecisionOrchestratorTest {
             public SkillResult run(SkillContext context) {
                 return SkillResult.failure(name(), "primary failed");
             }
-
-            @Override
-            public int routingScore(String input) {
-                return 950;
-            }
         };
         Skill backup = new Skill() {
             @Override
@@ -555,11 +545,6 @@ class DefaultDecisionOrchestratorTest {
             @Override
             public SkillResult run(SkillContext context) {
                 return SkillResult.success(name(), "backup created:" + context.attributes().get("task"));
-            }
-
-            @Override
-            public int routingScore(String input) {
-                return 900;
             }
         };
         SkillRegistry registry = new SkillRegistry(List.of(primary, backup));
@@ -621,11 +606,6 @@ class DefaultDecisionOrchestratorTest {
                     return SkillResult.failure(name(), "transient failure");
                 }
                 return SkillResult.success(name(), "recovered on call " + call);
-            }
-
-            @Override
-            public int routingScore(String input) {
-                return 980;
             }
         };
         SkillRegistry registry = new SkillRegistry(List.of(flaky));
@@ -708,11 +688,6 @@ class DefaultDecisionOrchestratorTest {
             public SkillResult run(SkillContext context) {
                 return SkillResult.failure(name(), "primary failed");
             }
-
-            @Override
-            public int routingScore(String input) {
-                return 990;
-            }
         };
         Skill backup = new Skill() {
             @Override
@@ -728,11 +703,6 @@ class DefaultDecisionOrchestratorTest {
             @Override
             public SkillResult run(SkillContext context) {
                 return SkillResult.success(name(), "backup recovered");
-            }
-
-            @Override
-            public int routingScore(String input) {
-                return 900;
             }
         };
         SkillRegistry registry = new SkillRegistry(List.of(primary, backup));
@@ -954,11 +924,6 @@ class DefaultDecisionOrchestratorTest {
                     @Override
                     public SkillResult run(SkillContext context) {
                         return entry.getValue();
-                    }
-
-                    @Override
-                    public int routingScore(String input) {
-                        return 900;
                     }
                 }).toList();
         SkillRegistry registry = new SkillRegistry(skills);

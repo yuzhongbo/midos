@@ -1,15 +1,10 @@
 package com.zhongbo.mindos.assistant.api.im;
 
 import com.zhongbo.mindos.assistant.common.ImDegradedReplyMarker;
-import com.zhongbo.mindos.assistant.common.SkillResult;
-import com.zhongbo.mindos.assistant.common.dto.ExecutionTraceDto;
 import com.zhongbo.mindos.assistant.dispatcher.DispatchResult;
 import com.zhongbo.mindos.assistant.dispatcher.DispatcherFacade;
-import com.zhongbo.mindos.assistant.dispatcher.decision.Decision;
-import com.zhongbo.mindos.assistant.dispatcher.orchestrator.DefaultMemoryGateway;
-import com.zhongbo.mindos.assistant.dispatcher.orchestrator.DecisionOrchestrator;
 import com.zhongbo.mindos.assistant.memory.MemoryConsolidationService;
-import com.zhongbo.mindos.assistant.memory.MemoryGateway;
+import com.zhongbo.mindos.assistant.memory.MemoryFacade;
 import com.zhongbo.mindos.assistant.memory.MemoryManager;
 import com.zhongbo.mindos.assistant.memory.model.LongTask;
 import com.zhongbo.mindos.assistant.memory.model.LongTaskStatus;
@@ -43,25 +38,6 @@ import static org.mockito.Mockito.when;
 
 class ImGatewayServiceTest {
 
-    private DecisionOrchestrator decisionOrchestrator(MemoryManager memoryManager) {
-        MemoryGateway memoryGateway = new DefaultMemoryGateway(memoryManager);
-        return new DecisionOrchestrator() {
-            @Override
-            public SkillResult execute(String userInput, String intent, java.util.Map<String, Object> params) {
-                throw new UnsupportedOperationException();
-            }
-
-            @Override
-            public OrchestrationOutcome orchestrate(Decision decision, OrchestrationRequest request) {
-                throw new UnsupportedOperationException();
-            }
-
-            @Override
-            public void recordOutcome(String userId, String userInput, SkillResult result, ExecutionTraceDto trace) {
-            }
-        };
-    }
-
     @AfterEach
     void clearTodoPolicyProperties() {
         System.clearProperty("mindos.todo.priority.p1-threshold");
@@ -79,8 +55,7 @@ class ImGatewayServiceTest {
         MemoryConsolidationService consolidationService = new MemoryConsolidationService();
         ImGatewayService service = new ImGatewayService(
                 dispatcherService,
-                decisionOrchestrator(memoryManager),
-                memoryManager,
+                new MemoryFacade(memoryManager),
                 consolidationService
         );
 
@@ -120,8 +95,7 @@ class ImGatewayServiceTest {
         MemoryConsolidationService consolidationService = new MemoryConsolidationService();
         ImGatewayService service = new ImGatewayService(
                 dispatcherService,
-                decisionOrchestrator(memoryManager),
-                memoryManager,
+                new MemoryFacade(memoryManager),
                 consolidationService
         );
 
@@ -141,8 +115,7 @@ class ImGatewayServiceTest {
         MemoryConsolidationService consolidationService = new MemoryConsolidationService();
         ImGatewayService service = new ImGatewayService(
                 dispatcherService,
-                decisionOrchestrator(memoryManager),
-                memoryManager,
+                new MemoryFacade(memoryManager),
                 consolidationService
         );
 
@@ -193,8 +166,7 @@ class ImGatewayServiceTest {
         MemoryConsolidationService consolidationService = new MemoryConsolidationService();
         ImGatewayService service = new ImGatewayService(
                 dispatcherService,
-                decisionOrchestrator(memoryManager),
-                memoryManager,
+                new MemoryFacade(memoryManager),
                 consolidationService
         );
 
@@ -217,8 +189,7 @@ class ImGatewayServiceTest {
         MemoryConsolidationService consolidationService = new MemoryConsolidationService();
         ImGatewayService service = new ImGatewayService(
                 dispatcherService,
-                decisionOrchestrator(memoryManager),
-                memoryManager,
+                new MemoryFacade(memoryManager),
                 consolidationService
         );
 
@@ -251,8 +222,7 @@ class ImGatewayServiceTest {
         MemoryConsolidationService consolidationService = new MemoryConsolidationService();
         ImGatewayService service = new ImGatewayService(
                 dispatcherService,
-                decisionOrchestrator(memoryManager),
-                memoryManager,
+                new MemoryFacade(memoryManager),
                 consolidationService
         );
 
@@ -282,8 +252,7 @@ class ImGatewayServiceTest {
         DingtalkOpenApiMessageClient openApiMessageClient = mock(DingtalkOpenApiMessageClient.class);
         ImGatewayService service = new ImGatewayService(
                 dispatcherService,
-                decisionOrchestrator(memoryManager),
-                memoryManager,
+                new MemoryFacade(memoryManager),
                 consolidationService,
                 asyncReplyClient,
                 openApiMessageClient
@@ -315,8 +284,7 @@ class ImGatewayServiceTest {
         DingtalkOpenApiMessageClient openApiMessageClient = mock(DingtalkOpenApiMessageClient.class);
         ImGatewayService service = new ImGatewayService(
                 dispatcherService,
-                decisionOrchestrator(memoryManager),
-                memoryManager,
+                new MemoryFacade(memoryManager),
                 consolidationService,
                 asyncReplyClient,
                 openApiMessageClient

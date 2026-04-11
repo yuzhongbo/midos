@@ -4,6 +4,8 @@ import com.zhongbo.mindos.assistant.api.testsupport.ApiTestSupport;
 import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.skill.Skill;
+import com.zhongbo.mindos.assistant.skill.SkillDescriptor;
+import com.zhongbo.mindos.assistant.skill.SkillDescriptorProvider;
 import com.zhongbo.mindos.assistant.skill.mcp.McpToolDefinition;
 import com.zhongbo.mindos.assistant.skill.mcp.McpToolExecutor;
 import org.junit.jupiter.api.Test;
@@ -429,77 +431,53 @@ class ChatControllerTest {
                                    java.util.function.Function<SkillContext, String> output) {
             McpToolDefinition definition = new McpToolDefinition(alias, "http://unused.local/mcp", toolName, description);
             McpToolExecutor executor = new McpToolExecutor();
-            return new Skill() {
-                @Override
-                public String name() {
-                    return definition.skillName();
-                }
-
-                @Override
-                public String description() {
-                    return description;
-                }
-
-                @Override
-                public java.util.List<String> routingKeywords() {
-                    return executor.routingKeywords(definition);
-                }
-
-                @Override
-                public boolean supports(String input) {
-                    return executor.supports(definition, input);
-                }
-
-                @Override
-                public int routingScore(String input) {
-                    if (!supports(input)) {
-                        return Integer.MIN_VALUE;
-                    }
-                    return switch (alias) {
-                        case "qwensearch" -> 930;
-                        case "bravesearch", "brave" -> 900;
-                        default -> 850;
-                    };
-                }
-
-                @Override
-                public SkillResult run(SkillContext context) {
-                    return SkillResult.success(definition.skillName(), output.apply(context));
-                }
-            };
+            return new ScriptedSkill(
+                    definition.skillName(),
+                    description,
+                    executor.routingKeywords(definition),
+                    context -> SkillResult.success(definition.skillName(), output.apply(context))
+            );
         }
 
         private Skill fixedSkill(String name, String description, java.util.function.Function<SkillContext, String> output) {
-            return new Skill() {
-                @Override
-                public String name() {
-                    return name;
-                }
+            return new ScriptedSkill(name, description, java.util.List.of(name, description), context -> SkillResult.success(name, output.apply(context)));
+        }
 
-                @Override
-                public String description() {
-                    return description;
-                }
+        private static final class ScriptedSkill implements Skill, SkillDescriptorProvider {
+            private final String name;
+            private final String description;
+            private final java.util.List<String> routingKeywords;
+            private final java.util.function.Function<SkillContext, SkillResult> runner;
 
-                @Override
-                public java.util.List<String> routingKeywords() {
-                    return java.util.List.of(name, description);
-                }
+            private ScriptedSkill(String name,
+                                  String description,
+                                  java.util.List<String> routingKeywords,
+                                  java.util.function.Function<SkillContext, SkillResult> runner) {
+                this.name = name;
+                this.description = description;
+                this.routingKeywords = routingKeywords == null ? java.util.List.of() : java.util.List.copyOf(routingKeywords);
+                this.runner = runner;
+            }
 
-                @Override
-                public boolean supports(String input) {
-                    if (input == null || input.isBlank()) {
-                        return false;
-                    }
-                    String normalized = input.toLowerCase();
-                    return normalized.contains(name.toLowerCase()) || normalized.contains(description.toLowerCase());
-                }
+            @Override
+            public String name() {
+                return name;
+            }
 
-                @Override
-                public SkillResult run(SkillContext context) {
-                    return SkillResult.success(name, output.apply(context));
-                }
-            };
+            @Override
+            public String description() {
+                return description;
+            }
+
+            @Override
+            public SkillDescriptor skillDescriptor() {
+                return new SkillDescriptor(name, description, routingKeywords);
+            }
+
+            @Override
+            public SkillResult run(SkillContext context) {
+                return runner.apply(context);
+            }
         }
     }
 }

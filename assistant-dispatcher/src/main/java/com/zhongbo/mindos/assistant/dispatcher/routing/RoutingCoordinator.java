@@ -3,7 +3,7 @@ package com.zhongbo.mindos.assistant.dispatcher.routing;
 import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.dispatcher.decision.Decision;
 import com.zhongbo.mindos.assistant.skill.SkillDescriptor;
-import com.zhongbo.mindos.assistant.skill.SkillEngine;
+import com.zhongbo.mindos.assistant.skill.SkillEngineFacade;
 import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalysisResult;
 import org.springframework.stereotype.Component;
 
@@ -14,9 +14,9 @@ import java.util.Objects;
 @Component
 public class RoutingCoordinator {
 
-    private final SkillEngine skillEngine;
+    private final SkillEngineFacade skillEngine;
 
-    public RoutingCoordinator(SkillEngine skillEngine) {
+    public RoutingCoordinator(SkillEngineFacade skillEngine) {
         this.skillEngine = skillEngine;
     }
 

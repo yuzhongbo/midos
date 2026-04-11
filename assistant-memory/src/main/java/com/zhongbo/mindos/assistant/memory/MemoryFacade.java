@@ -44,7 +44,7 @@ public class MemoryFacade {
     private final int vectorTopK;
 
     public MemoryFacade(GraphMemory graphMemory, VectorMemory vectorMemory) {
-        this(graphMemory, vectorMemory, null, 5);
+        this(graphMemory, vectorMemory, (MemoryManager) null, 5);
     }
 
     public MemoryFacade(MemoryManager memoryManager) {

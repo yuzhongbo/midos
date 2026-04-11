@@ -4,6 +4,8 @@ import com.zhongbo.mindos.assistant.common.LlmClient;
 import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.skill.Skill;
+import com.zhongbo.mindos.assistant.skill.SkillDescriptor;
+import com.zhongbo.mindos.assistant.skill.SkillDescriptorProvider;
 import org.springframework.stereotype.Component;
 import org.springframework.beans.factory.annotation.Value;
 
@@ -14,7 +16,7 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 
 @Component
-public class CodeGenerateSkill implements Skill {
+public class CodeGenerateSkill implements Skill, SkillDescriptorProvider {
     private static final Logger LOGGER = Logger.getLogger(CodeGenerateSkill.class.getName());
     private final LlmClient llmClient;
     private final String defaultProvider;
@@ -53,8 +55,8 @@ public class CodeGenerateSkill implements Skill {
     }
 
     @Override
-    public List<String> routingKeywords() {
-        return List.of("generate code", "代码", "生成代码", "写代码", "接口", "api", "dto", "controller", "bug", "修复", "sql");
+    public SkillDescriptor skillDescriptor() {
+        return new SkillDescriptor(name(), description(), List.of("generate code", "代码", "生成代码", "写代码", "接口", "api", "dto", "controller", "bug", "修复", "sql"));
     }
 
     @Override

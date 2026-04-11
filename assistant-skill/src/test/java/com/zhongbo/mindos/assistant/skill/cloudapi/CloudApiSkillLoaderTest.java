@@ -145,11 +145,10 @@ class CloudApiSkillLoaderTest {
         CloudApiSkillLoader loader = new CloudApiSkillLoader(registry, dir.toString());
         loader.reload();
 
-        Skill skill = registry.getSkill("weather.query").orElseThrow();
-        assertTrue(skill.supports("查一下今天的天气"));
-        assertTrue(skill.supports("check the weather"));
-        assertTrue(skill.supports("当前温度是多少"));
-        assertFalse(skill.supports("翻译这句话"));
+        assertEquals("weather.query", registry.detect("查一下今天的天气").map(Skill::name).orElse(""));
+        assertEquals("weather.query", registry.detect("check the weather").map(Skill::name).orElse(""));
+        assertEquals("weather.query", registry.detect("当前温度是多少").map(Skill::name).orElse(""));
+        assertTrue(registry.detect("翻译这句话").isEmpty());
     }
 
     @Test

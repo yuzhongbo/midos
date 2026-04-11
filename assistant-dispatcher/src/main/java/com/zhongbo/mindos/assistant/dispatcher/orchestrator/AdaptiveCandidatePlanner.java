@@ -6,7 +6,7 @@ import com.zhongbo.mindos.assistant.dispatcher.orchestrator.step5.PlannerLearnin
 import com.zhongbo.mindos.assistant.memory.MemoryGateway;
 import com.zhongbo.mindos.assistant.memory.graph.GraphMemory;
 import com.zhongbo.mindos.assistant.memory.model.SkillUsageStats;
-import com.zhongbo.mindos.assistant.skill.SkillEngine;
+import com.zhongbo.mindos.assistant.skill.SkillEngineFacade;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -25,7 +25,7 @@ public class AdaptiveCandidatePlanner implements CandidatePlanner {
     private static final double DEFAULT_LEARNING_RATE = 0.18;
     private static final double DEFAULT_MEMORY_SATURATION = 8.0;
 
-    protected final SkillEngine skillEngine;
+    protected final SkillEngineFacade skillEngine;
     protected final MemoryGateway memoryGateway;
     protected final GraphMemory graphMemory;
     protected final SkillCostTelemetry skillCostTelemetry;
@@ -40,10 +40,10 @@ public class AdaptiveCandidatePlanner implements CandidatePlanner {
     protected final double memorySaturation;
 
     public AdaptiveCandidatePlanner() {
-        this((SkillEngine) null, (MemoryGateway) null, (GraphMemory) null, (SkillCostTelemetry) null, (PlannerLearningStore) null, 3, 0.40, 0.35, 0.15, 0.10, DEFAULT_LATENCY_WEIGHT, DEFAULT_LEARNING_RATE, DEFAULT_MEMORY_SATURATION);
+        this((SkillEngineFacade) null, (MemoryGateway) null, (GraphMemory) null, (SkillCostTelemetry) null, (PlannerLearningStore) null, 3, 0.40, 0.35, 0.15, 0.10, DEFAULT_LATENCY_WEIGHT, DEFAULT_LEARNING_RATE, DEFAULT_MEMORY_SATURATION);
     }
 
-    public AdaptiveCandidatePlanner(SkillEngine skillEngine,
+    public AdaptiveCandidatePlanner(SkillEngineFacade skillEngine,
                                     MemoryGateway memoryGateway,
                                     int maxCandidates,
                                     double explicitWeight,
@@ -53,7 +53,7 @@ public class AdaptiveCandidatePlanner implements CandidatePlanner {
         this(skillEngine, memoryGateway, null, (SkillCostTelemetry) null, (PlannerLearningStore) null, maxCandidates, explicitWeight, keywordWeight, memoryWeight, successWeight, DEFAULT_LATENCY_WEIGHT, DEFAULT_LEARNING_RATE, DEFAULT_MEMORY_SATURATION);
     }
 
-    public AdaptiveCandidatePlanner(SkillEngine skillEngine,
+    public AdaptiveCandidatePlanner(SkillEngineFacade skillEngine,
                                     MemoryGateway memoryGateway,
                                     GraphMemory graphMemory,
                                     int maxCandidates,
@@ -64,7 +64,7 @@ public class AdaptiveCandidatePlanner implements CandidatePlanner {
         this(skillEngine, memoryGateway, graphMemory, (SkillCostTelemetry) null, (PlannerLearningStore) null, maxCandidates, explicitWeight, keywordWeight, memoryWeight, successWeight, DEFAULT_LATENCY_WEIGHT, DEFAULT_LEARNING_RATE, DEFAULT_MEMORY_SATURATION);
     }
 
-    public AdaptiveCandidatePlanner(SkillEngine skillEngine,
+    public AdaptiveCandidatePlanner(SkillEngineFacade skillEngine,
                                     MemoryGateway memoryGateway,
                                     GraphMemory graphMemory,
                                     SkillCostTelemetry skillCostTelemetry,
@@ -76,7 +76,7 @@ public class AdaptiveCandidatePlanner implements CandidatePlanner {
         this(skillEngine, memoryGateway, graphMemory, skillCostTelemetry, null, maxCandidates, explicitWeight, keywordWeight, memoryWeight, successWeight, DEFAULT_LATENCY_WEIGHT, DEFAULT_LEARNING_RATE, DEFAULT_MEMORY_SATURATION);
     }
 
-    protected AdaptiveCandidatePlanner(SkillEngine skillEngine,
+    protected AdaptiveCandidatePlanner(SkillEngineFacade skillEngine,
                                        MemoryGateway memoryGateway,
                                        GraphMemory graphMemory,
                                        SkillCostTelemetry skillCostTelemetry,
@@ -105,7 +105,7 @@ public class AdaptiveCandidatePlanner implements CandidatePlanner {
     }
 
     @Autowired
-    public AdaptiveCandidatePlanner(SkillEngine skillEngine,
+    public AdaptiveCandidatePlanner(SkillEngineFacade skillEngine,
                                     MemoryGateway memoryGateway,
                                     GraphMemory graphMemory,
                                     ObjectProvider<SkillCostTelemetry> skillCostTelemetryProvider,

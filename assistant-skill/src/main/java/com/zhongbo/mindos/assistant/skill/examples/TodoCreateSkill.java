@@ -4,6 +4,8 @@ import com.zhongbo.mindos.assistant.common.LlmClient;
 import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.skill.Skill;
+import com.zhongbo.mindos.assistant.skill.SkillDescriptor;
+import com.zhongbo.mindos.assistant.skill.SkillDescriptorProvider;
 import org.springframework.stereotype.Component;
 
 import java.time.Clock;
@@ -24,7 +26,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 @Component
-public class TodoCreateSkill implements Skill {
+public class TodoCreateSkill implements Skill, SkillDescriptorProvider {
     private static final Logger LOGGER = Logger.getLogger(TodoCreateSkill.class.getName());
     private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd");
     private static final DateTimeFormatter DATE_TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
@@ -61,8 +63,8 @@ public class TodoCreateSkill implements Skill {
     }
 
     @Override
-    public List<String> routingKeywords() {
-        return List.of("待办", "todo", "提醒", "安排任务", "创建任务", "截止", "deadline");
+    public SkillDescriptor skillDescriptor() {
+        return new SkillDescriptor(name(), description(), List.of("待办", "todo", "提醒", "安排任务", "创建任务", "截止", "deadline"));
     }
 
     @Override

@@ -34,10 +34,10 @@ public class PostExecutionMemoryRecorder {
     @org.springframework.beans.factory.annotation.Autowired
     public PostExecutionMemoryRecorder(MemoryGateway memoryGateway,
                                        ReflectionAgent reflectionAgent,
-                                       boolean proceduralLoggingEnabled,
-                                       boolean postSkillSummaryEnabled,
-                                       String postSkillSummarySkills,
-                                       int postSkillSummaryMaxReplyChars) {
+                                       @Value("${mindos.dispatcher.procedural-logging.enabled:true}") boolean proceduralLoggingEnabled,
+                                       @Value("${mindos.memory.post-skill-summary.enabled:false}") boolean postSkillSummaryEnabled,
+                                       @Value("${mindos.memory.post-skill-summary.skills:teaching.plan,todo.create,eq.coach,code.generate,file.search}") String postSkillSummarySkills,
+                                       @Value("${mindos.memory.post-skill-summary.max-reply-chars:280}") int postSkillSummaryMaxReplyChars) {
         this.memoryGateway = memoryGateway;
         this.reflectionAgent = reflectionAgent;
         this.proceduralLoggingEnabled = proceduralLoggingEnabled;

@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
 import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.common.SkillResult;
+import com.zhongbo.mindos.assistant.skill.Skill;
+import com.zhongbo.mindos.assistant.skill.SkillRegistry;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -29,36 +31,39 @@ class CloudApiSkillTest {
         }
     }
 
-    // ─── supports() ──────────────────────────────────────────────────────────
+    // ─── routing metadata / registry detection ───────────────────────────────
 
     @Test
-    void supportsBySkillNamePrefix() {
+    void detectsBySkillNamePrefix() {
         CloudApiSkill skill = buildSkill("translate.text", List.of("翻译"), null, null, null, null);
-        assertTrue(skill.supports("translate.text hello"));
-        assertTrue(skill.supports("translate.text"));
-        assertFalse(skill.supports("echo hello"));
+        SkillRegistry registry = routingRegistry(skill);
+        assertEquals("translate.text", detectSkillName(registry, "translate.text hello"));
+        assertEquals("translate.text", detectSkillName(registry, "translate.text"));
+        assertTrue(registry.detect("echo hello").isEmpty());
     }
 
     @Test
-    void supportsByKeyword() {
+    void detectsByKeyword() {
         CloudApiSkill skill = buildSkill("translate.text", List.of("翻译", "translate", "语言"), null, null, null, null);
-        assertTrue(skill.supports("帮我翻译这段话"));
-        assertTrue(skill.supports("translate this sentence"));
-        assertTrue(skill.supports("语言切换"));
-        assertFalse(skill.supports("查一下天气"));
+        SkillRegistry registry = routingRegistry(skill);
+        assertEquals("translate.text", detectSkillName(registry, "帮我翻译这段话"));
+        assertEquals("translate.text", detectSkillName(registry, "translate this sentence"));
+        assertEquals("translate.text", detectSkillName(registry, "语言切换"));
+        assertTrue(registry.detect("查一下天气").isEmpty());
     }
 
     @Test
-    void supportsReturnsFalseForBlankInput() {
+    void returnsNoCandidateForBlankInput() {
         CloudApiSkill skill = buildSkill("my.skill", List.of("keyword"), null, null, null, null);
-        assertFalse(skill.supports(null));
-        assertFalse(skill.supports("   "));
+        SkillRegistry registry = routingRegistry(skill);
+        assertTrue(registry.detect(null).isEmpty());
+        assertTrue(registry.detect("   ").isEmpty());
     }
 
     @Test
-    void supportsIsCaseInsensitive() {
+    void detectionIsCaseInsensitive() {
         CloudApiSkill skill = buildSkill("weather.query", List.of("Weather"), null, null, null, null);
-        assertTrue(skill.supports("check WEATHER today"));
+        assertEquals("weather.query", detectSkillName(routingRegistry(skill), "check WEATHER today"));
     }
 
     // ─── resolveTemplate() ───────────────────────────────────────────────────
@@ -269,5 +274,13 @@ class CloudApiSkillTest {
         return new CloudApiSkill(def,
                 HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build(),
                 objectMapper);
+    }
+
+    private SkillRegistry routingRegistry(Skill skill) {
+        return new SkillRegistry(List.of(skill));
+    }
+
+    private String detectSkillName(SkillRegistry registry, String input) {
+        return registry.detect(input).map(Skill::name).orElse("");
     }
 }

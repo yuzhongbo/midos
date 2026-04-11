@@ -1,6 +1,5 @@
 package com.zhongbo.mindos.assistant.dispatcher.agent.search;
 
-import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.dispatcher.agent.procedure.InMemoryProcedureMemoryEngine;
 import com.zhongbo.mindos.assistant.memory.MemoryGateway;
 import com.zhongbo.mindos.assistant.memory.graph.GraphMemory;
@@ -8,15 +7,15 @@ import com.zhongbo.mindos.assistant.memory.graph.MemoryNode;
 import com.zhongbo.mindos.assistant.memory.model.ConversationTurn;
 import com.zhongbo.mindos.assistant.memory.model.ProceduralMemoryEntry;
 import com.zhongbo.mindos.assistant.memory.model.SkillUsageStats;
-import com.zhongbo.mindos.assistant.skill.Skill;
-import com.zhongbo.mindos.assistant.skill.SkillDslExecutor;
-import com.zhongbo.mindos.assistant.skill.SkillEngine;
-import com.zhongbo.mindos.assistant.skill.SkillRegistry;
+import com.zhongbo.mindos.assistant.skill.SkillCandidate;
+import com.zhongbo.mindos.assistant.skill.SkillDescriptor;
+import com.zhongbo.mindos.assistant.skill.SkillEngineFacade;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -26,12 +25,11 @@ class BeamSearchCandidatePlannerTest {
 
     @Test
     void shouldUseKeywordGraphAndProceduralSignals() {
-        SkillRegistry registry = new SkillRegistry(List.of(
-                skill("student.get", 930),
-                skill("student.analyze", 860),
-                skill("teaching.plan", 820)
+        SkillEngineFacade skillEngine = skillEngine(Map.of(
+                "student.get", 930,
+                "student.analyze", 860,
+                "teaching.plan", 820
         ));
-        SkillEngine skillEngine = new SkillEngine(registry, new SkillDslExecutor(registry));
         GraphMemory graphMemory = new GraphMemory();
         graphMemory.addNode("u1", new MemoryNode("n1", "skill", Map.of("name", "student.analyze", "skillName", "student.analyze"), null, null));
 
@@ -71,26 +69,43 @@ class BeamSearchCandidatePlannerTest {
         assertTrue(candidates.get(0).reasons().stream().anyMatch(reason -> reason.contains("keyword") || reason.contains("memory") || reason.contains("success")));
     }
 
-    private Skill skill(String name, int score) {
-        return new Skill() {
+    private SkillEngineFacade skillEngine(Map<String, Integer> scores) {
+        return new SkillEngineFacade() {
             @Override
-            public String name() {
-                return name;
+            public Optional<String> detectSkillName(String input) {
+                return detectSkillCandidates(input, 1).stream().findFirst().map(SkillCandidate::skillName);
             }
 
             @Override
-            public String description() {
-                return name;
+            public List<SkillCandidate> detectSkillCandidates(String input, int limit) {
+                return scores.entrySet().stream()
+                        .sorted((left, right) -> Integer.compare(right.getValue(), left.getValue()))
+                        .limit(Math.max(0, limit))
+                        .map(entry -> new SkillCandidate(entry.getKey(), entry.getValue()))
+                        .toList();
             }
 
             @Override
-            public SkillResult run(com.zhongbo.mindos.assistant.common.SkillContext context) {
-                return SkillResult.success(name, "ok");
+            public Optional<SkillDescriptor> describeSkill(String skillName) {
+                return Optional.of(new SkillDescriptor(skillName, skillName, List.of(skillName)));
             }
 
             @Override
-            public int routingScore(String input) {
-                return score;
+            public List<SkillDescriptor> listSkillDescriptors() {
+                return scores.keySet().stream()
+                        .sorted()
+                        .map(name -> new SkillDescriptor(name, name, List.of(name)))
+                        .toList();
+            }
+
+            @Override
+            public String describeAvailableSkills() {
+                return String.join(", ", scores.keySet());
+            }
+
+            @Override
+            public List<String> listAvailableSkillSummaries() {
+                return scores.keySet().stream().sorted().toList();
             }
         };
     }
