@@ -2,6 +2,7 @@ package com.zhongbo.mindos.assistant.dispatcher.orchestrator;
 
 import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.common.dto.ExecutionTraceDto;
+import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.ReflectionAgent;
 import com.zhongbo.mindos.assistant.memory.MemoryGateway;
 import com.zhongbo.mindos.assistant.memory.model.ProceduralMemoryEntry;
 import org.springframework.beans.factory.annotation.Value;
@@ -16,6 +17,7 @@ import java.util.Set;
 public class PostExecutionMemoryRecorder {
 
     private final MemoryGateway memoryGateway;
+    private final ReflectionAgent reflectionAgent;
     private final boolean proceduralLoggingEnabled;
     private final boolean postSkillSummaryEnabled;
     private final Set<String> postSkillSummarySkills;
@@ -26,7 +28,18 @@ public class PostExecutionMemoryRecorder {
                                        @Value("${mindos.memory.post-skill-summary.enabled:false}") boolean postSkillSummaryEnabled,
                                        @Value("${mindos.memory.post-skill-summary.skills:teaching.plan,todo.create,eq.coach,code.generate,file.search}") String postSkillSummarySkills,
                                        @Value("${mindos.memory.post-skill-summary.max-reply-chars:280}") int postSkillSummaryMaxReplyChars) {
+        this(memoryGateway, null, proceduralLoggingEnabled, postSkillSummaryEnabled, postSkillSummarySkills, postSkillSummaryMaxReplyChars);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public PostExecutionMemoryRecorder(MemoryGateway memoryGateway,
+                                       ReflectionAgent reflectionAgent,
+                                       boolean proceduralLoggingEnabled,
+                                       boolean postSkillSummaryEnabled,
+                                       String postSkillSummarySkills,
+                                       int postSkillSummaryMaxReplyChars) {
         this.memoryGateway = memoryGateway;
+        this.reflectionAgent = reflectionAgent;
         this.proceduralLoggingEnabled = proceduralLoggingEnabled;
         this.postSkillSummaryEnabled = postSkillSummaryEnabled;
         this.postSkillSummarySkills = Set.copyOf(parseCsvList(postSkillSummarySkills));
@@ -49,6 +62,7 @@ public class PostExecutionMemoryRecorder {
         }
         maybeStorePostSkillSummary(userId, userInput, result);
         maybeStoreExecutionTraceMemory(userId, trace);
+        maybeStoreReflection(userId, userInput, result, trace);
     }
 
     private void maybeStoreExecutionTraceMemory(String userId, ExecutionTraceDto trace) {
@@ -63,6 +77,13 @@ public class PostExecutionMemoryRecorder {
                 Math.abs(summary.hashCode() % 1000) / 1000.0
         );
         memoryGateway.writeSemantic(userId, summary, embedding, "meta");
+    }
+
+    private void maybeStoreReflection(String userId, String userInput, SkillResult result, ExecutionTraceDto trace) {
+        if (reflectionAgent == null || result == null) {
+            return;
+        }
+        reflectionAgent.reflect(userId, userInput, trace, result, Map.of(), Map.of());
     }
 
     private void maybeStorePostSkillSummary(String userId, String userInput, SkillResult result) {

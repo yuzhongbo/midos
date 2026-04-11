@@ -28,6 +28,7 @@ public class DefaultMemoryEvolution implements MemoryEvolution {
     private final GraphMemoryGateway graphMemoryGateway;
     private final ProceduralMemory proceduralMemory;
     private final PolicyUpdater policyUpdater;
+    private final ReflectionAgent reflectionAgent;
     private final String semanticBucket;
     private final long nextCheckDelaySeconds;
     private final long highLatencyThresholdMs;
@@ -37,14 +38,39 @@ public class DefaultMemoryEvolution implements MemoryEvolution {
     private final int minProcedureReuseCount;
 
     public DefaultMemoryEvolution() {
-        this(null, null, null, null, "autonomous.evolution", 1800L, 1800L, 0.45d, 0.85d, 0.0d, 2);
+        this(null, null, null, null, null, "autonomous.evolution", 1800L, 1800L, 0.45d, 0.85d, 0.0d, 2);
     }
 
     public DefaultMemoryEvolution(MemoryGateway memoryGateway,
                                   GraphMemoryGateway graphMemoryGateway,
                                   ProceduralMemory proceduralMemory,
                                   PolicyUpdater policyUpdater) {
-        this(memoryGateway, graphMemoryGateway, proceduralMemory, policyUpdater, "autonomous.evolution", 1800L, 1800L, 0.45d, 0.85d, 0.0d, 2);
+        this(memoryGateway, graphMemoryGateway, proceduralMemory, policyUpdater, null, "autonomous.evolution", 1800L, 1800L, 0.45d, 0.85d, 0.0d, 2);
+    }
+
+    public DefaultMemoryEvolution(MemoryGateway memoryGateway,
+                                  GraphMemoryGateway graphMemoryGateway,
+                                  ProceduralMemory proceduralMemory,
+                                  PolicyUpdater policyUpdater,
+                                  String semanticBucket,
+                                  long nextCheckDelaySeconds,
+                                  long highLatencyThresholdMs,
+                                  double lowSuccessRateThreshold,
+                                  double highSuccessRateThreshold,
+                                  double pruneRewardThreshold,
+                                  int minProcedureReuseCount) {
+        this(memoryGateway,
+                graphMemoryGateway,
+                proceduralMemory,
+                policyUpdater,
+                null,
+                semanticBucket,
+                nextCheckDelaySeconds,
+                highLatencyThresholdMs,
+                lowSuccessRateThreshold,
+                highSuccessRateThreshold,
+                pruneRewardThreshold,
+                minProcedureReuseCount);
     }
 
     @Autowired
@@ -52,6 +78,7 @@ public class DefaultMemoryEvolution implements MemoryEvolution {
                                   GraphMemoryGateway graphMemoryGateway,
                                   ProceduralMemory proceduralMemory,
                                   PolicyUpdater policyUpdater,
+                                  ReflectionAgent reflectionAgent,
                                   @Value("${mindos.autonomous.memory.semantic-bucket:autonomous.evolution}") String semanticBucket,
                                   @Value("${mindos.autonomous.memory.next-check-delay-seconds:1800}") long nextCheckDelaySeconds,
                                   @Value("${mindos.autonomous.memory.high-latency-ms:1800}") long highLatencyThresholdMs,
@@ -63,6 +90,7 @@ public class DefaultMemoryEvolution implements MemoryEvolution {
                 graphMemoryGateway,
                 proceduralMemory,
                 policyUpdater,
+                reflectionAgent,
                 semanticBucket,
                 nextCheckDelaySeconds,
                 highLatencyThresholdMs,
@@ -76,6 +104,7 @@ public class DefaultMemoryEvolution implements MemoryEvolution {
                                   GraphMemoryGateway graphMemoryGateway,
                                   ProceduralMemory proceduralMemory,
                                   PolicyUpdater policyUpdater,
+                                  ReflectionAgent reflectionAgent,
                                   String semanticBucket,
                                   long nextCheckDelaySeconds,
                                   long highLatencyThresholdMs,
@@ -87,6 +116,7 @@ public class DefaultMemoryEvolution implements MemoryEvolution {
         this.graphMemoryGateway = graphMemoryGateway;
         this.proceduralMemory = proceduralMemory;
         this.policyUpdater = policyUpdater;
+        this.reflectionAgent = reflectionAgent;
         this.semanticBucket = semanticBucket == null || semanticBucket.isBlank() ? "autonomous.evolution" : semanticBucket.trim();
         this.nextCheckDelaySeconds = Math.max(60L, nextCheckDelaySeconds);
         this.highLatencyThresholdMs = Math.max(1L, highLatencyThresholdMs);
@@ -134,6 +164,7 @@ public class DefaultMemoryEvolution implements MemoryEvolution {
                 );
 
         Map<String, Object> sharedState = execution == null || execution.sharedState() == null ? Map.of() : execution.sharedState();
+        ReflectionResult reflection = reflect(safeUserId, safeGoal, execution, safeEvaluation, sharedState);
         TaskGraph taskGraph = objectValue(sharedState.get("multiAgent.plan.graph"), TaskGraph.class);
         boolean procedureRecorded = false;
         if (safeEvaluation.success() && proceduralMemory != null && taskGraph != null && !taskGraph.isEmpty()) {
@@ -158,6 +189,7 @@ public class DefaultMemoryEvolution implements MemoryEvolution {
         reasons.add("procedureRecorded=" + procedureRecorded);
         reasons.add("proceduresPruned=" + prunedProcedures);
         reasons.add("procedureStrengthened=" + (procedureRecorded && safeEvaluation.score() >= highSuccessRateThreshold));
+        reasons.add("reflectionPattern=" + (reflection == null ? "none" : reflection.pattern()));
         reasons.add("taskUpdated=" + taskUpdated);
         reasons.add("graphUpdated=" + graphUpdated);
         reasons.add("semanticWritten=" + semanticWritten);
@@ -172,6 +204,24 @@ public class DefaultMemoryEvolution implements MemoryEvolution {
                 graphUpdated,
                 buildSummary(safeGoal, safeEvaluation, rewardModel, durationMs, tokenEstimate, prunedProcedures),
                 reasons
+        );
+    }
+
+    private ReflectionResult reflect(String userId,
+                                     AutonomousGoal goal,
+                                     MasterOrchestrationResult execution,
+                                     AutonomousEvaluation evaluation,
+                                     Map<String, Object> sharedState) {
+        if (reflectionAgent == null) {
+            return null;
+        }
+        return reflectionAgent.reflect(
+                userId,
+                goal == null ? "" : firstNonBlank(goal.objective(), goal.title()),
+                execution == null ? null : execution.trace(),
+                execution == null ? null : execution.result(),
+                goal == null ? Map.of() : goal.params(),
+                sharedState == null ? Map.of() : sharedState
         );
     }
 
