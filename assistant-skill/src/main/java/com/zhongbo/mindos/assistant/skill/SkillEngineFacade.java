@@ -9,6 +9,10 @@ public interface SkillEngineFacade {
 
     List<SkillEngine.SkillCandidate> detectSkillCandidates(String input, int limit);
 
+    Optional<SkillDescriptor> describeSkill(String skillName);
+
+    List<SkillDescriptor> listSkillDescriptors();
+
     String describeAvailableSkills();
 
     List<String> listAvailableSkillSummaries();

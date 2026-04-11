@@ -70,6 +70,29 @@ public class SkillRegistry {
         return List.copyOf(skills.values());
     }
 
+    public synchronized Optional<SkillDescriptor> describeSkill(String skillName) {
+        Skill skill = skills.get(skillName);
+        if (skill == null) {
+            return Optional.empty();
+        }
+        return Optional.of(new SkillDescriptor(
+                skill.name(),
+                skill.description(),
+                resolvedRoutingKeywords(skill.name())
+        ));
+    }
+
+    public synchronized List<SkillDescriptor> listSkillDescriptors() {
+        return skills.values().stream()
+                .sorted(Comparator.comparing(Skill::name))
+                .map(skill -> new SkillDescriptor(
+                        skill.name(),
+                        skill.description(),
+                        resolvedRoutingKeywords(skill.name())
+                ))
+                .toList();
+    }
+
     public synchronized int size() {
         return skills.size();
     }

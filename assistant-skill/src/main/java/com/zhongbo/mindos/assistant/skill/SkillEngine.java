@@ -56,6 +56,16 @@ public class SkillEngine implements SkillEngineFacade {
         return safeLimit <= 0 ? List.of() : List.copyOf(candidates.subList(0, safeLimit));
     }
 
+    @Override
+    public Optional<SkillDescriptor> describeSkill(String skillName) {
+        return skillRegistry.describeSkill(skillName);
+    }
+
+    @Override
+    public List<SkillDescriptor> listSkillDescriptors() {
+        return skillRegistry.listSkillDescriptors();
+    }
+
     public String describeAvailableSkills() {
         return listAvailableSkillSummaries().stream().collect(Collectors.joining(", "));
     }

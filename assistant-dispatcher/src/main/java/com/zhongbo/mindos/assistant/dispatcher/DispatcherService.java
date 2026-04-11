@@ -40,6 +40,9 @@ import com.zhongbo.mindos.assistant.dispatcher.orchestrator.SimpleFallbackPlan;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.SimpleParamValidator;
 import com.zhongbo.mindos.assistant.dispatcher.agent.multiagent.MasterOrchestrationResult;
 import com.zhongbo.mindos.assistant.dispatcher.agent.multiagent.MasterOrchestrator;
+import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryFacade;
+import com.zhongbo.mindos.assistant.dispatcher.routing.DispatchPlan;
+import com.zhongbo.mindos.assistant.dispatcher.routing.RoutingCoordinator;
 import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalysisResult;
 import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalysisService;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -262,6 +265,8 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
     private final ParamValidator paramValidator;
     private final MemoryGateway memoryGateway;
     private MasterOrchestrator masterOrchestrator;
+    private RoutingCoordinator routingCoordinator;
+    private DispatcherMemoryFacade dispatcherMemoryFacade;
 
     public DispatcherService(SkillEngine skillEngine,
                              SkillDslParser skillDslParser,
@@ -578,6 +583,16 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         this.masterOrchestrator = masterOrchestrator;
     }
 
+    @Autowired(required = false)
+    void setRoutingCoordinator(RoutingCoordinator routingCoordinator) {
+        this.routingCoordinator = routingCoordinator;
+    }
+
+    @Autowired(required = false)
+    void setDispatcherMemoryFacade(DispatcherMemoryFacade dispatcherMemoryFacade) {
+        this.dispatcherMemoryFacade = dispatcherMemoryFacade;
+    }
+
     public DispatchResult dispatch(String userId, String userInput) {
         return dispatch(userId, userInput, Map.of());
     }
@@ -640,13 +655,22 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                 profileContext == null ? Map.of() : profileContext
         );
         activeDispatchCount.incrementAndGet();
-        String memoryContext = buildMemoryContext(userId, userInput);
-        PromptMemoryContextDto promptMemoryContext = memoryManager.buildPromptMemoryContext(
-                userId,
-                userInput,
-                memoryContextMaxChars,
-                resolvedProfileContext
-        );
+        String memoryContext = dispatcherMemoryFacade == null
+                ? buildMemoryContext(userId, userInput)
+                : dispatcherMemoryFacade.buildMemoryContext(
+                        userId,
+                        userInput,
+                        memoryContextMaxChars,
+                        stats -> recordContextCompressionMetrics(
+                                stats.rawChars(),
+                                stats.finalChars(),
+                                stats.compressed(),
+                                stats.summarizedTurns()
+                        )
+                );
+        PromptMemoryContextDto promptMemoryContext = dispatcherMemoryFacade == null
+                ? memoryManager.buildPromptMemoryContext(userId, userInput, memoryContextMaxChars, resolvedProfileContext)
+                : dispatcherMemoryFacade.buildPromptMemoryContext(userId, userInput, memoryContextMaxChars, resolvedProfileContext);
         SemanticAnalysisResult semanticAnalysis = shouldSkipSemanticAnalysis(userInput)
                 ? SemanticAnalysisResult.empty()
                 : semanticAnalysisService.analyze(
@@ -654,14 +678,16 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                         userInput,
                         memoryContext,
                         resolvedProfileContext,
-                        skillEngine.listAvailableSkillSummaries()
+                        routingCoordinator == null ? skillEngine.listAvailableSkillSummaries() : routingCoordinator.skillSummaries()
                 );
         maybeStoreSemanticSummary(userId, userInput, semanticAnalysis);
         boolean realtimeIntentInput = isRealtimeIntent(userInput, semanticAnalysis);
         realtimeLookupRef.set(realtimeIntentInput || isRealtimeLikeInput(userInput, semanticAnalysis));
         String routingInput = semanticAnalysis.routingInput(userInput);
         String effectiveMemoryContext = enrichMemoryContextWithSemanticAnalysis(memoryContext, semanticAnalysis);
-        List<Map<String, Object>> chatHistory = buildChatHistory(userId);
+        List<Map<String, Object>> chatHistory = dispatcherMemoryFacade == null
+                ? buildChatHistory(userId)
+                : dispatcherMemoryFacade.buildChatHistory(userId);
         Map<String, Object> skillAttributes = new LinkedHashMap<>(resolvedProfileContext);
         skillAttributes.put("originalInput", userInput);
         skillAttributes.put("memoryContext", memoryContext);
@@ -685,7 +711,16 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
             llmContext.put("chatHistory", chatHistory);
         }
 
-        if (shouldUseMasterOrchestrator(resolvedProfileContext)) {
+        DispatchPlan routingPlan = routingCoordinator == null
+                ? null
+                : routingCoordinator.preparePlan(userInput, semanticAnalysis, context, resolvedProfileContext);
+        boolean useMasterOrchestrator = routingPlan == null
+                ? shouldUseMasterOrchestrator(resolvedProfileContext)
+                : routingPlan.usesMultiAgent();
+        Decision multiAgentDecision = routingPlan == null
+                ? buildMultiAgentDecision(userInput, semanticAnalysis, context)
+                : routingPlan.decision();
+        if (useMasterOrchestrator) {
             return attachDispatchCompletion(
                     executeMasterOrchestratorDispatch(
                             userId,
@@ -701,6 +736,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                             finalResultSuccessRef,
                             realtimeLookupRef,
                             memoryDirectBypassedRef,
+                            multiAgentDecision,
                             resolvedProfileContext
                     ),
                     userId,
@@ -950,13 +986,13 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                                                                                 AtomicBoolean finalResultSuccessRef,
                                                                                 AtomicBoolean realtimeLookupRef,
                                                                                 AtomicBoolean memoryDirectBypassedRef,
+                                                                                Decision decision,
                                                                                 Map<String, Object> resolvedProfileContext) {
         return CompletableFuture.supplyAsync(() -> {
             Map<String, Object> multiAgentProfileContext = new LinkedHashMap<>(resolvedProfileContext == null ? Map.of() : resolvedProfileContext);
             multiAgentProfileContext.put("multiAgent", true);
             multiAgentProfileContext.put("orchestrationMode", "multi-agent");
             multiAgentProfileContext.put("multiAgent.skipMemoryWrite", true);
-            Decision decision = buildMultiAgentDecision(userInput, semanticAnalysis, context);
             if (decision == null || masterOrchestrator == null) {
                 return new DispatchResult("multi-agent orchestrator unavailable", "multi-agent.master",
                         new ExecutionTraceDto("multi-agent-master", 0,
@@ -1062,6 +1098,9 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
     private boolean shouldUseMasterOrchestrator(Map<String, Object> profileContext) {
         if (masterOrchestrator == null) {
             return false;
+        }
+        if (routingCoordinator != null) {
+            return routingCoordinator.shouldUseMasterOrchestrator(profileContext);
         }
         if (isTruthy(profileContext == null ? null : profileContext.get("multiAgent"))) {
             return true;
