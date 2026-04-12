@@ -40,6 +40,7 @@ import java.util.concurrent.TimeUnit;
 public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
 
     private final DecisionPlanner decisionPlanner;
+    private final TaskGraphPlanner taskGraphPlanner;
     private final DecisionExecutor decisionExecutor;
     private final PostExecutionMemoryRecorder memoryRecorder;
     private final OrchestratorMemoryWriter memoryWriter;
@@ -60,6 +61,12 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
                                        @Value("${mindos.dispatcher.orchestrator.max-loops:3}") int maxLoops) {
         this(
                 new DefaultDecisionPlanner(),
+                new DefaultTaskGraphPlanner(
+                        candidatePlanner,
+                        fallbackPlan,
+                        new DispatcherMemoryFacade(memoryGateway, null, null),
+                        maxLoops
+                ),
                 new DefaultDecisionExecutor(
                         candidatePlanner,
                         paramValidator,
@@ -93,6 +100,12 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
                                        @Value("${mindos.dispatcher.orchestrator.max-loops:3}") int maxLoops) {
         this(
                 new DefaultDecisionPlanner(),
+                new DefaultTaskGraphPlanner(
+                        candidatePlanner,
+                        fallbackPlan,
+                        dispatcherMemoryFacade,
+                        maxLoops
+                ),
                 new DefaultDecisionExecutor(
                         candidatePlanner,
                         paramValidator,
@@ -113,10 +126,12 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
 
     @Autowired
     public DefaultDecisionOrchestrator(DecisionPlanner decisionPlanner,
+                                       TaskGraphPlanner taskGraphPlanner,
                                        DecisionExecutor decisionExecutor,
                                        PostExecutionMemoryRecorder memoryRecorder,
                                        OrchestratorMemoryWriter memoryWriter) {
         this.decisionPlanner = decisionPlanner;
+        this.taskGraphPlanner = taskGraphPlanner;
         this.decisionExecutor = decisionExecutor;
         this.memoryRecorder = memoryRecorder;
         this.memoryWriter = memoryWriter;
@@ -128,10 +143,9 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
         Map<String, Object> safeParams = params == null ? Map.of() : Map.copyOf(params);
         SkillContext context = new SkillContext("", userInput == null ? "" : userInput, safeParams);
         Decision decision = decisionPlanner.plan(userInput, intent, safeParams, context);
-        OrchestrationOutcome outcome = decisionExecutor.execute(
-                decision,
-                new OrchestrationRequest("", userInput == null ? "" : userInput, context, Map.of())
-        );
+        OrchestrationRequest request = new OrchestrationRequest("", userInput == null ? "" : userInput, context, Map.of());
+        TaskGraphPlan taskGraphPlan = taskGraphPlanner.plan(decision, request);
+        OrchestrationOutcome outcome = decisionExecutor.execute(taskGraphPlan, request);
         if (outcome.hasResult() && outcome.result() != null && outcome.result().success()) {
             return outcome.result();
         }
@@ -158,7 +172,7 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
 
     @Override
     public OrchestrationOutcome orchestrate(Decision decision, OrchestrationRequest request) {
-        return decisionExecutor.execute(decision, request);
+        return decisionExecutor.execute(taskGraphPlanner.plan(decision, request), request);
     }
 
     @Override
@@ -174,13 +188,17 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
     }
 
     void setSearchPlanner(SearchPlanner searchPlanner) {
-        DefaultDecisionExecutor executor = defaultExecutor();
-        if (executor != null) {
-            executor.setSearchPlanner(searchPlanner);
+        DefaultTaskGraphPlanner planner = defaultTaskGraphPlanner();
+        if (planner != null) {
+            planner.setSearchPlanner(searchPlanner);
         }
     }
 
     void setProceduralMemory(ProceduralMemory proceduralMemory) {
+        DefaultTaskGraphPlanner planner = defaultTaskGraphPlanner();
+        if (planner != null) {
+            planner.setProceduralMemory(proceduralMemory);
+        }
         DefaultDecisionExecutor executor = defaultExecutor();
         if (executor != null) {
             executor.setProceduralMemory(proceduralMemory);
@@ -224,6 +242,10 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
 
     private DefaultDecisionExecutor defaultExecutor() {
         return decisionExecutor instanceof DefaultDecisionExecutor executor ? executor : null;
+    }
+
+    private DefaultTaskGraphPlanner defaultTaskGraphPlanner() {
+        return taskGraphPlanner instanceof DefaultTaskGraphPlanner planner ? planner : null;
     }
 }
 
@@ -378,36 +400,41 @@ final class DefaultDecisionExecutor implements DecisionExecutor {
     }
 
     @Override
-    public OrchestrationOutcome execute(Decision decision, OrchestrationRequest request) {
+    public OrchestrationOutcome execute(TaskGraphPlan plan, OrchestrationRequest request) {
+        Decision decision = plan == null ? null : plan.decision();
         String traceId = startTrace(decision, request);
         OrchestrationOutcome outcome = null;
         try {
-            if (decision == null || decision.target() == null || decision.target().isBlank()) {
-                outcome = clarificationOutcome("", "missing target");
-            } else if ("semantic.clarify".equalsIgnoreCase(decision.target()) || decision.requireClarify()) {
-                outcome = clarificationOutcome(decision.target(), "clarification requested");
+            if (plan == null) {
+                outcome = clarificationOutcome("", "missing task graph plan");
+            } else if (plan.requiresClarification()) {
+                outcome = clarificationOutcome(plan.clarificationTarget(), plan.clarificationMessage());
+            } else if (!plan.hasTaskGraph()) {
+                outcome = clarificationOutcome(
+                        plan.decision() == null ? "" : plan.decision().target(),
+                        "missing task graph"
+                );
             } else {
-                Map<String, Object> params = decision.params() == null ? Map.of() : decision.params();
-                Map<String, Object> effectiveParams = buildEffectiveParams(params, request == null ? null : request.skillContext());
-                TaskPlan taskPlan = TaskPlan.from(effectiveParams);
-                if ("task.plan".equalsIgnoreCase(decision.target()) || !taskPlan.isEmpty()) {
-                    traceEvent(traceId, "planner", "slow-path", Map.of("reason", "task-plan"));
-                    outcome = slowPath(decision, request, traceId, null);
-                } else if (shouldUseSlowPath(decision)) {
-                    traceEvent(traceId, "planner", "slow-path", Map.of("reason", "decision-confidence"));
-                    outcome = slowPath(decision, request, traceId, null);
-                } else {
-                    OrchestrationOutcome fastOutcome = fastPath(decision, request, traceId);
-                    if (fastOutcome.hasClarification()) {
-                        outcome = fastOutcome;
-                    } else if (fastOutcome.hasResult() && fastOutcome.result() != null && fastOutcome.result().success()) {
-                        outcome = fastOutcome;
-                    } else if (shouldEscalateToSlowPath(fastOutcome)) {
-                        traceEvent(traceId, "planner", "slow-path", Map.of("reason", "fast-path-failed"));
-                        outcome = slowPath(decision, request, traceId, fastOutcome);
-                    } else {
-                        outcome = fastOutcome;
-                    }
+                traceEvent(traceId, "planner", "task-graph", Map.of(
+                        "strategy", plan.strategy(),
+                        "nodeCount", plan.taskGraph().nodes().size()
+                ));
+                outcome = executePlannedGraph(plan, request, traceId);
+                if (shouldEscalateToFallback(plan, outcome)) {
+                    traceEvent(traceId, "planner", "fallback-task-graph", Map.of(
+                            "strategy", plan.fallbackStrategy(),
+                            "nodeCount", plan.fallbackTaskGraph().nodes().size()
+                    ));
+                    outcome = taskGraphCoordinator.orchestrateTaskGraph(
+                            decision,
+                            plan.fallbackTaskGraph(),
+                            plan.fallbackEffectiveParams(),
+                            request,
+                            traceId,
+                            plan.fallbackStrategy(),
+                            plan.intent(),
+                            plan.trigger()
+                    );
                 }
             }
         } finally {
@@ -416,104 +443,33 @@ final class DefaultDecisionExecutor implements DecisionExecutor {
         return outcome;
     }
 
-    OrchestrationOutcome fastPath(Decision decision, OrchestrationRequest request) {
-        return fastPath(decision, request, null);
-    }
-
-    OrchestrationOutcome slowPath(Decision decision, OrchestrationRequest request) {
-        return slowPath(decision, request, null, null);
-    }
-
-    private OrchestrationOutcome fastPath(Decision decision,
-                                          OrchestrationRequest request,
-                                          String traceId) {
-        if (decision == null || decision.target() == null || decision.target().isBlank()) {
-            return clarificationOutcome("", "missing target");
+    private OrchestrationOutcome executePlannedGraph(TaskGraphPlan plan,
+                                                     OrchestrationRequest request,
+                                                     String traceId) {
+        if (plan == null) {
+            return clarificationOutcome("", "missing task graph plan");
         }
-        Map<String, Object> effectiveParams = buildEffectiveParams(decision.params(), request == null ? null : request.skillContext());
-        return orchestrateFastPath(decision, decision.target(), effectiveParams, request, true, traceId);
-    }
-
-    private OrchestrationOutcome slowPath(Decision decision,
-                                          OrchestrationRequest request,
-                                          String traceId,
-                                          OrchestrationOutcome fastOutcome) {
-        if (decision == null || decision.target() == null || decision.target().isBlank()) {
-            return clarificationOutcome("", "missing target");
-        }
-        Map<String, Object> effectiveParams = buildEffectiveParams(decision.params(), request == null ? null : request.skillContext());
-        if (TaskGraph.fromDsl(effectiveParams).isEmpty()) {
-            java.util.Optional<ProceduralMemory.ReusableProcedure> reusableProcedure = matchReusableProcedure(decision, request, effectiveParams);
-            if (reusableProcedure.isPresent() && !reusableProcedure.get().taskGraph().isEmpty()) {
-                return taskGraphCoordinator.orchestrateTaskGraph(
-                        decision,
-                        reusableProcedure.get().taskGraph(),
-                        slowPathPlanBuilder.attachTaskGraph(effectiveParams, reusableProcedure.get().taskGraph()),
-                        request,
-                        traceId,
-                        "procedural-memory",
-                        decision.intent(),
-                        request == null ? "" : request.userInput()
-                );
-            }
-        }
-        TaskGraph taskGraph = slowPathPlanBuilder.buildTaskGraph(
-                decision,
-                effectiveParams,
-                request,
-                fastOutcome == null ? null : fastOutcome.selectedSkill(),
-                fastOutcome == null
-        );
-        if (taskGraph.isEmpty()) {
-            TaskPlan taskPlan = slowPathPlanBuilder.buildTaskPlan(
-                    decision,
-                    effectiveParams,
+        if (isSingleNodeFastPath(plan)) {
+            String target = plan.taskGraph().nodes().get(0).target();
+            return orchestrateFastPath(
+                    plan.decision(),
+                    target,
+                    plan.effectiveParams(),
                     request,
-                    fastOutcome == null ? null : fastOutcome.selectedSkill(),
-                    fastOutcome == null
-            );
-            if (taskPlan.isEmpty()) {
-                return fastOutcome == null ? clarificationOutcome(decision.target(), "无法生成 task plan") : fastOutcome;
-            }
-            return taskGraphCoordinator.orchestrateTaskPlan(
-                    decision,
-                    taskPlan,
-                    slowPathPlanBuilder.attachTaskPlan(effectiveParams, taskPlan),
-                    request,
-                    traceId,
-                    "slow-path",
-                    decision.intent(),
-                    request == null ? "" : request.userInput()
+                    true,
+                    traceId
             );
         }
         return taskGraphCoordinator.orchestrateTaskGraph(
-                decision,
-                taskGraph,
-                slowPathPlanBuilder.attachTaskGraph(effectiveParams, taskGraph),
+                plan.decision(),
+                plan.taskGraph(),
+                plan.effectiveParams(),
                 request,
                 traceId,
-                "slow-path",
-                decision.intent(),
-                request == null ? "" : request.userInput()
+                plan.strategy(),
+                plan.intent(),
+                plan.trigger()
         );
-    }
-
-    private java.util.Optional<ProceduralMemory.ReusableProcedure> matchReusableProcedure(Decision decision,
-                                                                                          OrchestrationRequest request,
-                                                                                          Map<String, Object> effectiveParams) {
-        if (decision == null) {
-            return java.util.Optional.empty();
-        }
-        return activeProcedureMemoryFacade().matchReusableProcedure(
-                request == null ? "" : request.userId(),
-                request == null ? "" : request.userInput(),
-                decision.intent() == null || decision.intent().isBlank() ? decision.target() : decision.intent(),
-                effectiveParams
-        );
-    }
-
-    private DispatcherMemoryFacade activeProcedureMemoryFacade() {
-        return proceduralMemoryFacade == null ? dispatcherMemoryFacade : proceduralMemoryFacade;
     }
 
     private OrchestrationOutcome orchestrateFastPath(Decision decision,
@@ -558,28 +514,24 @@ final class DefaultDecisionExecutor implements DecisionExecutor {
         return merged.isEmpty() ? Map.of() : Map.copyOf(merged);
     }
 
-    private String resolveExecutionTarget(String intent, Map<String, Object> params) {
-        if (params != null) {
-            Object explicitTarget = params.get("_target");
-            if (explicitTarget instanceof String target && !target.isBlank()) {
-                return target.trim();
-            }
-            if ((intent == null || intent.isBlank()) && params.get("target") instanceof String target && !target.isBlank()) {
-                return target.trim();
-            }
-        }
-        return intent == null ? "" : intent;
+    private boolean shouldEscalateToFallback(TaskGraphPlan plan, OrchestrationOutcome outcome) {
+        return plan != null
+                && plan.hasFallbackTaskGraph()
+                && outcome != null
+                && outcome.hasResult()
+                && outcome.result() != null
+                && !outcome.result().success();
     }
 
-    private boolean shouldUseSlowPath(Decision decision) {
-        return decision != null && decision.confidence() < TASK_PLAN_LOW_CONFIDENCE_THRESHOLD;
+    private boolean isSingleNodeFastPath(TaskGraphPlan plan) {
+        return plan != null
+                && "fast-path".equalsIgnoreCase(plan.strategy())
+                && plan.taskGraph() != null
+                && plan.taskGraph().nodes().size() == 1;
     }
 
-    private boolean shouldEscalateToSlowPath(OrchestrationOutcome fastOutcome) {
-        return fastOutcome != null
-                && fastOutcome.hasResult()
-                && fastOutcome.result() != null
-                && !fastOutcome.result().success();
+    private DispatcherMemoryFacade activeProcedureMemoryFacade() {
+        return proceduralMemoryFacade == null ? dispatcherMemoryFacade : proceduralMemoryFacade;
     }
 
     private Map<String, Object> applyContextPatch(Map<String, Object> baseContext, Map<String, Object> patch) {

@@ -4,6 +4,6 @@ import com.zhongbo.mindos.assistant.dispatcher.decision.Decision;
 
 public interface DecisionExecutor {
 
-    DecisionOrchestrator.OrchestrationOutcome execute(Decision decision,
+    DecisionOrchestrator.OrchestrationOutcome execute(TaskGraphPlan plan,
                                                       DecisionOrchestrator.OrchestrationRequest request);
 }

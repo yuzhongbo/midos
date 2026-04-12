@@ -1,0 +1,229 @@
+package com.zhongbo.mindos.assistant.dispatcher.orchestrator;
+
+import com.zhongbo.mindos.assistant.common.SkillContext;
+import com.zhongbo.mindos.assistant.dispatcher.agent.procedure.ProceduralMemory;
+import com.zhongbo.mindos.assistant.dispatcher.agent.search.SearchPlanner;
+import com.zhongbo.mindos.assistant.dispatcher.agent.taskgraph.TaskGraph;
+import com.zhongbo.mindos.assistant.dispatcher.agent.taskgraph.TaskNode;
+import com.zhongbo.mindos.assistant.dispatcher.decision.Decision;
+import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryFacade;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Component;
+
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
+@Component
+public class DefaultTaskGraphPlanner implements TaskGraphPlanner {
+
+    private static final double TASK_PLAN_LOW_CONFIDENCE_THRESHOLD = 0.70;
+
+    private final CandidateChainBuilder candidateChainBuilder;
+    private final SlowPathPlanBuilder slowPathPlanBuilder;
+    private final DispatcherMemoryFacade dispatcherMemoryFacade;
+    private SearchPlanner searchPlanner;
+    private ProceduralMemory proceduralMemory;
+    private DispatcherMemoryFacade proceduralMemoryFacade;
+
+    @Autowired
+    public DefaultTaskGraphPlanner(CandidatePlanner candidatePlanner,
+                                   FallbackPlan fallbackPlan,
+                                   DispatcherMemoryFacade dispatcherMemoryFacade,
+                                   @Value("${mindos.dispatcher.orchestrator.max-loops:3}") int maxLoops) {
+        this.candidateChainBuilder = new CandidateChainBuilder(candidatePlanner, fallbackPlan);
+        this.slowPathPlanBuilder = new SlowPathPlanBuilder(
+                this.candidateChainBuilder,
+                () -> this.searchPlanner,
+                this::isMcpSkill
+        );
+        this.dispatcherMemoryFacade = dispatcherMemoryFacade;
+    }
+
+    @Override
+    public TaskGraphPlan plan(Decision decision, DecisionOrchestrator.OrchestrationRequest request) {
+        if (decision == null || decision.target() == null || decision.target().isBlank()) {
+            return TaskGraphPlan.clarification(decision, "", "missing target");
+        }
+        if ("semantic.clarify".equalsIgnoreCase(decision.target()) || decision.requireClarify()) {
+            return TaskGraphPlan.clarification(decision, decision.target(), "clarification requested");
+        }
+        Map<String, Object> effectiveParams = buildEffectiveParams(decision.params(), request == null ? null : request.skillContext());
+        TaskGraph explicitGraph = TaskGraph.fromDsl(effectiveParams);
+        if (!explicitGraph.isEmpty()) {
+            return new TaskGraphPlan(
+                    decision,
+                    explicitGraph,
+                    slowPathPlanBuilder.attachTaskGraph(effectiveParams, explicitGraph),
+                    "slow-path",
+                    resolveIntent(decision),
+                    request == null ? "" : request.userInput(),
+                    new TaskGraph(List.of(), List.of()),
+                    Map.of(),
+                    "",
+                    "",
+                    ""
+            );
+        }
+        java.util.Optional<ProceduralMemory.ReusableProcedure> reusableProcedure = matchReusableProcedure(decision, request, effectiveParams);
+        if (reusableProcedure.isPresent() && !reusableProcedure.get().taskGraph().isEmpty()) {
+            TaskGraph graph = reusableProcedure.get().taskGraph();
+            return new TaskGraphPlan(
+                    decision,
+                    graph,
+                    slowPathPlanBuilder.attachTaskGraph(effectiveParams, graph),
+                    "procedural-memory",
+                    resolveIntent(decision),
+                    request == null ? "" : request.userInput(),
+                    new TaskGraph(List.of(), List.of()),
+                    Map.of(),
+                    "",
+                    "",
+                    ""
+            );
+        }
+        if ("task.plan".equalsIgnoreCase(decision.target()) || shouldUseSlowPath(decision)) {
+            return slowPathPlan(decision, effectiveParams, request, null, "slow-path", true);
+        }
+        TaskGraph fastPathGraph = buildSingleNodeGraph(decision, effectiveParams, request);
+        if (fastPathGraph.isEmpty()) {
+            return TaskGraphPlan.clarification(decision, decision.target(), "缺少可执行候选");
+        }
+        String selectedSkill = fastPathGraph.nodes().get(0).target();
+        TaskGraphPlan fallbackPlan = slowPathPlan(decision, effectiveParams, request, selectedSkill, "slow-path", false);
+        return new TaskGraphPlan(
+                decision,
+                fastPathGraph,
+                slowPathPlanBuilder.attachTaskGraph(effectiveParams, fastPathGraph),
+                "fast-path",
+                resolveIntent(decision),
+                request == null ? "" : request.userInput(),
+                fallbackPlan.taskGraph(),
+                fallbackPlan.effectiveParams(),
+                fallbackPlan.strategy(),
+                "",
+                ""
+        );
+    }
+
+    @Autowired(required = false)
+    void setSearchPlanner(SearchPlanner searchPlanner) {
+        this.searchPlanner = searchPlanner;
+    }
+
+    @Autowired(required = false)
+    void setProceduralMemory(ProceduralMemory proceduralMemory) {
+        this.proceduralMemory = proceduralMemory;
+        this.proceduralMemoryFacade = proceduralMemory == null
+                ? null
+                : new DispatcherMemoryFacade((com.zhongbo.mindos.assistant.memory.MemoryGateway) null, null, proceduralMemory);
+    }
+
+    private TaskGraphPlan slowPathPlan(Decision decision,
+                                       Map<String, Object> effectiveParams,
+                                       DecisionOrchestrator.OrchestrationRequest request,
+                                       String excludeSkill,
+                                       String strategy,
+                                       boolean requireMultipleSteps) {
+        TaskGraph taskGraph = slowPathPlanBuilder.buildTaskGraph(
+                decision,
+                effectiveParams,
+                request,
+                excludeSkill,
+                requireMultipleSteps
+        );
+        if (taskGraph.isEmpty()) {
+            return TaskGraphPlan.clarification(decision, decision.target(), "无法生成 task graph");
+        }
+        return new TaskGraphPlan(
+                decision,
+                taskGraph,
+                slowPathPlanBuilder.attachTaskGraph(effectiveParams, taskGraph),
+                strategy,
+                resolveIntent(decision),
+                request == null ? "" : request.userInput(),
+                new TaskGraph(List.of(), List.of()),
+                Map.of(),
+                "",
+                "",
+                ""
+        );
+    }
+
+    private TaskGraph buildSingleNodeGraph(Decision decision,
+                                           Map<String, Object> effectiveParams,
+                                           DecisionOrchestrator.OrchestrationRequest request) {
+        String target = selectTarget(decision == null ? null : decision.target(), request);
+        if (target.isBlank()) {
+            return new TaskGraph(List.of(), List.of());
+        }
+        TaskNode node = new TaskNode(
+                "task-1",
+                target,
+                effectiveParams,
+                List.of(),
+                "result",
+                false
+        );
+        return new TaskGraph(List.of(node), List.of());
+    }
+
+    private String selectTarget(String suggestedTarget, DecisionOrchestrator.OrchestrationRequest request) {
+        List<ScoredCandidate> candidates = candidateChainBuilder.build(suggestedTarget, request);
+        if (!candidates.isEmpty()) {
+            ScoredCandidate candidate = candidates.get(0);
+            if (candidate != null && candidate.skillName() != null && !candidate.skillName().isBlank()) {
+                return candidate.skillName();
+            }
+        }
+        return suggestedTarget == null ? "" : suggestedTarget.trim();
+    }
+
+    private java.util.Optional<ProceduralMemory.ReusableProcedure> matchReusableProcedure(Decision decision,
+                                                                                          DecisionOrchestrator.OrchestrationRequest request,
+                                                                                          Map<String, Object> effectiveParams) {
+        if (decision == null) {
+            return java.util.Optional.empty();
+        }
+        return activeProcedureMemoryFacade().matchReusableProcedure(
+                request == null ? "" : request.userId(),
+                request == null ? "" : request.userInput(),
+                resolveIntent(decision),
+                effectiveParams
+        );
+    }
+
+    private DispatcherMemoryFacade activeProcedureMemoryFacade() {
+        return proceduralMemoryFacade == null ? dispatcherMemoryFacade : proceduralMemoryFacade;
+    }
+
+    private boolean shouldUseSlowPath(Decision decision) {
+        return decision != null && decision.confidence() < TASK_PLAN_LOW_CONFIDENCE_THRESHOLD;
+    }
+
+    private boolean isMcpSkill(String target) {
+        return target != null && target.startsWith("mcp.");
+    }
+
+    private Map<String, Object> buildEffectiveParams(Map<String, Object> params, SkillContext skillContext) {
+        Map<String, Object> merged = new LinkedHashMap<>();
+        if (skillContext != null && skillContext.attributes() != null) {
+            merged.putAll(skillContext.attributes());
+        }
+        if (params != null && !params.isEmpty()) {
+            merged.putAll(params);
+        }
+        return merged.isEmpty() ? Map.of() : Map.copyOf(merged);
+    }
+
+    private String resolveIntent(Decision decision) {
+        if (decision == null) {
+            return "";
+        }
+        if (decision.intent() != null && !decision.intent().isBlank()) {
+            return decision.intent();
+        }
+        return decision.target() == null ? "" : decision.target();
+    }
+}
