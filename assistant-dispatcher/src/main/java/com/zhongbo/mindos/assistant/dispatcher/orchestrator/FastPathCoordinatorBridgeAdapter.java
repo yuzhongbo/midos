@@ -8,7 +8,7 @@ final class FastPathCoordinatorBridgeAdapter implements FastPathCoordinator.Fast
 
     @FunctionalInterface
     interface ClarificationOutcomeBuilder {
-        OrchestrationOutcome build(String target, String message);
+        DecisionOrchestrator.OrchestrationOutcome build(String target, String message);
     }
 
     @FunctionalInterface
@@ -42,7 +42,7 @@ final class FastPathCoordinatorBridgeAdapter implements FastPathCoordinator.Fast
     }
 
     @Override
-    public OrchestrationOutcome clarificationOutcome(String target, String message) {
+    public DecisionOrchestrator.OrchestrationOutcome clarificationOutcome(String target, String message) {
         return clarificationOutcomeBuilder.build(target, message);
     }
 

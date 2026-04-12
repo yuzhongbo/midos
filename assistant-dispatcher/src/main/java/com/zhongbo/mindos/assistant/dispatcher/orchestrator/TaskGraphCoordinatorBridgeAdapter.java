@@ -9,17 +9,17 @@ final class TaskGraphCoordinatorBridgeAdapter implements TaskGraphCoordinator.Ta
 
     @FunctionalInterface
     interface ClarificationOutcomeBuilder {
-        OrchestrationOutcome build(String target, String message);
+        DecisionOrchestrator.OrchestrationOutcome build(String target, String message);
     }
 
     @FunctionalInterface
     interface FastPathOrchestrator {
-        OrchestrationOutcome orchestrate(Decision decision,
-                                         String target,
-                                         Map<String, Object> params,
-                                         OrchestrationRequest request,
-                                         boolean allowParallelMcp,
-                                         String traceId);
+        DecisionOrchestrator.OrchestrationOutcome orchestrate(Decision decision,
+                                                              String target,
+                                                              Map<String, Object> params,
+                                                              DecisionOrchestrator.OrchestrationRequest request,
+                                                              boolean allowParallelMcp,
+                                                              String traceId);
     }
 
     @FunctionalInterface
@@ -56,17 +56,17 @@ final class TaskGraphCoordinatorBridgeAdapter implements TaskGraphCoordinator.Ta
     }
 
     @Override
-    public OrchestrationOutcome clarificationOutcome(String target, String message) {
+    public DecisionOrchestrator.OrchestrationOutcome clarificationOutcome(String target, String message) {
         return clarificationOutcomeBuilder.build(target, message);
     }
 
     @Override
-    public OrchestrationOutcome orchestrateFastPath(Decision decision,
-                                                    String target,
-                                                    Map<String, Object> params,
-                                                    OrchestrationRequest request,
-                                                    boolean allowParallelMcp,
-                                                    String traceId) {
+    public DecisionOrchestrator.OrchestrationOutcome orchestrateFastPath(Decision decision,
+                                                                         String target,
+                                                                         Map<String, Object> params,
+                                                                         DecisionOrchestrator.OrchestrationRequest request,
+                                                                         boolean allowParallelMcp,
+                                                                         String traceId) {
         return fastPathOrchestrator.orchestrate(decision, target, params, request, allowParallelMcp, traceId);
     }
 

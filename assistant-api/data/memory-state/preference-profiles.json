@@ -275,7 +275,7 @@
       "timezone" : "Asia/Shanghai",
       "preferredChannel" : "echo"
     },
-    "llm-dsl-guard-user-ffe3217c-7b02-43c3-9559-25d05336504f" : {
+    "llm-dsl-guard-user-2-bd49b656-5e07-41ab-8760-0f7f7195fff5" : {
       "assistantName" : "MindOS",
       "role" : "personal-assistant",
       "style" : "warm",
@@ -283,7 +283,7 @@
       "timezone" : "Asia/Shanghai",
       "preferredChannel" : "echo"
     },
-    "llm-dsl-guard-user-2-bd49b656-5e07-41ab-8760-0f7f7195fff5" : {
+    "llm-dsl-guard-user-ffe3217c-7b02-43c3-9559-25d05336504f" : {
       "assistantName" : "MindOS",
       "role" : "personal-assistant",
       "style" : "warm",
