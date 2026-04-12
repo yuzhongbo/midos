@@ -16,16 +16,16 @@ public class InMemoryParamSchemaRegistry implements ParamSchemaRegistry {
 
     @PostConstruct
     public void registerDefaults() {
-        register("todo.create", ParamSchema.atLeastOne("task", "input")
-                .withAliases(Map.of("task", java.util.List.of("input", "query"))));
-        register("news_search", ParamSchema.atLeastOne("query", "keyword", "input")
-                .withAliases(Map.of("query", java.util.List.of("keyword", "input")))
-                .withTypes(Map.of("count", ParamType.INTEGER))
-                .withDefaults(Map.of("count", 5))
-                .withNumericRanges(Map.of("count", ParamSchema.NumericRange.closed(1, 10))));
-        register("teaching.plan", ParamSchema.of(Set.of("topic"), Set.of("topic", "input"))
+        register("todo.create", ParamSchema.atLeastOne("task")
+                .withAliases(Map.of("task", java.util.List.of("query"))));
+        register("news_search", ParamSchema.atLeastOne("query", "keyword")
+                .withAliases(Map.of("query", java.util.List.of("keyword")))
+                .withTypes(Map.of("limit", ParamType.INTEGER))
+                .withDefaults(Map.of("limit", 5))
+                .withNumericRanges(Map.of("limit", ParamSchema.NumericRange.closed(1, 10))));
+        register("teaching.plan", ParamSchema.of(Set.of("topic"), Set.of("topic"))
                 .withAliases(Map.of(
-                        "topic", java.util.List.of("input", "query"),
+                        "topic", java.util.List.of("query"),
                         "studentId", java.util.List.of("student", "id"),
                         "durationWeeks", java.util.List.of("weeks"),
                         "weeklyHours", java.util.List.of("hours")
@@ -43,13 +43,13 @@ public class InMemoryParamSchemaRegistry implements ParamSchemaRegistry {
                         "durationWeeks", ParamSchema.NumericRange.closed(1, 52),
                         "weeklyHours", ParamSchema.NumericRange.closed(1, 80)
                 )));
-        register("eq.coach", ParamSchema.atLeastOne("query", "input")
-                .withAliases(Map.of("query", java.util.List.of("input", "task"))));
-        register("code.generate", ParamSchema.atLeastOne("task", "input")
-                .withAliases(Map.of("task", java.util.List.of("input", "query"))));
-        register("file.search", ParamSchema.atLeastOne("keyword", "path", "input")
+        register("eq.coach", ParamSchema.atLeastOne("query")
+                .withAliases(Map.of("query", java.util.List.of("task"))));
+        register("code.generate", ParamSchema.atLeastOne("task")
+                .withAliases(Map.of("task", java.util.List.of("query"))));
+        register("file.search", ParamSchema.atLeastOne("keyword", "path")
                 .withAliases(Map.of(
-                        "keyword", java.util.List.of("query", "input"),
+                        "keyword", java.util.List.of("query"),
                         "fileType", java.util.List.of("type")
                 ))
                 .withTypes(Map.of("limit", ParamType.INTEGER))

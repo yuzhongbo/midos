@@ -2,6 +2,7 @@ package com.zhongbo.mindos.assistant.dispatcher.agent.procedure;
 
 import com.zhongbo.mindos.assistant.dispatcher.agent.taskgraph.TaskGraph;
 import com.zhongbo.mindos.assistant.dispatcher.agent.taskgraph.TaskNode;
+import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryCommandService;
 import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryFacade;
 import com.zhongbo.mindos.assistant.memory.graph.GraphMemoryGateway;
 import com.zhongbo.mindos.assistant.memory.graph.MemoryNode;
@@ -21,6 +22,7 @@ public class InMemoryProcedureMemoryEngine implements ProcedureMemoryEngine {
 
     private final Map<String, Map<String, ProcedureTemplate>> templatesByUser = new ConcurrentHashMap<>();
     private final DispatcherMemoryFacade dispatcherMemoryFacade;
+    private final DispatcherMemoryCommandService memoryCommandService;
 
     public InMemoryProcedureMemoryEngine() {
         this(null);
@@ -28,6 +30,7 @@ public class InMemoryProcedureMemoryEngine implements ProcedureMemoryEngine {
 
     public InMemoryProcedureMemoryEngine(GraphMemoryGateway graphMemoryGateway) {
         this.dispatcherMemoryFacade = new DispatcherMemoryFacade((com.zhongbo.mindos.assistant.memory.MemoryGateway) null, graphMemoryGateway, null);
+        this.memoryCommandService = new DispatcherMemoryCommandService(this.dispatcherMemoryFacade, null);
     }
 
     @Override
@@ -60,7 +63,7 @@ public class InMemoryProcedureMemoryEngine implements ProcedureMemoryEngine {
         );
         userTemplates.put(templateId, template);
         if (dispatcherMemoryFacade.hasGraphMemory()) {
-            dispatcherMemoryFacade.upsertGraphNode(userId, new MemoryNode(
+            memoryCommandService.upsertGraphNode(userId, new MemoryNode(
                     "procedure:" + templateId,
                     "procedure.template",
                     Map.of("name", template.intent(), "trigger", template.trigger(), "successRate", template.successRate(), "reuseCount", template.reuseCount()),
@@ -105,7 +108,7 @@ public class InMemoryProcedureMemoryEngine implements ProcedureMemoryEngine {
             return false;
         }
         if (dispatcherMemoryFacade.hasGraphMemory()) {
-            dispatcherMemoryFacade.deleteGraphNode(userId, "procedure:" + normalizedProcedureId);
+            memoryCommandService.deleteGraphNode(userId, "procedure:" + normalizedProcedureId);
         }
         return true;
     }

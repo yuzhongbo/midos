@@ -12,14 +12,21 @@ import java.util.Optional;
 
 final class DecisionParamAssembler {
 
+    private final SkillCommandAssembler skillCommandAssembler;
+
+    DecisionParamAssembler() {
+        this(null);
+    }
+
+    DecisionParamAssembler(SkillCommandAssembler skillCommandAssembler) {
+        this.skillCommandAssembler = skillCommandAssembler;
+    }
+
     Decision toDecision(SkillDsl dsl, SkillContext context, double confidence) {
         if (dsl == null) {
             return null;
         }
         Map<String, Object> params = dsl.input() == null ? new LinkedHashMap<>() : new LinkedHashMap<>(dsl.input());
-        if (context != null && context.input() != null && !context.input().isBlank()) {
-            params.putIfAbsent("input", context.input());
-        }
         return new Decision(null, dsl.skill(), params, confidence, false);
     }
 
@@ -27,16 +34,28 @@ final class DecisionParamAssembler {
         if (skillName == null || skillName.isBlank()) {
             return null;
         }
-        return new Decision(null, skillName, decisionParamsFromContext(context), confidence, false);
+        return new Decision(null, skillName, decisionParamsFromContext(skillName, context), confidence, false);
     }
 
     Map<String, Object> decisionParamsFromContext(SkillContext context) {
-        if (context == null || context.attributes() == null || context.attributes().isEmpty()) {
-            return context == null || context.input() == null || context.input().isBlank()
-                    ? Map.of()
-                    : Map.of("input", context.input());
+        return decisionParamsFromContext(null, context);
+    }
+
+    Map<String, Object> decisionParamsFromContext(String skillName, SkillContext context) {
+        if (context == null) {
+            return Map.of();
         }
-        Map<String, Object> params = new LinkedHashMap<>(context.attributes());
+        Map<String, Object> params = new LinkedHashMap<>(context.attributes() == null ? Map.of() : context.attributes());
+        if (usesCanonicalCommands(skillName)) {
+            params.remove("input");
+            if (skillCommandAssembler != null) {
+                return skillCommandAssembler.buildDetectedSkillDsl(skillName, context.input(), params)
+                        .map(SkillDsl::input)
+                        .map(LinkedHashMap::new)
+                        .orElse(params);
+            }
+            return params;
+        }
         if (context.input() != null && !context.input().isBlank()) {
             params.putIfAbsent("input", context.input());
         }
@@ -60,5 +79,15 @@ final class DecisionParamAssembler {
             return routedResult.get().skillName();
         }
         return decision == null ? "" : decision.target();
+    }
+
+    private boolean usesCanonicalCommands(String skillName) {
+        if (skillName == null || skillName.isBlank()) {
+            return false;
+        }
+        return switch (skillName) {
+            case "teaching.plan", "todo.create", "eq.coach", "file.search", "news_search", "code.generate", "echo", "time" -> true;
+            default -> false;
+        };
     }
 }

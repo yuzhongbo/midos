@@ -179,8 +179,26 @@ final class DispatchRuleCatalog {
             return "我现在还没有注册任何技能。你可以稍后让我重载自定义技能，或者接入 MCP / 外部 JAR 来扩展能力。";
         }
         StringBuilder reply = new StringBuilder("我目前可用的技能有：");
+        boolean hasTimeSkill = false;
+        boolean hasTeachingPlanSkill = false;
         for (String skill : skills) {
             reply.append("\n- ").append(skill);
+            String normalizedSkill = normalize(skill);
+            if (normalizedSkill.startsWith("time ") || normalizedSkill.startsWith("time-") || normalizedSkill.startsWith("time")) {
+                hasTimeSkill = true;
+            }
+            if (normalizedSkill.startsWith("teaching.plan ") || normalizedSkill.startsWith("teaching.plan-") || normalizedSkill.startsWith("teaching.plan")) {
+                hasTeachingPlanSkill = true;
+            }
+        }
+        if (hasTimeSkill || hasTeachingPlanSkill) {
+            reply.append("\n\n你也可以直接这样用：");
+            if (hasTimeSkill) {
+                reply.append("\n- 问我“现在几点了”，我会直接返回当前时间。");
+            }
+            if (hasTeachingPlanSkill) {
+                reply.append("\n- 让我生成“六周数学学习计划”，我会给出分周学习安排。");
+            }
         }
         return reply.toString();
     }

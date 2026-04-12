@@ -25,6 +25,7 @@ final class SemanticRoutingSupport {
     SemanticRoutingSupport(DispatcherMemoryFacade dispatcherMemoryFacade,
                            DispatcherMemoryCommandService memoryCommandService,
                            BehaviorRoutingSupport behaviorRoutingSupport,
+                           SkillCommandAssembler skillCommandAssembler,
                            ParamValidator paramValidator,
                            Predicate<String> knownSkillNameChecker,
                            Function<String, String> memoryBucketResolver,
@@ -39,6 +40,7 @@ final class SemanticRoutingSupport {
         this.semanticPayloadCompleter = new SemanticPayloadCompleter(
                 dispatcherMemoryFacade,
                 behaviorRoutingSupport,
+                skillCommandAssembler,
                 memoryBucketResolver
         );
         this.semanticSkillResolver = new SemanticSkillResolver(

@@ -32,6 +32,7 @@ import com.zhongbo.mindos.assistant.dispatcher.orchestrator.SimpleFallbackPlan;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.SimpleParamValidator;
 import com.zhongbo.mindos.assistant.dispatcher.agent.multiagent.MasterOrchestrationResult;
 import com.zhongbo.mindos.assistant.dispatcher.agent.multiagent.MasterOrchestrator;
+import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryCommandService;
 import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryFacade;
 import com.zhongbo.mindos.assistant.dispatcher.routing.DispatchPlan;
 import com.zhongbo.mindos.assistant.dispatcher.routing.RoutingCoordinator;
@@ -75,6 +76,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
     private final SkillCapabilityPolicy skillCapabilityPolicy;
     private final PersonaCoreService personaCoreService;
     private final DispatcherMemoryFacade dispatcherMemoryFacade;
+    private final DispatcherMemoryCommandService memoryCommandService;
     private final SemanticAnalyzer semanticAnalyzer;
     private final boolean preferenceReuseEnabled;
     private final boolean habitRoutingEnabled;
@@ -185,6 +187,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
     private final DecisionParser decisionParser;
     private final DecisionOrchestrator decisionOrchestrator;
     private final ParamValidator paramValidator;
+    private final SkillCommandAssembler skillCommandAssembler;
     private final DecisionParamAssembler decisionParamAssembler;
     private final DispatchMemoryLifecycle dispatchMemoryLifecycle;
     private final DispatchHeuristicsSupport dispatchHeuristicsSupport;
@@ -192,7 +195,6 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
     private final DispatchPreparationSupport dispatchPreparationSupport;
     private final DispatchResultFinalizer dispatchResultFinalizer;
     private final DispatchRuleCatalog dispatchRuleCatalog;
-    private final DispatchOrchestrationSupport dispatchOrchestrationSupport;
     private final BehaviorRoutingSupport behaviorRoutingSupport;
     private final SkillRoutingSupport skillRoutingSupport;
     private final SemanticRoutingSupport semanticRoutingSupport;
@@ -417,6 +419,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         this.skillCapabilityPolicy = skillCapabilityPolicy;
         this.personaCoreService = personaCoreService;
         this.dispatcherMemoryFacade = Objects.requireNonNull(dispatcherMemoryFacade, "dispatcherMemoryFacade");
+        this.memoryCommandService = new DispatcherMemoryCommandService(this.dispatcherMemoryFacade, null);
         this.semanticAnalyzer = semanticAnalyzer;
         this.decisionParser = decisionParser;
         this.paramValidator = paramValidator;
@@ -502,11 +505,13 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         this.parallelDetectedSkillRoutingEnabled = parallelDetectedSkillRoutingEnabled;
         this.parallelDetectedSkillRoutingMaxCandidates = Math.max(1, parallelDetectedSkillRoutingMaxCandidates);
         this.parallelDetectedSkillRoutingTimeoutMs = Math.max(100L, parallelDetectedSkillRoutingTimeoutMs);
-        this.decisionParamAssembler = new DecisionParamAssembler();
+        this.skillCommandAssembler = new SkillCommandAssembler(this.skillDslParser, this.preferenceReuseEnabled);
+        this.decisionParamAssembler = new DecisionParamAssembler(this.skillCommandAssembler);
         this.behaviorRoutingSupport = new BehaviorRoutingSupport(
                 this.skillDslParser,
                 this.dispatcherMemoryFacade,
-                this.preferenceReuseEnabled,
+                this.skillCommandAssembler,
+                this.memoryCommandService,
                 this.habitRoutingEnabled,
                 this.habitRoutingMinTotalCount,
                 this.habitRoutingMinSuccessRate,
@@ -519,7 +524,6 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                 this.behaviorLearningDefaultParamThreshold
         );
         this.dispatchRuleCatalog = new DispatchRuleCatalog(this.skillEngine, this.behaviorRoutingSupport);
-        this.dispatchOrchestrationSupport = new DispatchOrchestrationSupport();
         this.skillRoutingSupport = new SkillRoutingSupport(
                 this.skillEngine,
                 this.dispatcherMemoryFacade,
@@ -529,7 +533,9 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         );
         this.semanticRoutingSupport = new SemanticRoutingSupport(
                 this.dispatcherMemoryFacade,
+                this.memoryCommandService,
                 this.behaviorRoutingSupport,
+                this.skillCommandAssembler,
                 this.paramValidator,
                 this::isKnownSkillName,
                 this.dispatchRuleCatalog::inferMemoryBucket,
@@ -540,6 +546,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         );
         this.dispatchMemoryLifecycle = new DispatchMemoryLifecycle(
                 this.dispatcherMemoryFacade,
+                this.memoryCommandService,
                 this.behaviorRoutingSupport,
                 this.dispatchRuleCatalog::inferMemoryBucket
         );
@@ -830,18 +837,18 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
 
                     @Override
                     public boolean shouldUseMasterOrchestrator(Map<String, Object> profileContext) {
-                        return DispatcherService.this.dispatchOrchestrationSupport.shouldUseMasterOrchestrator(
-                                DispatcherService.this.masterOrchestrator,
-                                DispatcherService.this.routingCoordinator,
-                                profileContext
-                        );
+                        return DispatcherService.this.masterOrchestrator != null
+                                && DispatcherService.this.routingCoordinator != null
+                                && DispatcherService.this.routingCoordinator.shouldUseMasterOrchestrator(profileContext);
                     }
 
                     @Override
                     public Decision buildMultiAgentDecision(String userInput,
                                                             SemanticAnalysisResult semanticAnalysis,
                                                             SkillContext context) {
-                        return DispatcherService.this.dispatchOrchestrationSupport.buildMultiAgentDecision(userInput, semanticAnalysis, context);
+                        return DispatcherService.this.routingCoordinator == null
+                                ? null
+                                : DispatcherService.this.routingCoordinator.buildMultiAgentDecision(userInput, semanticAnalysis, context);
                     }
 
                     @Override

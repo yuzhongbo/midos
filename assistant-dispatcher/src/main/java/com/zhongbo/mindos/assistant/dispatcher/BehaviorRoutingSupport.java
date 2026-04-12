@@ -18,8 +18,8 @@ final class BehaviorRoutingSupport {
 
     BehaviorRoutingSupport(SkillDslParser skillDslParser,
                            DispatcherMemoryFacade dispatcherMemoryFacade,
+                           SkillCommandAssembler skillCommandAssembler,
                            DispatcherMemoryCommandService memoryCommandService,
-                           boolean preferenceReuseEnabled,
                            boolean habitRoutingEnabled,
                            int habitRoutingMinTotalCount,
                            double habitRoutingMinSuccessRate,
@@ -31,9 +31,8 @@ final class BehaviorRoutingSupport {
                            int behaviorLearningWindowSize,
                            double behaviorLearningDefaultParamThreshold) {
         this.habitSkillSelector = new HabitSkillSelector(
-                skillDslParser,
                 dispatcherMemoryFacade,
-                preferenceReuseEnabled,
+                skillCommandAssembler,
                 habitRoutingEnabled,
                 habitRoutingMinTotalCount,
                 habitRoutingMinSuccessRate,

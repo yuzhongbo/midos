@@ -2,10 +2,10 @@ package com.zhongbo.mindos.assistant.skill.examples;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.zhongbo.mindos.assistant.skill.examples.util.ChineseNumberParser;
 import com.zhongbo.mindos.assistant.common.LlmClient;
 import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.common.SkillResult;
+import com.zhongbo.mindos.assistant.common.command.TeachingPlanCommandSupport;
 import com.zhongbo.mindos.assistant.skill.Skill;
 import com.zhongbo.mindos.assistant.skill.SkillDescriptor;
 import com.zhongbo.mindos.assistant.skill.SkillDescriptorProvider;
@@ -14,13 +14,10 @@ import org.springframework.stereotype.Component;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.logging.Level;
 import java.util.logging.Logger;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 @Component
 public class TeachingPlanSkill implements Skill, SkillDescriptorProvider {
@@ -30,39 +27,6 @@ public class TeachingPlanSkill implements Skill, SkillDescriptorProvider {
             "教学规划", "教学计划", "学习计划", "复习计划", "课程规划", "学习路线", "提分计划",
             "冲刺计划", "倒排计划", "备考计划", "学习方案", "学习安排",
             "study plan", "teaching plan", "learning plan", "revision plan"
-    );
-    private static final Pattern STUDENT_ID_PATTERN = Pattern.compile("\\b(stu-[A-Za-z0-9_-]+)\\b");
-    private static final Pattern WEEKLY_HOURS_PATTERN = Pattern.compile(
-            "(?:每周|一周|每星期|每个星期|weekly)\\s*([0-9一二两三四五六七八九十百千]+)\\s*(?:个)?小时",
-            Pattern.CASE_INSENSITIVE
-    );
-    private static final Pattern DURATION_WEEKS_PATTERN = Pattern.compile(
-            "(?<!每)([0-9一二两三四五六七八九十百千]+)\\s*(?:周|星期)",
-            Pattern.CASE_INSENSITIVE
-    );
-    private static final Pattern GOAL_PATTERN = Pattern.compile(
-            "(?:目标(?:是|为)?|希望|想要|争取|目标定为)\\s*[:：]?\\s*([^，。；;\\n]+)"
-    );
-    private static final Map<String, String> TOPIC_ALIASES = Map.ofEntries(
-            Map.entry("数学", "数学"),
-            Map.entry("math", "math"),
-            Map.entry("英语", "英语"),
-            Map.entry("english", "english"),
-            Map.entry("语文", "语文"),
-            Map.entry("chinese", "chinese"),
-            Map.entry("物理", "物理"),
-            Map.entry("physics", "physics"),
-            Map.entry("化学", "化学"),
-            Map.entry("chemistry", "chemistry"),
-            Map.entry("生物", "生物"),
-            Map.entry("biology", "biology"),
-            Map.entry("历史", "历史"),
-            Map.entry("history", "history"),
-            Map.entry("地理", "地理"),
-            Map.entry("geography", "geography"),
-            Map.entry("政治", "政治"),
-            Map.entry("java", "Java"),
-            Map.entry("python", "Python")
     );
 
     private final LlmClient llmClient;
@@ -106,31 +70,15 @@ public class TeachingPlanSkill implements Skill, SkillDescriptorProvider {
     }
 
     private PlanRequest buildRequest(SkillContext context) {
-        Map<String, Object> attributes = context.attributes();
+        Map<String, Object> attributes = TeachingPlanCommandSupport.resolveAttributes(context);
         String studentId = firstNonBlank(
                 asString(attributes, "studentId"),
-                firstNonBlank(extractStudentId(context.input()), context.userId())
+                context.userId()
         );
-        String topic = firstNonBlank(asString(attributes, "topic"), inferTopicFromInput(context.input()));
-        String goal = firstNonBlank(asString(attributes, "goal"), inferGoalFromInput(context.input()));
-        int durationWeeks = clamp(
-                firstPositive(
-                        parseFlexible(attributes.get("durationWeeks")),
-                        parseFlexible(extractDurationWeeksText(context.input())),
-                        8
-                ),
-                1,
-                52
-        );
-        int weeklyHours = clamp(
-                firstPositive(
-                        parseFlexible(attributes.get("weeklyHours")),
-                        parseFlexible(extractWeeklyHoursText(context.input())),
-                        6
-                ),
-                1,
-                80
-        );
+        String topic = firstNonBlank(asString(attributes, "topic"), "通用能力提升");
+        String goal = firstNonBlank(asString(attributes, "goal"), "夯实基础并稳定提升");
+        int durationWeeks = asInt(attributes.get("durationWeeks"), 8);
+        int weeklyHours = asInt(attributes.get("weeklyHours"), 6);
 
         return new PlanRequest(
                 studentId,
@@ -311,83 +259,6 @@ public class TeachingPlanSkill implements Skill, SkillDescriptorProvider {
         );
     }
 
-    private String inferTopicFromInput(String input) {
-        if (input == null || input.isBlank()) {
-            return "通用能力提升";
-        }
-        String normalized = normalize(input);
-        for (Map.Entry<String, String> entry : TOPIC_ALIASES.entrySet()) {
-            if (normalized.contains(normalize(entry.getKey()))) {
-                return entry.getValue();
-            }
-        }
-        String cleaned = input;
-        for (String term : PLAN_INTENT_TERMS) {
-            cleaned = cleaned.replace(term, " ");
-        }
-        cleaned = STUDENT_ID_PATTERN.matcher(cleaned).replaceAll(" ");
-        String weeklyHoursText = extractWeeklyHoursText(cleaned);
-        if (!weeklyHoursText.isBlank()) {
-            cleaned = cleaned.replace(weeklyHoursText, " ");
-        }
-        String durationWeeksText = extractDurationWeeksText(cleaned);
-        if (!durationWeeksText.isBlank()) {
-            cleaned = cleaned.replace(durationWeeksText, " ");
-        }
-        String goal = inferGoalFromInput(cleaned);
-        if (!goal.equals("夯实基础并稳定提升")) {
-            cleaned = cleaned.replace(goal, " ");
-        }
-        cleaned = cleaned.replaceAll("(?:请|帮我|给我|做一个|制定|安排|生成|提供|一份|一个|关于|针对|学生|为|做|的)", " ")
-                .replaceAll("\\s+", " ")
-                .trim();
-        return cleaned.isBlank() ? "通用能力提升" : cleaned;
-    }
-
-    private String inferGoalFromInput(String input) {
-        if (input == null || input.isBlank()) {
-            return "夯实基础并稳定提升";
-        }
-        Matcher matcher = GOAL_PATTERN.matcher(input);
-        if (matcher.find()) {
-            String goal = matcher.group(1) == null ? "" : matcher.group(1).trim();
-            return goal.isBlank() ? "夯实基础并稳定提升" : goal;
-        }
-        return "夯实基础并稳定提升";
-    }
-
-    private String extractStudentId(String input) {
-        if (input == null || input.isBlank()) {
-            return "";
-        }
-        Matcher matcher = STUDENT_ID_PATTERN.matcher(input);
-        return matcher.find() ? matcher.group(1) : "";
-    }
-
-    private String extractDurationWeeksText(String input) {
-        if (input == null || input.isBlank()) {
-            return "";
-        }
-        Matcher matcher = DURATION_WEEKS_PATTERN.matcher(input);
-        while (matcher.find()) {
-            int start = matcher.start();
-            String prefix = input.substring(Math.max(0, start - 2), start);
-            if (prefix.endsWith("每")) {
-                continue;
-            }
-            return matcher.group(1);
-        }
-        return "";
-    }
-
-    private String extractWeeklyHoursText(String input) {
-        if (input == null || input.isBlank()) {
-            return "";
-        }
-        Matcher matcher = WEEKLY_HOURS_PATTERN.matcher(input);
-        return matcher.find() ? matcher.group(1) : "";
-    }
-
     private String extractJsonBody(String response) {
         if (response == null || response.isBlank()) {
             return null;
@@ -424,41 +295,6 @@ public class TeachingPlanSkill implements Skill, SkillDescriptorProvider {
         }
     }
 
-    private int parseFlexibleOrDefault(Object value, int defaultValue) {
-        if (value == null) return defaultValue;
-        if (value instanceof Number number) return number.intValue();
-        String s = String.valueOf(value).trim();
-        if (s.isBlank()) return defaultValue;
-        Integer parsed = ChineseNumberParser.parseFlexibleNumber(s);
-        return parsed == null ? defaultValue : parsed;
-    }
-
-    private Integer parseFlexible(Object value) {
-        if (value == null) {
-            return null;
-        }
-        if (value instanceof Number number) {
-            return number.intValue();
-        }
-        String s = String.valueOf(value).trim();
-        if (s.isBlank()) {
-            return null;
-        }
-        return ChineseNumberParser.parseFlexibleNumber(s);
-    }
-
-    private int firstPositive(Integer... candidates) {
-        if (candidates == null) {
-            return 0;
-        }
-        for (Integer candidate : candidates) {
-            if (candidate != null && candidate > 0) {
-                return candidate;
-            }
-        }
-        return 0;
-    }
-
     private List<String> asStringList(Object value) {
         if (value == null) {
             return List.of();
@@ -488,16 +324,16 @@ public class TeachingPlanSkill implements Skill, SkillDescriptorProvider {
         return List.copyOf(result);
     }
 
-    private int clamp(int value, int min, int max) {
-        return Math.max(min, Math.min(max, value));
-    }
-
-    private String firstNonBlank(String value, String fallback) {
-        return value == null || value.isBlank() ? fallback : value;
-    }
-
-    private String normalize(String value) {
-        return value == null ? "" : value.trim().toLowerCase(Locale.ROOT);
+    private String firstNonBlank(String... values) {
+        if (values == null || values.length == 0) {
+            return "";
+        }
+        for (String value : values) {
+            if (value != null && !value.isBlank()) {
+                return value;
+            }
+        }
+        return "";
     }
 
     private boolean isNonBlankString(Object value) {

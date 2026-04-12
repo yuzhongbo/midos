@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zhongbo.mindos.assistant.common.LlmClient;
 import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.common.SkillResult;
+import com.zhongbo.mindos.assistant.common.command.NewsSearchCommandSupport;
 import com.zhongbo.mindos.assistant.skill.Skill;
 import com.zhongbo.mindos.assistant.skill.SkillDescriptor;
 import com.zhongbo.mindos.assistant.skill.SkillDescriptorProvider;
@@ -57,23 +58,6 @@ public class NewsSearchSkill implements Skill, SkillDescriptorProvider {
     private static final Logger LOGGER = Logger.getLogger(NewsSearchSkill.class.getName());
     private static final DateTimeFormatter RFC1123 = DateTimeFormatter.RFC_1123_DATE_TIME;
     private static final Pattern JSON_BLOCK_PATTERN = Pattern.compile("\\{.*}", Pattern.DOTALL);
-    private static final Pattern SOURCE_PATTERN = Pattern.compile("(?i)(?:^|\\s)source\\s*=\\s*([\\p{L}\\p{N}._-]+)(?:\\s|$)");
-    private static final Pattern SORT_PATTERN = Pattern.compile("(?i)(?:^|\\s)sort\\s*=\\s*(latest|relevance)(?:\\s|$)");
-    private static final Pattern LIMIT_PARAM_PATTERN = Pattern.compile("(?i)(?:^|\\s)limit\\s*=\\s*([0-9一二两三四五六七八九十百千万]+)(?:\\s|$)");
-    private static final Pattern COUNT_LIMIT_PATTERN = Pattern.compile("(?:前|看|来|给我看|给我|帮我看)?\\s*([0-9一二两三四五六七八九十百千万]+)\\s*(?:条|篇|个)");
-    private static final Pattern PARAMETER_TOKEN_PATTERN = Pattern.compile("(?i)\\b(source|sort|limit)\\s*=\\s*[^\\s]+");
-    private static final Pattern SOURCE_TOKEN_PATTERN = Pattern.compile("(?i)(?:36kr|36氪|serper|serpapi)");
-    private static final Pattern LEADING_QUERY_NOISE_PATTERN = Pattern.compile("^(?:只看|仅看|只要|仅限|帮我看|给我看|看|查|搜|搜索|查询|请|请帮我)?\\s*");
-    private static final Pattern LEADING_TOPIC_CONNECTOR_PATTERN = Pattern.compile("^(?:的|关于|有关|针对|围绕)\\s*");
-    private static final Pattern RECENCY_NOISE_PATTERN = Pattern.compile("(?:今天的|今日的|今天|今日|最新的|最新|最近的|最近|实时的|实时)");
-    private static final Pattern TRAILING_NEWS_NOISE_PATTERN = Pattern.compile("(?:新闻|资讯|消息|头条|热点|热搜)+$");
-    private static final Pattern TRAILING_ACTION_NOISE_PATTERN = Pattern.compile(
-            "(?:并|顺便)?\\s*(?:总结(?:一下)?|汇总(?:一下)?|梳理(?:一下|下)?|解读(?:一下)?|分析(?:一下)?|概括(?:一下)?|整理(?:一下)?)(?:吧|呀|一下)?$"
-    );
-    private static final Pattern NATURAL_NEWS_TRIGGER_PATTERN = Pattern.compile("(?:查看|看|查询|查|搜索|搜).{0,12}(?:新闻|资讯|头条)|(?:新闻|资讯|头条).{0,12}(?:查看|看|查询|查|搜索|搜)");
-    private static final Pattern PLAIN_NEWS_REQUEST_PATTERN = Pattern.compile(
-            "(?:今天|今日|最新|最近|实时|国际|国内|财经|科技|ai|人工智能|股市|市场|融资|头条)?.{0,18}(?:新闻|资讯|消息|头条|热点|热搜)"
-    );
     private static final Set<String> HOT_KEYWORD_STOP_WORDS = Set.of(
             "google", "news", "rss", "36kr", "today", "with", "from", "that", "this", "以及", "相关", "新闻", "今日", "最新", "报道"
     );
@@ -99,6 +83,7 @@ public class NewsSearchSkill implements Skill, SkillDescriptorProvider {
     private final String serperSearchUrl;
     private final String serperApiKey;
     private final ConcurrentHashMap<String, CacheEntry> cache = new ConcurrentHashMap<>();
+    private final NewsSearchCommandSupport commandSupport = new NewsSearchCommandSupport();
 
     @Autowired
     public NewsSearchSkill(LlmClient llmClient,
@@ -272,13 +257,14 @@ public class NewsSearchSkill implements Skill, SkillDescriptorProvider {
         if (!enabled) {
             return SkillResult.failure(name(), "news_search 已禁用，请联系管理员开启。");
         }
-        String query = resolveQuery(context);
+        Map<String, Object> resolved = commandSupport.resolveAttributes(context);
+        String query = asTrimmedText(resolved.get("query"));
         if (query.isBlank()) {
             return SkillResult.failure(name(), "请提供新闻关键词，例如：news_search AI 芯片");
         }
-        SourceSelection sourceSelection = resolveSource(context);
-        SortMode sortMode = resolveSort(context);
-        int requestedLimit = resolveLimit(context);
+        SourceSelection sourceSelection = resolveSource(asTrimmedText(resolved.get("source")));
+        SortMode sortMode = resolveSort(asTrimmedText(resolved.get("sort")));
+        int requestedLimit = resolveLimit(resolved.get("limit"));
         int effectiveLimit = Math.min(requestedLimit, maxItems);
         String cacheKey = normalize(query) + "|" + sourceSelection.cacheKey() + "|" + sortMode.cacheKey() + "|" + effectiveLimit;
         CacheEntry cacheEntry = loadWithCache(cacheKey, query, effectiveLimit, sourceSelection, sortMode);
@@ -850,51 +836,8 @@ public class NewsSearchSkill implements Skill, SkillDescriptorProvider {
         return matcher.find() ? matcher.group() : null;
     }
 
-    private String resolveQuery(SkillContext context) {
-        if (context.attributes() != null) {
-            Object query = context.attributes().get("query");
-            if (query != null && !String.valueOf(query).isBlank()) {
-                return String.valueOf(query).trim();
-            }
-            Object keyword = context.attributes().get("keyword");
-            if (keyword != null && !String.valueOf(keyword).isBlank()) {
-                return String.valueOf(keyword).trim();
-            }
-        }
-        String input = context.input() == null ? "" : context.input().trim();
-        String normalized = input.replaceFirst("(?i)^news[_ ]search", "").trim();
-        String candidate = normalized.isBlank() ? input : normalized;
-        candidate = PARAMETER_TOKEN_PATTERN.matcher(candidate).replaceAll(" ").trim();
-        candidate = COUNT_LIMIT_PATTERN.matcher(candidate).replaceAll(" ").trim();
-        candidate = candidate.replace("几条", " ").replace("若干条", " ");
-        candidate = SOURCE_TOKEN_PATTERN.matcher(candidate).replaceAll(" ").trim();
-        candidate = RECENCY_NOISE_PATTERN.matcher(candidate).replaceAll(" ").trim();
-        candidate = candidate.replaceAll("(?:最相关|按相关度|相关度|按相关|relevance)", " ");
-        candidate = TRAILING_ACTION_NOISE_PATTERN.matcher(candidate).replaceFirst("").trim();
-        candidate = LEADING_QUERY_NOISE_PATTERN.matcher(candidate).replaceFirst("").trim();
-        candidate = LEADING_TOPIC_CONNECTOR_PATTERN.matcher(candidate).replaceFirst("").trim();
-        candidate = TRAILING_NEWS_NOISE_PATTERN.matcher(candidate).replaceFirst("").trim();
-        candidate = LEADING_TOPIC_CONNECTOR_PATTERN.matcher(candidate).replaceFirst("").trim();
-        return candidate.replaceAll("\\s+", " ").trim();
-    }
-
-    private SourceSelection resolveSource(SkillContext context) {
-        String source = contextAttributeText(context, "source");
+    private SourceSelection resolveSource(String source) {
         boolean explicitlySpecified = source != null && !source.isBlank();
-        if (source == null || source.isBlank()) {
-            source = extractFromInput(context, SOURCE_PATTERN);
-            explicitlySpecified = source != null && !source.isBlank();
-        }
-        if (source == null || source.isBlank()) {
-            String normalizedInput = normalize(context.input());
-            if (containsAny(normalizedInput, "36kr", "36氪")) {
-                source = "36kr";
-                explicitlySpecified = true;
-            } else if (containsAny(normalizedInput, "serper")) {
-                source = "serper";
-                explicitlySpecified = true;
-            }
-        }
         String normalized = source == null ? "" : source.trim().toLowerCase(Locale.ROOT);
         SourceMode mode = SourceMode.fromValue(normalized);
         String alias = resolveConfiguredSourceAlias(normalized);
@@ -921,155 +864,15 @@ public class NewsSearchSkill implements Skill, SkillDescriptorProvider {
         return "";
     }
 
-    private SortMode resolveSort(SkillContext context) {
-        String sort = contextAttributeText(context, "sort");
-        if (sort == null || sort.isBlank()) {
-            sort = extractFromInput(context, SORT_PATTERN);
-        }
-        if (sort == null || sort.isBlank()) {
-            String normalizedInput = normalize(context.input());
-            if (containsAny(normalizedInput, "相关度", "按相关", "最相关", "relevance")) {
-                sort = "relevance";
-            } else if (containsAny(normalizedInput, "最新", "最近", "latest")) {
-                sort = "latest";
-            }
-        }
+    private SortMode resolveSort(String sort) {
         return SortMode.fromValue(sort);
     }
 
-    private int resolveLimit(SkillContext context) {
-        String fromAttribute = contextAttributeText(context, "limit");
-        Integer parsedAttr = parseFlexibleNumber(fromAttribute);
-        if (parsedAttr != null && parsedAttr > 0) {
-            return parsedAttr;
-        }
-        Integer fromLimitParam = parseFlexibleNumber(extractFromInput(context, LIMIT_PARAM_PATTERN));
-        if (fromLimitParam != null && fromLimitParam > 0) {
-            return fromLimitParam;
-        }
-        String input = context.input() == null ? "" : context.input();
-        Matcher countMatcher = COUNT_LIMIT_PATTERN.matcher(input);
-        if (countMatcher.find()) {
-            Integer fromCount = parseFlexibleNumber(countMatcher.group(1));
-            if (fromCount != null && fromCount > 0) {
-                return fromCount;
-            }
-        }
-        if (input.contains("几条") || input.contains("若干条")) {
-            return 10;
+    private int resolveLimit(Object rawLimit) {
+        if (rawLimit instanceof Number number && number.intValue() > 0) {
+            return number.intValue();
         }
         return maxItems;
-    }
-
-    private String extractFromInput(SkillContext context, Pattern pattern) {
-        String input = context.input() == null ? "" : context.input();
-        Matcher matcher = pattern.matcher(input);
-        if (!matcher.find()) {
-            return "";
-        }
-        return matcher.group(1);
-    }
-
-    private String contextAttributeText(SkillContext context, String key) {
-        if (context.attributes() == null || !context.attributes().containsKey(key)) {
-            return "";
-        }
-        Object raw = context.attributes().get(key);
-        if (raw instanceof Number number) {
-            return String.valueOf(number.intValue());
-        }
-        return raw == null ? "" : String.valueOf(raw).trim();
-    }
-
-    private Integer parseFlexibleNumber(String value) {
-        if (value == null || value.isBlank()) {
-            return null;
-        }
-        String normalized = value.trim();
-        if (normalized.matches("\\d+")) {
-            return Integer.parseInt(normalized);
-        }
-        return parseSimpleChineseNumber(normalized);
-    }
-
-    private Integer parseSimpleChineseNumber(String value) {
-        if (value == null || value.isBlank()) {
-            return null;
-        }
-        String normalized = value.trim().replace('两', '二');
-        while (normalized.startsWith("零")) {
-            normalized = normalized.substring(1);
-        }
-        if (normalized.isBlank()) {
-            return 0;
-        }
-        Integer withWan = parseChineseUnitNumber(normalized, '万', 10_000);
-        if (withWan != null) {
-            return withWan;
-        }
-        Integer withThousands = parseChineseUnitNumber(normalized, '千', 1000);
-        if (withThousands != null) {
-            return withThousands;
-        }
-        Integer withHundreds = parseChineseUnitNumber(normalized, '百', 100);
-        if (withHundreds != null) {
-            return withHundreds;
-        }
-        if ("十".equals(normalized)) {
-            return 10;
-        }
-        if (normalized.endsWith("十") && normalized.length() == 2) {
-            Integer tens = chineseDigit(normalized.charAt(0));
-            return tens == null ? null : tens * 10;
-        }
-        if (normalized.startsWith("十") && normalized.length() == 2) {
-            Integer ones = chineseDigit(normalized.charAt(1));
-            return ones == null ? null : 10 + ones;
-        }
-        if (normalized.contains("十") && normalized.length() == 3) {
-            Integer tens = chineseDigit(normalized.charAt(0));
-            Integer ones = chineseDigit(normalized.charAt(2));
-            return (tens == null || ones == null) ? null : tens * 10 + ones;
-        }
-        if (normalized.length() == 1) {
-            return chineseDigit(normalized.charAt(0));
-        }
-        return null;
-    }
-
-    private Integer parseChineseUnitNumber(String normalized, char unitChar, int unitValue) {
-        int unitIndex = normalized.indexOf(unitChar);
-        if (unitIndex < 0) {
-            return null;
-        }
-        String headPart = normalized.substring(0, unitIndex);
-        String tailPart = normalized.substring(unitIndex + 1);
-
-        Integer head = headPart.isBlank() ? 1 : parseSimpleChineseNumber(headPart);
-        if (head == null) {
-            return null;
-        }
-        if (tailPart.isBlank()) {
-            return head * unitValue;
-        }
-        Integer tail = parseSimpleChineseNumber(tailPart);
-        return tail == null ? null : head * unitValue + tail;
-    }
-
-    private Integer chineseDigit(char c) {
-        return switch (c) {
-            case '零' -> 0;
-            case '一' -> 1;
-            case '二' -> 2;
-            case '三' -> 3;
-            case '四' -> 4;
-            case '五' -> 5;
-            case '六' -> 6;
-            case '七' -> 7;
-            case '八' -> 8;
-            case '九' -> 9;
-            default -> null;
-        };
     }
 
     private List<NewsItem> parseFeed(String xml, String source) throws Exception {

@@ -6,6 +6,7 @@ import com.zhongbo.mindos.assistant.common.dto.ExecutionTraceDto;
 import com.zhongbo.mindos.assistant.common.dto.PlanStepDto;
 import com.zhongbo.mindos.assistant.common.dto.RoutingDecisionDto;
 import com.zhongbo.mindos.assistant.dispatcher.agent.multiagent.SharedMemorySnapshot;
+import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryCommandService;
 import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryFacade;
 import com.zhongbo.mindos.assistant.memory.model.ProceduralMemoryEntry;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -24,30 +25,47 @@ import java.util.Map;
 public class DefaultReflectionAgent implements ReflectionAgent {
 
     private final DispatcherMemoryFacade dispatcherMemoryFacade;
+    private final DispatcherMemoryCommandService memoryCommandService;
     private final String semanticBucket;
     private final String proceduralSkillName;
 
     public DefaultReflectionAgent() {
-        this((DispatcherMemoryFacade) null, "autonomous.reflection", "reflection");
+        this((DispatcherMemoryFacade) null, null, "autonomous.reflection", "reflection");
     }
 
     public DefaultReflectionAgent(com.zhongbo.mindos.assistant.memory.MemoryGateway memoryGateway) {
-        this(new DispatcherMemoryFacade(memoryGateway, null, null), "autonomous.reflection", "reflection");
+        this(new DispatcherMemoryFacade(memoryGateway, null, null),
+                new DispatcherMemoryCommandService(memoryGateway, null, null),
+                "autonomous.reflection",
+                "reflection");
     }
 
     public DefaultReflectionAgent(com.zhongbo.mindos.assistant.memory.MemoryGateway memoryGateway,
                                   String semanticBucket,
                                   String proceduralSkillName) {
-        this(new DispatcherMemoryFacade(memoryGateway, null, null), semanticBucket, proceduralSkillName);
+        this(new DispatcherMemoryFacade(memoryGateway, null, null),
+                new DispatcherMemoryCommandService(memoryGateway, null, null),
+                semanticBucket,
+                proceduralSkillName);
+    }
+
+    public DefaultReflectionAgent(DispatcherMemoryFacade dispatcherMemoryFacade,
+                                  String semanticBucket,
+                                  String proceduralSkillName) {
+        this(dispatcherMemoryFacade, null, semanticBucket, proceduralSkillName);
     }
 
     @Autowired
     public DefaultReflectionAgent(DispatcherMemoryFacade dispatcherMemoryFacade,
+                                  DispatcherMemoryCommandService memoryCommandService,
                                   @Value("${mindos.autonomous.reflection.semantic-bucket:autonomous.reflection}") String semanticBucket,
                                   @Value("${mindos.autonomous.reflection.procedural-skill:reflection}") String proceduralSkillName) {
         this.dispatcherMemoryFacade = dispatcherMemoryFacade == null
                 ? new DispatcherMemoryFacade(null, null, null)
                 : dispatcherMemoryFacade;
+        this.memoryCommandService = memoryCommandService == null
+                ? new DispatcherMemoryCommandService(this.dispatcherMemoryFacade, null)
+                : memoryCommandService;
         this.semanticBucket = normalizeBucket(semanticBucket);
         this.proceduralSkillName = normalizeName(proceduralSkillName, "reflection");
     }
@@ -399,7 +417,7 @@ public class DefaultReflectionAgent implements ReflectionAgent {
         if (request.userId().isBlank()) {
             return false;
         }
-        dispatcherMemoryFacade.writeProcedural(
+        memoryCommandService.writeProcedural(
                 request.userId(),
                 ProceduralMemoryEntry.of(proceduralSkillName, result.summary(), result.success())
         );
@@ -411,7 +429,7 @@ public class DefaultReflectionAgent implements ReflectionAgent {
             return false;
         }
         String semanticText = buildSemanticText(result, facts);
-        dispatcherMemoryFacade.writeSemantic(request.userId(), semanticText, buildEmbedding(result, facts), semanticBucket);
+        memoryCommandService.writeSemantic(request.userId(), semanticText, buildEmbedding(result, facts), semanticBucket);
         return true;
     }
 

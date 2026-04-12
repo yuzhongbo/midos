@@ -19,13 +19,16 @@ final class SemanticPayloadCompleter {
 
     private final DispatcherMemoryFacade dispatcherMemoryFacade;
     private final BehaviorRoutingSupport behaviorRoutingSupport;
+    private final SkillCommandAssembler skillCommandAssembler;
     private final Function<String, String> memoryBucketResolver;
 
     SemanticPayloadCompleter(DispatcherMemoryFacade dispatcherMemoryFacade,
                              BehaviorRoutingSupport behaviorRoutingSupport,
+                             SkillCommandAssembler skillCommandAssembler,
                              Function<String, String> memoryBucketResolver) {
         this.dispatcherMemoryFacade = dispatcherMemoryFacade;
         this.behaviorRoutingSupport = behaviorRoutingSupport;
+        this.skillCommandAssembler = skillCommandAssembler;
         this.memoryBucketResolver = memoryBucketResolver;
     }
 
@@ -36,22 +39,14 @@ final class SemanticPayloadCompleter {
         if (semanticAnalysis == null || targetSkill == null || targetSkill.isBlank()) {
             return Map.of();
         }
-        Map<String, Object> payload = new LinkedHashMap<>(semanticAnalysis.payload());
-        switch (targetSkill) {
-            case "code.generate" -> payload.putIfAbsent("task", semanticAnalysis.routingInput(originalInput));
-            case "todo.create" -> payload.putIfAbsent("task", semanticAnalysis.routingInput(originalInput));
-            case "eq.coach" -> payload.putIfAbsent("query", semanticAnalysis.routingInput(originalInput));
-            case "teaching.plan" -> payload.putAll(behaviorRoutingSupport.extractTeachingPlanPayload(originalInput));
-            case "file.search" -> {
-                payload.putIfAbsent("path", "./");
-                payload.putIfAbsent("keyword", semanticAnalysis.routingInput(originalInput));
-            }
-            default -> {
-            }
-        }
-        if (isMcpSearchSkill(targetSkill)) {
-            payload.putIfAbsent("query", semanticAnalysis.routingInput(originalInput));
-        }
+        Map<String, Object> payload = new LinkedHashMap<>(skillCommandAssembler.buildSemanticPayload(
+                targetSkill,
+                semanticAnalysis.payload(),
+                originalInput,
+                semanticAnalysis.summary(),
+                semanticAnalysis.routingInput(originalInput),
+                ""
+        ));
         completeFromMemory(userId, targetSkill, semanticAnalysis, payload, originalInput);
         return payload;
     }
@@ -108,33 +103,14 @@ final class SemanticPayloadCompleter {
         );
         String memoryHint = related.isEmpty() ? "" : related.get(0).text();
 
-        if ("todo.create".equals(skill) && isBlankValue(payload.get("task"))) {
-            String fallbackTask = !summary.isBlank() ? summary : (!memoryHint.isBlank() ? memoryHint : routingInput);
-            if (!fallbackTask.isBlank()) {
-                payload.put("task", capText(fallbackTask, 140));
-            }
-        }
-        if ("eq.coach".equals(skill) && isBlankValue(payload.get("query"))) {
-            String fallbackQuery = !summary.isBlank() ? summary : (!memoryHint.isBlank() ? memoryHint : routingInput);
-            if (!fallbackQuery.isBlank()) {
-                payload.put("query", capText(fallbackQuery, 180));
-            }
-        }
-        if ("file.search".equals(skill)) {
-            if (isBlankValue(payload.get("path"))) {
-                payload.put("path", "./");
-            }
-            if (isBlankValue(payload.get("keyword"))) {
-                String fallbackKeyword = !summary.isBlank() ? summary : routingInput;
-                payload.put("keyword", capText(fallbackKeyword, 120));
-            }
-        }
-        if (isMcpSearchSkill(skill) && isBlankValue(payload.get("query"))) {
-            String fallbackQuery = !summary.isBlank() ? summary : (!memoryHint.isBlank() ? memoryHint : routingInput);
-            if (!fallbackQuery.isBlank()) {
-                payload.put("query", capText(fallbackQuery, 120));
-            }
-        }
+        payload.putAll(skillCommandAssembler.buildSemanticPayload(
+                skill,
+                payload,
+                originalInput,
+                capText(summary, 180),
+                capText(routingInput, 180),
+                capText(memoryHint, 180)
+        ));
         List<String> filledKeys = new ArrayList<>();
         Set<String> beforeKeys = payload.isEmpty() ? Set.of() : new LinkedHashSet<>(payload.keySet());
         behaviorRoutingSupport.applyBehaviorLearnedDefaults(userId, skill, payload);
