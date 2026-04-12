@@ -2,18 +2,30 @@ package com.zhongbo.mindos.assistant.dispatcher.memory;
 
 import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.common.dto.PromptMemoryContextDto;
+import com.zhongbo.mindos.assistant.dispatcher.agent.procedure.Procedure;
+import com.zhongbo.mindos.assistant.dispatcher.agent.procedure.ProceduralMemory;
+import com.zhongbo.mindos.assistant.dispatcher.agent.taskgraph.TaskGraph;
 import com.zhongbo.mindos.assistant.memory.MemoryFacade;
+import com.zhongbo.mindos.assistant.memory.MemoryGateway;
+import com.zhongbo.mindos.assistant.memory.graph.GraphMemoryGateway;
+import com.zhongbo.mindos.assistant.memory.graph.GraphMemoryView;
+import com.zhongbo.mindos.assistant.memory.graph.MemoryEdge;
+import com.zhongbo.mindos.assistant.memory.graph.MemoryNode;
 import com.zhongbo.mindos.assistant.memory.model.ConversationTurn;
+import com.zhongbo.mindos.assistant.memory.model.LongTask;
+import com.zhongbo.mindos.assistant.memory.model.PreferenceProfile;
 import com.zhongbo.mindos.assistant.memory.model.ProceduralMemoryEntry;
 import com.zhongbo.mindos.assistant.memory.model.MemoryCompressionPlan;
 import com.zhongbo.mindos.assistant.memory.model.MemoryStyleProfile;
 import com.zhongbo.mindos.assistant.memory.model.SemanticMemoryEntry;
 import com.zhongbo.mindos.assistant.memory.model.SkillUsageStats;
 import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalysisResult;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -22,6 +34,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.function.Consumer;
 import java.util.regex.Pattern;
 
@@ -31,6 +44,10 @@ public class DispatcherMemoryFacade {
     private static final Pattern ROUTING_TOKEN_SPLIT_PATTERN = Pattern.compile("[^\\p{L}\\p{N}.#_-]+");
 
     private final MemoryFacade memoryFacade;
+    private final MemoryGateway memoryGateway;
+    private final GraphMemoryView graphMemoryView;
+    private final GraphMemoryGateway graphMemoryGateway;
+    private final ProceduralMemory proceduralMemory;
     private final int conversationHistoryLimit;
     private final int knowledgeLimit;
     private final int habitSkillStatsLimit;
@@ -41,17 +58,112 @@ public class DispatcherMemoryFacade {
     }
 
     public DispatcherMemoryFacade(MemoryFacade memoryFacade) {
-        this(memoryFacade, 6, 3, 3, 2, 4);
+        this(memoryFacade, (MemoryGateway) null, (GraphMemoryView) null, (GraphMemoryGateway) null, (ProceduralMemory) null, 6, 3, 3, 2, 4);
+    }
+
+    public DispatcherMemoryFacade(MemoryFacade memoryFacade,
+                                  int conversationHistoryLimit,
+                                  int knowledgeLimit,
+                                  int habitSkillStatsLimit,
+                                  int memoryContextKeepRecentTurns,
+                                  int memoryContextHistorySummaryMinTurns) {
+        this(
+                memoryFacade,
+                (MemoryGateway) null,
+                (GraphMemoryView) null,
+                (GraphMemoryGateway) null,
+                (ProceduralMemory) null,
+                conversationHistoryLimit,
+                knowledgeLimit,
+                habitSkillStatsLimit,
+                memoryContextKeepRecentTurns,
+                memoryContextHistorySummaryMinTurns
+        );
+    }
+
+    public DispatcherMemoryFacade(MemoryFacade memoryFacade,
+                                  MemoryGateway memoryGateway,
+                                  GraphMemoryView graphMemoryView,
+                                  GraphMemoryGateway graphMemoryGateway,
+                                  ProceduralMemory proceduralMemory) {
+        this(memoryFacade, memoryGateway, graphMemoryView, graphMemoryGateway, proceduralMemory, 6, 3, 3, 2, 4);
+    }
+
+    public DispatcherMemoryFacade(MemoryFacade memoryFacade,
+                                  MemoryGateway memoryGateway,
+                                  GraphMemoryGateway graphMemoryGateway,
+                                  ProceduralMemory proceduralMemory) {
+        this(
+                memoryFacade,
+                memoryGateway,
+                graphMemoryGateway instanceof GraphMemoryView graphView ? graphView : null,
+                graphMemoryGateway,
+                proceduralMemory,
+                6,
+                3,
+                3,
+                2,
+                4
+        );
+    }
+
+    public DispatcherMemoryFacade(MemoryGateway memoryGateway,
+                                  GraphMemoryGateway graphMemoryGateway,
+                                  ProceduralMemory proceduralMemory) {
+        this(
+                null,
+                memoryGateway,
+                graphMemoryGateway instanceof GraphMemoryView graphView ? graphView : null,
+                graphMemoryGateway,
+                proceduralMemory,
+                6,
+                3,
+                3,
+                2,
+                4
+        );
     }
 
     @Autowired
     public DispatcherMemoryFacade(MemoryFacade memoryFacade,
+                                  ObjectProvider<MemoryGateway> memoryGatewayProvider,
+                                  ObjectProvider<GraphMemoryView> graphMemoryViewProvider,
+                                  ObjectProvider<GraphMemoryGateway> graphMemoryGatewayProvider,
+                                  ObjectProvider<ProceduralMemory> proceduralMemoryProvider,
                                   @Value("${mindos.dispatcher.memory-context.history-limit:6}") int conversationHistoryLimit,
                                   @Value("${mindos.dispatcher.memory-context.knowledge-limit:3}") int knowledgeLimit,
                                   @Value("${mindos.dispatcher.memory-context.habit-stats-limit:3}") int habitSkillStatsLimit,
                                   @Value("${mindos.dispatcher.memory-context.keep-recent-turns:2}") int memoryContextKeepRecentTurns,
                                   @Value("${mindos.dispatcher.memory-context.history-summary-min-turns:4}") int memoryContextHistorySummaryMinTurns) {
+        this(
+                memoryFacade,
+                memoryGatewayProvider == null ? null : memoryGatewayProvider.getIfAvailable(),
+                graphMemoryViewProvider == null ? null : graphMemoryViewProvider.getIfAvailable(),
+                graphMemoryGatewayProvider == null ? null : graphMemoryGatewayProvider.getIfAvailable(),
+                proceduralMemoryProvider == null ? null : proceduralMemoryProvider.getIfAvailable(),
+                conversationHistoryLimit,
+                knowledgeLimit,
+                habitSkillStatsLimit,
+                memoryContextKeepRecentTurns,
+                memoryContextHistorySummaryMinTurns
+        );
+    }
+
+    private DispatcherMemoryFacade(MemoryFacade memoryFacade,
+                                   MemoryGateway memoryGateway,
+                                   GraphMemoryView graphMemoryView,
+                                   GraphMemoryGateway graphMemoryGateway,
+                                   ProceduralMemory proceduralMemory,
+                                   int conversationHistoryLimit,
+                                   int knowledgeLimit,
+                                   int habitSkillStatsLimit,
+                                   int memoryContextKeepRecentTurns,
+                                   int memoryContextHistorySummaryMinTurns) {
         this.memoryFacade = memoryFacade;
+        this.memoryGateway = memoryGateway;
+        this.graphMemoryView = graphMemoryView;
+        this.graphMemoryGateway = graphMemoryGateway;
+        this.proceduralMemory = proceduralMemory;
         this.conversationHistoryLimit = Math.max(1, conversationHistoryLimit);
         this.knowledgeLimit = Math.max(1, knowledgeLimit);
         this.habitSkillStatsLimit = Math.max(1, habitSkillStatsLimit);
@@ -251,27 +363,233 @@ public class DispatcherMemoryFacade {
     }
 
     public List<ProceduralMemoryEntry> getSkillUsageHistory(String userId) {
+        if (memoryFacade == null) {
+            return List.of();
+        }
         return memoryFacade.getSkillUsageHistory(userId);
     }
 
+    public boolean hasRuntimeMemory() {
+        return memoryGateway != null || memoryFacade != null;
+    }
+
+    public PreferenceProfile getPreferenceProfile(String userId) {
+        if (memoryFacade == null) {
+            return PreferenceProfile.empty();
+        }
+        return memoryFacade.getPreferenceProfile(userId);
+    }
+
+    public PreferenceProfile updatePreferenceProfile(String userId, PreferenceProfile profile) {
+        if (memoryGateway != null) {
+            return memoryGateway.updatePreferenceProfile(userId, profile);
+        }
+        if (memoryFacade == null) {
+            return PreferenceProfile.empty();
+        }
+        return memoryFacade.updatePreferenceProfile(userId, profile);
+    }
+
     public List<SkillUsageStats> getSkillUsageStats(String userId) {
+        if (memoryGateway != null) {
+            return memoryGateway.skillUsageStats(userId);
+        }
+        if (memoryFacade == null) {
+            return List.of();
+        }
         return memoryFacade.getSkillUsageStats(userId);
     }
 
+    public List<ConversationTurn> recentHistory(String userId) {
+        if (memoryGateway != null) {
+            return memoryGateway.recentHistory(userId);
+        }
+        if (memoryFacade == null || userId == null || userId.isBlank()) {
+            return List.of();
+        }
+        return memoryFacade.getRecentConversation(userId, conversationHistoryLimit);
+    }
+
     public List<SemanticMemoryEntry> searchKnowledge(String userId, String query, int limit, String bucket) {
+        if (memoryFacade == null) {
+            return List.of();
+        }
         return memoryFacade.searchKnowledge(userId, query, limit, bucket);
     }
 
+    public List<MemoryNode> queryRelated(String userId, String nodeId) {
+        if (memoryFacade == null || nodeId == null || nodeId.isBlank()) {
+            return List.of();
+        }
+        return memoryFacade.queryRelated(userId, nodeId);
+    }
+
+    public Optional<Object> infer(String userId, String key, String hint) {
+        if (memoryFacade == null) {
+            return Optional.empty();
+        }
+        return memoryFacade.infer(userId, key, hint);
+    }
+
+    public Optional<ProceduralMemory.ReusableProcedure> matchReusableProcedure(String userId,
+                                                                               String userInput,
+                                                                               String suggestedTarget,
+                                                                               Map<String, Object> effectiveParams) {
+        if (proceduralMemory == null) {
+            return Optional.empty();
+        }
+        return proceduralMemory.matchReusableProcedure(
+                userId,
+                userInput,
+                suggestedTarget,
+                effectiveParams == null ? Map.of() : effectiveParams
+        );
+    }
+
+    public List<MemoryNode> searchGraphNodes(String userId, String keyword, int limit) {
+        if (graphMemoryView == null) {
+            return List.of();
+        }
+        return graphMemoryView.searchNodes(userId, keyword, limit);
+    }
+
+    public Map<String, Double> scoreGraphCandidates(String userId, String userInput, List<String> candidateNames) {
+        if (graphMemoryView == null) {
+            return Map.of();
+        }
+        return graphMemoryView.scoreCandidates(userId, userInput, candidateNames);
+    }
+
     public void appendUserConversation(String userId, String message) {
-        memoryFacade.storeUserConversation(userId, message);
+        if (memoryGateway != null) {
+            memoryGateway.appendUserConversation(userId, message);
+            return;
+        }
+        if (memoryFacade != null) {
+            memoryFacade.storeUserConversation(userId, message);
+        }
     }
 
     public void appendAssistantConversation(String userId, String message) {
-        memoryFacade.storeAssistantConversation(userId, message);
+        if (memoryGateway != null) {
+            memoryGateway.appendAssistantConversation(userId, message == null ? "" : message);
+            return;
+        }
+        if (memoryFacade != null) {
+            memoryFacade.storeAssistantConversation(userId, message);
+        }
+    }
+
+    public void recordSkillUsage(String userId, String skillName, String trigger, boolean success) {
+        if (memoryGateway != null) {
+            memoryGateway.recordSkillUsage(userId, skillName, trigger, success);
+            return;
+        }
+        if (memoryFacade != null) {
+            memoryFacade.logSkillUsage(userId, skillName, trigger, success);
+        }
+    }
+
+    public void writeProcedural(String userId, ProceduralMemoryEntry entry) {
+        if (entry == null) {
+            return;
+        }
+        if (memoryGateway != null) {
+            memoryGateway.writeProcedural(userId, entry);
+            return;
+        }
+        if (memoryFacade != null && entry.skillName() != null && !entry.skillName().isBlank()) {
+            memoryFacade.logSkillUsage(userId, entry.skillName(), entry.input(), entry.success());
+        }
     }
 
     public void writeSemantic(String userId, String text, List<Double> embedding, String bucket) {
-        memoryFacade.storeKnowledge(userId, text, embedding, bucket);
+        if (memoryGateway != null) {
+            memoryGateway.writeSemantic(userId, text, embedding == null ? List.of() : embedding, bucket);
+            return;
+        }
+        if (memoryFacade != null) {
+            memoryFacade.storeKnowledge(userId, text, embedding, bucket);
+        }
+    }
+
+    public Procedure recordProcedureSuccess(String userId,
+                                            String intent,
+                                            String trigger,
+                                            TaskGraph graph,
+                                            Map<String, Object> contextAttributes) {
+        if (proceduralMemory == null) {
+            return null;
+        }
+        return proceduralMemory.recordSuccess(
+                userId,
+                intent,
+                trigger,
+                graph,
+                contextAttributes == null ? Map.of() : contextAttributes
+        );
+    }
+
+    public LongTask updateLongTaskProgress(String userId,
+                                           String taskId,
+                                           String workerId,
+                                           String completedStep,
+                                           String note,
+                                           String blockedReason,
+                                           Instant nextCheckAt,
+                                           boolean markCompleted) {
+        if (memoryGateway != null) {
+            return memoryGateway.updateLongTaskProgress(
+                    userId,
+                    taskId,
+                    workerId,
+                    completedStep,
+                    note,
+                    blockedReason,
+                    nextCheckAt,
+                    markCompleted
+            );
+        }
+        if (memoryFacade == null) {
+            return null;
+        }
+        return memoryFacade.updateLongTaskProgress(
+                userId,
+                taskId,
+                workerId,
+                completedStep,
+                note,
+                blockedReason,
+                nextCheckAt,
+                markCompleted
+        );
+    }
+
+    public boolean hasGraphMemory() {
+        return graphMemoryGateway != null;
+    }
+
+    public MemoryNode upsertGraphNode(String userId, MemoryNode node) {
+        if (graphMemoryGateway == null || node == null) {
+            return null;
+        }
+        return graphMemoryGateway.upsertNode(userId, node);
+    }
+
+    public MemoryEdge linkGraph(String userId,
+                                String from,
+                                String relation,
+                                String to,
+                                double weight,
+                                Map<String, Object> data) {
+        if (graphMemoryGateway == null) {
+            return null;
+        }
+        return graphMemoryGateway.link(userId, from, relation, to, weight, data == null ? Map.of() : data);
+    }
+
+    public boolean deleteGraphNode(String userId, String nodeId) {
+        return graphMemoryGateway != null && graphMemoryGateway.deleteNode(userId, nodeId);
     }
 
     private boolean shouldApplyRealtimeMemoryShrink(boolean realtimeIntentInput, boolean realtimeIntentMemoryShrinkEnabled) {

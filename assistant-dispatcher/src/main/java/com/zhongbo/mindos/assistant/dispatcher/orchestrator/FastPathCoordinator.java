@@ -96,11 +96,6 @@ final class FastPathCoordinator {
         List<CandidateExecution> executableCandidates = new ArrayList<>();
         String lastFailure = null;
         for (ScoredCandidate candidate : plannedCandidates) {
-            ParamValidator.ValidationResult namespaceValidation = validateNamespace(candidate.skillName());
-            if (!namespaceValidation.valid()) {
-                lastFailure = namespaceValidation.message();
-                continue;
-            }
             ParamValidator.ValidationResult validation = paramValidator.validate(candidate.skillName(), params, request);
             if (!validation.valid()) {
                 lastFailure = validation.message();
@@ -433,17 +428,6 @@ final class FastPathCoordinator {
             }
         }
         return Integer.MAX_VALUE;
-    }
-
-    private ParamValidator.ValidationResult validateNamespace(String target) {
-        if (target == null || target.isBlank() || !target.startsWith("mcp.")) {
-            return ParamValidator.ValidationResult.ok();
-        }
-        String[] parts = target.split("\\.");
-        if (parts.length < 3 || parts[1].isBlank() || parts[2].isBlank()) {
-            return ParamValidator.ValidationResult.error("MCP 名称需为 mcp.<alias>.<tool>");
-        }
-        return ParamValidator.ValidationResult.ok();
     }
 
     private PreparedExecution prepareExecution(Decision decision,

@@ -1,6 +1,6 @@
 package com.zhongbo.mindos.assistant.dispatcher.orchestrator.step5;
 
-import com.zhongbo.mindos.assistant.memory.MemoryGateway;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -10,11 +10,17 @@ public class DefaultPolicyUpdater implements PolicyUpdater {
     private final PlannerLearningStore plannerLearningStore;
     private final long highLatencyThresholdMs;
 
+    @Autowired
     public DefaultPolicyUpdater(PlannerLearningStore plannerLearningStore,
-                                MemoryGateway memoryGateway,
                                 @Value("${mindos.dispatcher.step5.policy.high-latency-ms:1800}") long highLatencyThresholdMs) {
         this.plannerLearningStore = plannerLearningStore;
         this.highLatencyThresholdMs = Math.max(1L, highLatencyThresholdMs);
+    }
+
+    public DefaultPolicyUpdater(PlannerLearningStore plannerLearningStore,
+                                com.zhongbo.mindos.assistant.memory.MemoryGateway memoryGateway,
+                                long highLatencyThresholdMs) {
+        this(plannerLearningStore, highLatencyThresholdMs);
     }
 
     @Override

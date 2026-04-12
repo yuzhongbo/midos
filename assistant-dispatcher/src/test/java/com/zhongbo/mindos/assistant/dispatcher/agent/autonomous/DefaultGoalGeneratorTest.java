@@ -77,7 +77,13 @@ class DefaultGoalGeneratorTest {
                 Instant.now()
         );
 
-        DefaultGoalGenerator generator = new DefaultGoalGenerator(null, null, strategyAgent, 5, 6);
+        DefaultGoalGenerator generator = new DefaultGoalGenerator(
+                (com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryFacade) null,
+                null,
+                strategyAgent,
+                5,
+                6
+        );
         List<AutonomousGoal> goals = generator.generate("u-strategy", 3);
 
         assertTrue(goals.stream().anyMatch(goal -> goal.type() == AutonomousGoalType.STRATEGIC));

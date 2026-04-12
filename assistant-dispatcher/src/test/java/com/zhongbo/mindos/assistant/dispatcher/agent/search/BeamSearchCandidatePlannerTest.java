@@ -1,6 +1,7 @@
 package com.zhongbo.mindos.assistant.dispatcher.agent.search;
 
 import com.zhongbo.mindos.assistant.dispatcher.agent.procedure.InMemoryProcedureMemoryEngine;
+import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryFacade;
 import com.zhongbo.mindos.assistant.memory.MemoryGateway;
 import com.zhongbo.mindos.assistant.memory.graph.GraphMemory;
 import com.zhongbo.mindos.assistant.memory.graph.MemoryNode;
@@ -35,7 +36,7 @@ class BeamSearchCandidatePlannerTest {
 
         BeamSearchCandidatePlanner planner = new BeamSearchCandidatePlanner(
                 skillEngine,
-                new MemoryGateway() {
+                new DispatcherMemoryFacade(new MemoryGateway() {
                     @Override
                     public List<ConversationTurn> recentHistory(String userId) {
                         return List.of();
@@ -56,8 +57,7 @@ class BeamSearchCandidatePlannerTest {
                     @Override public com.zhongbo.mindos.assistant.memory.model.LongTask createLongTask(String userId, String title, String objective, List<String> steps, Instant dueAt, Instant nextCheckAt) { return null; }
                     @Override public com.zhongbo.mindos.assistant.memory.model.LongTask updateLongTaskProgress(String userId, String taskId, String workerId, String completedStep, String note, String blockedReason, Instant nextCheckAt, boolean markCompleted) { return null; }
                     @Override public com.zhongbo.mindos.assistant.memory.model.LongTask updateLongTaskStatus(String userId, String taskId, com.zhongbo.mindos.assistant.memory.model.LongTaskStatus status, String note, Instant nextCheckAt) { return null; }
-                },
-                graphMemory,
+                }, graphMemory, null),
                 new InMemoryProcedureMemoryEngine()
         );
 

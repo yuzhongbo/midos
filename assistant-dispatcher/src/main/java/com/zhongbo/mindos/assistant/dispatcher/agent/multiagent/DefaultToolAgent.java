@@ -4,6 +4,7 @@ import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.common.SkillDsl;
 import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.DecisionOrchestrator;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.ParamValidator;
 import com.zhongbo.mindos.assistant.skill.SkillExecutionGateway;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -17,10 +18,17 @@ import java.util.Objects;
 public class DefaultToolAgent implements ToolAgent {
 
     private final SkillExecutionGateway skillExecutionGateway;
+    private final ParamValidator paramValidator;
+
+    public DefaultToolAgent(SkillExecutionGateway skillExecutionGateway) {
+        this(skillExecutionGateway, null);
+    }
 
     @Autowired
-    public DefaultToolAgent(SkillExecutionGateway skillExecutionGateway) {
+    public DefaultToolAgent(SkillExecutionGateway skillExecutionGateway,
+                            ParamValidator paramValidator) {
         this.skillExecutionGateway = skillExecutionGateway;
+        this.paramValidator = paramValidator;
     }
 
     @Override
@@ -60,8 +68,37 @@ public class DefaultToolAgent implements ToolAgent {
             );
         }
 
-        SkillContext skillContext = new SkillContext(context.userId(), context.userInput(), params);
-        SkillResult result = skillExecutionGateway.executeDslAsync(new SkillDsl(skillName, params), skillContext).join();
+        DecisionOrchestrator.OrchestrationRequest baseRequest = context == null
+                ? new DecisionOrchestrator.OrchestrationRequest("", "", new SkillContext("", "", Map.of()), Map.of())
+                : context.mergedRequest();
+        SkillContext skillContext = new SkillContext(baseRequest.userId(), baseRequest.userInput(), params);
+        DecisionOrchestrator.OrchestrationRequest request = new DecisionOrchestrator.OrchestrationRequest(
+                baseRequest.userId(),
+                baseRequest.userInput(),
+                skillContext,
+                baseRequest.safeProfileContext()
+        );
+        ParamValidator.ValidationResult validation = paramValidator == null
+                ? ParamValidator.ValidationResult.ok(params, Map.of())
+                : paramValidator.validate(skillName, params, request);
+        if (!validation.valid()) {
+            return AgentResponse.completed(
+                    name(),
+                    SkillResult.failure(skillName, validation.message()),
+                    usedFallback,
+                    List.of(),
+                    Map.of(
+                            "multiAgent.tool.skillName", skillName,
+                            "multiAgent.tool.valid", false
+                    ),
+                    validation.message()
+            );
+        }
+        Map<String, Object> normalizedParams = validation.normalizedParams().isEmpty()
+                ? params
+                : validation.normalizedParams();
+        skillContext = new SkillContext(baseRequest.userId(), baseRequest.userInput(), normalizedParams);
+        SkillResult result = skillExecutionGateway.executeDslAsync(new SkillDsl(skillName, normalizedParams), skillContext).join();
 
         Map<String, Object> memoryPayload = new LinkedHashMap<>();
         memoryPayload.put("kind", "skill-usage");
@@ -70,7 +107,7 @@ public class DefaultToolAgent implements ToolAgent {
         memoryPayload.put("result", result);
         memoryPayload.put("userInput", context.userInput());
         memoryPayload.put("usedFallback", usedFallback);
-        memoryPayload.put("params", params);
+        memoryPayload.put("params", normalizedParams);
         AgentMessage memoryMessage = AgentMessage.reply(
                 message,
                 name(),
@@ -82,6 +119,7 @@ public class DefaultToolAgent implements ToolAgent {
         patch.put("multiAgent.tool.skillName", skillName);
         patch.put("multiAgent.tool.success", result.success());
         patch.put("multiAgent.tool.usedFallback", usedFallback);
+        patch.put("multiAgent.tool.valid", true);
 
         return AgentResponse.completed(
                 name(),

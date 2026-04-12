@@ -1,9 +1,11 @@
 package com.zhongbo.mindos.assistant.dispatcher;
 
 import com.zhongbo.mindos.assistant.common.SkillResult;
+import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryFacade;
 import com.zhongbo.mindos.assistant.memory.MemoryFacade;
 import com.zhongbo.mindos.assistant.memory.model.PreferenceProfile;
 import com.zhongbo.mindos.assistant.memory.model.ProceduralMemoryEntry;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -17,16 +19,24 @@ import java.util.Set;
 @Service
 public class PersonaCoreService {
 
-    private final MemoryFacade memoryFacade;
+    private final DispatcherMemoryFacade dispatcherMemoryFacade;
     private final boolean enabled;
     private final int preferredChannelMinConsecutiveSuccess;
     private final Set<String> ignoredProfileTerms;
 
     public PersonaCoreService(MemoryFacade memoryFacade,
+                              boolean enabled,
+                              int preferredChannelMinConsecutiveSuccess,
+                              String ignoredProfileTerms) {
+        this(new DispatcherMemoryFacade(memoryFacade), enabled, preferredChannelMinConsecutiveSuccess, ignoredProfileTerms);
+    }
+
+    @Autowired
+    public PersonaCoreService(DispatcherMemoryFacade dispatcherMemoryFacade,
                               @Value("${mindos.dispatcher.persona-core.enabled:true}") boolean enabled,
                               @Value("${mindos.dispatcher.persona-core.preferred-channel.min-consecutive-success:2}") int preferredChannelMinConsecutiveSuccess,
                               @Value("${mindos.dispatcher.persona-core.ignored-profile-terms:unknown,null,n/a,na,tbd,todo,随便,不知道,待定}") String ignoredProfileTerms) {
-        this.memoryFacade = memoryFacade;
+        this.dispatcherMemoryFacade = dispatcherMemoryFacade;
         this.enabled = enabled;
         this.preferredChannelMinConsecutiveSuccess = Math.max(1, preferredChannelMinConsecutiveSuccess);
         this.ignoredProfileTerms = parseIgnoredTerms(ignoredProfileTerms);
@@ -41,7 +51,7 @@ public class PersonaCoreService {
             return merged;
         }
 
-        PreferenceProfile saved = memoryFacade.getPreferenceProfile(userId);
+        PreferenceProfile saved = dispatcherMemoryFacade.getPreferenceProfile(userId);
         putIfAbsent(merged, "assistantName", saved.assistantName());
         putIfAbsent(merged, "role", saved.role());
         putIfAbsent(merged, "style", saved.style());
@@ -68,7 +78,7 @@ public class PersonaCoreService {
         if (incoming.equals(PreferenceProfile.empty())) {
             return;
         }
-        memoryFacade.updatePreferenceProfile(userId, incoming);
+        dispatcherMemoryFacade.updatePreferenceProfile(userId, incoming);
     }
 
     private void putIfAbsent(Map<String, Object> target, String key, String value) {
@@ -109,7 +119,7 @@ public class PersonaCoreService {
     }
 
     private int countConsecutiveSkillSuccess(String userId, String skillName) {
-        List<ProceduralMemoryEntry> history = memoryFacade.getSkillUsageHistory(userId);
+        List<ProceduralMemoryEntry> history = dispatcherMemoryFacade.getSkillUsageHistory(userId);
         int streak = 0;
         for (int i = history.size() - 1; i >= 0; i--) {
             ProceduralMemoryEntry entry = history.get(i);

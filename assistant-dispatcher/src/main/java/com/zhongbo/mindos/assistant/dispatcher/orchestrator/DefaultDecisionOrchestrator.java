@@ -3,6 +3,7 @@ package com.zhongbo.mindos.assistant.dispatcher.orchestrator;
 import com.zhongbo.mindos.assistant.dispatcher.agent.taskgraph.TaskGraph;
 import com.zhongbo.mindos.assistant.dispatcher.agent.search.SearchPlanner;
 import com.zhongbo.mindos.assistant.dispatcher.agent.procedure.ProceduralMemory;
+import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryFacade;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.step5.AgentRouter;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.step5.PlannerLearningStore;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.step5.PolicyUpdater;
@@ -53,7 +54,7 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
     private final TaskGraphCoordinator taskGraphCoordinator;
     private final FastPathCoordinator fastPathCoordinator;
     private final SkillExecutionGateway skillExecutionGateway;
-    private final MemoryGateway memoryGateway;
+    private final DispatcherMemoryFacade dispatcherMemoryFacade;
     private final PostExecutionMemoryRecorder memoryRecorder;
     private final TaskExecutor taskExecutor;
     private final boolean mcpParallelEnabled;
@@ -64,11 +65,42 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
     private final int maxLoops;
     private SearchPlanner searchPlanner;
     private ProceduralMemory proceduralMemory;
+    private DispatcherMemoryFacade proceduralMemoryFacade;
     private PlannerLearningStore plannerLearningStore;
     private PolicyUpdater policyUpdater;
     private AgentRouter agentRouter;
     private RecoveryManager recoveryManager;
     private TraceLogger traceLogger;
+
+    public DefaultDecisionOrchestrator(CandidatePlanner candidatePlanner,
+                                       ParamValidator paramValidator,
+                                       ConversationLoop conversationLoop,
+                                       FallbackPlan fallbackPlan,
+                                       SkillExecutionGateway skillExecutionGateway,
+                                       MemoryGateway memoryGateway,
+                                       PostExecutionMemoryRecorder memoryRecorder,
+                                       TaskExecutor taskExecutor,
+                                       @Value("${mindos.dispatcher.parallel-routing.enabled:false}") boolean mcpParallelEnabled,
+                                       @Value("${mindos.dispatcher.parallel-routing.per-skill-timeout-ms:2500}") long mcpPerSkillTimeoutMs,
+                                       @Value("${mindos.dispatcher.skill.timeout.eq-coach-im-ms:12000}") long eqCoachImTimeoutMs,
+                                       @Value("${mindos.dispatcher.skill.timeout.eq-coach-im-reply:我先给你一个简短结论：当前请求较复杂，我正在整理更完整建议，稍后继续发你。}") String eqCoachImTimeoutReply,
+                                       @Value("${mindos.dispatcher.orchestrator.max-loops:3}") int maxLoops) {
+        this(
+                candidatePlanner,
+                paramValidator,
+                conversationLoop,
+                fallbackPlan,
+                skillExecutionGateway,
+                new DispatcherMemoryFacade(memoryGateway, null, null),
+                memoryRecorder,
+                taskExecutor,
+                mcpParallelEnabled,
+                mcpPerSkillTimeoutMs,
+                eqCoachImTimeoutMs,
+                eqCoachImTimeoutReply,
+                maxLoops
+        );
+    }
 
     @Autowired
     public DefaultDecisionOrchestrator(CandidatePlanner candidatePlanner,
@@ -76,7 +108,7 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
                                        ConversationLoop conversationLoop,
                                        FallbackPlan fallbackPlan,
                                        SkillExecutionGateway skillExecutionGateway,
-                                       MemoryGateway memoryGateway,
+                                       DispatcherMemoryFacade dispatcherMemoryFacade,
                                        PostExecutionMemoryRecorder memoryRecorder,
                                        TaskExecutor taskExecutor,
                                        @Value("${mindos.dispatcher.parallel-routing.enabled:false}") boolean mcpParallelEnabled,
@@ -104,7 +136,7 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
                 this::isMcpSkill
         );
         this.taskGraphCoordinator = new TaskGraphCoordinator(
-                () -> this.proceduralMemory,
+                this::activeProcedureMemoryFacade,
                 () -> this.recoveryManager,
                 new TaskGraphCoordinator.TaskGraphBridge() {
                     @Override
@@ -183,7 +215,7 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
                 effectiveMcpPriorityOrder
         );
         this.skillExecutionGateway = skillExecutionGateway;
-        this.memoryGateway = memoryGateway;
+        this.dispatcherMemoryFacade = dispatcherMemoryFacade;
         this.memoryRecorder = memoryRecorder;
         this.taskExecutor = taskExecutor;
         this.mcpParallelEnabled = effectiveMcpParallelEnabled;
@@ -202,6 +234,9 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
     @Autowired(required = false)
     void setProceduralMemory(ProceduralMemory proceduralMemory) {
         this.proceduralMemory = proceduralMemory;
+        this.proceduralMemoryFacade = proceduralMemory == null
+                ? null
+                : new DispatcherMemoryFacade((com.zhongbo.mindos.assistant.memory.MemoryGateway) null, null, proceduralMemory);
     }
 
     @Autowired(required = false)
@@ -394,15 +429,19 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
     private java.util.Optional<ProceduralMemory.ReusableProcedure> matchReusableProcedure(Decision decision,
                                                                                           OrchestrationRequest request,
                                                                                           Map<String, Object> effectiveParams) {
-        if (proceduralMemory == null || decision == null) {
+        if (decision == null) {
             return java.util.Optional.empty();
         }
-        return proceduralMemory.matchReusableProcedure(
+        return activeProcedureMemoryFacade().matchReusableProcedure(
                 request == null ? "" : request.userId(),
                 request == null ? "" : request.userInput(),
                 decision.intent() == null || decision.intent().isBlank() ? decision.target() : decision.intent(),
                 effectiveParams
         );
+    }
+
+    private DispatcherMemoryFacade activeProcedureMemoryFacade() {
+        return proceduralMemoryFacade == null ? dispatcherMemoryFacade : proceduralMemoryFacade;
     }
 
     private OrchestrationOutcome orchestrateFastPath(Decision decision,

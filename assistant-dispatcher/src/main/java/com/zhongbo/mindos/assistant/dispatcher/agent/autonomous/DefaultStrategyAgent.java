@@ -1,6 +1,6 @@
 package com.zhongbo.mindos.assistant.dispatcher.agent.autonomous;
 
-import com.zhongbo.mindos.assistant.dispatcher.memory.AgentMemoryFacade;
+import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryFacade;
 import com.zhongbo.mindos.assistant.memory.MemoryGateway;
 import com.zhongbo.mindos.assistant.memory.model.ConversationTurn;
 import com.zhongbo.mindos.assistant.memory.model.ProceduralMemoryEntry;
@@ -25,8 +25,7 @@ public class DefaultStrategyAgent implements StrategyAgent {
     private static final List<String> FAILURE_KEYWORDS = List.of("失败", "错误", "异常", "重试", "重做", "卡住", "阻塞", "missing", "缺失", "校验", "validate", "error", "fail");
     private static final List<String> EFFICIENCY_KEYWORDS = List.of("重复", "手工", "耗时", "慢", "低效", "重复调整", "重复确认", "拖延", "效率", "manual", "slow", "delay");
 
-    private final MemoryGateway memoryGateway;
-    private final AgentMemoryFacade agentMemoryFacade;
+    private final DispatcherMemoryFacade dispatcherMemoryFacade;
     private final String semanticBucket;
     private final String proceduralSkillName;
     private final int historyWindow;
@@ -35,37 +34,24 @@ public class DefaultStrategyAgent implements StrategyAgent {
     private final int maxActions;
 
     public DefaultStrategyAgent() {
-        this.memoryGateway = null;
-        this.agentMemoryFacade = new AgentMemoryFacade(null, null, null);
-        this.semanticBucket = "strategy.longterm";
-        this.proceduralSkillName = "strategy.agent";
-        this.historyWindow = 8;
-        this.minHighFrequencyCount = 5;
-        this.minFailureCount = 3;
-        this.maxActions = 3;
+        this((DispatcherMemoryFacade) null, "strategy.longterm", "strategy.agent", 8, 5, 3, 3);
     }
 
     public DefaultStrategyAgent(MemoryGateway memoryGateway) {
-        this.memoryGateway = memoryGateway;
-        this.agentMemoryFacade = new AgentMemoryFacade(memoryGateway, null, null);
-        this.semanticBucket = "strategy.longterm";
-        this.proceduralSkillName = "strategy.agent";
-        this.historyWindow = 8;
-        this.minHighFrequencyCount = 5;
-        this.minFailureCount = 3;
-        this.maxActions = 3;
+        this(new DispatcherMemoryFacade(memoryGateway, null, null), "strategy.longterm", "strategy.agent", 8, 5, 3, 3);
     }
 
     @Autowired
-    public DefaultStrategyAgent(MemoryGateway memoryGateway,
+    public DefaultStrategyAgent(DispatcherMemoryFacade dispatcherMemoryFacade,
                                 @Value("${mindos.autonomous.strategy.semantic-bucket:strategy.longterm}") String semanticBucket,
                                 @Value("${mindos.autonomous.strategy.procedural-skill:strategy.agent}") String proceduralSkillName,
                                 @Value("${mindos.autonomous.strategy.recent-history-turns:8}") int historyWindow,
                                 @Value("${mindos.autonomous.strategy.min-high-frequency-count:5}") int minHighFrequencyCount,
                                 @Value("${mindos.autonomous.strategy.min-failure-count:3}") int minFailureCount,
                                 @Value("${mindos.autonomous.strategy.max-actions:3}") int maxActions) {
-        this.memoryGateway = memoryGateway;
-        this.agentMemoryFacade = new AgentMemoryFacade(memoryGateway, null, null);
+        this.dispatcherMemoryFacade = dispatcherMemoryFacade == null
+                ? new DispatcherMemoryFacade(null, null, null)
+                : dispatcherMemoryFacade;
         this.semanticBucket = normalizeText(semanticBucket).isBlank() ? "strategy.longterm" : semanticBucket.trim();
         this.proceduralSkillName = normalizeText(proceduralSkillName).isBlank() ? "strategy.agent" : proceduralSkillName.trim();
         this.historyWindow = Math.max(1, historyWindow);
@@ -110,8 +96,8 @@ public class DefaultStrategyAgent implements StrategyAgent {
     }
 
     private StrategySignals analyse(String userId) {
-        List<ConversationTurn> history = historyTail(memoryGateway == null ? List.of() : safeHistory(memoryGateway.recentHistory(userId)), historyWindow);
-        List<SkillUsageStats> stats = safeStats(memoryGateway == null ? List.of() : memoryGateway.skillUsageStats(userId));
+        List<ConversationTurn> history = historyTail(safeHistory(dispatcherMemoryFacade.recentHistory(userId)), historyWindow);
+        List<SkillUsageStats> stats = safeStats(dispatcherMemoryFacade.getSkillUsageStats(userId));
 
         int scheduleMentions = countMentions(history, SCHEDULE_KEYWORDS);
         int failureMentions = countMentions(history, FAILURE_KEYWORDS);
@@ -256,8 +242,8 @@ public class DefaultStrategyAgent implements StrategyAgent {
             return;
         }
         String summary = buildSemanticText(goal, signals);
-        agentMemoryFacade.writeSemantic(userId, summary, buildEmbedding(goal, signals), semanticBucket);
-        agentMemoryFacade.writeProcedural(userId, ProceduralMemoryEntry.of(proceduralSkillName, summary, true));
+        dispatcherMemoryFacade.writeSemantic(userId, summary, buildEmbedding(goal, signals), semanticBucket);
+        dispatcherMemoryFacade.writeProcedural(userId, ProceduralMemoryEntry.of(proceduralSkillName, summary, true));
     }
 
     private String buildSemanticText(StrategicGoal goal, StrategySignals signals) {

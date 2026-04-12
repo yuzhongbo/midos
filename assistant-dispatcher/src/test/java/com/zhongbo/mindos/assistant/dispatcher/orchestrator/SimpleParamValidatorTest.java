@@ -1,6 +1,8 @@
 package com.zhongbo.mindos.assistant.dispatcher.orchestrator;
 
 import com.zhongbo.mindos.assistant.common.SkillContext;
+import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryFacade;
+import com.zhongbo.mindos.assistant.memory.MemoryFacade;
 import com.zhongbo.mindos.assistant.memory.MemoryGateway;
 import com.zhongbo.mindos.assistant.memory.graph.GraphMemory;
 import com.zhongbo.mindos.assistant.memory.graph.MemoryEdge;
@@ -31,8 +33,7 @@ class SimpleParamValidatorTest {
         graphMemory.addNode("u1", new MemoryNode("entity:student:123", "entity.student", Map.of("studentId", "stu-123", "name", "Alice"), null, null));
         SimpleParamValidator validator = new SimpleParamValidator(
                 registry,
-                gateway(List.of()),
-                graphMemory
+                dispatcherMemoryFacade(gateway(List.of()), graphMemory)
         );
 
         ParamValidator.ValidationResult result = validator.validate(
@@ -53,8 +54,7 @@ class SimpleParamValidatorTest {
         registry.registerDefaults();
         SimpleParamValidator validator = new SimpleParamValidator(
                 registry,
-                gateway(List.of(ConversationTurn.user("帮我做个英语学习计划"))),
-                new GraphMemory()
+                dispatcherMemoryFacade(gateway(List.of(ConversationTurn.user("帮我做个英语学习计划"))), new GraphMemory())
         );
 
         ParamValidator.ValidationResult result = validator.validate(
@@ -78,7 +78,7 @@ class SimpleParamValidatorTest {
         graphMemory.addNode("u1", new MemoryNode("result:plan:latest", "result.plan", Map.of("status", "draft"), null, null));
         graphMemory.addEdge("u1", new MemoryEdge("event:lesson:latest", "entity:student:42", "about-student", 0.9, Map.of(), null));
         graphMemory.addEdge("u1", new MemoryEdge("result:plan:latest", "event:lesson:latest", "derived-from", 0.8, Map.of(), null));
-        SimpleParamValidator validator = new SimpleParamValidator(registry, gateway(List.of()), graphMemory);
+        SimpleParamValidator validator = new SimpleParamValidator(registry, dispatcherMemoryFacade(gateway(List.of()), graphMemory));
 
         ParamValidator.ValidationResult result = validator.validate(
                 "teaching.plan",
@@ -179,5 +179,9 @@ class SimpleParamValidatorTest {
                 return null;
             }
         };
+    }
+
+    private DispatcherMemoryFacade dispatcherMemoryFacade(MemoryGateway memoryGateway, GraphMemory graphMemory) {
+        return new DispatcherMemoryFacade(new MemoryFacade(graphMemory, null), memoryGateway, graphMemory, null);
     }
 }

@@ -1799,7 +1799,7 @@ class DispatcherServiceTest {
                 280
         );
         DecisionOrchestrator decisionOrchestrator = new DefaultDecisionOrchestrator(
-                new SimpleCandidatePlanner(skillEngine, memoryGateway, 3, 0.40, 0.35, 0.15, 0.10),
+                new SimpleCandidatePlanner(skillEngine, dispatcherMemoryFacade(memoryGateway), 3, 0.40, 0.35, 0.15, 0.10),
                 paramValidator,
                 new SimpleConversationLoop(),
                 new SimpleFallbackPlan(),
@@ -1933,7 +1933,7 @@ class DispatcherServiceTest {
                 280
         );
         DecisionOrchestrator decisionOrchestrator = new DefaultDecisionOrchestrator(
-                new SimpleCandidatePlanner(skillEngine, memoryGateway, 3, 0.40, 0.35, 0.15, 0.10),
+                new SimpleCandidatePlanner(skillEngine, dispatcherMemoryFacade(memoryGateway), 3, 0.40, 0.35, 0.15, 0.10),
                 paramValidator,
                 new SimpleConversationLoop(),
                 new SimpleFallbackPlan(),
@@ -2413,7 +2413,7 @@ class DispatcherServiceTest {
                 280
         );
         DecisionOrchestrator decisionOrchestrator = new DefaultDecisionOrchestrator(
-                new SimpleCandidatePlanner(skillEngine, memoryGateway, 3, 0.40, 0.35, 0.15, 0.10),
+                new SimpleCandidatePlanner(skillEngine, dispatcherMemoryFacade(memoryGateway), 3, 0.40, 0.35, 0.15, 0.10),
                 paramValidator,
                 new SimpleConversationLoop(),
                 new SimpleFallbackPlan(),
@@ -2558,7 +2558,7 @@ class DispatcherServiceTest {
                 280
         );
         DecisionOrchestrator decisionOrchestrator = new DefaultDecisionOrchestrator(
-                new SimpleCandidatePlanner(skillEngine, memoryGateway, 3, 0.40, 0.35, 0.15, 0.10),
+                new SimpleCandidatePlanner(skillEngine, dispatcherMemoryFacade(memoryGateway), 3, 0.40, 0.35, 0.15, 0.10),
                 paramValidator,
                 new SimpleConversationLoop(),
                 new SimpleFallbackPlan(),
@@ -2669,6 +2669,10 @@ class DispatcherServiceTest {
                 true, "天气,新闻,热点,实时", true, 280, true);
     }
 
+    private DispatcherMemoryFacade dispatcherMemoryFacade(MemoryGateway memoryGateway) {
+        return new DispatcherMemoryFacade(memoryGateway, null, null);
+    }
+
     private MemoryManager createMemoryManager() {
         MemoryConsolidationService consolidationService = new MemoryConsolidationService();
         EpisodicMemoryService episodicMemoryService = new EpisodicMemoryService();
@@ -2702,7 +2706,7 @@ class DispatcherServiceTest {
 
     private DecisionOrchestrator decisionOrchestratorProxy(MemoryGateway memoryGateway) {
         return new DefaultDecisionOrchestrator(
-                new SimpleCandidatePlanner(new SkillEngine(new SkillRegistry(List.of()), new SkillDslExecutor(new SkillRegistry(List.of()))), memoryGateway, 3, 0.40, 0.35, 0.15, 0.10),
+                new SimpleCandidatePlanner(new SkillEngine(new SkillRegistry(List.of()), new SkillDslExecutor(new SkillRegistry(List.of()))), dispatcherMemoryFacade(memoryGateway), 3, 0.40, 0.35, 0.15, 0.10),
                 new SimpleParamValidator(new InMemoryParamSchemaRegistry(), memoryGateway),
                 new SimpleConversationLoop(),
                 new SimpleFallbackPlan(),

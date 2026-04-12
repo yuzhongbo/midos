@@ -3,7 +3,7 @@ package com.zhongbo.mindos.assistant.dispatcher.agent.autonomous;
 import com.zhongbo.mindos.assistant.dispatcher.agent.multiagent.MasterOrchestrationResult;
 import com.zhongbo.mindos.assistant.dispatcher.agent.procedure.ProceduralMemory;
 import com.zhongbo.mindos.assistant.dispatcher.agent.procedure.Procedure;
-import com.zhongbo.mindos.assistant.dispatcher.memory.AgentMemoryFacade;
+import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryFacade;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.step5.PolicyUpdater;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.step5.RewardModel;
 import com.zhongbo.mindos.assistant.memory.MemoryGateway;
@@ -25,10 +25,9 @@ import java.util.Map;
 @Component
 public class DefaultMemoryEvolution implements MemoryEvolution {
 
-    private final MemoryGateway memoryGateway;
     private final GraphMemoryGateway graphMemoryGateway;
     private final ProceduralMemory proceduralMemory;
-    private final AgentMemoryFacade agentMemoryFacade;
+    private final DispatcherMemoryFacade dispatcherMemoryFacade;
     private final PolicyUpdater policyUpdater;
     private final ReflectionAgent reflectionAgent;
     private final String semanticBucket;
@@ -40,14 +39,14 @@ public class DefaultMemoryEvolution implements MemoryEvolution {
     private final int minProcedureReuseCount;
 
     public DefaultMemoryEvolution() {
-        this(null, null, null, null, null, "autonomous.evolution", 1800L, 1800L, 0.45d, 0.85d, 0.0d, 2);
+        this((DispatcherMemoryFacade) null, null, null, null, null, "autonomous.evolution", 1800L, 1800L, 0.45d, 0.85d, 0.0d, 2);
     }
 
     public DefaultMemoryEvolution(MemoryGateway memoryGateway,
                                   GraphMemoryGateway graphMemoryGateway,
                                   ProceduralMemory proceduralMemory,
                                   PolicyUpdater policyUpdater) {
-        this(memoryGateway, graphMemoryGateway, proceduralMemory, policyUpdater, null, "autonomous.evolution", 1800L, 1800L, 0.45d, 0.85d, 0.0d, 2);
+        this(new DispatcherMemoryFacade(memoryGateway, graphMemoryGateway, proceduralMemory), graphMemoryGateway, proceduralMemory, policyUpdater, null, "autonomous.evolution", 1800L, 1800L, 0.45d, 0.85d, 0.0d, 2);
     }
 
     public DefaultMemoryEvolution(MemoryGateway memoryGateway,
@@ -61,7 +60,7 @@ public class DefaultMemoryEvolution implements MemoryEvolution {
                                   double highSuccessRateThreshold,
                                   double pruneRewardThreshold,
                                   int minProcedureReuseCount) {
-        this(memoryGateway,
+        this(new DispatcherMemoryFacade(memoryGateway, graphMemoryGateway, proceduralMemory),
                 graphMemoryGateway,
                 proceduralMemory,
                 policyUpdater,
@@ -76,7 +75,7 @@ public class DefaultMemoryEvolution implements MemoryEvolution {
     }
 
     @Autowired
-    public DefaultMemoryEvolution(MemoryGateway memoryGateway,
+    public DefaultMemoryEvolution(DispatcherMemoryFacade dispatcherMemoryFacade,
                                   GraphMemoryGateway graphMemoryGateway,
                                   ProceduralMemory proceduralMemory,
                                   PolicyUpdater policyUpdater,
@@ -88,7 +87,7 @@ public class DefaultMemoryEvolution implements MemoryEvolution {
                                   @Value("${mindos.autonomous.memory.high-success-rate-threshold:0.85}") double highSuccessRateThreshold,
                                   @Value("${mindos.autonomous.memory.prune-reward-threshold:0.0}") double pruneRewardThreshold,
                                   @Value("${mindos.autonomous.memory.min-procedure-reuse-count:2}") int minProcedureReuseCount) {
-        this(memoryGateway,
+        this(dispatcherMemoryFacade,
                 graphMemoryGateway,
                 proceduralMemory,
                 policyUpdater,
@@ -102,7 +101,7 @@ public class DefaultMemoryEvolution implements MemoryEvolution {
                 Integer.valueOf(minProcedureReuseCount));
     }
 
-    public DefaultMemoryEvolution(MemoryGateway memoryGateway,
+    public DefaultMemoryEvolution(DispatcherMemoryFacade dispatcherMemoryFacade,
                                   GraphMemoryGateway graphMemoryGateway,
                                   ProceduralMemory proceduralMemory,
                                   PolicyUpdater policyUpdater,
@@ -114,10 +113,11 @@ public class DefaultMemoryEvolution implements MemoryEvolution {
                                   Double highSuccessRateThreshold,
                                   Double pruneRewardThreshold,
                                    Integer minProcedureReuseCount) {
-        this.memoryGateway = memoryGateway;
         this.graphMemoryGateway = graphMemoryGateway;
         this.proceduralMemory = proceduralMemory;
-        this.agentMemoryFacade = new AgentMemoryFacade(memoryGateway, graphMemoryGateway, proceduralMemory);
+        this.dispatcherMemoryFacade = dispatcherMemoryFacade == null
+                ? new DispatcherMemoryFacade(null, graphMemoryGateway, proceduralMemory)
+                : dispatcherMemoryFacade;
         this.policyUpdater = policyUpdater;
         this.reflectionAgent = reflectionAgent;
         this.semanticBucket = semanticBucket == null || semanticBucket.isBlank() ? "autonomous.evolution" : semanticBucket.trim();
@@ -171,7 +171,7 @@ public class DefaultMemoryEvolution implements MemoryEvolution {
         TaskGraph taskGraph = objectValue(sharedState.get("multiAgent.plan.graph"), TaskGraph.class);
         boolean procedureRecorded = false;
         if (safeEvaluation.success() && proceduralMemory != null && taskGraph != null && !taskGraph.isEmpty()) {
-            Procedure strengthenedProcedure = proceduralMemory.recordSuccess(
+            Procedure strengthenedProcedure = dispatcherMemoryFacade.recordProcedureSuccess(
                     safeUserId,
                     safeGoal.title(),
                     safeGoal.objective(),
@@ -235,18 +235,19 @@ public class DefaultMemoryEvolution implements MemoryEvolution {
                                          long durationMs,
                                          int tokenEstimate,
                                          int prunedProcedures) {
-        if (memoryGateway == null) {
+        if (!dispatcherMemoryFacade.hasRuntimeMemory()) {
             return false;
         }
         String summary = buildSummary(goal, evaluation, rewardModel, durationMs, tokenEstimate, prunedProcedures);
-        return agentMemoryFacade.writeSemantic(userId, summary, List.of(), semanticBucket);
+        dispatcherMemoryFacade.writeSemantic(userId, summary, List.of(), semanticBucket);
+        return true;
     }
 
     private boolean updateLongTask(String userId,
                                    AutonomousGoal goal,
                                    AutonomousEvaluation evaluation,
                                    String workerId) {
-        if (memoryGateway == null || goal == null || goal.type() != AutonomousGoalType.LONG_TASK) {
+        if (!dispatcherMemoryFacade.hasRuntimeMemory() || goal == null || goal.type() != AutonomousGoalType.LONG_TASK) {
             return false;
         }
         String taskId = stringValue(goal.params().get("taskId"));
@@ -260,7 +261,7 @@ public class DefaultMemoryEvolution implements MemoryEvolution {
                 ? ""
                 : firstNonBlank(evaluation == null ? "" : evaluation.nextAction(), note, "autonomous-loop-failure");
         Instant nextCheckAt = Instant.now().plusSeconds(nextCheckDelaySeconds);
-        return agentMemoryFacade.updateLongTaskProgress(
+        return dispatcherMemoryFacade.updateLongTaskProgress(
                 userId,
                 taskId,
                 firstNonBlank(workerId, "autonomous-loop"),
@@ -281,7 +282,7 @@ public class DefaultMemoryEvolution implements MemoryEvolution {
                                Map<String, Object> sharedState,
                                TaskGraph taskGraph,
                                int prunedProcedures) {
-        if (!agentMemoryFacade.hasGraphMemory() || goal == null || evaluation == null) {
+        if (!dispatcherMemoryFacade.hasGraphMemory() || goal == null || evaluation == null) {
             return false;
         }
         String goalNodeId = "autonomous:goal:" + sanitizeId(goal.goalId());
@@ -290,21 +291,21 @@ public class DefaultMemoryEvolution implements MemoryEvolution {
         String dagNodeId = "autonomous:dag:" + sanitizeId(goal.goalId());
 
         boolean success = evaluation.success();
-        agentMemoryFacade.upsertGraphNode(userId, new MemoryNode(
+        dispatcherMemoryFacade.upsertGraphNode(userId, new MemoryNode(
                 goalNodeId,
                 "autonomous.goal",
                 goalData(goal, rewardModel, sharedState),
                 Instant.now(),
                 Instant.now()
         ));
-        agentMemoryFacade.upsertGraphNode(userId, new MemoryNode(
+        dispatcherMemoryFacade.upsertGraphNode(userId, new MemoryNode(
                 evaluationNodeId,
                 "autonomous.evaluation",
                 evaluationData(goal, evaluation, rewardModel, durationMs, tokenEstimate),
                 Instant.now(),
                 Instant.now()
         ));
-        agentMemoryFacade.linkGraph(
+        dispatcherMemoryFacade.linkGraph(
                 userId,
                 goalNodeId,
                 "evaluated-by",
@@ -312,21 +313,21 @@ public class DefaultMemoryEvolution implements MemoryEvolution {
                 Math.max(0.0, Math.min(1.0, evaluation.score())),
                 Map.of("reward", rewardModel.reward(), "success", success)
         );
-        agentMemoryFacade.upsertGraphNode(userId, new MemoryNode(
+        dispatcherMemoryFacade.upsertGraphNode(userId, new MemoryNode(
                 strategyNodeId,
                 "autonomous.strategy",
                 strategyData(goal, evaluation, rewardModel),
                 Instant.now(),
                 Instant.now()
         ));
-        agentMemoryFacade.upsertGraphNode(userId, new MemoryNode(
+        dispatcherMemoryFacade.upsertGraphNode(userId, new MemoryNode(
                 dagNodeId,
                 "autonomous.dag",
                 dagData(goal, evaluation, rewardModel, taskGraph, prunedProcedures),
                 Instant.now(),
                 Instant.now()
         ));
-        agentMemoryFacade.linkGraph(
+        dispatcherMemoryFacade.linkGraph(
                 userId,
                 evaluationNodeId,
                 success ? "reinforces" : "weakens",
@@ -334,7 +335,7 @@ public class DefaultMemoryEvolution implements MemoryEvolution {
                 Math.max(0.1, rewardModel.normalizedReward()),
                 Map.of("goalId", goal.goalId(), "feedback", evaluation.feedback(), "routeType", rewardModel.routeType())
         );
-        agentMemoryFacade.linkGraph(
+        dispatcherMemoryFacade.linkGraph(
                 userId,
                 goalNodeId,
                 success ? "optimizes-dag" : "prunes-dag",

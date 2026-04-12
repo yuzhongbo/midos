@@ -6,6 +6,7 @@ import com.zhongbo.mindos.assistant.dispatcher.decision.Decision;
 import com.zhongbo.mindos.assistant.dispatcher.agent.procedure.InMemoryProcedureMemoryEngine;
 import com.zhongbo.mindos.assistant.dispatcher.agent.procedure.ProceduralMemory;
 import com.zhongbo.mindos.assistant.dispatcher.agent.taskgraph.TaskGraph;
+import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryFacade;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.step5.RecoveryAction;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.step5.RecoveryManager;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.step5.RecoveryManager.RecoveryReport;
@@ -32,7 +33,7 @@ class DefaultDecisionOrchestratorTest {
         InMemoryParamSchemaRegistry registry = new InMemoryParamSchemaRegistry();
         registry.registerDefaults();
         return new DefaultDecisionOrchestrator(
-                new SimpleCandidatePlanner(runtime.skillEngine(), noopGateway(), 3, 0.40, 0.35, 0.15, 0.10),
+                new SimpleCandidatePlanner(runtime.skillEngine(), dispatcherMemoryFacade(noopGateway()), 3, 0.40, 0.35, 0.15, 0.10),
                 new SimpleParamValidator(registry, noopGateway()),
                 new SimpleConversationLoop(),
                 new SimpleFallbackPlan(),
@@ -62,7 +63,7 @@ class DefaultDecisionOrchestratorTest {
         assertFalse(validation.valid());
         SkillRuntime emptyRuntime = simpleSkillRuntime(Map.of());
         DefaultDecisionOrchestrator orchestrator = new DefaultDecisionOrchestrator(
-                new SimpleCandidatePlanner(emptyRuntime.skillEngine(), noopGateway(), 3, 0.40, 0.35, 0.15, 0.10),
+                new SimpleCandidatePlanner(emptyRuntime.skillEngine(), dispatcherMemoryFacade(noopGateway()), 3, 0.40, 0.35, 0.15, 0.10),
                 validator,
                 new SimpleConversationLoop(),
                 new SimpleFallbackPlan(),
@@ -141,7 +142,7 @@ class DefaultDecisionOrchestratorTest {
                 null,
                 null
         ));
-        ParamValidator validator = new SimpleParamValidator(registry, noopGateway(), graphMemory);
+        ParamValidator validator = new SimpleParamValidator(registry, dispatcherMemoryFacade(noopGateway(), graphMemory));
         Skill retryingSkill = new Skill() {
             private int calls;
 
@@ -168,7 +169,7 @@ class DefaultDecisionOrchestratorTest {
         SkillDslExecutor dslExecutor = new SkillDslExecutor(skillRegistry);
         SkillEngine skillEngine = new SkillEngine(skillRegistry, dslExecutor);
         DefaultDecisionOrchestrator orchestrator = new DefaultDecisionOrchestrator(
-                new SimpleCandidatePlanner(skillEngine, gatewayWithHistory(List.of()), 3, 0.40, 0.35, 0.15, 0.10),
+                new SimpleCandidatePlanner(skillEngine, dispatcherMemoryFacade(gatewayWithHistory(List.of())), 3, 0.40, 0.35, 0.15, 0.10),
                 validator,
                 new SimpleConversationLoop(),
                 new SimpleFallbackPlan(),
@@ -232,7 +233,7 @@ class DefaultDecisionOrchestratorTest {
         SkillDslExecutor dslExecutor = new SkillDslExecutor(registry);
         SkillEngine skillEngine = new SkillEngine(registry, dslExecutor);
         DefaultDecisionOrchestrator orchestrator = new DefaultDecisionOrchestrator(
-                new SimpleCandidatePlanner(skillEngine, noopGateway(), 3, 0.40, 0.35, 0.15, 0.10),
+                new SimpleCandidatePlanner(skillEngine, dispatcherMemoryFacade(noopGateway()), 3, 0.40, 0.35, 0.15, 0.10),
                 new SimpleParamValidator(new InMemoryParamSchemaRegistry(), noopGateway()),
                 new SimpleConversationLoop(),
                 new SimpleFallbackPlan(),
@@ -300,7 +301,7 @@ class DefaultDecisionOrchestratorTest {
         SkillDslExecutor dslExecutor = new SkillDslExecutor(registry);
         SkillEngine skillEngine = new SkillEngine(registry, dslExecutor);
         DefaultDecisionOrchestrator orchestrator = new DefaultDecisionOrchestrator(
-                new SimpleCandidatePlanner(skillEngine, noopGateway(), 3, 0.40, 0.35, 0.15, 0.10),
+                new SimpleCandidatePlanner(skillEngine, dispatcherMemoryFacade(noopGateway()), 3, 0.40, 0.35, 0.15, 0.10),
                 new SimpleParamValidator(new InMemoryParamSchemaRegistry(), noopGateway()),
                 new SimpleConversationLoop(),
                 new SimpleFallbackPlan(),
@@ -384,7 +385,7 @@ class DefaultDecisionOrchestratorTest {
         SkillDslExecutor dslExecutor = new SkillDslExecutor(registry);
         SkillEngine skillEngine = new SkillEngine(registry, dslExecutor);
         DefaultDecisionOrchestrator orchestrator = new DefaultDecisionOrchestrator(
-                new SimpleCandidatePlanner(skillEngine, noopGateway(), 3, 0.40, 0.35, 0.15, 0.10),
+                new SimpleCandidatePlanner(skillEngine, dispatcherMemoryFacade(noopGateway()), 3, 0.40, 0.35, 0.15, 0.10),
                 new SimpleParamValidator(new InMemoryParamSchemaRegistry(), noopGateway()),
                 new SimpleConversationLoop(),
                 new SimpleFallbackPlan(),
@@ -611,7 +612,7 @@ class DefaultDecisionOrchestratorTest {
         SkillRegistry registry = new SkillRegistry(List.of(flaky));
         SkillDslExecutor dslExecutor = new SkillDslExecutor(registry);
         DefaultDecisionOrchestrator orchestrator = new DefaultDecisionOrchestrator(
-                new SimpleCandidatePlanner(new SkillEngine(registry, dslExecutor), noopGateway(), 3, 0.40, 0.35, 0.15, 0.10),
+                new SimpleCandidatePlanner(new SkillEngine(registry, dslExecutor), dispatcherMemoryFacade(noopGateway()), 3, 0.40, 0.35, 0.15, 0.10),
                 new SimpleParamValidator(new InMemoryParamSchemaRegistry(), noopGateway()),
                 new SimpleConversationLoop(),
                 new SimpleFallbackPlan(),
@@ -708,7 +709,7 @@ class DefaultDecisionOrchestratorTest {
         SkillRegistry registry = new SkillRegistry(List.of(primary, backup));
         SkillDslExecutor dslExecutor = new SkillDslExecutor(registry);
         DefaultDecisionOrchestrator orchestrator = new DefaultDecisionOrchestrator(
-                new SimpleCandidatePlanner(new SkillEngine(registry, dslExecutor), noopGateway(), 3, 0.40, 0.35, 0.15, 0.10),
+                new SimpleCandidatePlanner(new SkillEngine(registry, dslExecutor), dispatcherMemoryFacade(noopGateway()), 3, 0.40, 0.35, 0.15, 0.10),
                 new SimpleParamValidator(new InMemoryParamSchemaRegistry(), noopGateway()),
                 new SimpleConversationLoop(),
                 new SimpleFallbackPlan(),
@@ -936,6 +937,14 @@ class DefaultDecisionOrchestratorTest {
 
     private PostExecutionMemoryRecorder noopRecorder() {
         return new PostExecutionMemoryRecorder(noopGateway(), false, false, "", 280);
+    }
+
+    private DispatcherMemoryFacade dispatcherMemoryFacade(MemoryGateway memoryGateway) {
+        return new DispatcherMemoryFacade(memoryGateway, null, null);
+    }
+
+    private DispatcherMemoryFacade dispatcherMemoryFacade(MemoryGateway memoryGateway, GraphMemory graphMemory) {
+        return new DispatcherMemoryFacade(new com.zhongbo.mindos.assistant.memory.MemoryFacade(graphMemory, null), memoryGateway, graphMemory, null);
     }
 
     private MemoryGateway noopGateway() {

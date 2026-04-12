@@ -2,7 +2,7 @@ package com.zhongbo.mindos.assistant.dispatcher.agent.procedure;
 
 import com.zhongbo.mindos.assistant.dispatcher.agent.taskgraph.TaskGraph;
 import com.zhongbo.mindos.assistant.dispatcher.agent.taskgraph.TaskNode;
-import com.zhongbo.mindos.assistant.dispatcher.memory.AgentMemoryFacade;
+import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryFacade;
 import com.zhongbo.mindos.assistant.memory.graph.GraphMemoryGateway;
 import com.zhongbo.mindos.assistant.memory.graph.MemoryNode;
 
@@ -20,14 +20,14 @@ import org.springframework.stereotype.Component;
 public class InMemoryProcedureMemoryEngine implements ProcedureMemoryEngine {
 
     private final Map<String, Map<String, ProcedureTemplate>> templatesByUser = new ConcurrentHashMap<>();
-    private final AgentMemoryFacade agentMemoryFacade;
+    private final DispatcherMemoryFacade dispatcherMemoryFacade;
 
     public InMemoryProcedureMemoryEngine() {
         this(null);
     }
 
     public InMemoryProcedureMemoryEngine(GraphMemoryGateway graphMemoryGateway) {
-        this.agentMemoryFacade = new AgentMemoryFacade(null, graphMemoryGateway, null);
+        this.dispatcherMemoryFacade = new DispatcherMemoryFacade((com.zhongbo.mindos.assistant.memory.MemoryGateway) null, graphMemoryGateway, null);
     }
 
     @Override
@@ -59,8 +59,8 @@ public class InMemoryProcedureMemoryEngine implements ProcedureMemoryEngine {
                 contextAttributes == null ? Map.of() : Map.copyOf(contextAttributes)
         );
         userTemplates.put(templateId, template);
-        if (agentMemoryFacade.hasGraphMemory()) {
-            agentMemoryFacade.upsertGraphNode(userId, new MemoryNode(
+        if (dispatcherMemoryFacade.hasGraphMemory()) {
+            dispatcherMemoryFacade.upsertGraphNode(userId, new MemoryNode(
                     "procedure:" + templateId,
                     "procedure.template",
                     Map.of("name", template.intent(), "trigger", template.trigger(), "successRate", template.successRate(), "reuseCount", template.reuseCount()),
@@ -104,8 +104,8 @@ public class InMemoryProcedureMemoryEngine implements ProcedureMemoryEngine {
         if (removed == null) {
             return false;
         }
-        if (agentMemoryFacade.hasGraphMemory()) {
-            agentMemoryFacade.deleteGraphNode(userId, "procedure:" + normalizedProcedureId);
+        if (dispatcherMemoryFacade.hasGraphMemory()) {
+            dispatcherMemoryFacade.deleteGraphNode(userId, "procedure:" + normalizedProcedureId);
         }
         return true;
     }

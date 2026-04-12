@@ -2,9 +2,9 @@ package com.zhongbo.mindos.assistant.dispatcher.orchestrator;
 
 import com.zhongbo.mindos.assistant.common.SkillCostTelemetry;
 import com.zhongbo.mindos.assistant.common.dto.CostModel;
+import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryFacade;
+import com.zhongbo.mindos.assistant.dispatcher.agent.procedure.ProceduralMemory;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.step5.PlannerLearningStore;
-import com.zhongbo.mindos.assistant.memory.MemoryGateway;
-import com.zhongbo.mindos.assistant.memory.graph.GraphMemory;
 import com.zhongbo.mindos.assistant.memory.model.SkillUsageStats;
 import com.zhongbo.mindos.assistant.skill.SkillEngineFacade;
 import org.springframework.beans.factory.ObjectProvider;
@@ -26,8 +26,7 @@ public class AdaptiveCandidatePlanner implements CandidatePlanner {
     private static final double DEFAULT_MEMORY_SATURATION = 8.0;
 
     protected final SkillEngineFacade skillEngine;
-    protected final MemoryGateway memoryGateway;
-    protected final GraphMemory graphMemory;
+    protected final DispatcherMemoryFacade dispatcherMemoryFacade;
     protected final SkillCostTelemetry skillCostTelemetry;
     protected final PlannerLearningStore plannerLearningStore;
     protected final int maxCandidates;
@@ -40,45 +39,71 @@ public class AdaptiveCandidatePlanner implements CandidatePlanner {
     protected final double memorySaturation;
 
     public AdaptiveCandidatePlanner() {
-        this((SkillEngineFacade) null, (MemoryGateway) null, (GraphMemory) null, (SkillCostTelemetry) null, (PlannerLearningStore) null, 3, 0.40, 0.35, 0.15, 0.10, DEFAULT_LATENCY_WEIGHT, DEFAULT_LEARNING_RATE, DEFAULT_MEMORY_SATURATION);
+        this(
+                null,
+                new DispatcherMemoryFacade(null, null, (ProceduralMemory) null),
+                (SkillCostTelemetry) null,
+                (PlannerLearningStore) null,
+                3,
+                0.40,
+                0.35,
+                0.15,
+                0.10,
+                DEFAULT_LATENCY_WEIGHT,
+                DEFAULT_LEARNING_RATE,
+                DEFAULT_MEMORY_SATURATION
+        );
     }
 
     public AdaptiveCandidatePlanner(SkillEngineFacade skillEngine,
-                                    MemoryGateway memoryGateway,
+                                    DispatcherMemoryFacade dispatcherMemoryFacade,
                                     int maxCandidates,
                                     double explicitWeight,
                                     double keywordWeight,
                                     double memoryWeight,
                                     double successWeight) {
-        this(skillEngine, memoryGateway, null, (SkillCostTelemetry) null, (PlannerLearningStore) null, maxCandidates, explicitWeight, keywordWeight, memoryWeight, successWeight, DEFAULT_LATENCY_WEIGHT, DEFAULT_LEARNING_RATE, DEFAULT_MEMORY_SATURATION);
+        this(
+                skillEngine,
+                dispatcherMemoryFacade,
+                (SkillCostTelemetry) null,
+                (PlannerLearningStore) null,
+                maxCandidates,
+                explicitWeight,
+                keywordWeight,
+                memoryWeight,
+                successWeight,
+                DEFAULT_LATENCY_WEIGHT,
+                DEFAULT_LEARNING_RATE,
+                DEFAULT_MEMORY_SATURATION
+        );
     }
 
     public AdaptiveCandidatePlanner(SkillEngineFacade skillEngine,
-                                    MemoryGateway memoryGateway,
-                                    GraphMemory graphMemory,
-                                    int maxCandidates,
-                                    double explicitWeight,
-                                    double keywordWeight,
-                                    double memoryWeight,
-                                    double successWeight) {
-        this(skillEngine, memoryGateway, graphMemory, (SkillCostTelemetry) null, (PlannerLearningStore) null, maxCandidates, explicitWeight, keywordWeight, memoryWeight, successWeight, DEFAULT_LATENCY_WEIGHT, DEFAULT_LEARNING_RATE, DEFAULT_MEMORY_SATURATION);
-    }
-
-    public AdaptiveCandidatePlanner(SkillEngineFacade skillEngine,
-                                    MemoryGateway memoryGateway,
-                                    GraphMemory graphMemory,
+                                    DispatcherMemoryFacade dispatcherMemoryFacade,
                                     SkillCostTelemetry skillCostTelemetry,
                                     int maxCandidates,
                                     double explicitWeight,
                                     double keywordWeight,
                                     double memoryWeight,
                                     double successWeight) {
-        this(skillEngine, memoryGateway, graphMemory, skillCostTelemetry, null, maxCandidates, explicitWeight, keywordWeight, memoryWeight, successWeight, DEFAULT_LATENCY_WEIGHT, DEFAULT_LEARNING_RATE, DEFAULT_MEMORY_SATURATION);
+        this(
+                skillEngine,
+                dispatcherMemoryFacade,
+                skillCostTelemetry,
+                null,
+                maxCandidates,
+                explicitWeight,
+                keywordWeight,
+                memoryWeight,
+                successWeight,
+                DEFAULT_LATENCY_WEIGHT,
+                DEFAULT_LEARNING_RATE,
+                DEFAULT_MEMORY_SATURATION
+        );
     }
 
     protected AdaptiveCandidatePlanner(SkillEngineFacade skillEngine,
-                                       MemoryGateway memoryGateway,
-                                       GraphMemory graphMemory,
+                                       DispatcherMemoryFacade dispatcherMemoryFacade,
                                        SkillCostTelemetry skillCostTelemetry,
                                        PlannerLearningStore plannerLearningStore,
                                        int maxCandidates,
@@ -90,8 +115,9 @@ public class AdaptiveCandidatePlanner implements CandidatePlanner {
                                        double learningRate,
                                        double memorySaturation) {
         this.skillEngine = skillEngine;
-        this.memoryGateway = memoryGateway;
-        this.graphMemory = graphMemory;
+        this.dispatcherMemoryFacade = dispatcherMemoryFacade == null
+                ? new DispatcherMemoryFacade(null, null, (ProceduralMemory) null)
+                : dispatcherMemoryFacade;
         this.skillCostTelemetry = skillCostTelemetry;
         this.plannerLearningStore = plannerLearningStore;
         this.maxCandidates = Math.max(1, Math.min(3, maxCandidates));
@@ -106,8 +132,7 @@ public class AdaptiveCandidatePlanner implements CandidatePlanner {
 
     @Autowired
     public AdaptiveCandidatePlanner(SkillEngineFacade skillEngine,
-                                    MemoryGateway memoryGateway,
-                                    GraphMemory graphMemory,
+                                    DispatcherMemoryFacade dispatcherMemoryFacade,
                                     ObjectProvider<SkillCostTelemetry> skillCostTelemetryProvider,
                                     ObjectProvider<PlannerLearningStore> plannerLearningStoreProvider,
                                     @Value("${mindos.dispatcher.candidate-planner.max-candidates:3}") int maxCandidates,
@@ -118,7 +143,7 @@ public class AdaptiveCandidatePlanner implements CandidatePlanner {
                                     @Value("${mindos.dispatcher.candidate-planner.latency-weight:0.10}") double latencyWeight,
                                     @Value("${mindos.dispatcher.candidate-planner.learning-rate:0.18}") double learningRate,
                                     @Value("${mindos.dispatcher.candidate-planner.memory-saturation:8.0}") double memorySaturation) {
-        this(skillEngine, memoryGateway, graphMemory,
+        this(skillEngine, dispatcherMemoryFacade,
                 skillCostTelemetryProvider == null ? null : skillCostTelemetryProvider.getIfAvailable(),
                 plannerLearningStoreProvider == null ? null : plannerLearningStoreProvider.getIfAvailable(),
                 maxCandidates,
@@ -217,11 +242,11 @@ public class AdaptiveCandidatePlanner implements CandidatePlanner {
     }
 
     protected Map<String, SkillUsageStats> lookupUsageStats(String userId) {
-        if (memoryGateway == null || userId == null || userId.isBlank()) {
+        if (userId == null || userId.isBlank()) {
             return Map.of();
         }
         Map<String, SkillUsageStats> stats = new LinkedHashMap<>();
-        memoryGateway.skillUsageStats(userId).forEach(entry -> stats.put(entry.skillName(), entry));
+        dispatcherMemoryFacade.getSkillUsageStats(userId).forEach(entry -> stats.put(entry.skillName(), entry));
         return Map.copyOf(stats);
     }
 
@@ -257,7 +282,7 @@ public class AdaptiveCandidatePlanner implements CandidatePlanner {
                                                     Set<String> usageCandidates,
                                                     Set<String> costCandidates,
                                                     Set<String> latencyCandidates) {
-        if (graphMemory == null || userId == null || userId.isBlank()) {
+        if (userId == null || userId.isBlank()) {
             return Map.of();
         }
         List<String> candidateNames = new ArrayList<>();
@@ -276,7 +301,7 @@ public class AdaptiveCandidatePlanner implements CandidatePlanner {
         if (suggestedTarget != null && !suggestedTarget.isBlank()) {
             candidateNames.add(suggestedTarget);
         }
-        return graphMemory.scoreCandidates(userId, userInput, candidateNames);
+        return dispatcherMemoryFacade.scoreGraphCandidates(userId, userInput, candidateNames);
     }
 
     protected Map<String, CandidateAccumulator> buildCandidates(String suggestedTarget,

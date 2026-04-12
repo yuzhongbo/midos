@@ -2,9 +2,8 @@ package com.zhongbo.mindos.assistant.dispatcher.agent.multiagent;
 
 import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.dispatcher.agent.procedure.ProceduralMemory;
-import com.zhongbo.mindos.assistant.memory.MemoryFacade;
 import com.zhongbo.mindos.assistant.memory.MemoryGateway;
-import com.zhongbo.mindos.assistant.dispatcher.memory.AgentMemoryFacade;
+import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryFacade;
 import com.zhongbo.mindos.assistant.memory.graph.MemoryNode;
 import com.zhongbo.mindos.assistant.memory.model.ConversationTurn;
 import com.zhongbo.mindos.assistant.memory.model.SkillUsageStats;
@@ -24,19 +23,17 @@ import java.util.Set;
 @Component
 public class DefaultMemoryAgent implements MemoryAgent {
 
-    private final MemoryGateway memoryGateway;
-    private final MemoryFacade memoryFacade;
-    private final ProceduralMemory proceduralMemory;
-    private final AgentMemoryFacade agentMemoryFacade;
+    private final DispatcherMemoryFacade dispatcherMemoryFacade;
 
     @Autowired
+    public DefaultMemoryAgent(DispatcherMemoryFacade dispatcherMemoryFacade) {
+        this.dispatcherMemoryFacade = dispatcherMemoryFacade;
+    }
+
     public DefaultMemoryAgent(MemoryGateway memoryGateway,
-                              MemoryFacade memoryFacade,
+                              com.zhongbo.mindos.assistant.memory.MemoryFacade memoryFacade,
                               ProceduralMemory proceduralMemory) {
-        this.memoryGateway = memoryGateway;
-        this.memoryFacade = memoryFacade;
-        this.proceduralMemory = proceduralMemory;
-        this.agentMemoryFacade = new AgentMemoryFacade(memoryGateway, null, proceduralMemory);
+        this(new DispatcherMemoryFacade(memoryFacade, memoryGateway, null, proceduralMemory));
     }
 
     @Override
@@ -89,12 +86,12 @@ public class DefaultMemoryAgent implements MemoryAgent {
             keysToInfer.add(focusKey);
         }
 
-        List<ConversationTurn> recentHistory = memoryGateway == null ? List.of() : memoryGateway.recentHistory(userId);
-        List<SkillUsageStats> skillUsageStats = memoryGateway == null ? List.of() : memoryGateway.skillUsageStats(userId);
-        List<MemoryNode> relatedNodes = memoryFacade == null || focusKey.isBlank() ? List.of() : memoryFacade.queryRelated(userId, focusKey);
+        List<ConversationTurn> recentHistory = dispatcherMemoryFacade.recentHistory(userId);
+        List<SkillUsageStats> skillUsageStats = dispatcherMemoryFacade.getSkillUsageStats(userId);
+        List<MemoryNode> relatedNodes = focusKey.isBlank() ? List.of() : dispatcherMemoryFacade.queryRelated(userId, focusKey);
         List<ProceduralMemory.ReusableProcedure> reusableProcedures = new ArrayList<>();
-        if (proceduralMemory != null && !focusKey.isBlank()) {
-            proceduralMemory.matchReusableProcedure(
+        if (!focusKey.isBlank()) {
+            dispatcherMemoryFacade.matchReusableProcedure(
                     userId,
                     context.userInput(),
                     focusKey,
@@ -107,10 +104,8 @@ public class DefaultMemoryAgent implements MemoryAgent {
             if (key == null || key.isBlank() || inferredFacts.containsKey(key)) {
                 continue;
             }
-            if (memoryFacade != null) {
-                Optional<Object> inferred = memoryFacade.infer(userId, key, context.userInput());
-                inferred.ifPresent(value -> inferredFacts.put(key, value));
-            }
+            Optional<Object> inferred = dispatcherMemoryFacade.infer(userId, key, context.userInput());
+            inferred.ifPresent(value -> inferredFacts.put(key, value));
         }
 
         SharedMemorySnapshot snapshot = new SharedMemorySnapshot(
@@ -158,15 +153,15 @@ public class DefaultMemoryAgent implements MemoryAgent {
 
         if (result != null) {
             if ("skill-usage".equalsIgnoreCase(kind)) {
-                agentMemoryFacade.recordSkillUsage(userId, skillName, trigger, success);
+                dispatcherMemoryFacade.recordSkillUsage(userId, skillName, trigger, success);
                 if (result.output() != null && !result.output().isBlank()) {
-                    agentMemoryFacade.appendAssistantConversation(userId, result.output());
+                    dispatcherMemoryFacade.appendAssistantConversation(userId, result.output());
                 }
             }
         }
 
         if ("procedure".equalsIgnoreCase(kind) && success && graph != null) {
-            agentMemoryFacade.recordProcedureSuccess(userId, intent, trigger, graph, contextAttributes);
+            dispatcherMemoryFacade.recordProcedureSuccess(userId, intent, trigger, graph, contextAttributes);
         }
 
         Map<String, Object> patch = new LinkedHashMap<>();

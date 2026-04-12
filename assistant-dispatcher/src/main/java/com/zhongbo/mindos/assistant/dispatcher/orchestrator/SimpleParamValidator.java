@@ -1,9 +1,8 @@
 package com.zhongbo.mindos.assistant.dispatcher.orchestrator;
 
 import com.zhongbo.mindos.assistant.common.SkillResult;
-import com.zhongbo.mindos.assistant.memory.MemoryFacade;
+import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryFacade;
 import com.zhongbo.mindos.assistant.memory.MemoryGateway;
-import com.zhongbo.mindos.assistant.memory.graph.GraphMemory;
 import com.zhongbo.mindos.assistant.memory.model.ConversationTurn;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -31,26 +30,22 @@ public class SimpleParamValidator implements ParamValidator {
     private static final Pattern MISSING_PARAMS_PATTERN = Pattern.compile("(?:缺少必填参数|至少需要提供以下参数之一):\\s*([^。\\n]+)");
 
     private final ParamSchemaRegistry registry;
-    private final MemoryGateway memoryGateway;
-    private final MemoryFacade memoryFacade;
+    private final DispatcherMemoryFacade dispatcherMemoryFacade;
 
     public SimpleParamValidator(ParamSchemaRegistry registry) {
-        this(registry, null, (MemoryFacade) null);
+        this(registry, new DispatcherMemoryFacade(null, null, null));
     }
 
     public SimpleParamValidator(ParamSchemaRegistry registry, MemoryGateway memoryGateway) {
-        this(registry, memoryGateway, (MemoryFacade) null);
+        this(registry, new DispatcherMemoryFacade(memoryGateway, null, null));
     }
 
     @Autowired
-    public SimpleParamValidator(ParamSchemaRegistry registry, MemoryGateway memoryGateway, MemoryFacade memoryFacade) {
+    public SimpleParamValidator(ParamSchemaRegistry registry, DispatcherMemoryFacade dispatcherMemoryFacade) {
         this.registry = registry;
-        this.memoryGateway = memoryGateway;
-        this.memoryFacade = memoryFacade;
-    }
-
-    public SimpleParamValidator(ParamSchemaRegistry registry, MemoryGateway memoryGateway, GraphMemory graphMemory) {
-        this(registry, memoryGateway, graphMemory == null ? null : new MemoryFacade(graphMemory, null));
+        this.dispatcherMemoryFacade = dispatcherMemoryFacade == null
+                ? new DispatcherMemoryFacade(null, null, null)
+                : dispatcherMemoryFacade;
     }
 
     @Override
@@ -59,6 +54,10 @@ public class SimpleParamValidator implements ParamValidator {
                                      DecisionOrchestrator.OrchestrationRequest request) {
         if (target == null || target.isBlank()) {
             return ValidationResult.error("missing target");
+        }
+        ValidationResult targetValidation = validateTarget(target);
+        if (!targetValidation.valid()) {
+            return targetValidation;
         }
         Map<String, Object> safeParams = params == null ? Map.of() : params;
         Optional<ParamSchema> schema = registry.find(target);
@@ -76,11 +75,26 @@ public class SimpleParamValidator implements ParamValidator {
         if (target == null || target.isBlank()) {
             return ValidationResult.error("missing target");
         }
+        ValidationResult targetValidation = validateTarget(target);
+        if (!targetValidation.valid()) {
+            return targetValidation;
+        }
         Optional<ParamSchema> schema = registry.find(target);
         if (schema.isEmpty()) {
             return validate(target, params, request);
         }
         return validateAgainstSchema(target, schema.get(), params == null ? Map.of() : params, request, parseMissingKeys(failure));
+    }
+
+    private ValidationResult validateTarget(String target) {
+        if (target == null || target.isBlank() || !target.startsWith("mcp.")) {
+            return ValidationResult.ok();
+        }
+        String[] parts = target.split("\\.");
+        if (parts.length < 3 || parts[1].isBlank() || parts[2].isBlank()) {
+            return ValidationResult.error("MCP 名称需为 mcp.<alias>.<tool>");
+        }
+        return ValidationResult.ok();
     }
 
     private ValidationResult validateAgainstSchema(String target,
@@ -143,7 +157,7 @@ public class SimpleParamValidator implements ParamValidator {
                                                   Map<String, Object> currentParams,
                                                   DecisionOrchestrator.OrchestrationRequest request,
                                                   Set<String> extraRequired) {
-        if (request == null || request.userId() == null || request.userId().isBlank() || memoryFacade == null) {
+        if (request == null || request.userId() == null || request.userId().isBlank()) {
             return Map.of();
         }
         Map<String, Object> resolved = new LinkedHashMap<>();
@@ -152,7 +166,7 @@ public class SimpleParamValidator implements ParamValidator {
             if (hasValue(currentParams, key)) {
                 continue;
             }
-            memoryFacade.infer(request.userId(), key, request.userInput(), () -> Optional.ofNullable(schema.defaults().get(key)))
+            dispatcherMemoryFacade.infer(request.userId(), key, request.userInput())
                     .ifPresent(value -> resolved.put(key, value));
         }
         return resolved;

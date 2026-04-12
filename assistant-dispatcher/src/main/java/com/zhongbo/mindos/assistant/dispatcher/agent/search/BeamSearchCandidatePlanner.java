@@ -2,8 +2,7 @@ package com.zhongbo.mindos.assistant.dispatcher.agent.search;
 
 import com.zhongbo.mindos.assistant.dispatcher.agent.procedure.ProcedureMatch;
 import com.zhongbo.mindos.assistant.dispatcher.agent.procedure.ProcedureMemoryEngine;
-import com.zhongbo.mindos.assistant.memory.MemoryGateway;
-import com.zhongbo.mindos.assistant.memory.graph.GraphMemoryView;
+import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryFacade;
 import com.zhongbo.mindos.assistant.memory.graph.MemoryNode;
 import com.zhongbo.mindos.assistant.memory.model.SkillUsageStats;
 import com.zhongbo.mindos.assistant.skill.SkillEngineFacade;
@@ -24,17 +23,14 @@ public class BeamSearchCandidatePlanner implements SearchPlanner {
     private static final double PATH_COST_WEIGHT = 0.15;
 
     private final SkillEngineFacade skillEngine;
-    private final MemoryGateway memoryGateway;
-    private final GraphMemoryView graphMemoryView;
+    private final DispatcherMemoryFacade dispatcherMemoryFacade;
     private final ProcedureMemoryEngine procedureMemoryEngine;
 
     public BeamSearchCandidatePlanner(SkillEngineFacade skillEngine,
-                                      MemoryGateway memoryGateway,
-                                      GraphMemoryView graphMemoryView,
+                                      DispatcherMemoryFacade dispatcherMemoryFacade,
                                       ProcedureMemoryEngine procedureMemoryEngine) {
         this.skillEngine = skillEngine;
-        this.memoryGateway = memoryGateway;
-        this.graphMemoryView = graphMemoryView;
+        this.dispatcherMemoryFacade = dispatcherMemoryFacade;
         this.procedureMemoryEngine = procedureMemoryEngine;
     }
 
@@ -80,15 +76,15 @@ public class BeamSearchCandidatePlanner implements SearchPlanner {
             skillEngine.detectSkillCandidates(request.userInput(), request.beamWidth() * 3).forEach(candidate ->
                     signals.computeIfAbsent(candidate.skillName(), CandidateSignal::new).mergeKeyword(normalize(candidate.score(), 1000.0), "keyword-score"));
         }
-        if (memoryGateway != null && !request.userId().isBlank()) {
-            for (SkillUsageStats stats : memoryGateway.skillUsageStats(request.userId())) {
+        if (!request.userId().isBlank()) {
+            for (SkillUsageStats stats : dispatcherMemoryFacade.getSkillUsageStats(request.userId())) {
                 CandidateSignal signal = signals.computeIfAbsent(stats.skillName(), CandidateSignal::new);
                 signal.mergeSuccessRate(normalize(stats.successCount(), Math.max(1.0, stats.totalCount())), "success-rate");
                 signal.mergeMemory(normalize(stats.totalCount(), maxUsageCount(request.userId())), "memory-usage");
             }
         }
-        if (graphMemoryView != null && !request.userInput().isBlank()) {
-            for (MemoryNode node : graphMemoryView.searchNodes(request.userId(), request.userInput(), request.beamWidth() * 2)) {
+        if (!request.userInput().isBlank()) {
+            for (MemoryNode node : dispatcherMemoryFacade.searchGraphNodes(request.userId(), request.userInput(), request.beamWidth() * 2)) {
                 String candidate = extractCandidateFromNode(node);
                 if (!candidate.isBlank()) {
                     signals.computeIfAbsent(candidate, CandidateSignal::new).mergeMemory(0.72, "graph-memory");
@@ -148,10 +144,10 @@ public class BeamSearchCandidatePlanner implements SearchPlanner {
     }
 
     private long maxUsageCount(String userId) {
-        if (memoryGateway == null || userId == null || userId.isBlank()) {
+        if (userId == null || userId.isBlank()) {
             return 1L;
         }
-        return Math.max(1L, memoryGateway.skillUsageStats(userId).stream()
+        return Math.max(1L, dispatcherMemoryFacade.getSkillUsageStats(userId).stream()
                 .mapToLong(SkillUsageStats::totalCount)
                 .max()
                 .orElse(1L));

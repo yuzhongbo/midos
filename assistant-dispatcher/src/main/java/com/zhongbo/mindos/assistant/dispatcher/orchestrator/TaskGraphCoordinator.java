@@ -6,12 +6,12 @@ import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.common.dto.CritiqueReportDto;
 import com.zhongbo.mindos.assistant.common.dto.ExecutionTraceDto;
 import com.zhongbo.mindos.assistant.common.dto.PlanStepDto;
-import com.zhongbo.mindos.assistant.dispatcher.agent.procedure.ProceduralMemory;
 import com.zhongbo.mindos.assistant.dispatcher.agent.taskgraph.DAGExecutor;
 import com.zhongbo.mindos.assistant.dispatcher.agent.taskgraph.TaskGraph;
 import com.zhongbo.mindos.assistant.dispatcher.agent.taskgraph.TaskGraphExecutionResult;
 import com.zhongbo.mindos.assistant.dispatcher.agent.taskgraph.TaskNode;
 import com.zhongbo.mindos.assistant.dispatcher.decision.Decision;
+import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryFacade;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.DecisionOrchestrator.OrchestrationOutcome;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.DecisionOrchestrator.OrchestrationRequest;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.step5.RecoveryAction;
@@ -25,15 +25,15 @@ import java.util.function.Supplier;
 
 final class TaskGraphCoordinator {
 
-    private final Supplier<ProceduralMemory> proceduralMemorySupplier;
+    private final Supplier<DispatcherMemoryFacade> memoryFacadeSupplier;
     private final Supplier<RecoveryManager> recoveryManagerSupplier;
     private final TaskGraphBridge bridge;
     private final DAGExecutor dagExecutor = new DAGExecutor();
 
-    TaskGraphCoordinator(Supplier<ProceduralMemory> proceduralMemorySupplier,
+    TaskGraphCoordinator(Supplier<DispatcherMemoryFacade> memoryFacadeSupplier,
                          Supplier<RecoveryManager> recoveryManagerSupplier,
                          TaskGraphBridge bridge) {
-        this.proceduralMemorySupplier = proceduralMemorySupplier;
+        this.memoryFacadeSupplier = memoryFacadeSupplier;
         this.recoveryManagerSupplier = recoveryManagerSupplier;
         this.bridge = bridge;
     }
@@ -125,9 +125,9 @@ final class TaskGraphCoordinator {
                 }
             }
         }
-        ProceduralMemory proceduralMemory = proceduralMemorySupplier.get();
-        if (taskResult.finalResult().success() && proceduralMemory != null) {
-            proceduralMemory.recordSuccess(
+        DispatcherMemoryFacade dispatcherMemoryFacade = memoryFacadeSupplier.get();
+        if (taskResult.finalResult().success() && dispatcherMemoryFacade != null) {
+            dispatcherMemoryFacade.recordProcedureSuccess(
                     request == null ? "" : request.userId(),
                     intent == null || intent.isBlank() ? taskResult.finalResult().skillName() : intent,
                     trigger == null ? "" : trigger,

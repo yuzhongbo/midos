@@ -1,5 +1,6 @@
 package com.zhongbo.mindos.assistant.dispatcher.agent.autonomous;
 
+import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryFacade;
 import com.zhongbo.mindos.assistant.memory.LongTaskService;
 import com.zhongbo.mindos.assistant.memory.MemoryGateway;
 import com.zhongbo.mindos.assistant.memory.model.ConversationTurn;
@@ -22,35 +23,45 @@ import java.util.Map;
 @Component
 public class DefaultGoalGenerator implements GoalGenerator {
 
-    private final MemoryGateway memoryGateway;
+    private final DispatcherMemoryFacade dispatcherMemoryFacade;
     private final LongTaskService longTaskService;
     private final StrategyAgent strategyAgent;
     private final int maxGoals;
     private final int recentHistoryTurns;
 
     public DefaultGoalGenerator() {
-        this(null, null, null, 5, 6);
+        this((DispatcherMemoryFacade) null, null, null, 5, 6);
     }
 
     public DefaultGoalGenerator(MemoryGateway memoryGateway,
                                 LongTaskService longTaskService) {
-        this(memoryGateway, longTaskService, null, 5, 6);
+        this(new DispatcherMemoryFacade(memoryGateway, null, null), longTaskService, null, 5, 6);
     }
 
     public DefaultGoalGenerator(MemoryGateway memoryGateway,
                                 LongTaskService longTaskService,
                                 int maxGoals,
                                 int recentHistoryTurns) {
-        this(memoryGateway, longTaskService, null, maxGoals, recentHistoryTurns);
+        this(new DispatcherMemoryFacade(memoryGateway, null, null), longTaskService, null, maxGoals, recentHistoryTurns);
+    }
+
+    public DefaultGoalGenerator(MemoryGateway memoryGateway,
+                                LongTaskService longTaskService,
+                                StrategyAgent strategyAgent,
+                                int maxGoals,
+                                int recentHistoryTurns) {
+        this(new DispatcherMemoryFacade(memoryGateway, null, null), longTaskService, strategyAgent, maxGoals, recentHistoryTurns);
     }
 
     @Autowired
-    public DefaultGoalGenerator(MemoryGateway memoryGateway,
+    public DefaultGoalGenerator(DispatcherMemoryFacade dispatcherMemoryFacade,
                                 LongTaskService longTaskService,
                                 StrategyAgent strategyAgent,
                                 @Value("${mindos.autonomous.goal.max-goals:5}") int maxGoals,
                                 @Value("${mindos.autonomous.goal.recent-history-turns:6}") int recentHistoryTurns) {
-        this.memoryGateway = memoryGateway;
+        this.dispatcherMemoryFacade = dispatcherMemoryFacade == null
+                ? new DispatcherMemoryFacade(null, null, null)
+                : dispatcherMemoryFacade;
         this.longTaskService = longTaskService;
         this.strategyAgent = strategyAgent;
         this.maxGoals = Math.max(1, maxGoals);
@@ -184,10 +195,7 @@ public class DefaultGoalGenerator implements GoalGenerator {
     }
 
     private List<AutonomousGoal> generateSkillRecoveryGoals(String userId) {
-        if (memoryGateway == null) {
-            return List.of();
-        }
-        List<SkillUsageStats> statsList = memoryGateway.skillUsageStats(userId);
+        List<SkillUsageStats> statsList = dispatcherMemoryFacade.getSkillUsageStats(userId);
         if (statsList == null || statsList.isEmpty()) {
             return List.of();
         }
@@ -230,10 +238,7 @@ public class DefaultGoalGenerator implements GoalGenerator {
     }
 
     private List<AutonomousGoal> generateBehaviorOptimizationGoals(String userId) {
-        if (memoryGateway == null) {
-            return List.of();
-        }
-        List<SkillUsageStats> statsList = memoryGateway.skillUsageStats(userId);
+        List<SkillUsageStats> statsList = dispatcherMemoryFacade.getSkillUsageStats(userId);
         if (statsList == null || statsList.isEmpty()) {
             return List.of();
         }
@@ -279,10 +284,7 @@ public class DefaultGoalGenerator implements GoalGenerator {
     }
 
     private List<AutonomousGoal> generateMemoryReviewGoals(String userId) {
-        if (memoryGateway == null) {
-            return List.of();
-        }
-        List<ConversationTurn> history = memoryGateway.recentHistory(userId);
+        List<ConversationTurn> history = dispatcherMemoryFacade.recentHistory(userId);
         if (history == null || history.isEmpty()) {
             return List.of();
         }

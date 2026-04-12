@@ -97,6 +97,7 @@ public class GraphMemoryService implements GraphMemoryView, GraphMemoryGateway {
         return matches.stream().findFirst().map(InferenceCandidate::value);
     }
 
+    @Override
     public Map<String, Double> scoreCandidates(String userId, String userInput, List<String> candidateNames) {
         if (candidateNames == null || candidateNames.isEmpty()) {
             return Map.of();

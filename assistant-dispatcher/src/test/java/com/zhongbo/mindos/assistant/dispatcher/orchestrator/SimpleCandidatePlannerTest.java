@@ -3,6 +3,7 @@ package com.zhongbo.mindos.assistant.dispatcher.orchestrator;
 import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.common.SkillCostTelemetry;
 import com.zhongbo.mindos.assistant.common.dto.CostModel;
+import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryFacade;
 import com.zhongbo.mindos.assistant.memory.MemoryGateway;
 import com.zhongbo.mindos.assistant.memory.graph.GraphMemory;
 import com.zhongbo.mindos.assistant.memory.graph.MemoryNode;
@@ -47,7 +48,15 @@ class SimpleCandidatePlannerTest {
         );
         GraphMemory graphMemory = new GraphMemory();
         graphMemory.addNode("u1", new MemoryNode("skill:qwen", "result.skill", Map.of("name", "Qwen Search", "skillName", "mcp.qwensearch.webSearch", "topic", "今天新闻"), null, null));
-        SimpleCandidatePlanner planner = new SimpleCandidatePlanner(skillEngine, memoryGateway, graphMemory, 3, 0.40, 0.35, 0.15, 0.10);
+        SimpleCandidatePlanner planner = new SimpleCandidatePlanner(
+                skillEngine,
+                new DispatcherMemoryFacade(memoryGateway, graphMemory, null),
+                3,
+                0.40,
+                0.35,
+                0.15,
+                0.10
+        );
 
         List<ScoredCandidate> candidates = planner.plan(
                 "",
@@ -87,7 +96,16 @@ class SimpleCandidatePlannerTest {
                 );
             }
         };
-        SimpleCandidatePlanner planner = new SimpleCandidatePlanner(skillEngine, memoryGateway, graphMemory, telemetry, 3, 0.40, 0.35, 0.15, 0.10);
+        SimpleCandidatePlanner planner = new SimpleCandidatePlanner(
+                skillEngine,
+                new DispatcherMemoryFacade(memoryGateway, graphMemory, null),
+                telemetry,
+                3,
+                0.40,
+                0.35,
+                0.15,
+                0.10
+        );
 
         List<ScoredCandidate> candidates = planner.plan(
                 "",
@@ -116,7 +134,17 @@ class SimpleCandidatePlannerTest {
         InMemoryPlannerLearningStore learningStore = new InMemoryPlannerLearningStore();
         learningStore.observe("u1", "skill.good", "local", true, 120L, 24, false, 1.0);
         learningStore.observe("u1", "skill.bad", "local", true, 120L, 24, false, -1.0);
-        SimpleCandidatePlanner planner = new SimpleCandidatePlanner(skillEngine, memoryGateway, graphMemory, null, learningStore, 3, 0.40, 0.35, 0.15, 0.10);
+        SimpleCandidatePlanner planner = new SimpleCandidatePlanner(
+                skillEngine,
+                new DispatcherMemoryFacade(memoryGateway, graphMemory, null),
+                null,
+                learningStore,
+                3,
+                0.40,
+                0.35,
+                0.15,
+                0.10
+        );
 
         List<ScoredCandidate> candidates = planner.plan(
                 "",
