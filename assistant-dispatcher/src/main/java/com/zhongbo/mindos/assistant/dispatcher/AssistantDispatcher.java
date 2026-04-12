@@ -8,14 +8,14 @@ import java.util.concurrent.CompletableFuture;
 @Service
 public class AssistantDispatcher {
 
-    private final DispatcherService dispatcherService;
+    private final DispatcherFacade dispatcherService;
 
-    public AssistantDispatcher(DispatcherService dispatcherService) {
+    public AssistantDispatcher(DispatcherFacade dispatcherService) {
         this.dispatcherService = dispatcherService;
     }
 
     public DispatchResult dispatch(String userId, String input) {
-        return dispatcherService.dispatch(userId, input);
+        return dispatcherService.dispatch(userId, input, Map.of());
     }
 
     public DispatchResult dispatchMultiAgent(String userId, String input) {
@@ -23,7 +23,7 @@ public class AssistantDispatcher {
     }
 
     public CompletableFuture<DispatchResult> dispatchAsync(String userId, String input) {
-        return dispatcherService.dispatchAsync(userId, input);
+        return dispatcherService.dispatchAsync(userId, input, Map.of());
     }
 
     public CompletableFuture<DispatchResult> dispatchMultiAgentAsync(String userId, String input) {

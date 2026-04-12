@@ -1,6 +1,6 @@
 package com.zhongbo.mindos.assistant.api;
 
-import com.zhongbo.mindos.assistant.dispatcher.DispatcherService;
+import com.zhongbo.mindos.assistant.dispatcher.DispatcherFacade;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -10,10 +10,10 @@ import java.util.Map;
 @RestController
 public class ReadinessController {
 
-    private final DispatcherService dispatcherService;
+    private final DispatcherFacade dispatcherService;
     private final InflightRequestTracker tracker;
 
-    public ReadinessController(DispatcherService dispatcherService, InflightRequestTracker tracker) {
+    public ReadinessController(DispatcherFacade dispatcherService, InflightRequestTracker tracker) {
         this.dispatcherService = dispatcherService;
         this.tracker = tracker;
     }
@@ -30,4 +30,3 @@ public class ReadinessController {
                 "acceptingRequests", dispatcherService.isAcceptingRequests()));
     }
 }
-

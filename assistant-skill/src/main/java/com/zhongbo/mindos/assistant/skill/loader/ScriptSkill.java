@@ -45,24 +45,36 @@ public class ScriptSkill implements Skill, SkillDescriptorProvider {
     @Override
     public SkillResult run(SkillContext context) {
         String resp = definition.response();
+        String input = resolvedInput(context);
 
         if ("llm".equalsIgnoreCase(resp)) {
             if (llmClient == null) {
                 return SkillResult.failure(name(), "No LLM client configured for script skill: " + name());
             }
             String output = llmClient.generateResponse(
-                    context.input(),
+                    input,
                     Map.of("userId", context.userId() == null ? "" : context.userId())
             );
             return SkillResult.success(name(), output);
         }
 
         // Template expansion
-        String input = context.input() == null ? "" : context.input();
         String user = context.userId() == null ? "" : context.userId();
         String output = resp
                 .replace("{{input}}", input)
                 .replace("{{user}}", user);
         return SkillResult.success(name(), output);
+    }
+
+    private String resolvedInput(SkillContext context) {
+        if (context == null || context.attributes() == null) {
+            return "";
+        }
+        Object input = context.attributes().get("input");
+        if (input == null) {
+            return "";
+        }
+        String normalized = String.valueOf(input).trim();
+        return normalized.isBlank() ? "" : normalized;
     }
 }

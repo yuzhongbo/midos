@@ -125,9 +125,6 @@ public class McpToolExecutor {
                                SkillContext context) {
         try {
             Map<String, Object> arguments = new LinkedHashMap<>(context.attributes());
-            if (!arguments.containsKey("input") && context.input() != null && !context.input().isBlank()) {
-                arguments.put("input", context.input());
-            }
             ensureSearchQuery(toolDefinition, arguments, context);
             if (isSearchLikeTool(toolDefinition) && stringValue(arguments.get("query")).isBlank()) {
                 return SkillResult.success(toolDefinition.skillName(), buildMissingQueryReply(context));
@@ -227,8 +224,7 @@ public class McpToolExecutor {
         }
         String fallback = firstNonBlank(
                 stringValue(arguments.get("input")),
-                stringValue(arguments.get("originalInput")),
-                context.input()
+                stringValue(arguments.get("originalInput"))
         );
         fallback = deriveSearchQuery(fallback);
         if (!fallback.isBlank()) {
@@ -271,7 +267,12 @@ public class McpToolExecutor {
     }
 
     private String buildMissingQueryReply(SkillContext context) {
-        String input = context == null ? "" : stringValue(context.input());
+        String input = context == null || context.attributes() == null
+                ? ""
+                : firstNonBlank(
+                stringValue(context.attributes().get("input")),
+                stringValue(context.attributes().get("originalInput"))
+        );
         if (input.isBlank()) {
             return "抱歉，我还不知道你想查什么。你可以直接说例如：科技新闻、AI 头条、成都天气、美元汇率。";
         }

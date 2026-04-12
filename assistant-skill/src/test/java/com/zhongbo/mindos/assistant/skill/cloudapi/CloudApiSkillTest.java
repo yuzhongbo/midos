@@ -71,7 +71,7 @@ class CloudApiSkillTest {
     @Test
     void resolvesInputPlaceholder() {
         CloudApiSkill skill = buildSkill("s", List.of(), null, null, null, null);
-        SkillContext ctx = new SkillContext("u1", "hello world", Map.of());
+        SkillContext ctx = new SkillContext("u1", "", Map.of("input", "hello world"));
         assertEquals("echo: hello world", skill.resolveTemplate("echo: ${input}", ctx));
     }
 
@@ -171,7 +171,7 @@ class CloudApiSkillTest {
                 HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build(),
                 objectMapper);
 
-        SkillResult result = skill.run(SkillContext.of("u1", "Hello, world"));
+        SkillResult result = skill.run(new SkillContext("u1", "", Map.of("input", "Hello, world")));
 
         assertTrue(result.success());
         assertEquals("你好，世界", result.output());
@@ -208,7 +208,7 @@ class CloudApiSkillTest {
                 HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build(),
                 objectMapper);
 
-        SkillResult result = skill.run(SkillContext.of("u1", "test"));
+        SkillResult result = skill.run(new SkillContext("u1", "", Map.of("input", "test")));
 
         assertFalse(result.success());
         assertTrue(result.output().contains("500"));
@@ -246,7 +246,7 @@ class CloudApiSkillTest {
                 HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build(),
                 objectMapper);
 
-        SkillResult result = skill.run(SkillContext.of("u1", "get raw"));
+        SkillResult result = skill.run(new SkillContext("u1", "", Map.of("input", "get raw")));
 
         assertTrue(result.success());
         assertTrue(result.output().contains("42"));

@@ -41,7 +41,7 @@ class McpToolSkillTest {
         McpToolExecutor executor = new McpToolExecutor();
         McpToolDefinition tool = new McpToolDefinition("qwensearch", "http://unused.local/mcp", "bailian_web_search", "Search latest web news");
 
-        executor.execute(tool, client, new SkillContext("u1", "查看今天新闻 股市", Map.of()));
+        executor.execute(tool, client, new SkillContext("u1", "", Map.of("input", "查看今天新闻 股市")));
 
         assertEquals("股市", client.lastArguments.get("query"));
     }
@@ -63,7 +63,7 @@ class McpToolSkillTest {
         McpToolExecutor executor = new McpToolExecutor();
         McpToolDefinition tool = new McpToolDefinition("qwensearch", "http://unused.local/mcp", "bailian_web_search", "Search latest web news");
 
-        executor.execute(tool, client, new SkillContext("u1", "帮我看看科技新闻", Map.of()));
+        executor.execute(tool, client, new SkillContext("u1", "", Map.of("input", "帮我看看科技新闻")));
 
         assertEquals("科技", client.lastArguments.get("query"));
     }
@@ -74,7 +74,7 @@ class McpToolSkillTest {
         McpToolExecutor executor = new McpToolExecutor();
         McpToolDefinition tool = new McpToolDefinition("qwensearch", "http://unused.local/mcp", "bailian_web_search", "Search latest web news");
 
-        var result = executor.execute(tool, client, new SkillContext("u1", "帮我查一下", Map.of()));
+        var result = executor.execute(tool, client, new SkillContext("u1", "", Map.of("input", "帮我查一下")));
 
         assertTrue(result.success());
         assertTrue(result.output().contains("抱歉"));

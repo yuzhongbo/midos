@@ -65,7 +65,9 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 
 @Service
-public class DispatcherService implements ContextCompressionMetricsReader, DispatcherRoutingMetricsReader, DispatcherFacade {
+public class DispatcherService implements ContextCompressionMetricsReader,
+        DispatcherRoutingMetricsReader,
+        DispatcherFacade {
 
     private static final Logger LOGGER = Logger.getLogger(DispatcherService.class.getName());
 

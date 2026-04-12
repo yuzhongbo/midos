@@ -1,7 +1,7 @@
 package com.zhongbo.mindos.assistant.api;
 
 import com.zhongbo.mindos.assistant.memory.MemoryFacade;
-import com.zhongbo.mindos.assistant.dispatcher.DispatcherService;
+import com.zhongbo.mindos.assistant.dispatcher.DispatcherFacade;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -20,9 +20,11 @@ public class AdminController {
 
     private final InflightRequestTracker tracker;
     private final MemoryFacade memoryFacade;
-    private final DispatcherService dispatcherService;
+    private final DispatcherFacade dispatcherService;
 
-    public AdminController(InflightRequestTracker tracker, MemoryFacade memoryFacade, DispatcherService dispatcherService) {
+    public AdminController(InflightRequestTracker tracker,
+                           MemoryFacade memoryFacade,
+                           DispatcherFacade dispatcherService) {
         this.tracker = tracker;
         this.memoryFacade = memoryFacade;
         this.dispatcherService = dispatcherService;

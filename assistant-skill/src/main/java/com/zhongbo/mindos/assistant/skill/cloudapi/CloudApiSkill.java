@@ -154,9 +154,6 @@ public class CloudApiSkill implements Skill, SkillDescriptorProvider {
             return resolveTemplate(definition.bodyTemplate(), context);
         }
         Map<String, Object> body = new LinkedHashMap<>(context.attributes());
-        if (!body.containsKey("input") && context.input() != null) {
-            body.put("input", context.input());
-        }
         try {
             return objectMapper.writeValueAsString(body);
         } catch (IOException e) {
@@ -220,8 +217,9 @@ public class CloudApiSkill implements Skill, SkillDescriptorProvider {
         }
         String result = template;
 
-        if (context.input() != null) {
-            result = result.replace("${input}", context.input());
+        String input = objectSafeString(context.attributes().get("input"));
+        if (!input.isBlank()) {
+            result = result.replace("${input}", input);
         }
 
         for (Map.Entry<String, Object> attr : context.attributes().entrySet()) {
