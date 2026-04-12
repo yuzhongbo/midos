@@ -13,6 +13,11 @@ public interface DecisionOrchestrator {
 
     SkillResult execute(String userInput, String intent, Map<String, Object> params);
 
+    default OrchestrationOutcome planAndExecute(OrchestrationRequest request, String intent, Map<String, Object> params) {
+        String userInput = request == null ? "" : request.userInput();
+        return new OrchestrationOutcome(execute(userInput, intent, params), null, null, null, "", false);
+    }
+
     OrchestrationOutcome orchestrate(Decision decision, OrchestrationRequest request);
 
     default OrchestrationOutcome fastPath(Decision decision, OrchestrationRequest request) {

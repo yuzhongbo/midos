@@ -27,15 +27,45 @@ public class MetaOrchestratorService {
             Supplier<CompletableFuture<SkillResult>> fallbackAttempt) {
         if (!enabled) {
             Instant start = Instant.now();
-            return primaryAttempt.get().thenApply(result -> {
-                Instant finish = Instant.now();
-                ExecutionTraceDto trace = new ExecutionTraceDto(
-                        "single-pass",
-                        0,
-                        new CritiqueReportDto(true, "meta-orchestrator disabled", "none"),
-                        List.of(new PlanStepDto("primary", "success", result.skillName(), "primary execution", start, finish))
-                );
-                return new MetaOrchestrationResult(result, trace);
+            return primaryAttempt.get().thenCompose(result -> {
+                Instant primaryFinish = Instant.now();
+                if (result != null && result.success()) {
+                    ExecutionTraceDto trace = new ExecutionTraceDto(
+                            "single-pass",
+                            0,
+                            new CritiqueReportDto(true, "meta-orchestrator disabled", "none"),
+                            List.of(new PlanStepDto("primary", "success", result.skillName(), "primary execution", start, primaryFinish))
+                    );
+                    return CompletableFuture.completedFuture(new MetaOrchestrationResult(result, trace));
+                }
+                Instant fallbackStart = Instant.now();
+                String failureReason = result == null ? "unknown primary result" : result.output();
+                return fallbackAttempt.get().thenApply(fallbackResult -> {
+                    ExecutionTraceDto trace = new ExecutionTraceDto(
+                            "single-pass",
+                            0,
+                            new CritiqueReportDto(false, failureReason, "fallback_without_meta"),
+                            List.of(
+                                    new PlanStepDto(
+                                            "primary",
+                                            "failed",
+                                            result == null ? "unknown" : result.skillName(),
+                                            failureReason,
+                                            start,
+                                            primaryFinish
+                                    ),
+                                    new PlanStepDto(
+                                            "fallback",
+                                            "success",
+                                            fallbackResult.skillName(),
+                                            "fallback after primary failure",
+                                            fallbackStart,
+                                            Instant.now()
+                                    )
+                            )
+                    );
+                    return new MetaOrchestrationResult(fallbackResult, trace);
+                });
             });
         }
 
@@ -95,4 +125,3 @@ public class MetaOrchestratorService {
     public record MetaOrchestrationResult(SkillResult result, ExecutionTraceDto trace) {
     }
 }
-

@@ -6,9 +6,12 @@ import com.zhongbo.mindos.assistant.common.dto.CritiqueReportDto;
 import com.zhongbo.mindos.assistant.common.dto.ExecutionTraceDto;
 import com.zhongbo.mindos.assistant.common.dto.PromptMemoryContextDto;
 import com.zhongbo.mindos.assistant.common.dto.RoutingDecisionDto;
+import com.zhongbo.mindos.assistant.common.dto.ExecutionTraceDto;
 import com.zhongbo.mindos.assistant.dispatcher.agent.multiagent.MasterOrchestrationResult;
 import com.zhongbo.mindos.assistant.dispatcher.agent.multiagent.MasterOrchestrator;
 import com.zhongbo.mindos.assistant.dispatcher.decision.Decision;
+import com.zhongbo.mindos.assistant.dispatcher.MetaOrchestratorService.MetaOrchestrationResult;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.DecisionOrchestrator;
 import com.zhongbo.mindos.assistant.dispatcher.routing.DispatchPlan;
 import com.zhongbo.mindos.assistant.dispatcher.routing.RoutingCoordinator;
 import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalysisResult;
@@ -33,6 +36,7 @@ final class DispatchApplicationCoordinator {
     private final DispatchMemoryLifecycle dispatchMemoryLifecycle;
     private final DispatchPreparationSupport dispatchPreparationSupport;
     private final DispatchRoutingPipeline dispatchRoutingPipeline;
+    private final DecisionOrchestrator decisionOrchestrator;
     private final MetaOrchestratorService metaOrchestratorService;
     private final DispatchResultFinalizer dispatchResultFinalizer;
     private final Supplier<MasterOrchestrator> masterOrchestratorSupplier;
@@ -46,6 +50,7 @@ final class DispatchApplicationCoordinator {
     DispatchApplicationCoordinator(DispatchMemoryLifecycle dispatchMemoryLifecycle,
                                    DispatchPreparationSupport dispatchPreparationSupport,
                                    DispatchRoutingPipeline dispatchRoutingPipeline,
+                                   DecisionOrchestrator decisionOrchestrator,
                                    MetaOrchestratorService metaOrchestratorService,
                                    DispatchResultFinalizer dispatchResultFinalizer,
                                    Supplier<MasterOrchestrator> masterOrchestratorSupplier,
@@ -56,6 +61,7 @@ final class DispatchApplicationCoordinator {
         this.dispatchMemoryLifecycle = dispatchMemoryLifecycle;
         this.dispatchPreparationSupport = dispatchPreparationSupport;
         this.dispatchRoutingPipeline = dispatchRoutingPipeline;
+        this.decisionOrchestrator = decisionOrchestrator;
         this.metaOrchestratorService = metaOrchestratorService;
         this.dispatchResultFinalizer = dispatchResultFinalizer;
         this.masterOrchestratorSupplier = masterOrchestratorSupplier;
@@ -140,39 +146,66 @@ final class DispatchApplicationCoordinator {
                 );
             }
 
-            CompletableFuture<DispatchResult> future = metaOrchestratorService.orchestrate(
-                            () -> executeSinglePass(
-                                    userId,
-                                    userInput,
-                                    context,
-                                    effectiveMemoryContext,
-                                    promptMemoryContext,
-                                    llmContext,
-                                    realtimeIntentInput,
-                                    executionState,
-                                    semanticAnalysis,
-                                    replayProbe
-                            ),
-                            () -> CompletableFuture.completedFuture(
-                                    bridge.buildFallbackResult(
-                                            effectiveMemoryContext,
-                                            promptMemoryContext,
-                                            routingInput,
-                                            llmContext,
-                                            realtimeIntentInput
-                                    )
-                            )
-                    )
-                    .thenApply(orchestration -> dispatchResultFinalizer.finalizeMetaOrchestration(
-                            userId,
-                            userInput,
-                            orchestration,
-                            llmContext,
-                            resolvedProfileContext,
-                            promptMemoryContext,
-                            replayProbe,
-                            executionState
-                    ));
+            CompletableFuture<DispatchResult> future;
+            if (shouldAttemptPrimaryPass(userInput, context)) {
+                future = metaOrchestratorService.orchestrate(
+                                () -> executePrimaryPass(
+                                        userId,
+                                        userInput,
+                                        context,
+                                        executionState,
+                                        resolvedProfileContext
+                                ),
+                                () -> executeCompatibilityPass(
+                                        userId,
+                                        userInput,
+                                        context,
+                                        effectiveMemoryContext,
+                                        promptMemoryContext,
+                                        llmContext,
+                                        realtimeIntentInput,
+                                        executionState,
+                                        semanticAnalysis,
+                                        replayProbe
+                                )
+                        )
+                        .thenApply(orchestration -> dispatchResultFinalizer.finalizeMetaOrchestration(
+                                userId,
+                                userInput,
+                                orchestration,
+                                llmContext,
+                                resolvedProfileContext,
+                                promptMemoryContext,
+                                replayProbe,
+                                executionState
+                        ));
+            } else {
+                future = executeCompatibilityPass(
+                                userId,
+                                userInput,
+                                context,
+                                effectiveMemoryContext,
+                                promptMemoryContext,
+                                llmContext,
+                                realtimeIntentInput,
+                                executionState,
+                                semanticAnalysis,
+                                replayProbe
+                        )
+                        .thenApply(result -> dispatchResultFinalizer.finalizeMetaOrchestration(
+                                userId,
+                                userInput,
+                                new MetaOrchestrationResult(
+                                        result,
+                                        new ExecutionTraceDto("compatibility-single-pass", 0, null, List.of())
+                                ),
+                                llmContext,
+                                resolvedProfileContext,
+                                promptMemoryContext,
+                                replayProbe,
+                                executionState
+                        ));
+            }
             return attachDispatchCompletion(future, userId, startTime, executionState, false);
         } catch (RuntimeException | Error ex) {
             activeDispatchCount.decrementAndGet();
@@ -224,36 +257,88 @@ final class DispatchApplicationCoordinator {
             SkillContext context = preparedDispatch.context();
             Map<String, Object> llmContext = preparedDispatch.llmContext();
 
-            CompletableFuture<DispatchResult> future = dispatchRoutingPipeline.routeToSkillAsync(
-                            userId,
-                            userInput,
-                            context,
-                            effectiveMemoryContext,
-                            semanticAnalysis,
-                            replayProbe
-                    )
-                    .thenApply(routingOutcome -> {
-                        executionState.setRoutingDecision(routingOutcome.routingDecision());
-                        return routingOutcome.result().orElseGet(() ->
-                                bridge.buildLlmFallbackStreamResult(
-                                        effectiveMemoryContext,
-                                        promptMemoryContext,
-                                        routingInput,
-                                        llmContext,
-                                        realtimeIntentInput,
-                                        deltaConsumer
-                                ));
-                    })
-                    .thenApply(result -> dispatchResultFinalizer.finalizeStreamResult(
-                            userId,
-                            userInput,
-                            result,
-                            llmContext,
-                            resolvedProfileContext,
-                            promptMemoryContext,
-                            replayProbe,
-                            executionState
-                    ));
+            CompletableFuture<DispatchResult> future;
+            if (shouldAttemptPrimaryPass(userInput, context)) {
+                future = executePrimaryPass(
+                                userId,
+                                userInput,
+                                context,
+                                executionState,
+                                resolvedProfileContext
+                        )
+                        .thenCompose(primaryResult -> {
+                            if (primaryResult != null && primaryResult.success()) {
+                                return CompletableFuture.completedFuture(primaryResult);
+                            }
+                            return dispatchRoutingPipeline.routeToSkillAsync(
+                                            userId,
+                                            userInput,
+                                            context,
+                                            effectiveMemoryContext,
+                                            semanticAnalysis,
+                                            replayProbe
+                                    )
+                                    .thenApply(routingOutcome -> {
+                                        executionState.setRoutingDecision(routingOutcome.routingDecision());
+                                        SkillResult routedResult = routingOutcome.result().orElse(null);
+                                        if (routedResult != null && routedResult.success()) {
+                                            return routedResult;
+                                        }
+                                        return bridge.buildLlmFallbackStreamResult(
+                                                effectiveMemoryContext,
+                                                promptMemoryContext,
+                                                routingInput,
+                                                llmContext,
+                                                realtimeIntentInput,
+                                                deltaConsumer
+                                        );
+                                    });
+                        })
+                        .thenApply(result -> dispatchResultFinalizer.finalizeStreamResult(
+                                userId,
+                                userInput,
+                                result,
+                                llmContext,
+                                resolvedProfileContext,
+                                promptMemoryContext,
+                                replayProbe,
+                                executionState
+                        ));
+            } else {
+                future = dispatchRoutingPipeline.routeToSkillAsync(
+                                userId,
+                                userInput,
+                                context,
+                                effectiveMemoryContext,
+                                semanticAnalysis,
+                                replayProbe
+                        )
+                        .thenApply(routingOutcome -> {
+                            executionState.setRoutingDecision(routingOutcome.routingDecision());
+                            SkillResult routedResult = routingOutcome.result().orElse(null);
+                            if (routedResult != null && routedResult.success()) {
+                                return routedResult;
+                            }
+                            return bridge.buildLlmFallbackStreamResult(
+                                    effectiveMemoryContext,
+                                    promptMemoryContext,
+                                    routingInput,
+                                    llmContext,
+                                    realtimeIntentInput,
+                                    deltaConsumer
+                            );
+                        })
+                        .thenApply(result -> dispatchResultFinalizer.finalizeStreamResult(
+                                userId,
+                                userInput,
+                                result,
+                                llmContext,
+                                resolvedProfileContext,
+                                promptMemoryContext,
+                                replayProbe,
+                                executionState
+                        ));
+            }
             return attachDispatchCompletion(future, userId, startTime, executionState, true);
         } catch (RuntimeException | Error ex) {
             activeDispatchCount.decrementAndGet();
@@ -297,28 +382,127 @@ final class DispatchApplicationCoordinator {
         dispatchResultFinalizer.flushPendingMemoryWrites(userId, executionState);
     }
 
-    private CompletableFuture<SkillResult> executeSinglePass(String userId,
-                                                             String userInput,
-                                                             SkillContext context,
-                                                             String memoryContext,
-                                                             PromptMemoryContextDto promptMemoryContext,
-                                                             Map<String, Object> llmContext,
-                                                             boolean realtimeIntentInput,
-                                                             DispatchExecutionState executionState,
-                                                             SemanticAnalysisResult semanticAnalysis,
-                                                             RoutingReplayProbe replayProbe) {
+    private CompletableFuture<SkillResult> executePrimaryPass(String userId,
+                                                              String userInput,
+                                                              SkillContext context,
+                                                              DispatchExecutionState executionState,
+                                                              Map<String, Object> resolvedProfileContext) {
+        return CompletableFuture.supplyAsync(() -> {
+            DecisionOrchestrator.OrchestrationOutcome outcome = decisionOrchestrator.planAndExecute(
+                    new DecisionOrchestrator.OrchestrationRequest(userId, userInput, context, resolvedProfileContext),
+                    "",
+                    context == null || context.attributes() == null ? Map.of() : context.attributes()
+            );
+            executionState.setRoutingDecision(buildPrimaryRoutingDecision(outcome));
+            if (outcome == null) {
+                return SkillResult.failure("decision.orchestrator", "primary orchestrator produced no result");
+            }
+            if (outcome.hasClarification()) {
+                if (outcome.selectedSkill() == null || outcome.selectedSkill().isBlank()) {
+                    return SkillResult.failure("decision.orchestrator", "primary planner produced no target");
+                }
+                return outcome.clarification();
+            }
+            if (outcome.hasResult() && outcome.result().success()) {
+                return outcome.result();
+            }
+            return SkillResult.failure("decision.orchestrator", "primary orchestrator failed");
+        });
+    }
+
+    private boolean shouldAttemptPrimaryPass(String userInput, SkillContext context) {
+        String normalizedInput = userInput == null ? "" : userInput.trim();
+        if (normalizedInput.startsWith("skill:")) {
+            return true;
+        }
+        Map<String, Object> attributes = context == null || context.attributes() == null
+                ? Map.of()
+                : context.attributes();
+        Object explicitRoute = attributes.get("dispatcherPrimaryRoute");
+        if (explicitRoute instanceof Boolean booleanValue && booleanValue) {
+            return true;
+        }
+        String explicitTarget = attributeText(attributes, "explicitTarget");
+        if (explicitTarget != null) {
+            return true;
+        }
+        return attributeText(attributes, "explicitSkill") != null;
+    }
+
+    private String attributeText(Map<String, Object> attributes, String key) {
+        if (attributes == null || attributes.isEmpty()) {
+            return null;
+        }
+        Object value = attributes.get(key);
+        if (value == null) {
+            return null;
+        }
+        String normalized = String.valueOf(value).trim();
+        return normalized.isBlank() ? null : normalized;
+    }
+
+    private CompletableFuture<SkillResult> executeCompatibilityPass(String userId,
+                                                                    String userInput,
+                                                                    SkillContext context,
+                                                                    String memoryContext,
+                                                                    PromptMemoryContextDto promptMemoryContext,
+                                                                    Map<String, Object> llmContext,
+                                                                    boolean realtimeIntentInput,
+                                                                    DispatchExecutionState executionState,
+                                                                    SemanticAnalysisResult semanticAnalysis,
+                                                                    RoutingReplayProbe replayProbe) {
         return dispatchRoutingPipeline.routeToSkillAsync(userId, userInput, context, memoryContext, semanticAnalysis, replayProbe)
                 .thenApply(routingOutcome -> {
                     executionState.setRoutingDecision(routingOutcome.routingDecision());
-                    return routingOutcome.result().orElseGet(() ->
-                            bridge.buildFallbackResult(
-                                    memoryContext,
-                                    promptMemoryContext,
-                                    context.input(),
-                                    llmContext,
-                                    realtimeIntentInput
-                            ));
+                    SkillResult routedResult = routingOutcome.result().orElse(null);
+                    if (routedResult != null && routedResult.success()) {
+                        return routedResult;
+                    }
+                    return bridge.buildFallbackResult(
+                            memoryContext,
+                            promptMemoryContext,
+                            context.input(),
+                            llmContext,
+                            realtimeIntentInput
+                    );
                 });
+    }
+
+    private RoutingDecisionDto buildPrimaryRoutingDecision(DecisionOrchestrator.OrchestrationOutcome outcome) {
+        if (outcome == null) {
+            return new RoutingDecisionDto(
+                    "orchestrator-primary",
+                    "",
+                    0.0,
+                    List.of("primary orchestrator returned no outcome"),
+                    List.of()
+            );
+        }
+        String selectedSkill = outcome.selectedSkill();
+        if ((selectedSkill == null || selectedSkill.isBlank()) && outcome.result() != null) {
+            selectedSkill = outcome.result().skillName();
+        }
+        if ((selectedSkill == null || selectedSkill.isBlank()) && outcome.clarification() != null) {
+            selectedSkill = outcome.clarification().skillName();
+        }
+        java.util.ArrayList<String> reasons = new java.util.ArrayList<>();
+        reasons.add("primary route executed through orchestrator planner");
+        if (outcome.usedFallback()) {
+            reasons.add("orchestrator-used-fallback=true");
+        }
+        if (outcome.hasClarification()) {
+            reasons.add("clarification requested by planner/executor");
+        }
+        if (outcome.hasResult() && !outcome.result().success()) {
+            reasons.add("primary orchestrator execution failed");
+        }
+        return new RoutingDecisionDto(
+                "orchestrator-primary",
+                selectedSkill == null ? "" : selectedSkill,
+                outcome.trace() == null ? 0.0 : 1.0,
+                List.copyOf(reasons),
+                List.of()
+        );
     }
 
     private CompletableFuture<DispatchResult> executeMasterOrchestratorDispatch(String userId,

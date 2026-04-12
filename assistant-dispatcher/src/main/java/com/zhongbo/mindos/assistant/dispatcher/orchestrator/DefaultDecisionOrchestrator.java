@@ -171,6 +171,24 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
     }
 
     @Override
+    public OrchestrationOutcome planAndExecute(OrchestrationRequest request, String intent, Map<String, Object> params) {
+        Map<String, Object> safeParams = params == null ? Map.of() : Map.copyOf(params);
+        SkillContext context = request == null || request.skillContext() == null
+                ? new SkillContext(request == null ? "" : request.userId(), request == null ? "" : request.userInput(), safeParams)
+                : request.skillContext();
+        Decision decision = decisionPlanner.plan(
+                request == null ? "" : request.userInput(),
+                intent,
+                safeParams,
+                context
+        );
+        OrchestrationRequest effectiveRequest = request == null
+                ? new OrchestrationRequest("", context.input(), context, Map.of())
+                : new OrchestrationRequest(request.userId(), request.userInput(), context, request.safeProfileContext());
+        return decisionExecutor.execute(taskGraphPlanner.plan(decision, effectiveRequest), effectiveRequest);
+    }
+
+    @Override
     public OrchestrationOutcome orchestrate(Decision decision, OrchestrationRequest request) {
         return decisionExecutor.execute(taskGraphPlanner.plan(decision, request), request);
     }
