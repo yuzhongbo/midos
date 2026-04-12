@@ -17,6 +17,8 @@ import com.zhongbo.mindos.assistant.common.dto.CritiqueReportDto;
 import com.zhongbo.mindos.assistant.common.dto.ExecutionTraceDto;
 import com.zhongbo.mindos.assistant.common.dto.PlanStepDto;
 import com.zhongbo.mindos.assistant.dispatcher.decision.Decision;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.DecisionOrchestrator.OrchestrationOutcome;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.DecisionOrchestrator.OrchestrationRequest;
 import com.zhongbo.mindos.assistant.memory.MemoryGateway;
 import com.zhongbo.mindos.assistant.skill.SkillExecutionGateway;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -34,34 +36,11 @@ import java.util.concurrent.TimeUnit;
 
 @Component
 public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
-    private static final double TASK_PLAN_LOW_CONFIDENCE_THRESHOLD = 0.70;
 
-    private final CandidatePlanner candidatePlanner;
-    private final ParamValidator paramValidator;
-    private final ConversationLoop conversationLoop;
-    private final FallbackPlan fallbackPlan;
-    private final CandidateChainBuilder candidateChainBuilder;
-    private final FailureNormalizer failureNormalizer;
-    private final SlowPathPlanBuilder slowPathPlanBuilder;
-    private final TaskGraphCoordinator taskGraphCoordinator;
-    private final FastPathCoordinator fastPathCoordinator;
-    private final SkillExecutionGateway skillExecutionGateway;
-    private final DispatcherMemoryFacade dispatcherMemoryFacade;
+    private final DecisionPlanner decisionPlanner;
+    private final DecisionExecutor decisionExecutor;
     private final PostExecutionMemoryRecorder memoryRecorder;
-    private final boolean mcpParallelEnabled;
-    private final long mcpPerSkillTimeoutMs;
-    private final long eqCoachImTimeoutMs;
-    private final String eqCoachImTimeoutReply;
-    private final List<String> mcpPriorityOrder;
-    private final int maxLoops;
-    private SearchPlanner searchPlanner;
-    private ProceduralMemory proceduralMemory;
-    private DispatcherMemoryFacade proceduralMemoryFacade;
-    private PlannerLearningStore plannerLearningStore;
-    private PolicyUpdater policyUpdater;
-    private AgentRouter agentRouter;
-    private RecoveryManager recoveryManager;
-    private TraceLogger traceLogger;
+    private final FailureNormalizer failureNormalizer;
 
     public DefaultDecisionOrchestrator(CandidatePlanner candidatePlanner,
                                        ParamValidator paramValidator,
@@ -77,19 +56,21 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
                                        @Value("${mindos.dispatcher.skill.timeout.eq-coach-im-reply:我先给你一个简短结论：当前请求较复杂，我正在整理更完整建议，稍后继续发你。}") String eqCoachImTimeoutReply,
                                        @Value("${mindos.dispatcher.orchestrator.max-loops:3}") int maxLoops) {
         this(
-                candidatePlanner,
-                paramValidator,
-                conversationLoop,
-                fallbackPlan,
-                skillExecutionGateway,
-                new DispatcherMemoryFacade(memoryGateway, null, null),
-                memoryRecorder,
-                taskExecutor,
-                mcpParallelEnabled,
-                mcpPerSkillTimeoutMs,
-                eqCoachImTimeoutMs,
-                eqCoachImTimeoutReply,
-                maxLoops
+                new DefaultDecisionPlanner(),
+                new DefaultDecisionExecutor(
+                        candidatePlanner,
+                        paramValidator,
+                        conversationLoop,
+                        fallbackPlan,
+                        skillExecutionGateway,
+                        new DispatcherMemoryFacade(memoryGateway, null, null),
+                        mcpParallelEnabled,
+                        mcpPerSkillTimeoutMs,
+                        eqCoachImTimeoutMs,
+                        eqCoachImTimeoutReply,
+                        maxLoops
+                ),
+                memoryRecorder
         );
     }
 
@@ -107,40 +88,177 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
                                        @Value("${mindos.dispatcher.skill.timeout.eq-coach-im-reply:我先给你一个简短结论：当前请求较复杂，我正在整理更完整建议，稍后继续发你。}") String eqCoachImTimeoutReply,
                                        @Value("${mindos.dispatcher.orchestrator.max-loops:3}") int maxLoops) {
         this(
-                candidatePlanner,
-                paramValidator,
-                conversationLoop,
-                fallbackPlan,
-                skillExecutionGateway,
-                dispatcherMemoryFacade,
-                memoryRecorder,
-                mcpParallelEnabled,
-                mcpPerSkillTimeoutMs,
-                eqCoachImTimeoutMs,
-                eqCoachImTimeoutReply,
-                maxLoops
+                new DefaultDecisionPlanner(),
+                new DefaultDecisionExecutor(
+                        candidatePlanner,
+                        paramValidator,
+                        conversationLoop,
+                        fallbackPlan,
+                        skillExecutionGateway,
+                        dispatcherMemoryFacade,
+                        mcpParallelEnabled,
+                        mcpPerSkillTimeoutMs,
+                        eqCoachImTimeoutMs,
+                        eqCoachImTimeoutReply,
+                        maxLoops
+                ),
+                memoryRecorder
         );
     }
 
     @Autowired
-    public DefaultDecisionOrchestrator(CandidatePlanner candidatePlanner,
-                                       ParamValidator paramValidator,
-                                       ConversationLoop conversationLoop,
-                                       FallbackPlan fallbackPlan,
-                                       SkillExecutionGateway skillExecutionGateway,
-                                       DispatcherMemoryFacade dispatcherMemoryFacade,
-                                       PostExecutionMemoryRecorder memoryRecorder,
-                                       @Value("${mindos.dispatcher.parallel-routing.enabled:false}") boolean mcpParallelEnabled,
-                                       @Value("${mindos.dispatcher.parallel-routing.per-skill-timeout-ms:2500}") long mcpPerSkillTimeoutMs,
-                                       @Value("${mindos.dispatcher.skill.timeout.eq-coach-im-ms:12000}") long eqCoachImTimeoutMs,
-                                       @Value("${mindos.dispatcher.skill.timeout.eq-coach-im-reply:我先给你一个简短结论：当前请求较复杂，我正在整理更完整建议，稍后继续发你。}") String eqCoachImTimeoutReply,
-                                       @Value("${mindos.dispatcher.orchestrator.max-loops:3}") int maxLoops) {
+    public DefaultDecisionOrchestrator(DecisionPlanner decisionPlanner,
+                                       DecisionExecutor decisionExecutor,
+                                       PostExecutionMemoryRecorder memoryRecorder) {
+        this.decisionPlanner = decisionPlanner;
+        this.decisionExecutor = decisionExecutor;
+        this.memoryRecorder = memoryRecorder;
+        this.failureNormalizer = new FailureNormalizer();
+    }
+
+    @Override
+    public SkillResult execute(String userInput, String intent, Map<String, Object> params) {
+        Map<String, Object> safeParams = params == null ? Map.of() : Map.copyOf(params);
+        SkillContext context = new SkillContext("", userInput == null ? "" : userInput, safeParams);
+        Decision decision = decisionPlanner.plan(userInput, intent, safeParams, context);
+        OrchestrationOutcome outcome = decisionExecutor.execute(
+                decision,
+                new OrchestrationRequest("", userInput == null ? "" : userInput, context, Map.of())
+        );
+        if (outcome.hasResult() && outcome.result() != null && outcome.result().success()) {
+            return outcome.result();
+        }
+        if (outcome.hasClarification()) {
+            return outcome.clarification();
+        }
+        if (outcome.hasResult()) {
+            List<String> attemptedCandidates = outcome.trace() == null || outcome.trace().steps() == null
+                    ? List.of()
+                    : outcome.trace().steps().stream()
+                    .map(PlanStepDto::channel)
+                    .filter(channel -> channel != null && !channel.isBlank())
+                    .distinct()
+                    .toList();
+            return failureNormalizer.unifiedFailureResult(userInput, intent, attemptedCandidates, outcome.result());
+        }
+        return failureNormalizer.unifiedFailureResult(
+                userInput,
+                intent,
+                List.of(),
+                SkillResult.failure("decision.orchestrator", "all candidates failed")
+        );
+    }
+
+    @Override
+    public OrchestrationOutcome orchestrate(Decision decision, OrchestrationRequest request) {
+        return decisionExecutor.execute(decision, request);
+    }
+
+    @Override
+    public void recordOutcome(String userId, String userInput, SkillResult result, ExecutionTraceDto trace) {
+        memoryRecorder.record(userId, userInput, result, trace);
+    }
+
+    void setSearchPlanner(SearchPlanner searchPlanner) {
+        DefaultDecisionExecutor executor = defaultExecutor();
+        if (executor != null) {
+            executor.setSearchPlanner(searchPlanner);
+        }
+    }
+
+    void setProceduralMemory(ProceduralMemory proceduralMemory) {
+        DefaultDecisionExecutor executor = defaultExecutor();
+        if (executor != null) {
+            executor.setProceduralMemory(proceduralMemory);
+        }
+    }
+
+    void setPlannerLearningStore(PlannerLearningStore plannerLearningStore) {
+        DefaultDecisionExecutor executor = defaultExecutor();
+        if (executor != null) {
+            executor.setPlannerLearningStore(plannerLearningStore);
+        }
+    }
+
+    void setPolicyUpdater(PolicyUpdater policyUpdater) {
+        DefaultDecisionExecutor executor = defaultExecutor();
+        if (executor != null) {
+            executor.setPolicyUpdater(policyUpdater);
+        }
+    }
+
+    void setAgentRouter(AgentRouter agentRouter) {
+        DefaultDecisionExecutor executor = defaultExecutor();
+        if (executor != null) {
+            executor.setAgentRouter(agentRouter);
+        }
+    }
+
+    void setRecoveryManager(RecoveryManager recoveryManager) {
+        DefaultDecisionExecutor executor = defaultExecutor();
+        if (executor != null) {
+            executor.setRecoveryManager(recoveryManager);
+        }
+    }
+
+    void setTraceLogger(TraceLogger traceLogger) {
+        DefaultDecisionExecutor executor = defaultExecutor();
+        if (executor != null) {
+            executor.setTraceLogger(traceLogger);
+        }
+    }
+
+    private DefaultDecisionExecutor defaultExecutor() {
+        return decisionExecutor instanceof DefaultDecisionExecutor executor ? executor : null;
+    }
+}
+
+@Component
+final class DefaultDecisionExecutor implements DecisionExecutor {
+    private static final double TASK_PLAN_LOW_CONFIDENCE_THRESHOLD = 0.70;
+
+    private final CandidatePlanner candidatePlanner;
+    private final ParamValidator paramValidator;
+    private final ConversationLoop conversationLoop;
+    private final FallbackPlan fallbackPlan;
+    private final CandidateChainBuilder candidateChainBuilder;
+    private final SlowPathPlanBuilder slowPathPlanBuilder;
+    private final TaskGraphCoordinator taskGraphCoordinator;
+    private final FastPathCoordinator fastPathCoordinator;
+    private final SkillExecutionGateway skillExecutionGateway;
+    private final DispatcherMemoryFacade dispatcherMemoryFacade;
+    private final boolean mcpParallelEnabled;
+    private final long mcpPerSkillTimeoutMs;
+    private final long eqCoachImTimeoutMs;
+    private final String eqCoachImTimeoutReply;
+    private final List<String> mcpPriorityOrder;
+    private final int maxLoops;
+    private SearchPlanner searchPlanner;
+    private ProceduralMemory proceduralMemory;
+    private DispatcherMemoryFacade proceduralMemoryFacade;
+    private PlannerLearningStore plannerLearningStore;
+    private PolicyUpdater policyUpdater;
+    private AgentRouter agentRouter;
+    private RecoveryManager recoveryManager;
+    private TraceLogger traceLogger;
+
+    @Autowired
+    DefaultDecisionExecutor(CandidatePlanner candidatePlanner,
+                            ParamValidator paramValidator,
+                            ConversationLoop conversationLoop,
+                            FallbackPlan fallbackPlan,
+                            SkillExecutionGateway skillExecutionGateway,
+                            DispatcherMemoryFacade dispatcherMemoryFacade,
+                            @Value("${mindos.dispatcher.parallel-routing.enabled:false}") boolean mcpParallelEnabled,
+                            @Value("${mindos.dispatcher.parallel-routing.per-skill-timeout-ms:2500}") long mcpPerSkillTimeoutMs,
+                            @Value("${mindos.dispatcher.skill.timeout.eq-coach-im-ms:12000}") long eqCoachImTimeoutMs,
+                            @Value("${mindos.dispatcher.skill.timeout.eq-coach-im-reply:我先给你一个简短结论：当前请求较复杂，我正在整理更完整建议，稍后继续发你。}") String eqCoachImTimeoutReply,
+                            @Value("${mindos.dispatcher.orchestrator.max-loops:3}") int maxLoops) {
         this.candidatePlanner = candidatePlanner;
         this.paramValidator = paramValidator;
         this.conversationLoop = conversationLoop;
         this.fallbackPlan = fallbackPlan;
         this.candidateChainBuilder = new CandidateChainBuilder(candidatePlanner, fallbackPlan);
-        this.failureNormalizer = new FailureNormalizer();
         boolean effectiveMcpParallelEnabled = mcpParallelEnabled;
         long effectiveMcpPerSkillTimeoutMs = Math.max(250, mcpPerSkillTimeoutMs);
         long effectiveEqCoachImTimeoutMs = Math.max(0L, eqCoachImTimeoutMs);
@@ -189,7 +307,6 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
         );
         this.skillExecutionGateway = skillExecutionGateway;
         this.dispatcherMemoryFacade = dispatcherMemoryFacade;
-        this.memoryRecorder = memoryRecorder;
         this.mcpParallelEnabled = effectiveMcpParallelEnabled;
         this.mcpPerSkillTimeoutMs = effectiveMcpPerSkillTimeoutMs;
         this.eqCoachImTimeoutMs = effectiveEqCoachImTimeoutMs;
@@ -247,41 +364,7 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
     }
 
     @Override
-    public SkillResult execute(String userInput, String intent, Map<String, Object> params) {
-        Map<String, Object> safeParams = params == null ? Map.of() : Map.copyOf(params);
-        String resolvedTarget = resolveExecutionTarget(intent, safeParams);
-        Decision decision = new Decision(intent, resolvedTarget, safeParams, 1.0, false);
-        SkillContext context = new SkillContext("", userInput == null ? "" : userInput, safeParams);
-        OrchestrationOutcome outcome = orchestrate(
-                decision,
-                new OrchestrationRequest("", userInput == null ? "" : userInput, context, Map.of())
-        );
-        if (outcome.hasResult() && outcome.result() != null && outcome.result().success()) {
-            return outcome.result();
-        }
-        if (outcome.hasClarification()) {
-            return outcome.clarification();
-        }
-        if (outcome.hasResult()) {
-            List<String> attemptedCandidates = outcome.trace() == null || outcome.trace().steps() == null
-                    ? List.of()
-                    : outcome.trace().steps().stream()
-                    .map(PlanStepDto::channel)
-                    .filter(channel -> channel != null && !channel.isBlank())
-                    .distinct()
-                    .toList();
-            return failureNormalizer.unifiedFailureResult(userInput, intent, attemptedCandidates, outcome.result());
-        }
-        return failureNormalizer.unifiedFailureResult(
-                userInput,
-                intent,
-                List.of(),
-                SkillResult.failure("decision.orchestrator", "all candidates failed")
-        );
-    }
-
-    @Override
-    public OrchestrationOutcome orchestrate(Decision decision, OrchestrationRequest request) {
+    public OrchestrationOutcome execute(Decision decision, OrchestrationRequest request) {
         String traceId = startTrace(decision, request);
         OrchestrationOutcome outcome = null;
         try {
@@ -319,19 +402,12 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
         return outcome;
     }
 
-    @Override
-    public OrchestrationOutcome fastPath(Decision decision, OrchestrationRequest request) {
+    OrchestrationOutcome fastPath(Decision decision, OrchestrationRequest request) {
         return fastPath(decision, request, null);
     }
 
-    @Override
-    public OrchestrationOutcome slowPath(Decision decision, OrchestrationRequest request) {
+    OrchestrationOutcome slowPath(Decision decision, OrchestrationRequest request) {
         return slowPath(decision, request, null, null);
-    }
-
-    @Override
-    public void recordOutcome(String userId, String userInput, SkillResult result, ExecutionTraceDto trace) {
-        memoryRecorder.record(userId, userInput, result, trace);
     }
 
     private OrchestrationOutcome fastPath(Decision decision,
