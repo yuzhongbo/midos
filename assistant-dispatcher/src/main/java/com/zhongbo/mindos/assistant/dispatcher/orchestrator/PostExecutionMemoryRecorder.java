@@ -6,6 +6,8 @@ import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.ReflectionAgent;
 import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.ReflectionResult;
 import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryCommandService;
 import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryFacade;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.memory.MemoryWriteBatch;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.memory.MemoryWriteOperation;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.memory.OrchestratorMemoryWriter;
 import com.zhongbo.mindos.assistant.memory.MemoryGateway;
 import com.zhongbo.mindos.assistant.memory.model.ProceduralMemoryEntry;
@@ -21,9 +23,7 @@ import java.util.Set;
 public class PostExecutionMemoryRecorder {
 
     private final DispatcherMemoryFacade dispatcherMemoryFacade;
-    private final DispatcherMemoryCommandService memoryCommandService;
     private final ReflectionAgent reflectionAgent;
-    private final OrchestratorMemoryWriter memoryWriter;
     private final boolean proceduralLoggingEnabled;
     private final boolean postSkillSummaryEnabled;
     private final Set<String> postSkillSummarySkills;
@@ -78,39 +78,29 @@ public class PostExecutionMemoryRecorder {
                                        @Value("${mindos.memory.post-skill-summary.skills:teaching.plan,todo.create,eq.coach,code.generate,file.search}") String postSkillSummarySkills,
                                        @Value("${mindos.memory.post-skill-summary.max-reply-chars:280}") int postSkillSummaryMaxReplyChars) {
         this.dispatcherMemoryFacade = dispatcherMemoryFacade;
-        this.memoryCommandService = memoryCommandService == null
-                ? new DispatcherMemoryCommandService(dispatcherMemoryFacade, null)
-                : memoryCommandService;
         this.reflectionAgent = reflectionAgent;
-        this.memoryWriter = memoryWriter;
         this.proceduralLoggingEnabled = proceduralLoggingEnabled;
         this.postSkillSummaryEnabled = postSkillSummaryEnabled;
         this.postSkillSummarySkills = Set.copyOf(parseCsvList(postSkillSummarySkills));
         this.postSkillSummaryMaxReplyChars = Math.max(80, postSkillSummaryMaxReplyChars);
     }
 
-    public void record(String userId,
-                       String userInput,
-                       SkillResult result,
-                       ExecutionTraceDto trace) {
+    public MemoryWriteBatch record(String userId,
+                                   String userInput,
+                                   SkillResult result,
+                                   ExecutionTraceDto trace) {
         if (result == null) {
-            return;
+            return MemoryWriteBatch.empty();
         }
-        if (proceduralLoggingEnabled && !shouldSkipProceduralLogging(result.skillName())) {
-            memoryCommandService.writeProcedural(userId, ProceduralMemoryEntry.of(
-                    result.skillName(),
-                    userInput,
-                    result.success()
-            ));
-        }
-        maybeStorePostSkillSummary(userId, userInput, result);
-        maybeStoreExecutionTraceMemory(userId, trace);
-        maybeStoreReflection(userId, userInput, result, trace);
+        return proceduralLoggingWrite(userInput, result)
+                .merge(postSkillSummaryWrite(userInput, result))
+                .merge(executionTraceWrite(trace))
+                .merge(reflectionWrites(userId, userInput, result, trace));
     }
 
-    private void maybeStoreExecutionTraceMemory(String userId, ExecutionTraceDto trace) {
+    private MemoryWriteBatch executionTraceWrite(ExecutionTraceDto trace) {
         if (trace == null || trace.replanCount() <= 0) {
-            return;
+            return MemoryWriteBatch.empty();
         }
         String summary = "meta-trace strategy=" + trace.strategy()
                 + ", replans=" + trace.replanCount()
@@ -119,33 +109,31 @@ public class PostExecutionMemoryRecorder {
                 (double) summary.length(),
                 Math.abs(summary.hashCode() % 1000) / 1000.0
         );
-        memoryCommandService.writeSemantic(userId, summary, embedding, "meta");
+        return MemoryWriteBatch.of(new MemoryWriteOperation.WriteSemantic(summary, embedding, "meta"));
     }
 
-    private void maybeStoreReflection(String userId, String userInput, SkillResult result, ExecutionTraceDto trace) {
+    private MemoryWriteBatch reflectionWrites(String userId, String userInput, SkillResult result, ExecutionTraceDto trace) {
         if (reflectionAgent == null || result == null) {
-            return;
+            return MemoryWriteBatch.empty();
         }
         ReflectionResult reflection = reflectionAgent.reflect(userId, userInput, trace, result, Map.of(), Map.of());
-        if (reflection != null && memoryWriter != null) {
-            memoryWriter.commit(userId, reflection.memoryWrites());
-        }
+        return reflection == null ? MemoryWriteBatch.empty() : reflection.memoryWrites();
     }
 
-    private void maybeStorePostSkillSummary(String userId, String userInput, SkillResult result) {
+    private MemoryWriteBatch postSkillSummaryWrite(String userInput, SkillResult result) {
         if (!postSkillSummaryEnabled || result == null || !result.success()) {
-            return;
+            return MemoryWriteBatch.empty();
         }
         String channel = result.skillName();
         if (channel == null || channel.isBlank() || "llm".equals(channel) || "security.guard".equals(channel)) {
-            return;
+            return MemoryWriteBatch.empty();
         }
         if (!matchesConfiguredSkill(channel)) {
-            return;
+            return MemoryWriteBatch.empty();
         }
         String output = capText(result.output() == null ? "" : result.output(), postSkillSummaryMaxReplyChars);
         if (output.isBlank()) {
-            return;
+            return MemoryWriteBatch.empty();
         }
         String summary = "post-skill-summary channel=" + channel
                 + ", input=" + capText(userInput == null ? "" : userInput, 120)
@@ -154,7 +142,20 @@ public class PostExecutionMemoryRecorder {
                 (double) summary.length(),
                 Math.abs(summary.hashCode() % 1000) / 1000.0
         );
-        memoryCommandService.writeSemantic(userId, summary, embedding, inferMemoryBucket(userInput));
+        return MemoryWriteBatch.of(new MemoryWriteOperation.WriteSemantic(summary, embedding, inferMemoryBucket(userInput)));
+    }
+
+    private MemoryWriteBatch proceduralLoggingWrite(String userInput, SkillResult result) {
+        if (!proceduralLoggingEnabled || result == null || shouldSkipProceduralLogging(result.skillName())) {
+            return MemoryWriteBatch.empty();
+        }
+        return MemoryWriteBatch.of(new MemoryWriteOperation.WriteProcedural(
+                ProceduralMemoryEntry.of(
+                        result.skillName(),
+                        userInput,
+                        result.success()
+                )
+        ));
     }
 
     private boolean matchesConfiguredSkill(String skillName) {

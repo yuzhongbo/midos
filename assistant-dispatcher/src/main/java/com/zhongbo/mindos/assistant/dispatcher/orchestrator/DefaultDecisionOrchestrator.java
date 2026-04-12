@@ -198,7 +198,7 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
 
     @Override
     public void recordOutcome(String userId, String userInput, SkillResult result, ExecutionTraceDto trace) {
-        memoryRecorder.record(userId, userInput, result, trace);
+        commitMemoryWrites(userId, memoryRecorder.record(userId, userInput, result, trace));
     }
 
     @Override
