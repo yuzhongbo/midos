@@ -3,6 +3,7 @@ package com.zhongbo.mindos.assistant.dispatcher.orchestrator;
 import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.common.dto.ExecutionTraceDto;
 import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.ReflectionAgent;
+import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryCommandService;
 import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryFacade;
 import com.zhongbo.mindos.assistant.memory.MemoryGateway;
 import com.zhongbo.mindos.assistant.memory.model.ProceduralMemoryEntry;
@@ -18,6 +19,7 @@ import java.util.Set;
 public class PostExecutionMemoryRecorder {
 
     private final DispatcherMemoryFacade dispatcherMemoryFacade;
+    private final DispatcherMemoryCommandService memoryCommandService;
     private final ReflectionAgent reflectionAgent;
     private final boolean proceduralLoggingEnabled;
     private final boolean postSkillSummaryEnabled;
@@ -29,7 +31,13 @@ public class PostExecutionMemoryRecorder {
                                        @Value("${mindos.memory.post-skill-summary.enabled:false}") boolean postSkillSummaryEnabled,
                                        @Value("${mindos.memory.post-skill-summary.skills:teaching.plan,todo.create,eq.coach,code.generate,file.search}") String postSkillSummarySkills,
                                        @Value("${mindos.memory.post-skill-summary.max-reply-chars:280}") int postSkillSummaryMaxReplyChars) {
-        this(new DispatcherMemoryFacade(memoryGateway, null, null), null, proceduralLoggingEnabled, postSkillSummaryEnabled, postSkillSummarySkills, postSkillSummaryMaxReplyChars);
+        this(new DispatcherMemoryFacade(memoryGateway, null, null),
+                null,
+                new DispatcherMemoryCommandService(memoryGateway, null, null),
+                proceduralLoggingEnabled,
+                postSkillSummaryEnabled,
+                postSkillSummarySkills,
+                postSkillSummaryMaxReplyChars);
     }
 
     public PostExecutionMemoryRecorder(DispatcherMemoryFacade dispatcherMemoryFacade,
@@ -37,7 +45,7 @@ public class PostExecutionMemoryRecorder {
                                        @Value("${mindos.memory.post-skill-summary.enabled:false}") boolean postSkillSummaryEnabled,
                                        @Value("${mindos.memory.post-skill-summary.skills:teaching.plan,todo.create,eq.coach,code.generate,file.search}") String postSkillSummarySkills,
                                        @Value("${mindos.memory.post-skill-summary.max-reply-chars:280}") int postSkillSummaryMaxReplyChars) {
-        this(dispatcherMemoryFacade, null, proceduralLoggingEnabled, postSkillSummaryEnabled, postSkillSummarySkills, postSkillSummaryMaxReplyChars);
+        this(dispatcherMemoryFacade, null, null, proceduralLoggingEnabled, postSkillSummaryEnabled, postSkillSummarySkills, postSkillSummaryMaxReplyChars);
     }
 
     public PostExecutionMemoryRecorder(MemoryGateway memoryGateway,
@@ -46,17 +54,27 @@ public class PostExecutionMemoryRecorder {
                                        @Value("${mindos.memory.post-skill-summary.enabled:false}") boolean postSkillSummaryEnabled,
                                        @Value("${mindos.memory.post-skill-summary.skills:teaching.plan,todo.create,eq.coach,code.generate,file.search}") String postSkillSummarySkills,
                                        @Value("${mindos.memory.post-skill-summary.max-reply-chars:280}") int postSkillSummaryMaxReplyChars) {
-        this(new DispatcherMemoryFacade(memoryGateway, null, null), reflectionAgent, proceduralLoggingEnabled, postSkillSummaryEnabled, postSkillSummarySkills, postSkillSummaryMaxReplyChars);
+        this(new DispatcherMemoryFacade(memoryGateway, null, null),
+                reflectionAgent,
+                new DispatcherMemoryCommandService(memoryGateway, null, null),
+                proceduralLoggingEnabled,
+                postSkillSummaryEnabled,
+                postSkillSummarySkills,
+                postSkillSummaryMaxReplyChars);
     }
 
     @org.springframework.beans.factory.annotation.Autowired
     public PostExecutionMemoryRecorder(DispatcherMemoryFacade dispatcherMemoryFacade,
                                        ReflectionAgent reflectionAgent,
+                                       DispatcherMemoryCommandService memoryCommandService,
                                        @Value("${mindos.dispatcher.procedural-logging.enabled:true}") boolean proceduralLoggingEnabled,
                                        @Value("${mindos.memory.post-skill-summary.enabled:false}") boolean postSkillSummaryEnabled,
                                        @Value("${mindos.memory.post-skill-summary.skills:teaching.plan,todo.create,eq.coach,code.generate,file.search}") String postSkillSummarySkills,
                                        @Value("${mindos.memory.post-skill-summary.max-reply-chars:280}") int postSkillSummaryMaxReplyChars) {
         this.dispatcherMemoryFacade = dispatcherMemoryFacade;
+        this.memoryCommandService = memoryCommandService == null
+                ? new DispatcherMemoryCommandService(dispatcherMemoryFacade, null)
+                : memoryCommandService;
         this.reflectionAgent = reflectionAgent;
         this.proceduralLoggingEnabled = proceduralLoggingEnabled;
         this.postSkillSummaryEnabled = postSkillSummaryEnabled;
@@ -72,7 +90,7 @@ public class PostExecutionMemoryRecorder {
             return;
         }
         if (proceduralLoggingEnabled && !shouldSkipProceduralLogging(result.skillName())) {
-            dispatcherMemoryFacade.writeProcedural(userId, ProceduralMemoryEntry.of(
+            memoryCommandService.writeProcedural(userId, ProceduralMemoryEntry.of(
                     result.skillName(),
                     userInput,
                     result.success()
@@ -94,7 +112,7 @@ public class PostExecutionMemoryRecorder {
                 (double) summary.length(),
                 Math.abs(summary.hashCode() % 1000) / 1000.0
         );
-        dispatcherMemoryFacade.writeSemantic(userId, summary, embedding, "meta");
+        memoryCommandService.writeSemantic(userId, summary, embedding, "meta");
     }
 
     private void maybeStoreReflection(String userId, String userInput, SkillResult result, ExecutionTraceDto trace) {
@@ -126,7 +144,7 @@ public class PostExecutionMemoryRecorder {
                 (double) summary.length(),
                 Math.abs(summary.hashCode() % 1000) / 1000.0
         );
-        dispatcherMemoryFacade.writeSemantic(userId, summary, embedding, inferMemoryBucket(userInput));
+        memoryCommandService.writeSemantic(userId, summary, embedding, inferMemoryBucket(userInput));
     }
 
     private boolean matchesConfiguredSkill(String skillName) {

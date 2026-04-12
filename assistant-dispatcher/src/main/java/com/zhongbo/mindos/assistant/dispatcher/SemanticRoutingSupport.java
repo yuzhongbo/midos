@@ -1,6 +1,7 @@
 package com.zhongbo.mindos.assistant.dispatcher;
 
 import com.zhongbo.mindos.assistant.common.SkillDsl;
+import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryCommandService;
 import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryFacade;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.ParamValidator;
 import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalysisResult;
@@ -16,11 +17,13 @@ final class SemanticRoutingSupport {
     private static final double SEMANTIC_SUMMARY_MIN_CONFIDENCE = 0.60;
 
     private final DispatcherMemoryFacade dispatcherMemoryFacade;
+    private final DispatcherMemoryCommandService memoryCommandService;
     private final SemanticPayloadCompleter semanticPayloadCompleter;
     private final SemanticSkillResolver semanticSkillResolver;
     private final SemanticClarifyPolicy semanticClarifyPolicy;
 
     SemanticRoutingSupport(DispatcherMemoryFacade dispatcherMemoryFacade,
+                           DispatcherMemoryCommandService memoryCommandService,
                            BehaviorRoutingSupport behaviorRoutingSupport,
                            ParamValidator paramValidator,
                            Predicate<String> knownSkillNameChecker,
@@ -30,6 +33,9 @@ final class SemanticRoutingSupport {
                            boolean preferSuggestedSkillEnabled,
                            double preferSuggestedSkillMinConfidence) {
         this.dispatcherMemoryFacade = dispatcherMemoryFacade;
+        this.memoryCommandService = memoryCommandService == null
+                ? new DispatcherMemoryCommandService(dispatcherMemoryFacade, null)
+                : memoryCommandService;
         this.semanticPayloadCompleter = new SemanticPayloadCompleter(
                 dispatcherMemoryFacade,
                 behaviorRoutingSupport,
@@ -78,7 +84,7 @@ final class SemanticRoutingSupport {
                 (double) memoryText.length(),
                 Math.abs(memoryText.hashCode() % 1000) / 1000.0
         );
-        dispatcherMemoryFacade.writeSemantic(userId, memoryText, embedding, semanticPayloadCompleter.resolveMemoryBucket(userInput));
+        memoryCommandService.writeSemantic(userId, memoryText, embedding, semanticPayloadCompleter.resolveMemoryBucket(userInput));
     }
 
     boolean shouldAskSemanticClarification(SemanticAnalysisResult semanticAnalysis,

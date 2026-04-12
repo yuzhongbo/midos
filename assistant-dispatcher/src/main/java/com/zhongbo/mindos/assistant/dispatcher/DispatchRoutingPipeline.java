@@ -27,12 +27,12 @@ import java.util.regex.Pattern;
 final class DispatchRoutingPipeline {
 
     private static final Logger LOGGER = Logger.getLogger(DispatchRoutingPipeline.class.getName());
-    private static final String SKILL_HELP_CHANNEL = "skills.help";
     private static final Pattern ROUTING_TOKEN_SPLIT_PATTERN = Pattern.compile("[^\\p{L}\\p{N}.#_-]+");
 
     private final SkillEngineFacade skillEngine;
     private final SkillDslParser skillDslParser;
     private final BehaviorRoutingSupport behaviorRoutingSupport;
+    private final DispatchRuleCatalog dispatchRuleCatalog;
     private final SemanticRoutingSupport semanticRoutingSupport;
     private final DecisionOrchestrator decisionOrchestrator;
     private final DecisionParamAssembler decisionParamAssembler;
@@ -55,6 +55,7 @@ final class DispatchRoutingPipeline {
     DispatchRoutingPipeline(SkillEngineFacade skillEngine,
                             SkillDslParser skillDslParser,
                             BehaviorRoutingSupport behaviorRoutingSupport,
+                            DispatchRuleCatalog dispatchRuleCatalog,
                             SemanticRoutingSupport semanticRoutingSupport,
                             DecisionOrchestrator decisionOrchestrator,
                             DecisionParamAssembler decisionParamAssembler,
@@ -75,6 +76,7 @@ final class DispatchRoutingPipeline {
         this.skillEngine = skillEngine;
         this.skillDslParser = skillDslParser;
         this.behaviorRoutingSupport = behaviorRoutingSupport;
+        this.dispatchRuleCatalog = dispatchRuleCatalog;
         this.semanticRoutingSupport = semanticRoutingSupport;
         this.decisionOrchestrator = decisionOrchestrator;
         this.decisionParamAssembler = decisionParamAssembler;
@@ -331,7 +333,7 @@ final class DispatchRoutingPipeline {
         Optional<SkillDsl> ruleDsl = detectSkillWithRules(userInput);
         if (ruleDsl.isPresent()
                 && "code.generate".equals(ruleDsl.get().skill())
-                && !bridge.isCodeGenerationIntent(userInput)
+                && !dispatchRuleCatalog.isCodeGenerationIntent(userInput)
                 && !behaviorRoutingSupport.isContinuationOnlyInput(userInput)) {
             rejectedReasons.add("rule-based code.generate rejected because input does not look like a code task");
             ruleDsl = Optional.empty();
@@ -370,15 +372,16 @@ final class DispatchRoutingPipeline {
     private Optional<CompletableFuture<RoutingOutcome>> routeMetaHelpStage(String userId,
                                                                            String userInput,
                                                                            List<String> rejectedReasons) {
-        Optional<SkillResult> metaReply = bridge.answerMetaQuestion(userInput);
+        Optional<SkillResult> metaReply = dispatchRuleCatalog.answerMetaQuestion(userInput);
         if (metaReply.isEmpty()) {
             rejectedReasons.add("input is not a meta help question");
             return Optional.empty();
         }
-        LOGGER.info("Dispatcher route=meta-help, userId=" + userId + ", channel=" + SKILL_HELP_CHANNEL);
+        String channel = metaReply.get().skillName();
+        LOGGER.info("Dispatcher route=meta-help, userId=" + userId + ", channel=" + channel);
         return Optional.of(CompletableFuture.completedFuture(new RoutingOutcome(metaReply, new RoutingDecisionDto(
                 "meta-help",
-                SKILL_HELP_CHANNEL,
+                channel,
                 0.97,
                 List.of("input matched a built-in meta help question"),
                 List.copyOf(rejectedReasons)
@@ -544,7 +547,7 @@ final class DispatchRoutingPipeline {
         }
         if (habitDsl.isPresent()
                 && "code.generate".equals(habitDsl.get().skill())
-                && !bridge.isCodeGenerationIntent(userInput)
+                && !dispatchRuleCatalog.isCodeGenerationIntent(userInput)
                 && !behaviorRoutingSupport.isContinuationOnlyInput(userInput)) {
             rejectedReasons.add("habit-based code.generate rejected because input does not look like a code task");
             habitDsl = Optional.empty();
@@ -682,7 +685,7 @@ final class DispatchRoutingPipeline {
         Optional<SkillDsl> llmDsl = llmDetection.skillDsl();
         if (llmDsl.isPresent()
                 && "code.generate".equals(llmDsl.get().skill())
-                && !bridge.isCodeGenerationIntent(userInput)
+                && !dispatchRuleCatalog.isCodeGenerationIntent(userInput)
                 && !behaviorRoutingSupport.isContinuationOnlyInput(userInput)) {
             rejectedReasons.add("LLM-routed code.generate rejected because input does not look like a code task");
             llmDsl = Optional.empty();
@@ -899,35 +902,7 @@ final class DispatchRoutingPipeline {
     }
 
     private Optional<SkillDsl> detectSkillWithRules(String userInput) {
-        if (userInput == null || userInput.isBlank()) {
-            return Optional.empty();
-        }
-
-        String normalized = userInput.trim().toLowerCase(Locale.ROOT);
-        if (normalized.startsWith("echo ")) {
-            return Optional.of(new SkillDsl("echo", Map.of("text", userInput.substring("echo ".length()))));
-        }
-        if (normalized.contains("time")
-                || normalized.contains("clock")
-                || normalized.contains("几点")
-                || normalized.contains("时间")
-                || normalized.contains("what time")) {
-            return Optional.of(SkillDsl.of("time"));
-        }
-        if (normalized.startsWith("code ") || normalized.contains("generate code")) {
-            if (!bridge.isCodeGenerationIntent(userInput)) {
-                return Optional.empty();
-            }
-            return Optional.of(new SkillDsl("code.generate", Map.of("task", userInput)));
-        }
-        if (isTeachingPlanIntent(normalized)) {
-            return Optional.of(new SkillDsl("teaching.plan", behaviorRoutingSupport.extractTeachingPlanPayload(userInput)));
-        }
-        return Optional.empty();
-    }
-
-    private boolean isTeachingPlanIntent(String normalizedInput) {
-        return containsAny(normalizedInput, "教学规划", "学习计划", "复习计划", "teaching plan", "study plan");
+        return dispatchRuleCatalog.detectSkillWithRules(userInput);
     }
 
     private Optional<CompletableFuture<RoutingOutcome>> routeToBraveSearchFirst(String userId,
@@ -1046,10 +1021,6 @@ final class DispatchRoutingPipeline {
         boolean isRealtimeLikeInput(String userInput, SemanticAnalysisResult semanticAnalysis);
 
         boolean shouldRunSkillPreAnalyze(String userId, String userInput);
-
-        boolean isCodeGenerationIntent(String userInput);
-
-        Optional<SkillResult> answerMetaQuestion(String userInput);
 
         LlmDetectionResult detectSkillWithLlm(String userId,
                                               String userInput,

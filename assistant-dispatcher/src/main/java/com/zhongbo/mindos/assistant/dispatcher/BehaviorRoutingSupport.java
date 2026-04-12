@@ -2,6 +2,7 @@ package com.zhongbo.mindos.assistant.dispatcher;
 
 import com.zhongbo.mindos.assistant.common.SkillDsl;
 import com.zhongbo.mindos.assistant.common.SkillResult;
+import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryCommandService;
 import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryFacade;
 import com.zhongbo.mindos.assistant.memory.model.ProceduralMemoryEntry;
 
@@ -17,6 +18,7 @@ final class BehaviorRoutingSupport {
 
     BehaviorRoutingSupport(SkillDslParser skillDslParser,
                            DispatcherMemoryFacade dispatcherMemoryFacade,
+                           DispatcherMemoryCommandService memoryCommandService,
                            boolean preferenceReuseEnabled,
                            boolean habitRoutingEnabled,
                            int habitRoutingMinTotalCount,
@@ -43,6 +45,7 @@ final class BehaviorRoutingSupport {
         this.behaviorProfileRecorder = new BehaviorProfileRecorder(
                 skillDslParser,
                 dispatcherMemoryFacade,
+                memoryCommandService,
                 behaviorLearningEnabled,
                 behaviorLearningWindowSize,
                 behaviorLearningDefaultParamThreshold,

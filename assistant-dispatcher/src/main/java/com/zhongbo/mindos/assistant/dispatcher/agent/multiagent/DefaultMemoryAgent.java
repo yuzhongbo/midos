@@ -2,6 +2,7 @@ package com.zhongbo.mindos.assistant.dispatcher.agent.multiagent;
 
 import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.dispatcher.agent.procedure.ProceduralMemory;
+import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryCommandService;
 import com.zhongbo.mindos.assistant.memory.MemoryGateway;
 import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryFacade;
 import com.zhongbo.mindos.assistant.memory.graph.MemoryNode;
@@ -24,16 +25,22 @@ import java.util.Set;
 public class DefaultMemoryAgent implements MemoryAgent {
 
     private final DispatcherMemoryFacade dispatcherMemoryFacade;
+    private final DispatcherMemoryCommandService memoryCommandService;
 
     @Autowired
-    public DefaultMemoryAgent(DispatcherMemoryFacade dispatcherMemoryFacade) {
+    public DefaultMemoryAgent(DispatcherMemoryFacade dispatcherMemoryFacade,
+                              DispatcherMemoryCommandService memoryCommandService) {
         this.dispatcherMemoryFacade = dispatcherMemoryFacade;
+        this.memoryCommandService = memoryCommandService == null
+                ? new DispatcherMemoryCommandService(dispatcherMemoryFacade, null)
+                : memoryCommandService;
     }
 
     public DefaultMemoryAgent(MemoryGateway memoryGateway,
                               com.zhongbo.mindos.assistant.memory.MemoryFacade memoryFacade,
                               ProceduralMemory proceduralMemory) {
-        this(new DispatcherMemoryFacade(memoryFacade, memoryGateway, null, proceduralMemory));
+        this(new DispatcherMemoryFacade(memoryFacade, memoryGateway, null, proceduralMemory),
+                new DispatcherMemoryCommandService(memoryGateway, null, proceduralMemory));
     }
 
     @Override
@@ -153,15 +160,15 @@ public class DefaultMemoryAgent implements MemoryAgent {
 
         if (result != null) {
             if ("skill-usage".equalsIgnoreCase(kind)) {
-                dispatcherMemoryFacade.recordSkillUsage(userId, skillName, trigger, success);
+                memoryCommandService.recordSkillUsage(userId, skillName, trigger, success);
                 if (result.output() != null && !result.output().isBlank()) {
-                    dispatcherMemoryFacade.appendAssistantConversation(userId, result.output());
+                    memoryCommandService.appendAssistantConversation(userId, result.output());
                 }
             }
         }
 
         if ("procedure".equalsIgnoreCase(kind) && success && graph != null) {
-            dispatcherMemoryFacade.recordProcedureSuccess(userId, intent, trigger, graph, contextAttributes);
+            memoryCommandService.recordProcedureSuccess(userId, intent, trigger, graph, contextAttributes);
         }
 
         Map<String, Object> patch = new LinkedHashMap<>();

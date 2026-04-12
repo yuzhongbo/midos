@@ -1,6 +1,7 @@
 package com.zhongbo.mindos.assistant.dispatcher;
 
 import com.zhongbo.mindos.assistant.common.SkillResult;
+import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryCommandService;
 import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryFacade;
 
 import java.util.LinkedHashMap;
@@ -22,25 +23,28 @@ final class DispatchMemoryLifecycle {
             Pattern.CASE_INSENSITIVE
     );
 
-    private final DispatcherMemoryFacade dispatcherMemoryFacade;
+    private final DispatcherMemoryCommandService memoryCommandService;
     private final BehaviorRoutingSupport behaviorRoutingSupport;
     private final Function<String, String> memoryBucketResolver;
 
     DispatchMemoryLifecycle(DispatcherMemoryFacade dispatcherMemoryFacade,
+                            DispatcherMemoryCommandService memoryCommandService,
                             BehaviorRoutingSupport behaviorRoutingSupport,
                             Function<String, String> memoryBucketResolver) {
-        this.dispatcherMemoryFacade = dispatcherMemoryFacade;
+        this.memoryCommandService = memoryCommandService == null
+                ? new DispatcherMemoryCommandService(dispatcherMemoryFacade, null)
+                : memoryCommandService;
         this.behaviorRoutingSupport = behaviorRoutingSupport;
         this.memoryBucketResolver = memoryBucketResolver;
     }
 
     void recordUserInput(String userId, String userInput) {
-        dispatcherMemoryFacade.appendUserConversation(userId, userInput);
+        memoryCommandService.appendUserConversation(userId, userInput);
         maybeStoreRememberedKnowledge(userId, userInput);
     }
 
     void recordAssistantReply(String userId, String reply) {
-        dispatcherMemoryFacade.appendAssistantConversation(userId, reply == null ? "" : reply);
+        memoryCommandService.appendAssistantConversation(userId, reply == null ? "" : reply);
     }
 
     void recordSkillOutcome(String userId, SkillResult result) {
@@ -72,7 +76,7 @@ final class DispatchMemoryLifecycle {
                 (double) ((Integer) embeddingSeed.get("length")),
                 ((Integer) embeddingSeed.get("hash")) / 1000.0
         );
-        dispatcherMemoryFacade.writeSemantic(userId, knowledge, embedding, memoryBucket);
+        memoryCommandService.writeSemantic(userId, knowledge, embedding, memoryBucket);
     }
 
     private String resolveMemoryBucket(String knowledge) {

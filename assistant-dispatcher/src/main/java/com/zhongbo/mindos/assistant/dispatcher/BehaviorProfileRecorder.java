@@ -2,6 +2,7 @@ package com.zhongbo.mindos.assistant.dispatcher;
 
 import com.zhongbo.mindos.assistant.common.SkillDsl;
 import com.zhongbo.mindos.assistant.common.SkillResult;
+import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryCommandService;
 import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryFacade;
 import com.zhongbo.mindos.assistant.memory.model.ProceduralMemoryEntry;
 import com.zhongbo.mindos.assistant.memory.model.SemanticMemoryEntry;
@@ -23,6 +24,7 @@ final class BehaviorProfileRecorder {
 
     private final SkillDslParser skillDslParser;
     private final DispatcherMemoryFacade dispatcherMemoryFacade;
+    private final DispatcherMemoryCommandService memoryCommandService;
     private final boolean behaviorLearningEnabled;
     private final int behaviorLearningWindowSize;
     private final double behaviorLearningDefaultParamThreshold;
@@ -30,12 +32,16 @@ final class BehaviorProfileRecorder {
 
     BehaviorProfileRecorder(SkillDslParser skillDslParser,
                             DispatcherMemoryFacade dispatcherMemoryFacade,
+                            DispatcherMemoryCommandService memoryCommandService,
                             boolean behaviorLearningEnabled,
                             int behaviorLearningWindowSize,
                             double behaviorLearningDefaultParamThreshold,
                             Predicate<String> habitEligibleChecker) {
         this.skillDslParser = skillDslParser;
         this.dispatcherMemoryFacade = dispatcherMemoryFacade;
+        this.memoryCommandService = memoryCommandService == null
+                ? new DispatcherMemoryCommandService(dispatcherMemoryFacade, null)
+                : memoryCommandService;
         this.behaviorLearningEnabled = behaviorLearningEnabled;
         this.behaviorLearningWindowSize = behaviorLearningWindowSize;
         this.behaviorLearningDefaultParamThreshold = behaviorLearningDefaultParamThreshold;
@@ -81,7 +87,7 @@ final class BehaviorProfileRecorder {
         }
         LOGGER.info(() -> "behavior-learning.store userId=" + userId + ", bucket=" + bucket + ", profileSummary=" + capText(profile, 200));
         List<Double> embedding = List.of((double) profile.length(), Math.abs(profile.hashCode() % 1000) / 1000.0);
-        dispatcherMemoryFacade.writeSemantic(userId, profile, embedding, bucket);
+        memoryCommandService.writeSemantic(userId, profile, embedding, bucket);
     }
 
     private Map<String, String> inferDefaultParamsFromHistory(String userId, String skillName) {

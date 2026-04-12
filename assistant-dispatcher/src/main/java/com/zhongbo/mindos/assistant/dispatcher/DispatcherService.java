@@ -2,7 +2,6 @@ package com.zhongbo.mindos.assistant.dispatcher;
 
 import com.zhongbo.mindos.assistant.common.ContextCompressionMetricsReader;
 import com.zhongbo.mindos.assistant.common.DispatcherRoutingMetricsReader;
-import com.zhongbo.mindos.assistant.common.ImDegradedReplyMarker;
 import com.zhongbo.mindos.assistant.common.LlmClient;
 import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.common.SkillDsl;
@@ -46,8 +45,6 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Comparator;
 import java.util.Deque;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -70,20 +67,6 @@ import java.util.logging.Logger;
 public class DispatcherService implements ContextCompressionMetricsReader, DispatcherRoutingMetricsReader, DispatcherFacade {
 
     private static final Logger LOGGER = Logger.getLogger(DispatcherService.class.getName());
-    private static final String SKILL_HELP_CHANNEL = "skills.help";
-    private static final Set<String> SMALL_TALK_INPUTS = Set.of(
-            "hi", "hello", "hey", "thanks", "thank you", "ok", "okay", "got it", "roger",
-            "你好", "您好", "嗨", "谢谢", "多谢", "收到", "好的", "好", "嗯", "嗯嗯", "晚安", "早上好"
-    );
-    private static final Set<String> NEWS_DOMAIN_WHITELIST_TERMS = Set.of(
-            "新闻", "热点", "快讯", "发布", "政策", "监管", "部委", "国务院", "央行",
-            "科技", "ai", "芯片", "大模型", "算力", "机器人", "云计算",
-            "财经", "金融", "经济", "市场", "产业", "融资", "并购", "上市", "财报", "投资", "a股", "港股", "美股"
-    );
-    private static final Set<String> WEATHER_DOMAIN_PENALTY_TERMS = Set.of(
-            "天气", "天气预报", "气温", "降雨", "湿度", "空气质量", "风力", "台风",
-            "accuweather", "weather.com", "weathernews", "中国气象局", "全国天气网"
-    );
 
     private final SkillEngineFacade skillEngine;
     private final SkillDslParser skillDslParser;
@@ -92,7 +75,6 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
     private final SkillCapabilityPolicy skillCapabilityPolicy;
     private final PersonaCoreService personaCoreService;
     private final DispatcherMemoryFacade dispatcherMemoryFacade;
-    private final LlmClient llmClient;
     private final SemanticAnalyzer semanticAnalyzer;
     private final boolean preferenceReuseEnabled;
     private final boolean habitRoutingEnabled;
@@ -200,15 +182,17 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
     private final AtomicLong fallbackChainHitCount = new AtomicLong();
     private final Map<String, AtomicLong> escalationReasonCounters = new java.util.concurrent.ConcurrentHashMap<>();
     private final AtomicLong routingReplayTotalCapturedCount = new AtomicLong();
-    private final PromptBuilder promptBuilder;
-    private final LLMDecisionEngine llmDecisionEngine;
     private final DecisionParser decisionParser;
     private final DecisionOrchestrator decisionOrchestrator;
     private final ParamValidator paramValidator;
     private final DecisionParamAssembler decisionParamAssembler;
     private final DispatchMemoryLifecycle dispatchMemoryLifecycle;
+    private final DispatchHeuristicsSupport dispatchHeuristicsSupport;
+    private final DispatchLlmSupport dispatchLlmSupport;
     private final DispatchPreparationSupport dispatchPreparationSupport;
     private final DispatchResultFinalizer dispatchResultFinalizer;
+    private final DispatchRuleCatalog dispatchRuleCatalog;
+    private final DispatchOrchestrationSupport dispatchOrchestrationSupport;
     private final BehaviorRoutingSupport behaviorRoutingSupport;
     private final SkillRoutingSupport skillRoutingSupport;
     private final SemanticRoutingSupport semanticRoutingSupport;
@@ -433,10 +417,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         this.skillCapabilityPolicy = skillCapabilityPolicy;
         this.personaCoreService = personaCoreService;
         this.dispatcherMemoryFacade = Objects.requireNonNull(dispatcherMemoryFacade, "dispatcherMemoryFacade");
-        this.llmClient = llmClient;
         this.semanticAnalyzer = semanticAnalyzer;
-        this.promptBuilder = promptBuilder;
-        this.llmDecisionEngine = llmDecisionEngine;
         this.decisionParser = decisionParser;
         this.paramValidator = paramValidator;
         this.decisionOrchestrator = decisionOrchestrator;
@@ -463,7 +444,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                 ? "我先给你一个简短结论：当前请求较复杂，我正在整理更完整建议，稍后继续发你。"
                 : eqCoachImTimeoutReply;
         this.promptInjectionGuardEnabled = promptInjectionGuardEnabled;
-        this.promptInjectionRiskTerms = parseRiskTerms(promptInjectionRiskTerms);
+        this.promptInjectionRiskTerms = DispatchHeuristicsSupport.parseRiskTerms(promptInjectionRiskTerms);
         this.promptInjectionSafeReply = promptInjectionSafeReply == null || promptInjectionSafeReply.isBlank()
                 ? "检测到高风险诱导指令，已拒绝执行敏感操作。请改为明确、安全、可审计的请求。"
                 : promptInjectionSafeReply;
@@ -537,19 +518,21 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                 this.behaviorLearningWindowSize,
                 this.behaviorLearningDefaultParamThreshold
         );
+        this.dispatchRuleCatalog = new DispatchRuleCatalog(this.skillEngine, this.behaviorRoutingSupport);
+        this.dispatchOrchestrationSupport = new DispatchOrchestrationSupport();
         this.skillRoutingSupport = new SkillRoutingSupport(
                 this.skillEngine,
                 this.dispatcherMemoryFacade,
                 this.behaviorRoutingSupport,
                 this.llmRoutingShortlistMaxSkills,
-                this::inferMemoryBucket
+                this.dispatchRuleCatalog::inferMemoryBucket
         );
         this.semanticRoutingSupport = new SemanticRoutingSupport(
                 this.dispatcherMemoryFacade,
                 this.behaviorRoutingSupport,
                 this.paramValidator,
                 this::isKnownSkillName,
-                this::inferMemoryBucket,
+                this.dispatchRuleCatalog::inferMemoryBucket,
                 this.semanticAnalysisRouteMinConfidence,
                 this.semanticAnalysisClarifyMinConfidence,
                 this.preferSuggestedSkillEnabled,
@@ -558,7 +541,69 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         this.dispatchMemoryLifecycle = new DispatchMemoryLifecycle(
                 this.dispatcherMemoryFacade,
                 this.behaviorRoutingSupport,
-                this::inferMemoryBucket
+                this.dispatchRuleCatalog::inferMemoryBucket
+        );
+        this.dispatchHeuristicsSupport = new DispatchHeuristicsSupport(
+                this.dispatchMemoryLifecycle,
+                this.promptInjectionGuardEnabled,
+                this.promptInjectionRiskTerms,
+                this.semanticAnalysisSkipShortSimpleEnabled,
+                this.realtimeIntentBypassEnabled,
+                this.realtimeIntentTerms
+        );
+        this.dispatchLlmSupport = new DispatchLlmSupport(
+                llmClient,
+                promptBuilder,
+                llmDecisionEngine,
+                this.dispatchHeuristicsSupport,
+                new DispatchLlmSupport.PromptConfig(
+                        this.promptMaxChars,
+                        this.llmReplyMaxChars,
+                        this.llmDslMemoryContextMaxChars,
+                        this.realtimeIntentMemoryShrinkEnabled,
+                        this.realtimeIntentMemoryShrinkMaxChars,
+                        this.realtimeIntentMemoryShrinkIncludePersona
+                ),
+                new DispatchLlmSupport.StageRouteConfig(
+                        this.llmDslProvider,
+                        this.llmDslPreset,
+                        this.llmDslModel,
+                        this.llmDslMaxTokens,
+                        this.llmFallbackProvider,
+                        this.llmFallbackPreset,
+                        this.llmFallbackModel,
+                        this.llmFallbackMaxTokens,
+                        this.skillFinalizeWithLlmProvider,
+                        this.skillFinalizeWithLlmPreset,
+                        this.skillFinalizeWithLlmModel,
+                        this.skillFinalizeMaxTokens
+                ),
+                new DispatchLlmSupport.SkillFinalizeConfig(
+                        this.skillFinalizeWithLlmEnabled,
+                        this.skillFinalizeWithLlmSkills,
+                        this.skillFinalizeWithLlmMaxOutputChars
+                ),
+                new DispatchLlmSupport.EscalationConfig(
+                        this.localEscalationEnabled,
+                        this.localEscalationCloudProvider,
+                        this.localEscalationCloudPreset,
+                        this.localEscalationCloudModel,
+                        this.localEscalationQualityEnabled,
+                        this.localEscalationQualityMaxReplyChars,
+                        this.localEscalationQualityInputTerms,
+                        this.localEscalationQualityReplyTerms,
+                        this.localEscalationResourceGuardEnabled,
+                        this.localEscalationResourceGuardMinFreeMemoryMb,
+                        this.localEscalationResourceGuardMinFreeMemoryRatio,
+                        this.localEscalationResourceGuardMinAvailableProcessors
+                ),
+                new DispatchLlmSupport.Metrics(
+                        this.localEscalationAttemptCount,
+                        this.localEscalationHitCount,
+                        this.fallbackChainAttemptCount,
+                        this.fallbackChainHitCount,
+                        this.escalationReasonCounters
+                )
         );
         this.dispatchPreparationSupport = new DispatchPreparationSupport(
                 this.dispatcherMemoryFacade,
@@ -583,17 +628,17 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
 
                     @Override
                     public boolean shouldSkipSemanticAnalysis(String userInput) {
-                        return DispatcherService.this.shouldSkipSemanticAnalysis(userInput);
+                        return DispatcherService.this.dispatchHeuristicsSupport.shouldSkipSemanticAnalysis(userInput);
                     }
 
                     @Override
                     public boolean isRealtimeIntent(String userInput, SemanticAnalysisResult semanticAnalysis) {
-                        return DispatcherService.this.isRealtimeIntent(userInput, semanticAnalysis);
+                        return DispatcherService.this.dispatchHeuristicsSupport.isRealtimeIntent(userInput, semanticAnalysis);
                     }
 
                     @Override
                     public boolean isRealtimeLikeInput(String userInput, SemanticAnalysisResult semanticAnalysis) {
-                        return DispatcherService.this.isRealtimeLikeInput(userInput, semanticAnalysis);
+                        return DispatcherService.this.dispatchHeuristicsSupport.isRealtimeLikeInput(userInput, semanticAnalysis);
                     }
 
                     @Override
@@ -610,7 +655,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                     public void applyStageLlmRoute(String stage,
                                                   Map<String, Object> profileContext,
                                                   Map<String, Object> llmContext) {
-                        DispatcherService.this.applyStageLlmRoute(stage, profileContext, llmContext);
+                        DispatcherService.this.dispatchLlmSupport.applyStageLlmRoute(stage, profileContext, llmContext);
                     }
                 },
                 this.memoryContextMaxChars,
@@ -627,18 +672,18 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                     public DispatchResultFinalizer.FinalizedSkill finalizeSkillResult(String userInput,
                                                                                       SkillResult result,
                                                                                       Map<String, Object> llmContext) {
-                        SkillFinalizeOutcome outcome = DispatcherService.this.maybeFinalizeSkillResultWithLlm(userInput, result, llmContext);
+                        SkillFinalizeOutcome outcome = DispatcherService.this.dispatchLlmSupport.maybeFinalizeSkillResultWithLlm(userInput, result, llmContext);
                         return new DispatchResultFinalizer.FinalizedSkill(outcome.result(), outcome.applied());
                     }
 
                     @Override
                     public String capLlmReply(String output) {
-                        return DispatcherService.this.capText(output, DispatcherService.this.llmReplyMaxChars);
+                        return DispatcherService.this.dispatchLlmSupport.capLlmReply(output);
                     }
 
                     @Override
                     public String classifyMcpSearchSource(String skillName) {
-                        return DispatcherService.this.classifyMcpSearchSource(skillName);
+                        return DispatcherService.this.dispatchLlmSupport.classifyMcpSearchSource(skillName);
                     }
 
                     @Override
@@ -681,6 +726,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                 this.skillEngine,
                 this.skillDslParser,
                 this.behaviorRoutingSupport,
+                this.dispatchRuleCatalog,
                 this.semanticRoutingSupport,
                 this.decisionOrchestrator,
                 this.decisionParamAssembler,
@@ -702,27 +748,17 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
 
                     @Override
                     public boolean isRealtimeIntent(String userInput, SemanticAnalysisResult semanticAnalysis) {
-                        return DispatcherService.this.isRealtimeIntent(userInput, semanticAnalysis);
+                        return DispatcherService.this.dispatchHeuristicsSupport.isRealtimeIntent(userInput, semanticAnalysis);
                     }
 
                     @Override
                     public boolean isRealtimeLikeInput(String userInput, SemanticAnalysisResult semanticAnalysis) {
-                        return DispatcherService.this.isRealtimeLikeInput(userInput, semanticAnalysis);
+                        return DispatcherService.this.dispatchHeuristicsSupport.isRealtimeLikeInput(userInput, semanticAnalysis);
                     }
 
                     @Override
                     public boolean shouldRunSkillPreAnalyze(String userId, String userInput) {
                         return DispatcherService.this.shouldRunSkillPreAnalyze(userId, userInput);
-                    }
-
-                    @Override
-                    public boolean isCodeGenerationIntent(String userInput) {
-                        return DispatcherService.this.isCodeGenerationIntent(userInput);
-                    }
-
-                    @Override
-                    public Optional<SkillResult> answerMetaQuestion(String userInput) {
-                        return DispatcherService.this.answerMetaQuestion(userInput);
                     }
 
                     @Override
@@ -774,34 +810,38 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
 
                     @Override
                     public boolean isConversationalBypassInput(String normalizedInput) {
-                        return DispatcherService.this.isConversationalBypassInput(normalizedInput);
+                        return DispatcherService.this.dispatchHeuristicsSupport.isConversationalBypassInput(normalizedInput);
                     }
 
                     @Override
                     public DispatchResult handleConversationalBypass(String userId, String normalizedInput) {
-                        return DispatcherService.this.handleConversationalBypass(userId, normalizedInput);
+                        return DispatcherService.this.dispatchHeuristicsSupport.handleConversationalBypass(userId, normalizedInput);
                     }
 
                     @Override
                     public boolean isPromptInjectionAttempt(String userInput) {
-                        return DispatcherService.this.isPromptInjectionAttempt(userInput);
+                        return DispatcherService.this.dispatchHeuristicsSupport.isPromptInjectionAttempt(userInput);
                     }
 
                     @Override
                     public boolean isRealtimeLikeInput(String userInput, SemanticAnalysisResult semanticAnalysis) {
-                        return DispatcherService.this.isRealtimeLikeInput(userInput, semanticAnalysis);
+                        return DispatcherService.this.dispatchHeuristicsSupport.isRealtimeLikeInput(userInput, semanticAnalysis);
                     }
 
                     @Override
                     public boolean shouldUseMasterOrchestrator(Map<String, Object> profileContext) {
-                        return DispatcherService.this.shouldUseMasterOrchestrator(profileContext);
+                        return DispatcherService.this.dispatchOrchestrationSupport.shouldUseMasterOrchestrator(
+                                DispatcherService.this.masterOrchestrator,
+                                DispatcherService.this.routingCoordinator,
+                                profileContext
+                        );
                     }
 
                     @Override
                     public Decision buildMultiAgentDecision(String userInput,
                                                             SemanticAnalysisResult semanticAnalysis,
                                                             SkillContext context) {
-                        return DispatcherService.this.buildMultiAgentDecision(userInput, semanticAnalysis, context);
+                        return DispatcherService.this.dispatchOrchestrationSupport.buildMultiAgentDecision(userInput, semanticAnalysis, context);
                     }
 
                     @Override
@@ -810,7 +850,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                                                            String userInput,
                                                            Map<String, Object> llmContext,
                                                            boolean realtimeIntentInput) {
-                        return DispatcherService.this.buildFallbackResult(
+                        return DispatcherService.this.dispatchLlmSupport.buildFallbackResult(
                                 memoryContext,
                                 promptMemoryContext,
                                 userInput,
@@ -826,7 +866,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                                                                     Map<String, Object> llmContext,
                                                                     boolean realtimeIntentInput,
                                                                     Consumer<String> deltaConsumer) {
-                        return DispatcherService.this.buildLlmFallbackStreamResult(
+                        return DispatcherService.this.dispatchLlmSupport.buildLlmFallbackStreamResult(
                                 memoryContext,
                                 promptMemoryContext,
                                 userInput,
@@ -905,69 +945,6 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         return dispatchApplicationCoordinator.dispatchStream(userId, userInput, profileContext, deltaConsumer);
     }
 
-    private Decision buildMultiAgentDecision(String userInput,
-                                             SemanticAnalysisResult semanticAnalysis,
-                                             SkillContext context) {
-        if (context == null) {
-            return null;
-        }
-        Map<String, Object> params = new LinkedHashMap<>(context.attributes() == null ? Map.of() : context.attributes());
-        if (semanticAnalysis != null) {
-            params.putAll(semanticAnalysis.asAttributes());
-            if (semanticAnalysis.payload() != null && !semanticAnalysis.payload().isEmpty()) {
-                params.putIfAbsent("semanticPayload", semanticAnalysis.payload());
-            }
-            if (semanticAnalysis.keywords() != null && !semanticAnalysis.keywords().isEmpty()) {
-                params.putIfAbsent("semanticKeywords", semanticAnalysis.keywords());
-            }
-        }
-        params.putIfAbsent("input", context.input());
-        params.putIfAbsent("multiAgent", true);
-        params.putIfAbsent("orchestrationMode", "multi-agent");
-        String intent = firstNonBlank(
-                semanticAnalysis == null ? null : semanticAnalysis.intent(),
-                semanticAnalysis == null ? null : semanticAnalysis.suggestedSkill(),
-                context.input()
-        );
-        String target = firstNonBlank(
-                semanticAnalysis == null ? null : semanticAnalysis.suggestedSkill(),
-                semanticAnalysis == null ? null : semanticAnalysis.intent(),
-                "llm.orchestrate"
-        );
-        double confidence = semanticAnalysis == null ? 0.75 : Math.max(semanticAnalysis.effectiveConfidence(), 0.75);
-        return new Decision(intent, target, params, confidence, false);
-    }
-
-    private boolean shouldUseMasterOrchestrator(Map<String, Object> profileContext) {
-        if (masterOrchestrator == null) {
-            return false;
-        }
-        if (routingCoordinator != null) {
-            return routingCoordinator.shouldUseMasterOrchestrator(profileContext);
-        }
-        if (isTruthy(profileContext == null ? null : profileContext.get("multiAgent"))) {
-            return true;
-        }
-        String orchestrationMode = asString(profileContext == null ? null : profileContext.get("orchestrationMode"));
-        return "multi-agent".equalsIgnoreCase(orchestrationMode)
-                || "master".equalsIgnoreCase(orchestrationMode)
-                || "master-orchestrator".equalsIgnoreCase(orchestrationMode);
-    }
-
-    private boolean isTruthy(Object value) {
-        if (value instanceof Boolean bool) {
-            return bool;
-        }
-        if (value == null) {
-            return false;
-        }
-        String normalized = String.valueOf(value).trim().toLowerCase(Locale.ROOT);
-        return "true".equals(normalized)
-                || "1".equals(normalized)
-                || "yes".equals(normalized)
-                || "on".equals(normalized);
-    }
-
     private void logDispatchCompletion(String userId,
                                        DispatchResult result,
                                        DispatchExecutionState executionState,
@@ -997,368 +974,6 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         );
     }
 
-    private SkillResult buildFallbackResult(String memoryContext,
-                                            PromptMemoryContextDto promptMemoryContext,
-                                            String userInput,
-                                            Map<String, Object> llmContext,
-                                            boolean realtimeIntentInput) {
-        QueryContext queryContext = buildQueryContext(llmContext, userInput, promptMemoryContext);
-        boolean realtimeLookup = realtimeIntentInput || isRealtimeLikeInput(userInput);
-        try {
-            LOGGER.info(() -> "dispatcher.llm.debug userQuery=" + clip(userInput)
-                    + ", explicit=" + queryContext.explicitLlmRequest()
-                    + ", complex=" + queryContext.complexReasoningRequired()
-                    + ", realtimeLookup=" + realtimeLookup
-                    + ", memoryDebug=" + promptMemoryDebugSummary(promptMemoryContext)
-            );
-        } catch (Exception e) {
-            // best-effort debug logging
-        }
-        if (!realtimeLookup && !llmDecisionEngine.shouldCallLLM(queryContext)) {
-            return buildMemoryDirectResult(promptMemoryContext, userInput);
-        }
-        return SkillResult.success("llm", callLlmWithLocalEscalation(
-                buildFallbackPrompt(memoryContext, promptMemoryContext, userInput, realtimeIntentInput),
-                llmContext
-        ));
-    }
-
-    private SkillResult buildLlmFallbackStreamResult(String memoryContext,
-                                                     PromptMemoryContextDto promptMemoryContext,
-                                                     String userInput,
-                                                     Map<String, Object> llmContext,
-                                                     boolean realtimeIntentInput,
-                                                     Consumer<String> deltaConsumer) {
-        QueryContext queryContext = buildQueryContext(llmContext, userInput, promptMemoryContext);
-        boolean realtimeLookup = realtimeIntentInput || isRealtimeLikeInput(userInput);
-        try {
-            LOGGER.info(() -> "dispatcher.llm.stream.debug userQuery=" + clip(userInput)
-                    + ", explicit=" + queryContext.explicitLlmRequest()
-                    + ", complex=" + queryContext.complexReasoningRequired()
-                    + ", realtimeLookup=" + realtimeLookup
-                    + ", memoryDebug=" + promptMemoryDebugSummary(promptMemoryContext)
-            );
-        } catch (Exception e) {
-            // best-effort debug logging
-        }
-        if (!realtimeLookup && !llmDecisionEngine.shouldCallLLM(queryContext)) {
-            SkillResult result = buildMemoryDirectResult(promptMemoryContext, userInput);
-            if (deltaConsumer != null) {
-                deltaConsumer.accept(result.output());
-            }
-            return result;
-        }
-        String prompt = buildFallbackPrompt(memoryContext, promptMemoryContext, userInput, realtimeIntentInput);
-        StringBuilder aggregated = new StringBuilder();
-        llmClient.streamResponse(prompt, llmContext, chunk -> {
-            if (chunk == null || chunk.isBlank()) {
-                return;
-            }
-            aggregated.append(chunk);
-            if (deltaConsumer != null) {
-                deltaConsumer.accept(chunk);
-            }
-        });
-        String output = aggregated.toString().trim();
-        if (output.isBlank()) {
-            output = callLlmWithLocalEscalation(prompt, llmContext);
-        }
-        return SkillResult.success("llm", output);
-    }
-
-    private SkillFinalizeOutcome maybeFinalizeSkillResultWithLlm(String userInput,
-                                                                 SkillResult result,
-                                                                 Map<String, Object> llmContext) {
-        if (!skillFinalizeWithLlmEnabled || result == null || !result.success()) {
-            return SkillFinalizeOutcome.notApplied(result);
-        }
-        String channel = result.skillName();
-        if (channel == null || channel.isBlank() || "llm".equals(channel) || "security.guard".equals(channel)) {
-            return SkillFinalizeOutcome.notApplied(result);
-        }
-        if (!matchesConfiguredSkill(channel, skillFinalizeWithLlmSkills)) {
-            return SkillFinalizeOutcome.notApplied(result);
-        }
-        String rawOutput = result.output() == null ? "" : result.output();
-        if (rawOutput.isBlank()) {
-            return SkillFinalizeOutcome.notApplied(result);
-        }
-
-        String prompt = buildSkillFinalizePrompt(userInput, channel, rawOutput);
-        Map<String, Object> finalizeContext = new LinkedHashMap<>(llmContext == null ? Map.of() : llmContext);
-        finalizeContext.put("routeStage", "skill-postprocess");
-        finalizeContext.put("skillChannel", channel);
-        logMcpPostprocessTrace(channel, rawOutput);
-        if (skillFinalizeWithLlmProvider != null) {
-            finalizeContext.put("llmProvider", skillFinalizeWithLlmProvider);
-        }
-        if (skillFinalizeWithLlmPreset != null) {
-            finalizeContext.put("llmPreset", skillFinalizeWithLlmPreset);
-        }
-        applyStageLlmRoute("skill-postprocess", null, finalizeContext);
-        String optimized = callLlmWithLocalEscalation(prompt, finalizeContext);
-        if (optimized == null || optimized.isBlank()) {
-            return SkillFinalizeOutcome.notApplied(result);
-        }
-        if (optimized.startsWith("[LLM ")) {
-            return SkillFinalizeOutcome.notApplied(result);
-        }
-        String finalizedOutput = optimized.trim();
-        if (isNewsSearchFinalizeChannel(channel)) {
-            finalizedOutput = ensureNewsBriefShape(finalizedOutput, rawOutput);
-        }
-        return SkillFinalizeOutcome.applied(SkillResult.success(channel, capText(finalizedOutput, skillFinalizeWithLlmMaxOutputChars)));
-    }
-
-    private String buildSkillFinalizePrompt(String userInput, String channel, String rawOutput) {
-        StringBuilder summary = new StringBuilder();
-        summary.append("skill=").append(channel).append('\n');
-        summary.append("input=").append(capText(userInput == null ? "" : userInput, 220)).append('\n');
-        summary.append("raw_output=\n").append(capText(rawOutput, 1200));
-
-        if (isNewsSearchFinalizeChannel(channel)) {
-            String prompt = "你是新闻整理助手。给你一份搜索得到的新闻/资讯结果，请整理成适合直接发给用户的新闻简报。"
-                    + "要求：\n"
-                    + "1. 保持新闻特点，严格按下面结构输出，不要改标题名：\n"
-                    + "今日新闻标题：\n"
-                    + "1. ...\n"
-                    + "2. ...\n"
-                    + "3. ...\n"
-                    + "总结：...\n"
-                    + "2. 直接输出结果，不要写任何开场白、寒暄、致歉、确认、等待或自我说明；不要出现“好的”“请稍等”“我正在搜索”“已收到”“稍后给你”等话术；\n"
-                    + "3. ‘今日新闻标题：’下面列出 3-6 条新闻标题或核心要点，每条单独一行，优先保留原始标题信息；\n"
-                    + "4. 标题要尽量贴近原始结果，不要凭空编造；\n"
-                    + "5. 最后必须单独输出“总结：”，概括今天的整体动态、趋势或值得关注点；\n"
-                    + "6. 如果原始结果不足，就按实际数量输出，不要凑数；\n"
-                    + "7. 语言自然、信息清晰，不要泄露内部字段名；控制在 8-12 行中文。\n"
-                    + summary;
-            return capText(prompt, promptMaxChars);
-        }
-
-        String prompt = "你是回复优化助手。给你一个技能结构化执行结果，请输出面向用户的最终答复。"
-                + "要求：自然、简洁、可执行，避免模板化列表；不要泄露内部字段名；不要写任何开场白、寒暄、致歉、确认、等待或“我正在…”类句子；控制在 6-10 行中文。\n"
-                + summary;
-        return capText(prompt, promptMaxChars);
-    }
-
-    private boolean isNewsSearchFinalizeChannel(String channel) {
-        String normalized = normalize(channel);
-        return "mcp.qwensearch.websearch".equals(normalized)
-                || "mcp.bravesearch.websearch".equals(normalized)
-                || "mcp.brave.websearch".equals(normalized);
-    }
-
-    private String ensureNewsBriefShape(String optimizedOutput, String rawOutput) {
-        String normalizedOutput = normalizeMultilineText(stripImDegradedMarkers(optimizedOutput));
-        String normalizedRawOutput = normalizeMultilineText(stripImDegradedMarkers(rawOutput));
-        if (normalizedOutput.isBlank()) {
-            return optimizedOutput == null ? "" : optimizedOutput.trim();
-        }
-
-        List<String> headlines = extractNewsHeadlines(normalizedOutput);
-        if (headlines.size() < 2) {
-            headlines = mergeHeadlines(headlines, extractNewsHeadlines(normalizedRawOutput));
-        }
-        String summary = extractNewsSummary(normalizedOutput);
-        if (summary.isBlank()) {
-            summary = synthesizeNewsSummary(headlines, normalizedOutput);
-        }
-
-        if (headlines.isEmpty()) {
-            return normalizedOutput.contains("总结：") ? normalizedOutput : normalizedOutput + "\n总结：" + summary;
-        }
-
-        StringBuilder builder = new StringBuilder("今日新闻标题：\n");
-        int index = 1;
-        for (String headline : headlines) {
-            builder.append(index).append(". ").append(headline).append('\n');
-            index++;
-            if (index > 6) {
-                break;
-            }
-        }
-        builder.append("总结：").append(summary);
-        return builder.toString().trim();
-    }
-
-    private String normalizeMultilineText(String value) {
-        if (value == null || value.isBlank()) {
-            return "";
-        }
-        return value.replace("\r\n", "\n")
-                .replace('\r', '\n')
-                .trim();
-    }
-
-    private List<String> extractNewsHeadlines(String text) {
-        String normalized = normalizeMultilineText(text);
-        if (normalized.isBlank()) {
-            return List.of();
-        }
-        List<RankedHeadlineCandidate> rankedCandidates = new ArrayList<>();
-        int sourceOrder = 0;
-        for (String line : normalized.split("\n+")) {
-            String originalLine = normalizeMultilineText(line);
-            String candidate = sanitizeNewsLine(line);
-            if (candidate.isBlank()) {
-                continue;
-            }
-            boolean structuredLine = originalLine.matches("^(?:[-*•]+|[0-9]+[.)、]).*");
-            if (candidate.startsWith("今日新闻标题")) {
-                continue;
-            }
-            if (candidate.startsWith("总结：") || candidate.startsWith("总结:")) {
-                continue;
-            }
-            if (ImDegradedReplyMarker.parse(candidate).isPresent()) {
-                continue;
-            }
-            if (candidate.startsWith("http://") || candidate.startsWith("https://")) {
-                continue;
-            }
-            if (candidate.startsWith("Brave 搜索（") || candidate.startsWith("Qwen MCP") || candidate.startsWith("搜索结果")) {
-                continue;
-            }
-            if (isLikelyWeatherNoiseLine(candidate)) {
-                continue;
-            }
-            if (candidate.length() < 4) {
-                continue;
-            }
-            if (!structuredLine && candidate.length() > 24 && (candidate.contains("，") || candidate.contains("。"))) {
-                continue;
-            }
-            int separatorIndex = candidate.indexOf(" - ");
-            if (separatorIndex > 0) {
-                candidate = candidate.substring(0, separatorIndex).trim();
-            }
-            int domainScore = scoreNewsDomainRelevance(candidate);
-            if (domainScore <= 0) {
-                continue;
-            }
-            rankedCandidates.add(new RankedHeadlineCandidate(candidate, domainScore, sourceOrder));
-            sourceOrder++;
-        }
-        if (rankedCandidates.isEmpty()) {
-            return List.of();
-        }
-        rankedCandidates.sort(Comparator
-                .comparingInt(RankedHeadlineCandidate::score).reversed()
-                .thenComparingInt(RankedHeadlineCandidate::sourceOrder));
-        LinkedHashSet<String> deduped = new LinkedHashSet<>();
-        for (RankedHeadlineCandidate candidate : rankedCandidates) {
-            deduped.add(candidate.text());
-            if (deduped.size() >= 6) {
-                break;
-            }
-        }
-        return deduped.isEmpty() ? List.of() : List.copyOf(deduped);
-    }
-
-    private List<String> mergeHeadlines(List<String> first, List<String> second) {
-        LinkedHashSet<String> merged = new LinkedHashSet<>();
-        if (first != null) {
-            merged.addAll(first);
-        }
-        if (second != null) {
-            merged.addAll(second);
-        }
-        return merged.isEmpty() ? List.of() : List.copyOf(merged);
-    }
-
-    private String sanitizeNewsLine(String line) {
-        String candidate = normalizeMultilineText(line);
-        candidate = candidate.replaceFirst("^(?:[-*•]+|[0-9]+[.)、])\\s*", "");
-        candidate = candidate.replaceFirst("^(?:标题|要点)[:：]\\s*", "");
-        return candidate.trim();
-    }
-
-    private String extractNewsSummary(String text) {
-        String normalized = normalizeMultilineText(stripImDegradedMarkers(text));
-        if (normalized.isBlank()) {
-            return "";
-        }
-        for (String line : normalized.split("\n+")) {
-            String candidate = normalizeMultilineText(line);
-            if (candidate.startsWith("总结：") || candidate.startsWith("总结:")) {
-                String extracted = candidate.substring(candidate.indexOf('：') >= 0 ? candidate.indexOf('：') + 1 : candidate.indexOf(':') + 1).trim();
-                String sanitized = normalizeMultilineText(stripImDegradedMarkers(extracted));
-                if (!sanitized.isBlank()) {
-                    return sanitized;
-                }
-            }
-        }
-        return "";
-    }
-
-    private String synthesizeNewsSummary(List<String> headlines, String fallbackText) {
-        if (headlines != null && !headlines.isEmpty()) {
-            if (headlines.size() == 1) {
-                return "今天的重点主要围绕“" + headlines.get(0) + "”展开，值得继续关注后续进展。";
-            }
-            return "今天的新闻重点主要集中在“" + headlines.get(0) + "”以及“" + headlines.get(1) + "”等方向，整体仍以持续推进和阶段性进展为主。";
-        }
-        String normalized = normalizeMultilineText(stripImDegradedMarkers(fallbackText));
-        if (normalized.isBlank()) {
-            return "今天的新闻动态以阶段性进展为主，建议结合后续更新持续关注。";
-        }
-        return normalized.length() <= 90 ? normalized : normalized.substring(0, 90).trim() + "…";
-    }
-
-    private String stripImDegradedMarkers(String text) {
-        String normalized = normalizeMultilineText(text);
-        if (normalized.isBlank()) {
-            return "";
-        }
-        List<String> keptLines = new ArrayList<>();
-        for (String line : normalized.split("\n+")) {
-            String candidate = normalizeMultilineText(line);
-            if (candidate.isBlank()) {
-                continue;
-            }
-            var parsedMarker = ImDegradedReplyMarker.parse(candidate).orElse(null);
-            if (parsedMarker != null) {
-                if (!parsedMarker.remainder().isBlank()) {
-                    keptLines.add(parsedMarker.remainder());
-                }
-                continue;
-            }
-            keptLines.add(candidate);
-        }
-        return keptLines.isEmpty() ? "" : String.join("\n", keptLines);
-    }
-
-
-    private boolean isLikelyWeatherNoiseLine(String line) {
-        String normalized = normalize(line);
-        if (normalized.isBlank()) {
-            return false;
-        }
-        return normalized.contains("天气预报")
-                || normalized.contains("7天天气")
-                || normalized.contains("10天天气")
-                || normalized.contains("15天天气")
-                || normalized.contains("accuweather")
-                || normalized.contains("中国气象局")
-                || normalized.contains("weather.com")
-                || normalized.contains("weathernews")
-                || normalized.contains("全国天气网");
-    }
-
-    private void logMcpPostprocessTrace(String channel, String rawOutput) {
-        String source = classifyMcpSearchSource(channel);
-        if (source.isBlank()) {
-            return;
-        }
-        LOGGER.info(() -> "{\"event\":\"dispatcher.skill-postprocess.trace\",\"source\":\""
-                + source
-                + "\",\"channel\":\""
-                + (channel == null ? "" : channel)
-                + "\",\"sent\":true,\"outputChars\":"
-                + (rawOutput == null ? 0 : rawOutput.length())
-                + "}");
-    }
-
     private void logFinalAggregateTrace(String userId,
                                         String finalChannel,
                                         ExecutionTraceDto trace,
@@ -1368,7 +983,7 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                                         boolean memoryDirectBypassed) {
         RoutingDecisionDto routing = trace == null ? null : trace.routing();
         String selectedSkill = routing == null ? "" : normalizeOptional(routing.selectedSkill());
-        String searchSource = classifyMcpSearchSource(!selectedSkill.isBlank() ? selectedSkill : finalChannel);
+        String searchSource = dispatchLlmSupport.classifyMcpSearchSource(!selectedSkill.isBlank() ? selectedSkill : finalChannel);
         String actualSearchSource = searchSource;
         boolean searchAttempted = !searchSource.isBlank();
         String searchStatus = resolveSearchStatus(searchAttempted, selectedSkill, finalChannel, trace, finalResultSuccess);
@@ -1431,17 +1046,6 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
 
     private String normalizeOptional(String value) {
         return value == null ? "" : value.trim();
-    }
-
-    private String classifyMcpSearchSource(String channel) {
-        String normalized = normalize(channel);
-        if (normalized.startsWith("mcp.qwensearch.")) {
-            return "qwen";
-        }
-        if (normalized.startsWith("mcp.bravesearch.") || normalized.startsWith("mcp.brave.")) {
-            return "brave";
-        }
-        return "";
     }
 
     public void beginDrain() {
@@ -1575,44 +1179,6 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         return channel != null && "im".equalsIgnoreCase(String.valueOf(channel));
     }
 
-    private boolean isCodeGenerationIntent(String input) {
-        if (input == null || input.isBlank()) {
-            return false;
-        }
-        String normalized = input.trim().toLowerCase(Locale.ROOT);
-        boolean hasCodeCue = containsAny(normalized,
-                "generate code",
-                "code ",
-                "写代码",
-                "生成代码",
-                "代码实现",
-                "代码示例",
-                "写个函数",
-                "实现一个",
-                "java代码",
-                "python代码",
-                "sql",
-                "接口",
-                "api",
-                "bug",
-                "debug",
-                "修复");
-        if (!hasCodeCue) {
-            return false;
-        }
-        boolean looksLikeGeneralQuestion = containsAny(normalized,
-                "是什么",
-                "原理",
-                "解释",
-                "怎么理解",
-                "什么意思",
-                "why",
-                "what is",
-                "explain")
-                && !containsAny(normalized, "代码", "函数", "class", "method", "api", "bug", "修复");
-        return !looksLikeGeneralQuestion;
-    }
-
     private SkillResult enrichMemoryHabitResult(SkillResult result,
                                                 String routedSkill,
                                                 Map<String, Object> profileContext) {
@@ -1688,24 +1254,13 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         }
     }
 
-    private boolean isTeachingPlanIntent(String normalized) {
-        return containsAny(normalized,
-                "教学规划",
-                "学习计划",
-                "复习计划",
-                "课程规划",
-                "学习路线",
-                "study plan",
-                "teaching plan");
-    }
-
     private LlmDetectionResult detectSkillWithLlm(String userId,
-                                                  String userInput,
-                                                  String memoryContext,
+                                                   String userInput,
+                                                   String memoryContext,
                                                   SkillContext skillContext,
                                                   Map<String, Object> profileContext) {
         String normalizedInput = normalize(userInput);
-        if (llmRoutingConversationalBypassEnabled && isConversationalBypassInput(normalizedInput)) {
+        if (llmRoutingConversationalBypassEnabled && dispatchHeuristicsSupport.isConversationalBypassInput(normalizedInput)) {
             return LlmDetectionResult.empty();
         }
         String knownSkills = skillRoutingSupport.describeSkillRoutingCandidates(userId, userInput);
@@ -1715,21 +1270,21 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         String prompt = "You are a dispatcher. Decide whether a skill is needed. "
                 + "Return ONLY JSON with schema {\"intent\":\"name\",\"target\":\"skill-or-tool\",\"params\":{},\"confidence\":0.0,\"requireClarify\":false} or NONE.\n"
                 + "Only choose from these candidate skills: " + capText(knownSkills, 800) + ".\n"
-                + "Context:\n" + capText(buildLlmDslMemoryContext(memoryContext, profileContext), llmDslMemoryContextMaxChars) + "\n"
+                + "Context:\n" + capText(dispatchLlmSupport.buildLlmDslMemoryContext(memoryContext, profileContext), llmDslMemoryContextMaxChars) + "\n"
                 + "User input:\n" + capText(userInput, 400);
         prompt = capText(prompt, promptMaxChars);
 
         Map<String, Object> llmContext = new LinkedHashMap<>();
         llmContext.put("userId", userId);
-        llmContext.put("memoryContext", buildLlmDslMemoryContext(memoryContext, profileContext));
+        llmContext.put("memoryContext", dispatchLlmSupport.buildLlmDslMemoryContext(memoryContext, profileContext));
         llmContext.put("input", userInput);
         llmContext.put("routeStage", "llm-dsl");
-        applyStageLlmRoute("llm-dsl", profileContext, llmContext);
+        dispatchLlmSupport.applyStageLlmRoute("llm-dsl", profileContext, llmContext);
         List<Map<String, Object>> chatHistory = activeDispatcherMemoryFacade().buildChatHistory(userId);
         if (!chatHistory.isEmpty()) {
             llmContext.put("chatHistory", chatHistory);
         }
-        String llmReply = callLlmWithLocalEscalation(prompt, Map.copyOf(llmContext));
+        String llmReply = dispatchLlmSupport.callLlmWithLocalEscalation(prompt, Map.copyOf(llmContext));
         if (llmReply == null || llmReply.isBlank() || "NONE".equalsIgnoreCase(llmReply.trim())) {
             return LlmDetectionResult.empty();
         }
@@ -1766,223 +1321,14 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
 
     private boolean shouldRejectCodeGenerate(String userInput, String skillName) {
         return "code.generate".equals(skillName)
-                && !isCodeGenerationIntent(userInput)
+                && !dispatchRuleCatalog.isCodeGenerationIntent(userInput)
                 && !behaviorRoutingSupport.isContinuationOnlyInput(userInput);
-    }
-
-    private Optional<SkillResult> answerMetaQuestion(String userInput) {
-        if (userInput == null || userInput.isBlank()) {
-            return Optional.empty();
-        }
-
-        String normalized = normalize(userInput);
-        if (isLearnableSkillsQuestion(normalized)) {
-            return Optional.of(SkillResult.success(SKILL_HELP_CHANNEL, buildLearnableSkillsReply()));
-        }
-        if (isAvailableSkillsQuestion(normalized)) {
-            return Optional.of(SkillResult.success(SKILL_HELP_CHANNEL, buildAvailableSkillsReply()));
-        }
-        return Optional.empty();
-    }
-
-    private boolean isAvailableSkillsQuestion(String normalized) {
-        return containsAny(normalized,
-                "你有哪些技能",
-                "你有什么技能",
-                "你会什么",
-                "你能做什么",
-                "你可以做什么",
-                "你有什么能力",
-                "支持哪些技能",
-                "有哪些技能",
-                "skill list",
-                "list skills",
-                "show skills",
-                "available skills",
-                "what skills do you have",
-                "what can you do");
-    }
-
-    private boolean isLearnableSkillsQuestion(String normalized) {
-        return containsAny(normalized,
-                "可以学习哪些技能",
-                "能学习哪些技能",
-                "还能学习什么技能",
-                "还可以学习哪些技能",
-                "你能学什么",
-                "你可以学什么",
-                "怎么学习新技能",
-                "怎么添加新技能",
-                "怎么扩展技能",
-                "what skills can you learn",
-                "can you learn new skills",
-                "how can you learn new skills",
-                "add new skills",
-                "learn new skills");
-    }
-
-    private boolean containsAny(String normalized, String... phrases) {
-        for (String phrase : phrases) {
-            if (normalized.contains(phrase)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private String buildAvailableSkillsReply() {
-        List<String> skills = skillEngine.listAvailableSkillSummaries();
-        if (skills.isEmpty()) {
-            return "我现在还没有注册任何技能。你可以稍后让我重载自定义技能，或者接入 MCP / 外部 JAR 来扩展能力。";
-        }
-
-        StringBuilder reply = new StringBuilder("我当前可以直接使用这些技能：\n");
-        for (String skill : skills) {
-            reply.append("- ").append(skill).append('\n');
-        }
-        reply.append("你可以直接说：“现在几点了”“echo 你好”“帮我做一个六周数学学习计划”“帮我创建一个周五前完成的待办”。如果你想继续扩展能力，也可以问我“你还可以学习哪些技能？”。");
-        return reply.toString();
-    }
-
-    private String buildLearnableSkillsReply() {
-        return "我目前可以通过 3 种方式扩展/学习新技能：\n"
-                + "1. 自定义 JSON 技能：把 .json 技能定义放到 mindos.skills.custom-dir，然后重载。\n"
-                + "2. MCP 工具技能：配置 mindos.skills.mcp-servers，或运行时接入一个 MCP server。\n"
-                + "3. 外部 JAR 技能：加载实现 Skill SPI 的外部 JAR。\n"
-                + "如果你愿意，也可以先告诉我你想新增什么能力，我可以帮你判断更适合用哪一种方式。";
     }
 
     private String normalize(String value) {
         return value == null ? "" : value.trim().toLowerCase().replaceAll("\\s+", " ");
     }
 
-
-    private String buildFallbackPrompt(String memoryContext,
-                                       PromptMemoryContextDto promptMemoryContext,
-                                       String userInput,
-                                       boolean realtimeIntentInput) {
-        if (shouldApplyRealtimeMemoryShrink(realtimeIntentInput)) {
-            return buildRealtimeFallbackPrompt(promptMemoryContext, userInput);
-        }
-        return capText(promptBuilder.build(promptMemoryContext, userInput), promptMaxChars);
-    }
-
-    private SkillResult buildMemoryDirectResult(PromptMemoryContextDto promptMemoryContext, String userInput) {
-        List<String> items = promptMemoryContext == null || promptMemoryContext.debugTopItems() == null
-                ? List.of()
-                : promptMemoryContext.debugTopItems().stream()
-                .filter(item -> item != null && item.type() != null && !"episodic".equalsIgnoreCase(item.type()))
-                .sorted(Comparator.comparingDouble(com.zhongbo.mindos.assistant.common.dto.RetrievedMemoryItemDto::finalScore).reversed())
-                .limit(3)
-                .map(item -> item.text() == null ? "" : item.text().replace('\n', ' ').trim())
-                .filter(text -> !text.isBlank())
-                .toList();
-        if (items.isEmpty()) {
-            items = List.of("未找到可直接复用的高相关记忆，请补充更多背景。");
-        }
-        StringBuilder reply = new StringBuilder("根据已有记忆，我先直接回答：");
-        for (int i = 0; i < items.size(); i++) {
-            reply.append("\n").append(i + 1).append(". ").append(capText(items.get(i), 160));
-        }
-        if (userInput != null && !userInput.isBlank()) {
-            reply.append("\n如需更深入分析，请明确说明你希望我详细推理的部分。");
-        }
-        return SkillResult.success("memory.direct", capText(reply.toString(), llmReplyMaxChars));
-    }
-
-    private String promptMemoryDebugSummary(PromptMemoryContextDto ctx) {
-        if (ctx == null || ctx.debugTopItems() == null) {
-            return "promptMemoryDebug=empty";
-        }
-        StringBuilder sb = new StringBuilder();
-        sb.append("promptMemory.items=").append(ctx.debugTopItems().size());
-        int i = 0;
-        for (com.zhongbo.mindos.assistant.common.dto.RetrievedMemoryItemDto item : ctx.debugTopItems()) {
-            if (item == null) continue;
-            i++;
-            sb.append(" |").append(i).append(":type=").append(item.type() == null ? "" : item.type())
-                    .append(",final=").append(String.format(Locale.ROOT, "%.3f", item.finalScore()))
-                    .append(",recency=").append(String.format(Locale.ROOT, "%.3f", item.recencyScore()))
-                    .append(",text=")
-                    .append(item.text() == null ? "" : item.text().replace('\n', ' ').trim());
-            if (i >= 5) break;
-        }
-        return sb.toString();
-    }
-
-    private QueryContext buildQueryContext(Map<String, Object> llmContext,
-                                           String userInput,
-                                           PromptMemoryContextDto promptMemoryContext) {
-        String userId = llmContext == null ? "" : Objects.toString(llmContext.get("userId"), "");
-        return new QueryContext(
-                userId,
-                userInput,
-                promptMemoryContext,
-                isExplicitLlmRequest(userInput),
-                requiresComplexReasoning(userInput)
-        );
-    }
-
-    private boolean isExplicitLlmRequest(String userInput) {
-        if (userInput == null || userInput.isBlank()) {
-            return false;
-        }
-        String normalized = userInput.toLowerCase(Locale.ROOT);
-        return normalized.contains("调用llm")
-                || normalized.contains("调用大模型")
-                || normalized.contains("step by step")
-                || normalized.contains("请详细分析")
-                || normalized.contains("请深入分析");
-    }
-
-    private boolean requiresComplexReasoning(String userInput) {
-        if (userInput == null || userInput.isBlank()) {
-            return false;
-        }
-        String normalized = userInput.toLowerCase(Locale.ROOT);
-        return normalized.contains("为什么")
-                || normalized.contains("比较")
-                || normalized.contains("权衡")
-                || normalized.contains("tradeoff")
-                || normalized.contains("设计方案")
-                || normalized.contains("根因")
-                || normalized.contains("如何设计");
-    }
-
-    private boolean shouldApplyRealtimeMemoryShrink(boolean realtimeIntentInput) {
-        return realtimeIntentInput && realtimeIntentMemoryShrinkEnabled;
-    }
-
-    private String buildRealtimeFallbackPrompt(PromptMemoryContextDto promptMemoryContext, String userInput) {
-        StringBuilder prompt = new StringBuilder("请使用中文简要回答，优先使用最新事实并避免陈旧假设。\n");
-        if (realtimeIntentMemoryShrinkIncludePersona && promptMemoryContext != null
-                && promptMemoryContext.personaSnapshot() != null
-                && !promptMemoryContext.personaSnapshot().isEmpty()) {
-            prompt.append("Persona:\n")
-                    .append(capText(promptMemoryContext.personaSnapshot().toString(), realtimeIntentMemoryShrinkMaxChars / 2))
-                    .append('\n');
-        }
-        prompt.append("User input: ")
-                .append(capText(userInput, 400));
-        return capText(prompt.toString(), Math.min(promptMaxChars, realtimeIntentMemoryShrinkMaxChars + 220));
-    }
-
-    private String buildStructuredMemoryPromptContext(PromptMemoryContextDto promptMemoryContext) {
-        if (promptMemoryContext == null) {
-            return "";
-        }
-        StringBuilder builder = new StringBuilder();
-        appendContextSection(builder, "Structured recent conversation", promptMemoryContext.recentConversation(), memoryContextMaxChars / 3);
-        appendContextSection(builder, "Structured semantic memory", promptMemoryContext.semanticContext(), memoryContextMaxChars / 3);
-        appendContextSection(builder, "Structured procedural hints", promptMemoryContext.proceduralHints(), memoryContextMaxChars / 3);
-        if (promptMemoryContext.personaSnapshot() != null && !promptMemoryContext.personaSnapshot().isEmpty()) {
-            appendContextSection(builder,
-                    "Structured persona",
-                    promptMemoryContext.personaSnapshot().toString(),
-                    Math.max(80, memoryContextMaxChars / 6));
-        }
-        return builder.toString();
-    }
 
     private boolean isSkillLoopGuardBlocked(String userId, String skillName, String userInput) {
         if (skillName == null || skillName.isBlank()) {
@@ -2066,417 +1412,11 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         return Optional.of(SkillResult.success("security.guard", message));
     }
 
-    private boolean isPromptInjectionAttempt(String userInput) {
-        if (!promptInjectionGuardEnabled || userInput == null || userInput.isBlank()) {
-            return false;
-        }
-        String normalized = normalize(userInput).toLowerCase(Locale.ROOT);
-        for (String term : promptInjectionRiskTerms) {
-            if (normalized.contains(term)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private List<String> parseRiskTerms(String rawTerms) {
-        if (rawTerms == null || rawTerms.isBlank()) {
-            return List.of();
-        }
-        return Arrays.stream(rawTerms.split(","))
-                .map(value -> value == null ? "" : value.trim().toLowerCase(Locale.ROOT))
-                .filter(value -> !value.isBlank())
-                .toList();
-    }
-
     private String normalizeOptionalConfig(String value) {
         if (value == null || value.isBlank()) {
             return null;
         }
         return value.trim();
-    }
-
-    private void applyStageLlmRoute(String stage,
-                                    Map<String, Object> profileContext,
-                                    Map<String, Object> llmContext) {
-        if (llmContext == null) {
-            return;
-        }
-        String profileProvider = profileContext == null ? null : asString(profileContext.get("llmProvider"));
-        String profilePreset = profileContext == null ? null : asString(profileContext.get("llmPreset"));
-        String profileModel = profileContext == null ? null : asString(profileContext.get("llmModel"));
-
-        String provider = profileProvider;
-        String preset = profilePreset;
-        String model = profileModel;
-        if ("llm-dsl".equals(stage)) {
-            if (provider == null) {
-                provider = llmDslProvider;
-            }
-            if (preset == null) {
-                preset = llmDslPreset;
-            }
-            if (model == null) {
-                model = llmDslModel;
-            }
-        } else if ("llm-fallback".equals(stage)) {
-            if (provider == null) {
-                provider = llmFallbackProvider;
-            }
-            if (preset == null) {
-                preset = llmFallbackPreset;
-            }
-            if (model == null) {
-                model = llmFallbackModel;
-            }
-        } else if ("skill-postprocess".equals(stage) && model == null) {
-            model = skillFinalizeWithLlmModel;
-        }
-        if (provider != null) {
-            llmContext.put("llmProvider", provider);
-        }
-        if (preset != null) {
-            llmContext.put("llmPreset", preset);
-        }
-        if (model != null) {
-            llmContext.put("model", model);
-        }
-        if ("llm-dsl".equals(stage) && llmDslMaxTokens > 0) {
-            llmContext.put("maxTokens", llmDslMaxTokens);
-        }
-        if ("llm-fallback".equals(stage) && llmFallbackMaxTokens > 0) {
-            llmContext.put("maxTokens", llmFallbackMaxTokens);
-        }
-        if ("skill-postprocess".equals(stage) && skillFinalizeMaxTokens > 0) {
-            llmContext.put("maxTokens", skillFinalizeMaxTokens);
-        }
-    }
-
-    private String callLlmWithLocalEscalation(String prompt, Map<String, Object> llmContext) {
-        boolean localPrimary = isLocalProviderContext(llmContext);
-        if (localPrimary) {
-            localEscalationAttemptCount.incrementAndGet();
-        }
-        String resourceGuardReason = detectResourceGuardEscalationReason(llmContext);
-        if (resourceGuardReason != null) {
-            fallbackChainAttemptCount.incrementAndGet();
-            incrementEscalationReason(resourceGuardReason);
-            Map<String, Object> escalatedContext = new LinkedHashMap<>(llmContext == null ? Map.of() : llmContext);
-            String cloudProvider = resolveEscalationProvider(escalatedContext);
-            if (cloudProvider == null) {
-                return llmClient.generateResponse(prompt, llmContext);
-            }
-            escalatedContext.put("llmProvider", cloudProvider);
-            if (localEscalationCloudPreset != null) {
-                escalatedContext.put("llmPreset", localEscalationCloudPreset);
-            }
-            if (localEscalationCloudModel != null) {
-                escalatedContext.put("model", localEscalationCloudModel);
-            }
-            escalatedContext.put("localEscalationReason", resourceGuardReason);
-            LOGGER.info("Dispatcher route=llm-local-escalation, from=local, to=" + cloudProvider
-                    + ", stage=" + asString(escalatedContext.get("routeStage"))
-                    + ", reason=" + resourceGuardReason);
-            String escalatedReply = llmClient.generateResponse(prompt, escalatedContext);
-            if (isSuccessfulLlmReply(escalatedReply)) {
-                fallbackChainHitCount.incrementAndGet();
-            }
-            return escalatedReply;
-        }
-        String primaryReply = llmClient.generateResponse(prompt, llmContext);
-        String reason = detectEscalationReason(primaryReply, llmContext);
-        if (reason == null) {
-            if (localPrimary && isSuccessfulLlmReply(primaryReply)) {
-                localEscalationHitCount.incrementAndGet();
-            }
-            return primaryReply;
-        }
-        fallbackChainAttemptCount.incrementAndGet();
-        incrementEscalationReason(reason);
-        Map<String, Object> escalatedContext = new LinkedHashMap<>(llmContext == null ? Map.of() : llmContext);
-        String cloudProvider = resolveEscalationProvider(escalatedContext);
-        if (cloudProvider == null) {
-            return primaryReply;
-        }
-        escalatedContext.put("llmProvider", cloudProvider);
-        if (localEscalationCloudPreset != null) {
-            escalatedContext.put("llmPreset", localEscalationCloudPreset);
-        }
-        if (localEscalationCloudModel != null) {
-            escalatedContext.put("model", localEscalationCloudModel);
-        }
-        escalatedContext.put("localEscalationReason", reason);
-        LOGGER.info("Dispatcher route=llm-local-escalation, from=local, to=" + cloudProvider
-                + ", stage=" + asString(escalatedContext.get("routeStage"))
-                + ", reason=" + reason);
-        String escalatedReply = llmClient.generateResponse(prompt, escalatedContext);
-        if (isSuccessfulLlmReply(escalatedReply)) {
-            fallbackChainHitCount.incrementAndGet();
-        }
-        return escalatedReply;
-    }
-
-    private String detectEscalationReason(String reply, Map<String, Object> llmContext) {
-        if (!localEscalationEnabled || llmContext == null || llmContext.isEmpty()) {
-            return null;
-        }
-        String provider = resolveEscalationSourceProvider(llmContext);
-        if (!"local".equals(provider) && !"ollama".equals(provider) && !"gemma".equals(provider)) {
-            return null;
-        }
-        if (isManualEscalationRequested(llmContext)) {
-            return "manual";
-        }
-        String normalizedReply = normalize(reply);
-        if (normalizedReply.isBlank()) {
-            return "empty_response";
-        }
-        if (!normalizedReply.startsWith("[llm local]")) {
-            return shouldEscalateForQuality(reply, llmContext) ? "quality" : null;
-        }
-        if (normalizedReply.contains("reason=timeout") || normalizedReply.contains(" timed out") || normalizedReply.contains(" timeout")) {
-            return "timeout";
-        }
-        if (normalizedReply.contains("reason=upstream_5xx")
-                || normalizedReply.contains("http_500")
-                || normalizedReply.contains("http_502")
-                || normalizedReply.contains("http_503")
-                || normalizedReply.contains("http_504")) {
-            return "upstream_5xx";
-        }
-        if (normalizedReply.contains("reason=empty_response")
-                || normalizedReply.contains("empty_response_content")
-                || normalizedReply.contains("empty response")) {
-            return "empty_response";
-        }
-        return null;
-    }
-
-    private String detectResourceGuardEscalationReason(Map<String, Object> llmContext) {
-        if (!localEscalationEnabled || !localEscalationResourceGuardEnabled || llmContext == null || llmContext.isEmpty()) {
-            return null;
-        }
-        String provider = resolveEscalationSourceProvider(llmContext);
-        if (!"local".equals(provider) && !"ollama".equals(provider) && !"gemma".equals(provider)) {
-            return null;
-        }
-        Runtime runtime = Runtime.getRuntime();
-        long maxMemory = runtime.maxMemory();
-        long usedMemory = runtime.totalMemory() - runtime.freeMemory();
-        long freeMemory = Math.max(0L, maxMemory - usedMemory);
-        long freeMemoryMb = freeMemory / (1024 * 1024);
-        double freeMemoryRatio = maxMemory <= 0 ? 1.0 : (double) freeMemory / (double) maxMemory;
-        int availableProcessors = runtime.availableProcessors();
-        if (freeMemoryMb >= localEscalationResourceGuardMinFreeMemoryMb
-                && freeMemoryRatio >= localEscalationResourceGuardMinFreeMemoryRatio
-                && availableProcessors >= localEscalationResourceGuardMinAvailableProcessors) {
-            return null;
-        }
-        LOGGER.info("Dispatcher local resource guard triggered: freeMemoryMb=" + freeMemoryMb
-                + ", freeMemoryRatio=" + String.format(Locale.ROOT, "%.4f", freeMemoryRatio)
-                + ", availableProcessors=" + availableProcessors
-                + ", minFreeMemoryMb=" + localEscalationResourceGuardMinFreeMemoryMb
-                + ", minFreeMemoryRatio=" + String.format(Locale.ROOT, "%.4f", localEscalationResourceGuardMinFreeMemoryRatio)
-                + ", minAvailableProcessors=" + localEscalationResourceGuardMinAvailableProcessors);
-        return "resource_guard";
-    }
-
-    private boolean isManualEscalationRequested(Map<String, Object> llmContext) {
-        String directReason = normalize(asString(llmContext.get("localEscalationReason")));
-        if ("manual".equals(directReason)) {
-            return true;
-        }
-        if (isTrue(llmContext.get("forceCloudRetry"))) {
-            return true;
-        }
-        Map<String, Object> profile = asObjectMap(llmContext.get("profile"));
-        String profileReason = normalize(asString(profile.get("localEscalationReason")));
-        if ("manual".equals(profileReason)) {
-            return true;
-        }
-        return isTrue(profile.get("forceCloudRetry"));
-    }
-
-    private boolean shouldEscalateForQuality(String reply, Map<String, Object> llmContext) {
-        if (!localEscalationQualityEnabled) {
-            return false;
-        }
-        if (!isSuccessfulLlmReply(reply)) {
-            return false;
-        }
-        String input = asString(llmContext.get("originalInput"));
-        if (input == null) {
-            input = asString(llmContext.get("input"));
-        }
-        if (input == null) {
-            return false;
-        }
-        String normalizedInput = normalize(input);
-        if (!matchesAnyTerm(normalizedInput, localEscalationQualityInputTerms)) {
-            return false;
-        }
-        String normalizedReply = normalize(reply);
-        if (normalizedReply.length() > localEscalationQualityMaxReplyChars) {
-            return false;
-        }
-        return matchesAnyTerm(normalizedReply, localEscalationQualityReplyTerms);
-    }
-
-    private boolean matchesAnyTerm(String normalizedText, Set<String> terms) {
-        if (normalizedText == null || normalizedText.isBlank() || terms == null || terms.isEmpty()) {
-            return false;
-        }
-        for (String term : terms) {
-            if (term != null && !term.isBlank() && normalizedText.contains(term)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private boolean isTrue(Object value) {
-        if (value instanceof Boolean bool) {
-            return bool;
-        }
-        if (value instanceof Number number) {
-            return number.intValue() != 0;
-        }
-        if (value instanceof String text) {
-            String normalized = normalize(text);
-            return "true".equals(normalized) || "1".equals(normalized) || "yes".equals(normalized) || "on".equals(normalized);
-        }
-        return false;
-    }
-
-    private Map<String, Object> asObjectMap(Object value) {
-        if (!(value instanceof Map<?, ?> raw)) {
-            return Map.of();
-        }
-        Map<String, Object> mapped = new LinkedHashMap<>();
-        for (Map.Entry<?, ?> entry : raw.entrySet()) {
-            mapped.put(String.valueOf(entry.getKey()), entry.getValue());
-        }
-        return mapped.isEmpty() ? Map.of() : Map.copyOf(mapped);
-    }
-
-    private boolean isLocalProviderContext(Map<String, Object> llmContext) {
-        if (llmContext == null || llmContext.isEmpty()) {
-            return false;
-        }
-        String provider = resolveEscalationSourceProvider(llmContext);
-        return "local".equals(provider) || "ollama".equals(provider) || "gemma".equals(provider);
-    }
-
-    private String resolveEscalationSourceProvider(Map<String, Object> llmContext) {
-        String provider = normalize(asString(llmContext.get("llmProvider")));
-        if (!provider.isBlank()) {
-            return provider;
-        }
-        Map<String, Object> profile = asObjectMap(llmContext.get("profile"));
-        String profileProvider = normalize(asString(profile.get("llmProvider")));
-        if (!profileProvider.isBlank() && !"auto".equals(profileProvider)) {
-            return profileProvider;
-        }
-        String routeStage = normalize(asString(llmContext.get("routeStage")));
-        if ("llm-fallback".equals(routeStage)) {
-            return normalize(llmFallbackProvider);
-        }
-        if ("llm-dsl".equals(routeStage)) {
-            return normalize(llmDslProvider);
-        }
-        return provider;
-    }
-
-    private boolean isSuccessfulLlmReply(String reply) {
-        if (reply == null || reply.isBlank()) {
-            return false;
-        }
-        return !normalize(reply).startsWith("[llm ");
-    }
-
-    private void incrementEscalationReason(String reason) {
-        if (reason == null || reason.isBlank()) {
-            return;
-        }
-        escalationReasonCounters.computeIfAbsent(reason, ignored -> new AtomicLong()).incrementAndGet();
-    }
-
-    private String buildLlmDslMemoryContext(String memoryContext, Map<String, Object> profileContext) {
-        StringBuilder builder = new StringBuilder();
-        String semanticIntent = asString(profileContext == null ? null : profileContext.get("semanticIntent"));
-        String semanticRewritten = asString(profileContext == null ? null : profileContext.get("semanticRewrittenInput"));
-        if (semanticIntent != null || semanticRewritten != null) {
-            builder.append("Semantic hint:\n");
-            if (semanticIntent != null) {
-                builder.append("- intent: ").append(semanticIntent).append('\n');
-            }
-            if (semanticRewritten != null) {
-                builder.append("- rewrittenInput: ").append(semanticRewritten).append('\n');
-            }
-        }
-        List<Map<String, Object>> history = extractRecentChatHistory(profileContext, 2);
-        if (!history.isEmpty()) {
-            builder.append("Recent chat turns:\n");
-            for (Map<String, Object> turn : history) {
-                String role = asString(turn.get("role"));
-                String content = asString(turn.get("content"));
-                if (content == null) {
-                    continue;
-                }
-                builder.append("- ").append(role == null ? "assistant" : role).append(": ")
-                        .append(capText(content, 140)).append('\n');
-            }
-        }
-        if (builder.length() == 0) {
-            return capText(memoryContext == null ? "" : memoryContext, llmDslMemoryContextMaxChars);
-        }
-        if (memoryContext != null && !memoryContext.isBlank()) {
-            builder.append("Memory summary:\n")
-                    .append(capText(memoryContext, Math.max(120, llmDslMemoryContextMaxChars / 2)));
-        }
-        return capText(builder.toString(), llmDslMemoryContextMaxChars);
-    }
-
-    private List<Map<String, Object>> extractRecentChatHistory(Map<String, Object> profileContext, int keepLast) {
-        if (profileContext == null || keepLast <= 0) {
-            return List.of();
-        }
-        Object raw = profileContext.get("chatHistory");
-        if (!(raw instanceof List<?> list) || list.isEmpty()) {
-            return List.of();
-        }
-        int from = Math.max(0, list.size() - keepLast);
-        List<Map<String, Object>> turns = new ArrayList<>();
-        for (int i = from; i < list.size(); i++) {
-            Object item = list.get(i);
-            if (item instanceof Map<?, ?> map) {
-                Map<String, Object> normalized = new LinkedHashMap<>();
-                for (Map.Entry<?, ?> entry : map.entrySet()) {
-                    normalized.put(String.valueOf(entry.getKey()), entry.getValue());
-                }
-                turns.add(Map.copyOf(normalized));
-            }
-        }
-        return turns.isEmpty() ? List.of() : List.copyOf(turns);
-    }
-
-    private String resolveEscalationProvider(Map<String, Object> llmContext) {
-        String configured = localEscalationCloudProvider;
-        if (configured == null) {
-            configured = llmFallbackProvider;
-        }
-        String normalized = normalize(configured);
-        if (normalized.isBlank()
-                || "local".equals(normalized)
-                || "ollama".equals(normalized)
-                || "gemma".equals(normalized)) {
-            return null;
-        }
-        String currentProvider = normalize(asString(llmContext.get("llmProvider")));
-        if (normalized.equals(currentProvider)) {
-            return null;
-        }
-        return configured.trim();
     }
 
     private void recordRoutingReplaySample(String userInput,
@@ -2558,14 +1498,6 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
             return value;
         }
         return value.substring(0, Math.max(0, maxChars - 14)) + "\n...[truncated]";
-    }
-
-    private void appendContextSection(StringBuilder builder, String title, String content, int budget) {
-        builder.append(title).append(":\n");
-        builder.append(capText(content == null || content.isBlank() ? "- none\n" : content, budget));
-        if (builder.length() == 0 || builder.charAt(builder.length() - 1) != '\n') {
-            builder.append('\n');
-        }
     }
 
     private void recordContextCompressionMetrics(int rawChars,
@@ -2741,74 +1673,6 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         return parsed.isEmpty() ? List.of() : List.copyOf(parsed);
     }
 
-    private boolean isConversationalBypassInput(String normalizedInput) {
-        if (normalizedInput == null || normalizedInput.isBlank()) {
-            return true;
-        }
-        if (SMALL_TALK_INPUTS.contains(normalizedInput)) {
-            return true;
-        }
-        return normalizedInput.length() <= 12
-                && (normalizedInput.startsWith("谢谢")
-                || normalizedInput.startsWith("收到")
-                || normalizedInput.startsWith("好的")
-                || normalizedInput.startsWith("hello")
-                || normalizedInput.startsWith("thanks"));
-    }
-
-    private boolean shouldSkipSemanticAnalysis(String userInput) {
-        if (!semanticAnalysisSkipShortSimpleEnabled) {
-            return false;
-        }
-        return isConversationalBypassInput(normalize(userInput));
-    }
-
-    private DispatchResult handleConversationalBypass(String userId, String normalizedInput) {
-        String reply = "";
-        if (normalizedInput == null || normalizedInput.isBlank()) {
-            reply = "";
-        } else if (normalizedInput.startsWith("谢谢") || normalizedInput.startsWith("多谢") || normalizedInput.startsWith("thanks")) {
-            reply = "不客气";
-        } else if (normalizedInput.startsWith("收到")) {
-            reply = "已收到";
-        } else if (normalizedInput.startsWith("好的") || normalizedInput.equals("好") || normalizedInput.startsWith("ok") || normalizedInput.startsWith("okay")) {
-            reply = "好的";
-        } else if (normalizedInput.startsWith("hi") || normalizedInput.startsWith("hello") || normalizedInput.startsWith("你好") || normalizedInput.startsWith("嗨") || normalizedInput.startsWith("您好")) {
-            reply = "你好！有什么我可以帮你的吗？";
-        }
-        // Persist assistant reply to conversation history for consistency
-        dispatchMemoryLifecycle.recordAssistantReply(userId, reply);
-        RoutingDecisionDto decision = new RoutingDecisionDto(
-                "conversational-bypass",
-                "conversational-bypass",
-                1.0,
-                List.of("short conversational input bypassed routing"),
-                List.of()
-        );
-        ExecutionTraceDto trace = new ExecutionTraceDto("single-pass", 0, null, List.of(), decision);
-        return new DispatchResult(reply == null ? "" : reply, "conversational-bypass", trace);
-    }
-
-    private boolean isRealtimeIntent(String userInput) {
-        return isRealtimeIntent(userInput, SemanticAnalysisResult.empty());
-    }
-
-    private boolean isRealtimeIntent(String userInput, SemanticAnalysisResult semanticAnalysis) {
-        return realtimeIntentBypassEnabled && RealtimeIntentHeuristics.isRealtimeIntent(userInput, realtimeIntentTerms, semanticAnalysis);
-    }
-
-    /**
-     * Realtime-like intent detector that is not gated by realtimeIntentBypassEnabled.
-     * Used for safe fallback guards to avoid memory.direct responses for weather/news lookups.
-     */
-    private boolean isRealtimeLikeInput(String userInput) {
-        return isRealtimeLikeInput(userInput, SemanticAnalysisResult.empty());
-    }
-
-    private boolean isRealtimeLikeInput(String userInput, SemanticAnalysisResult semanticAnalysis) {
-        return RealtimeIntentHeuristics.isRealtimeLikeInput(userInput, realtimeIntentTerms, semanticAnalysis);
-    }
-
     private ExecutionTraceDto enrichTraceWithRouting(ExecutionTraceDto trace, RoutingDecisionDto routingDecision) {
         if (trace == null) {
             return new ExecutionTraceDto("single-pass", 0, null, List.of(), routingDecision);
@@ -2851,16 +1715,6 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
         reasons.add(key + "=" + (value == null ? "" : value));
     }
 
-    private record SkillFinalizeOutcome(SkillResult result, boolean applied) {
-        private static SkillFinalizeOutcome notApplied(SkillResult result) {
-            return new SkillFinalizeOutcome(result, false);
-        }
-
-        private static SkillFinalizeOutcome applied(SkillResult result) {
-            return new SkillFinalizeOutcome(result, true);
-        }
-    }
-
     private boolean isKnownSkillName(String skillName) {
         if (skillName == null || skillName.isBlank()) {
             return false;
@@ -2871,52 +1725,6 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                     return separator >= 0 ? summary.substring(0, separator).trim() : summary.trim();
                 })
                 .anyMatch(skillName::equals);
-    }
-
-    private int scoreNewsDomainRelevance(String line) {
-        String normalized = normalize(line);
-        if (normalized.isBlank()) {
-            return 0;
-        }
-        int score = 0;
-        for (String keyword : NEWS_DOMAIN_WHITELIST_TERMS) {
-            if (normalized.contains(keyword)) {
-                score += 2;
-            }
-        }
-        for (String keyword : WEATHER_DOMAIN_PENALTY_TERMS) {
-            if (normalized.contains(keyword)) {
-                score -= 3;
-            }
-        }
-        return score;
-    }
-
-    private record RankedHeadlineCandidate(String text, int score, int sourceOrder) {
-    }
-
-    private String inferMemoryBucket(String input) {
-        String normalized = normalize(input);
-        if (normalized.isBlank()) {
-            return "general";
-        }
-        if (containsAny(normalized,
-                "学习计划", "教学规划", "复习计划", "备考", "课程", "学科", "数学", "英语", "物理", "化学")) {
-            return "learning";
-        }
-        if (containsAny(normalized,
-                "情商", "沟通", "同事", "关系", "冲突", "安抚", "eq", "coach")) {
-            return "eq";
-        }
-        if (containsAny(normalized,
-                "待办", "todo", "截止", "任务", "清单", "优先级", "计划")) {
-            return "task";
-        }
-        if (containsAny(normalized,
-                "代码", "编译", "java", "spring", "bug", "接口", "mcp", "sdk")) {
-            return "coding";
-        }
-        return "general";
     }
 
     private String clip(String value) {

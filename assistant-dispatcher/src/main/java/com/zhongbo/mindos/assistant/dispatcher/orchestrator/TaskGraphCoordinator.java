@@ -12,6 +12,7 @@ import com.zhongbo.mindos.assistant.dispatcher.agent.taskgraph.TaskGraph;
 import com.zhongbo.mindos.assistant.dispatcher.agent.taskgraph.TaskGraphExecutionResult;
 import com.zhongbo.mindos.assistant.dispatcher.agent.taskgraph.TaskNode;
 import com.zhongbo.mindos.assistant.dispatcher.decision.Decision;
+import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryCommandService;
 import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryFacade;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.DecisionOrchestrator.OrchestrationOutcome;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.DecisionOrchestrator.OrchestrationRequest;
@@ -128,7 +129,7 @@ final class TaskGraphCoordinator {
         }
         DispatcherMemoryFacade dispatcherMemoryFacade = memoryFacadeSupplier.get();
         if (taskResult.finalResult().success() && dispatcherMemoryFacade != null) {
-            dispatcherMemoryFacade.recordProcedureSuccess(
+            new DispatcherMemoryCommandService(dispatcherMemoryFacade, null).recordProcedureSuccess(
                     request == null ? "" : request.userId(),
                     intent == null || intent.isBlank() ? taskResult.finalResult().skillName() : intent,
                     trigger == null ? "" : trigger,
