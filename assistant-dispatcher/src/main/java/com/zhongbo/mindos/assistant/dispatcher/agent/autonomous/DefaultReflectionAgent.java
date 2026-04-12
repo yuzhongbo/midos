@@ -8,6 +8,8 @@ import com.zhongbo.mindos.assistant.common.dto.RoutingDecisionDto;
 import com.zhongbo.mindos.assistant.dispatcher.agent.multiagent.SharedMemorySnapshot;
 import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryCommandService;
 import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryFacade;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.memory.MemoryWriteBatch;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.memory.MemoryWriteOperation;
 import com.zhongbo.mindos.assistant.memory.model.ProceduralMemoryEntry;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -25,7 +27,6 @@ import java.util.Map;
 public class DefaultReflectionAgent implements ReflectionAgent {
 
     private final DispatcherMemoryFacade dispatcherMemoryFacade;
-    private final DispatcherMemoryCommandService memoryCommandService;
     private final String semanticBucket;
     private final String proceduralSkillName;
 
@@ -57,15 +58,12 @@ public class DefaultReflectionAgent implements ReflectionAgent {
 
     @Autowired
     public DefaultReflectionAgent(DispatcherMemoryFacade dispatcherMemoryFacade,
-                                  DispatcherMemoryCommandService memoryCommandService,
+                                  com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryCommandService memoryCommandService,
                                   @Value("${mindos.autonomous.reflection.semantic-bucket:autonomous.reflection}") String semanticBucket,
                                   @Value("${mindos.autonomous.reflection.procedural-skill:reflection}") String proceduralSkillName) {
         this.dispatcherMemoryFacade = dispatcherMemoryFacade == null
                 ? new DispatcherMemoryFacade(null, null, null)
                 : dispatcherMemoryFacade;
-        this.memoryCommandService = memoryCommandService == null
-                ? new DispatcherMemoryCommandService(this.dispatcherMemoryFacade, null)
-                : memoryCommandService;
         this.semanticBucket = normalizeBucket(semanticBucket);
         this.proceduralSkillName = normalizeName(proceduralSkillName, "reflection");
     }
@@ -91,11 +89,15 @@ public class DefaultReflectionAgent implements ReflectionAgent {
                 signals,
                 false,
                 false,
-                Instant.now()
+                Instant.now(),
+                MemoryWriteBatch.empty()
         );
-        boolean proceduralWritten = writeProcedural(safeRequest, result);
-        boolean semanticWritten = writeSemantic(safeRequest, result, facts);
-        return result.withMemoryWrites(proceduralWritten, semanticWritten);
+        MemoryWriteBatch memoryWrites = buildMemoryWrites(safeRequest, result, facts);
+        return result.withMemoryWrites(
+                containsProceduralWrite(memoryWrites),
+                containsSemanticWrite(memoryWrites),
+                memoryWrites
+        );
     }
 
     private ReflectionFacts analyse(ReflectionRequest request) {
@@ -413,24 +415,36 @@ public class DefaultReflectionAgent implements ReflectionAgent {
         return List.copyOf(signals);
     }
 
-    private boolean writeProcedural(ReflectionRequest request, ReflectionResult result) {
-        if (request.userId().isBlank()) {
-            return false;
-        }
-        memoryCommandService.writeProcedural(
-                request.userId(),
-                ProceduralMemoryEntry.of(proceduralSkillName, result.summary(), result.success())
+    private MemoryWriteBatch buildMemoryWrites(ReflectionRequest request, ReflectionResult result, ReflectionFacts facts) {
+        return MemoryWriteBatch.of(
+                proceduralWrite(request, result),
+                semanticWrite(request, result, facts)
         );
-        return true;
     }
 
-    private boolean writeSemantic(ReflectionRequest request, ReflectionResult result, ReflectionFacts facts) {
+    private boolean containsProceduralWrite(MemoryWriteBatch batch) {
+        return batch != null && batch.operations().stream().anyMatch(MemoryWriteOperation.WriteProcedural.class::isInstance);
+    }
+
+    private boolean containsSemanticWrite(MemoryWriteBatch batch) {
+        return batch != null && batch.operations().stream().anyMatch(MemoryWriteOperation.WriteSemantic.class::isInstance);
+    }
+
+    private MemoryWriteOperation proceduralWrite(ReflectionRequest request, ReflectionResult result) {
         if (request.userId().isBlank()) {
-            return false;
+            return null;
+        }
+        return new MemoryWriteOperation.WriteProcedural(
+                ProceduralMemoryEntry.of(proceduralSkillName, result.summary(), result.success())
+        );
+    }
+
+    private MemoryWriteOperation semanticWrite(ReflectionRequest request, ReflectionResult result, ReflectionFacts facts) {
+        if (request.userId().isBlank()) {
+            return null;
         }
         String semanticText = buildSemanticText(result, facts);
-        memoryCommandService.writeSemantic(request.userId(), semanticText, buildEmbedding(result, facts), semanticBucket);
-        return true;
+        return new MemoryWriteOperation.WriteSemantic(semanticText, buildEmbedding(result, facts), semanticBucket);
     }
 
     private String buildSemanticText(ReflectionResult result, ReflectionFacts facts) {

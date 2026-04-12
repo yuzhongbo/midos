@@ -1,10 +1,8 @@
 package com.zhongbo.mindos.assistant.dispatcher.agent.autonomous;
 
-import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryCommandService;
 import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryFacade;
 import com.zhongbo.mindos.assistant.memory.MemoryGateway;
 import com.zhongbo.mindos.assistant.memory.model.ConversationTurn;
-import com.zhongbo.mindos.assistant.memory.model.ProceduralMemoryEntry;
 import com.zhongbo.mindos.assistant.memory.model.SkillUsageStats;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -27,7 +25,6 @@ public class DefaultStrategyAgent implements StrategyAgent {
     private static final List<String> EFFICIENCY_KEYWORDS = List.of("重复", "手工", "耗时", "慢", "低效", "重复调整", "重复确认", "拖延", "效率", "manual", "slow", "delay");
 
     private final DispatcherMemoryFacade dispatcherMemoryFacade;
-    private final DispatcherMemoryCommandService memoryCommandService;
     private final String semanticBucket;
     private final String proceduralSkillName;
     private final int historyWindow;
@@ -36,12 +33,12 @@ public class DefaultStrategyAgent implements StrategyAgent {
     private final int maxActions;
 
     public DefaultStrategyAgent() {
-        this((DispatcherMemoryFacade) null, (DispatcherMemoryCommandService) null, "strategy.longterm", "strategy.agent", 8, 5, 3, 3);
+        this((DispatcherMemoryFacade) null, null, "strategy.longterm", "strategy.agent", 8, 5, 3, 3);
     }
 
     public DefaultStrategyAgent(MemoryGateway memoryGateway) {
         this(new DispatcherMemoryFacade(memoryGateway, null, null),
-                new DispatcherMemoryCommandService(memoryGateway, null, null),
+                null,
                 "strategy.longterm",
                 "strategy.agent",
                 8,
@@ -52,7 +49,7 @@ public class DefaultStrategyAgent implements StrategyAgent {
 
     @Autowired
     public DefaultStrategyAgent(DispatcherMemoryFacade dispatcherMemoryFacade,
-                                DispatcherMemoryCommandService memoryCommandService,
+                                com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryCommandService memoryCommandService,
                                 @Value("${mindos.autonomous.strategy.semantic-bucket:strategy.longterm}") String semanticBucket,
                                 @Value("${mindos.autonomous.strategy.procedural-skill:strategy.agent}") String proceduralSkillName,
                                 @Value("${mindos.autonomous.strategy.recent-history-turns:8}") int historyWindow,
@@ -62,9 +59,6 @@ public class DefaultStrategyAgent implements StrategyAgent {
         this.dispatcherMemoryFacade = dispatcherMemoryFacade == null
                 ? new DispatcherMemoryFacade(null, null, null)
                 : dispatcherMemoryFacade;
-        this.memoryCommandService = memoryCommandService == null
-                ? new DispatcherMemoryCommandService(this.dispatcherMemoryFacade, null)
-                : memoryCommandService;
         this.semanticBucket = normalizeText(semanticBucket).isBlank() ? "strategy.longterm" : semanticBucket.trim();
         this.proceduralSkillName = normalizeText(proceduralSkillName).isBlank() ? "strategy.agent" : proceduralSkillName.trim();
         this.historyWindow = Math.max(1, historyWindow);
@@ -81,7 +75,7 @@ public class DefaultStrategyAgent implements StrategyAgent {
                                 int minFailureCount,
                                 int maxActions) {
         this(dispatcherMemoryFacade,
-                (DispatcherMemoryCommandService) null,
+                (com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryCommandService) null,
                 semanticBucket,
                 proceduralSkillName,
                 historyWindow,
@@ -268,12 +262,6 @@ public class DefaultStrategyAgent implements StrategyAgent {
     }
 
     private void writeMemory(String userId, StrategicGoal goal, StrategySignals signals) {
-        if (userId.isBlank() || goal == null) {
-            return;
-        }
-        String summary = buildSemanticText(goal, signals);
-        memoryCommandService.writeSemantic(userId, summary, buildEmbedding(goal, signals), semanticBucket);
-        memoryCommandService.writeProcedural(userId, ProceduralMemoryEntry.of(proceduralSkillName, summary, true));
     }
 
     private String buildSemanticText(StrategicGoal goal, StrategySignals signals) {

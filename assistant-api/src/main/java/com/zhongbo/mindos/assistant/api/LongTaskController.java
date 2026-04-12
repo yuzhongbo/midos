@@ -26,16 +26,16 @@ import java.util.List;
 public class LongTaskController {
 
     private final MemoryFacade memoryFacade;
-    private final LongTaskCommandService longTaskCommandService;
+    private final LongTaskCommandOrchestrator longTaskCommandOrchestrator;
     private final LongTaskAutoRunner longTaskAutoRunner;
     private final SecurityPolicyGuard securityPolicyGuard;
 
     public LongTaskController(MemoryFacade memoryFacade,
-                              LongTaskCommandService longTaskCommandService,
+                              LongTaskCommandOrchestrator longTaskCommandOrchestrator,
                               LongTaskAutoRunner longTaskAutoRunner,
                               SecurityPolicyGuard securityPolicyGuard) {
         this.memoryFacade = memoryFacade;
-        this.longTaskCommandService = longTaskCommandService;
+        this.longTaskCommandOrchestrator = longTaskCommandOrchestrator;
         this.longTaskAutoRunner = longTaskAutoRunner;
         this.securityPolicyGuard = securityPolicyGuard;
     }
@@ -43,7 +43,7 @@ public class LongTaskController {
     @PostMapping("/{userId}")
     public LongTaskDto createTask(@PathVariable String userId,
                                   @RequestBody LongTaskCreateRequestDto request) {
-        LongTask created = longTaskCommandService.createTask(
+        LongTask created = longTaskCommandOrchestrator.createTask(
                 userId,
                 request == null ? null : request.title(),
                 request == null ? null : request.objective(),
@@ -75,7 +75,7 @@ public class LongTaskController {
                                              @RequestParam(defaultValue = "assistant-worker") String workerId,
                                              @RequestParam(defaultValue = "1") int limit,
                                              @RequestParam(defaultValue = "300") long leaseSeconds) {
-        return longTaskCommandService.claimReadyTasks(userId, workerId, limit, leaseSeconds)
+        return longTaskCommandOrchestrator.claimReadyTasks(userId, workerId, limit, leaseSeconds)
                 .stream().map(this::toDto).toList();
     }
 
@@ -98,7 +98,7 @@ public class LongTaskController {
                                       @PathVariable String taskId,
                                       @RequestBody LongTaskProgressUpdateDto request) {
         try {
-            LongTask updated = longTaskCommandService.updateProgress(
+            LongTask updated = longTaskCommandOrchestrator.updateProgress(
                     userId,
                     taskId,
                     request == null ? null : request.workerId(),
@@ -122,7 +122,7 @@ public class LongTaskController {
                                     @PathVariable String taskId,
                                     @RequestBody LongTaskStatusUpdateDto request) {
         try {
-            LongTask updated = longTaskCommandService.updateStatus(
+            LongTask updated = longTaskCommandOrchestrator.updateStatus(
                     userId,
                     taskId,
                     request == null ? null : request.status(),

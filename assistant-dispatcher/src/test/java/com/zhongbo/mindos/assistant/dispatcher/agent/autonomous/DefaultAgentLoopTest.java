@@ -63,7 +63,8 @@ class DefaultAgentLoopTest {
                     false,
                     false,
                     evaluation.summary(),
-                    List.of("stub-evolution")
+                    List.of("stub-evolution"),
+                    com.zhongbo.mindos.assistant.dispatcher.orchestrator.memory.MemoryWriteBatch.empty()
             );
         };
 

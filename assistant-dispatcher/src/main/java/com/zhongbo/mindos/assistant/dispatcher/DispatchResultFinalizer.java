@@ -9,6 +9,7 @@ import com.zhongbo.mindos.assistant.dispatcher.MetaOrchestratorService.MetaOrche
 import com.zhongbo.mindos.assistant.dispatcher.agent.multiagent.MasterOrchestrationResult;
 import com.zhongbo.mindos.assistant.dispatcher.decision.Decision;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.DecisionOrchestrator;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.memory.MemoryWriteBatch;
 
 import java.util.List;
 import java.util.Map;
@@ -198,11 +199,17 @@ final class DispatchResultFinalizer {
                                     RoutingDecisionDto replayRoutingDecision,
                                     DispatchExecutionState state) {
         state.setFinalResultSuccess(result.success());
+        MemoryWriteBatch memoryWrites = state.pendingMemoryWrites()
+                .merge(dispatchMemoryLifecycle.recordSkillOutcome(userId, result))
+                .merge(personaCoreService.learnFromTurn(userId, resolvedProfileContext, result));
+        decisionOrchestrator.commitMemoryWrites(userId, memoryWrites);
         decisionOrchestrator.recordOutcome(userId, userInput, result, trace);
-        dispatchMemoryLifecycle.recordSkillOutcome(userId, result);
-        personaCoreService.learnFromTurn(userId, resolvedProfileContext, result);
         bridge.recordRoutingReplaySample(userInput, replayRoutingDecision, replayProbe, promptMemoryContext, result.skillName());
         return new DispatchResult(result.output(), result.skillName(), trace);
+    }
+
+    void flushPendingMemoryWrites(String userId, DispatchExecutionState state) {
+        decisionOrchestrator.commitMemoryWrites(userId, state == null ? MemoryWriteBatch.empty() : state.pendingMemoryWrites());
     }
 
     private String defaultText(String value, String fallback) {

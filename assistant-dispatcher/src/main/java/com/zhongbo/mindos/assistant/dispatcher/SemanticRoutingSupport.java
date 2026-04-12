@@ -1,9 +1,10 @@
 package com.zhongbo.mindos.assistant.dispatcher;
 
 import com.zhongbo.mindos.assistant.common.SkillDsl;
-import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryCommandService;
 import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryFacade;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.ParamValidator;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.memory.MemoryWriteBatch;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.memory.MemoryWriteOperation;
 import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalysisResult;
 
 import java.util.List;
@@ -17,13 +18,12 @@ final class SemanticRoutingSupport {
     private static final double SEMANTIC_SUMMARY_MIN_CONFIDENCE = 0.60;
 
     private final DispatcherMemoryFacade dispatcherMemoryFacade;
-    private final DispatcherMemoryCommandService memoryCommandService;
     private final SemanticPayloadCompleter semanticPayloadCompleter;
     private final SemanticSkillResolver semanticSkillResolver;
     private final SemanticClarifyPolicy semanticClarifyPolicy;
 
     SemanticRoutingSupport(DispatcherMemoryFacade dispatcherMemoryFacade,
-                           DispatcherMemoryCommandService memoryCommandService,
+                           com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryCommandService memoryCommandService,
                            BehaviorRoutingSupport behaviorRoutingSupport,
                            SkillCommandAssembler skillCommandAssembler,
                            ParamValidator paramValidator,
@@ -34,9 +34,6 @@ final class SemanticRoutingSupport {
                            boolean preferSuggestedSkillEnabled,
                            double preferSuggestedSkillMinConfidence) {
         this.dispatcherMemoryFacade = dispatcherMemoryFacade;
-        this.memoryCommandService = memoryCommandService == null
-                ? new DispatcherMemoryCommandService(dispatcherMemoryFacade, null)
-                : memoryCommandService;
         this.semanticPayloadCompleter = new SemanticPayloadCompleter(
                 dispatcherMemoryFacade,
                 behaviorRoutingSupport,
@@ -61,18 +58,18 @@ final class SemanticRoutingSupport {
         return semanticSkillResolver.toSemanticSkillDsl(semanticPlan);
     }
 
-    void maybeStoreSemanticSummary(String userId,
-                                   String userInput,
-                                   SemanticAnalysisResult semanticAnalysis) {
+    MemoryWriteBatch maybeStoreSemanticSummary(String userId,
+                                               String userInput,
+                                               SemanticAnalysisResult semanticAnalysis) {
         if (semanticAnalysis == null || semanticAnalysis.summary() == null || semanticAnalysis.summary().isBlank()) {
-            return;
+            return MemoryWriteBatch.empty();
         }
         if (semanticSkillResolver.resolveSemanticAnalysisConfidence(semanticAnalysis) < SEMANTIC_SUMMARY_MIN_CONFIDENCE) {
-            return;
+            return MemoryWriteBatch.empty();
         }
         String summary = capText(semanticAnalysis.summary(), 220);
         if (summary.isBlank()) {
-            return;
+            return MemoryWriteBatch.empty();
         }
         String paramsDigest = semanticPayloadCompleter.summarizeSemanticParams(semanticAnalysis.payload());
         String memoryText = "semantic-summary intent="
@@ -86,7 +83,11 @@ final class SemanticRoutingSupport {
                 (double) memoryText.length(),
                 Math.abs(memoryText.hashCode() % 1000) / 1000.0
         );
-        memoryCommandService.writeSemantic(userId, memoryText, embedding, semanticPayloadCompleter.resolveMemoryBucket(userInput));
+        return MemoryWriteBatch.of(new MemoryWriteOperation.WriteSemantic(
+                memoryText,
+                embedding,
+                semanticPayloadCompleter.resolveMemoryBucket(userInput)
+        ));
     }
 
     boolean shouldAskSemanticClarification(SemanticAnalysisResult semanticAnalysis,

@@ -17,6 +17,8 @@ import com.zhongbo.mindos.assistant.common.dto.CritiqueReportDto;
 import com.zhongbo.mindos.assistant.common.dto.ExecutionTraceDto;
 import com.zhongbo.mindos.assistant.common.dto.PlanStepDto;
 import com.zhongbo.mindos.assistant.dispatcher.decision.Decision;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.memory.MemoryWriteBatch;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.memory.OrchestratorMemoryWriter;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.DecisionOrchestrator.OrchestrationOutcome;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.DecisionOrchestrator.OrchestrationRequest;
 import com.zhongbo.mindos.assistant.memory.MemoryGateway;
@@ -40,6 +42,7 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
     private final DecisionPlanner decisionPlanner;
     private final DecisionExecutor decisionExecutor;
     private final PostExecutionMemoryRecorder memoryRecorder;
+    private final OrchestratorMemoryWriter memoryWriter;
     private final FailureNormalizer failureNormalizer;
 
     public DefaultDecisionOrchestrator(CandidatePlanner candidatePlanner,
@@ -70,7 +73,8 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
                         eqCoachImTimeoutReply,
                         maxLoops
                 ),
-                memoryRecorder
+                memoryRecorder,
+                null
         );
     }
 
@@ -102,17 +106,20 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
                         eqCoachImTimeoutReply,
                         maxLoops
                 ),
-                memoryRecorder
+                memoryRecorder,
+                null
         );
     }
 
     @Autowired
     public DefaultDecisionOrchestrator(DecisionPlanner decisionPlanner,
                                        DecisionExecutor decisionExecutor,
-                                       PostExecutionMemoryRecorder memoryRecorder) {
+                                       PostExecutionMemoryRecorder memoryRecorder,
+                                       OrchestratorMemoryWriter memoryWriter) {
         this.decisionPlanner = decisionPlanner;
         this.decisionExecutor = decisionExecutor;
         this.memoryRecorder = memoryRecorder;
+        this.memoryWriter = memoryWriter;
         this.failureNormalizer = new FailureNormalizer();
     }
 
@@ -157,6 +164,13 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
     @Override
     public void recordOutcome(String userId, String userInput, SkillResult result, ExecutionTraceDto trace) {
         memoryRecorder.record(userId, userInput, result, trace);
+    }
+
+    @Override
+    public void commitMemoryWrites(String userId, MemoryWriteBatch batch) {
+        if (memoryWriter != null) {
+            memoryWriter.commit(userId, batch);
+        }
     }
 
     void setSearchPlanner(SearchPlanner searchPlanner) {

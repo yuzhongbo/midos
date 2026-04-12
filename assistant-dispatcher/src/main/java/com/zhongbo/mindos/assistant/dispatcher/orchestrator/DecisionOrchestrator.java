@@ -5,6 +5,7 @@ import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.dispatcher.decision.Decision;
 import com.zhongbo.mindos.assistant.common.dto.ExecutionTraceDto;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.memory.MemoryWriteBatch;
 
 import java.util.Map;
 
@@ -23,6 +24,9 @@ public interface DecisionOrchestrator {
     }
 
     void recordOutcome(String userId, String userInput, SkillResult result, ExecutionTraceDto trace);
+
+    default void commitMemoryWrites(String userId, MemoryWriteBatch batch) {
+    }
 
     record OrchestrationOutcome(SkillResult result,
                                 SkillDsl skillDsl,

@@ -47,15 +47,18 @@ import java.util.Map;
 public class MemorySyncController {
 
     private final MemoryFacade memoryFacade;
+    private final MemoryCommandOrchestrator memoryCommandOrchestrator;
     private final boolean retrievePreviewRequireAdminToken;
     private final String adminTokenHeader;
     private final String adminToken;
 
     public MemorySyncController(MemoryFacade memoryFacade,
+                                MemoryCommandOrchestrator memoryCommandOrchestrator,
                                 @Value("${mindos.security.memory.retrieve-preview.require-admin-token:false}") boolean retrievePreviewRequireAdminToken,
                                 @Value("${mindos.security.risky-ops.admin-token-header:X-MindOS-Admin-Token}") String adminTokenHeader,
                                 @Value("${mindos.security.risky-ops.admin-token:}") String adminToken) {
         this.memoryFacade = memoryFacade;
+        this.memoryCommandOrchestrator = memoryCommandOrchestrator;
         this.retrievePreviewRequireAdminToken = retrievePreviewRequireAdminToken;
         this.adminTokenHeader = adminTokenHeader == null || adminTokenHeader.isBlank()
                 ? "X-MindOS-Admin-Token"
@@ -75,7 +78,7 @@ public class MemorySyncController {
     public MemorySyncResponseDto applyUpdates(@PathVariable String userId,
                                               @RequestBody MemorySyncRequestDto request,
                                               @RequestParam(defaultValue = "100") int limit) {
-        MemoryApplyResult applyResult = memoryFacade.applyIncrementalUpdates(userId, new MemorySyncBatch(
+        MemoryApplyResult applyResult = memoryCommandOrchestrator.applyIncrementalUpdates(userId, new MemorySyncBatch(
                 request.eventId(),
                 toConversationTurns(request.episodic()),
                 toSemanticEntries(request.semantic()),
@@ -141,7 +144,7 @@ public class MemorySyncController {
                                                    @RequestBody MemoryStyleProfileDto request,
                                                    @RequestParam(defaultValue = "false") boolean autoTune,
                                                    @RequestParam(required = false) String sampleText) {
-        MemoryStyleProfile updated = memoryFacade.updateMemoryStyleProfile(userId, toModel(request), autoTune, sampleText);
+        MemoryStyleProfile updated = memoryCommandOrchestrator.updateMemoryStyleProfile(userId, toModel(request), autoTune, sampleText);
         return toDto(updated);
     }
 

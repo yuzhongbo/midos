@@ -4,7 +4,9 @@ import com.zhongbo.mindos.assistant.common.SkillDsl;
 import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryCommandService;
 import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryFacade;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.memory.MemoryWriteBatch;
 import com.zhongbo.mindos.assistant.memory.model.ProceduralMemoryEntry;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.memory.MemoryWriteBatch;
 
 import java.util.List;
 import java.util.Map;
@@ -75,8 +77,8 @@ final class BehaviorRoutingSupport {
         behaviorProfileRecorder.applyBehaviorLearnedDefaults(userId, skillName, payload);
     }
 
-    void maybeStoreBehaviorProfile(String userId, SkillResult result) {
-        behaviorProfileRecorder.maybeStoreBehaviorProfile(userId, result);
+    MemoryWriteBatch maybeStoreBehaviorProfile(String userId, SkillResult result) {
+        return behaviorProfileRecorder.maybeStoreBehaviorProfile(userId, result);
     }
 
     boolean isHabitEligibleSkill(String skillName) {

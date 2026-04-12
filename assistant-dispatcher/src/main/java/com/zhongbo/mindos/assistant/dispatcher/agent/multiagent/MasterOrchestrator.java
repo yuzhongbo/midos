@@ -8,6 +8,8 @@ import com.zhongbo.mindos.assistant.dispatcher.decision.Decision;
 import com.zhongbo.mindos.assistant.dispatcher.agent.taskgraph.TaskGraph;
 import com.zhongbo.mindos.assistant.dispatcher.agent.taskgraph.TaskGraphExecutionResult;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.DecisionOrchestrator;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.memory.MemoryWriteBatch;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.memory.OrchestratorMemoryWriter;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.step5.TraceLogger;
 import org.springframework.stereotype.Service;
 
@@ -26,12 +28,22 @@ public class MasterOrchestrator {
 
     private final Map<String, Agent> agents;
     private final TraceLogger traceLogger;
+    private final OrchestratorMemoryWriter memoryWriter;
 
     public MasterOrchestrator(PlannerAgent plannerAgent,
                               ExecutorAgent executorAgent,
                               MemoryAgent memoryAgent,
                               ToolAgent toolAgent,
                               TraceLogger traceLogger) {
+        this(plannerAgent, executorAgent, memoryAgent, toolAgent, traceLogger, null);
+    }
+
+    public MasterOrchestrator(PlannerAgent plannerAgent,
+                              ExecutorAgent executorAgent,
+                              MemoryAgent memoryAgent,
+                              ToolAgent toolAgent,
+                              TraceLogger traceLogger,
+                              OrchestratorMemoryWriter memoryWriter) {
         this.agents = Map.of(
                 plannerAgent.name(), plannerAgent,
                 executorAgent.name(), executorAgent,
@@ -39,6 +51,7 @@ public class MasterOrchestrator {
                 toolAgent.name(), toolAgent
         );
         this.traceLogger = traceLogger;
+        this.memoryWriter = memoryWriter;
     }
 
     public MasterOrchestrationResult execute(String userId,
@@ -83,7 +96,8 @@ public class MasterOrchestrator {
         AgentResponse executionResponse = gateway.send(buildExecutionMessage(state, plannedGraph, planResponse, graphId));
         SkillResult finalResult = resolveFinalResult(executionResponse);
         if (!shouldSkipMemoryWrite(safeRequest)) {
-            gateway.send(buildMemoryWriteMessage(state, finalResult, plannedGraph, executionResponse, graphId));
+            AgentResponse memoryResponse = gateway.send(buildMemoryWriteMessage(state, finalResult, plannedGraph, executionResponse, graphId));
+            commitMemoryWrites(safeRequest.userId(), memoryResponse);
         }
 
         ExecutionTraceDto trace = new ExecutionTraceDto(
@@ -203,6 +217,16 @@ public class MasterOrchestrator {
             return bool;
         }
         return value != null && Boolean.parseBoolean(String.valueOf(value));
+    }
+
+    private void commitMemoryWrites(String userId, AgentResponse response) {
+        if (memoryWriter == null || response == null || response.contextPatch() == null) {
+            return;
+        }
+        MemoryWriteBatch batch = objectValue(response.contextPatch().get(DefaultMemoryAgent.WRITE_BATCH_KEY), MemoryWriteBatch.class);
+        if (batch != null) {
+            memoryWriter.commit(userId, batch);
+        }
     }
 
     private List<String> inferKeys(Decision decision) {

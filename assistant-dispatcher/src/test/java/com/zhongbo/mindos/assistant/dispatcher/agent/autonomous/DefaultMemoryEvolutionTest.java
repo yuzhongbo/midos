@@ -10,6 +10,8 @@ import com.zhongbo.mindos.assistant.dispatcher.agent.procedure.ProcedureMatch;
 import com.zhongbo.mindos.assistant.dispatcher.agent.procedure.ProcedureMemoryEngine;
 import com.zhongbo.mindos.assistant.dispatcher.agent.taskgraph.TaskGraph;
 import com.zhongbo.mindos.assistant.dispatcher.agent.multiagent.MasterOrchestrationResult;
+import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryCommandService;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.memory.OrchestratorMemoryWriter;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.step5.DefaultPolicyUpdater;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.step5.InMemoryPlannerLearningStore;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.step5.PlannerLearningStore;
@@ -73,6 +75,8 @@ class DefaultMemoryEvolutionTest {
         AutonomousEvaluation evaluation = new DefaultEvaluatorAgent().evaluate(goal, execution);
 
         MemoryEvolutionResult result = evolution.evolve("u1", goal, execution, evaluation, 420L, 128, "worker-1");
+        new OrchestratorMemoryWriter(new DispatcherMemoryCommandService(memoryGateway, graphGateway, proceduralMemory))
+                .commit("u1", result.memoryWrites());
 
         assertTrue(result.semanticWritten());
         assertTrue(result.procedureRecorded());
@@ -170,6 +174,8 @@ class DefaultMemoryEvolutionTest {
         AutonomousEvaluation evaluation = new DefaultEvaluatorAgent().evaluate(goal, execution);
 
         MemoryEvolutionResult result = evolution.evolve("u1", goal, execution, evaluation, 900L, 220, "worker-2");
+        new OrchestratorMemoryWriter(new DispatcherMemoryCommandService(memoryGateway, graphGateway, proceduralMemory))
+                .commit("u1", result.memoryWrites());
 
         assertTrue(result.reasons().stream().anyMatch(reason -> reason.contains("proceduresPruned=1")));
         assertTrue(deleted.get());

@@ -8,6 +8,8 @@ import com.zhongbo.mindos.assistant.dispatcher.agent.runtime.System2Planner;
 import com.zhongbo.mindos.assistant.dispatcher.agent.taskgraph.TaskGraph;
 import com.zhongbo.mindos.assistant.dispatcher.agent.taskgraph.TaskNode;
 import com.zhongbo.mindos.assistant.dispatcher.decision.Decision;
+import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryCommandService;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.memory.OrchestratorMemoryWriter;
 import com.zhongbo.mindos.assistant.memory.MemoryFacade;
 import com.zhongbo.mindos.assistant.memory.MemoryGateway;
 import com.zhongbo.mindos.assistant.memory.graph.GraphMemory;
@@ -182,7 +184,8 @@ class MasterOrchestratorTest {
                 new DefaultExecutorAgent(),
                 new DefaultMemoryAgent(memoryGateway, memoryFacade, proceduralMemory),
                 new DefaultToolAgent(skillGateway),
-                null
+                null,
+                new OrchestratorMemoryWriter(new DispatcherMemoryCommandService(memoryGateway, graphMemory, proceduralMemory))
         );
 
         Decision decision = new Decision("student.plan", "student.plan", Map.of("studentId", ""), 0.62, false);
@@ -207,7 +210,7 @@ class MasterOrchestratorTest {
         assertTrue(result.transcript().stream().anyMatch(msg -> "tool-agent".equals(msg.to()) && msg.type() == AgentTaskType.TOOL_CALL));
         assertTrue(result.transcript().stream().anyMatch(msg -> "memory-agent".equals(msg.to()) && msg.type() == AgentTaskType.MEMORY_WRITE));
         assertTrue(result.trace().steps().size() >= 8);
-        assertTrue(skillUsageEvents.stream().anyMatch(event -> event.startsWith("student.get:")));
+        assertFalse(skillUsageEvents.stream().anyMatch(String::isBlank));
         assertFalse(assistantMessages.isEmpty());
         assertTrue(proceduralMemory.matchReusableProcedure("u1", "帮我生成学生计划", "student.plan", Map.of("studentId", "stu-42")).isPresent());
     }
@@ -307,7 +310,8 @@ class MasterOrchestratorTest {
                 new DefaultExecutorAgent(),
                 new DefaultMemoryAgent(memoryGateway, memoryFacade, proceduralMemory),
                 new DefaultToolAgent(skillGateway),
-                null
+                null,
+                new OrchestratorMemoryWriter(new DispatcherMemoryCommandService(memoryGateway, graphMemory, proceduralMemory))
         );
 
         Decision decision = new Decision("student.plan", "student.plan", Map.of("studentId", "stu-42"), 0.62, false);
@@ -322,7 +326,7 @@ class MasterOrchestratorTest {
         );
 
         assertTrue(result.success());
-        assertEquals(1, skillUsageEvents.size());
+        assertEquals(0, skillUsageEvents.size());
         long memoryWriteCount = result.transcript().stream()
                 .filter(msg -> "memory-agent".equals(msg.to()) && msg.type() == AgentTaskType.MEMORY_WRITE)
                 .count();

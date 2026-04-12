@@ -7,6 +7,7 @@ import com.zhongbo.mindos.assistant.dispatcher.routing.RoutingCoordinator;
 import com.zhongbo.mindos.assistant.skill.SkillEngineFacade;
 import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalysisResult;
 import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalyzer;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.memory.MemoryWriteBatch;
 
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -90,7 +91,7 @@ final class DispatchPreparationSupport {
                         resolvedProfileContext,
                         availableSkillSummaries
                 );
-        semanticRoutingSupport.maybeStoreSemanticSummary(userId, userInput, semanticAnalysis);
+        MemoryWriteBatch memoryWrites = semanticRoutingSupport.maybeStoreSemanticSummary(userId, userInput, semanticAnalysis);
         boolean realtimeIntentInput = bridge.isRealtimeIntent(userInput, semanticAnalysis);
         boolean realtimeLookup = realtimeIntentInput || bridge.isRealtimeLikeInput(userInput, semanticAnalysis);
         String routingInput = semanticAnalysis.routingInput(userInput);
@@ -141,6 +142,7 @@ final class DispatchPreparationSupport {
                 resolvedProfileContext,
                 promptMemoryContext,
                 semanticAnalysis,
+                memoryWrites,
                 realtimeIntentInput,
                 realtimeLookup,
                 routingInput,
@@ -170,6 +172,7 @@ final class DispatchPreparationSupport {
             Map<String, Object> resolvedProfileContext,
             PromptMemoryContextDto promptMemoryContext,
             SemanticAnalysisResult semanticAnalysis,
+            MemoryWriteBatch memoryWrites,
             boolean realtimeIntentInput,
             boolean realtimeLookup,
             String routingInput,

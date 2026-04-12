@@ -5,6 +5,8 @@ import com.zhongbo.mindos.assistant.dispatcher.agent.procedure.ProceduralMemory;
 import com.zhongbo.mindos.assistant.dispatcher.agent.procedure.Procedure;
 import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryCommandService;
 import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryFacade;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.memory.MemoryWriteBatch;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.memory.MemoryWriteOperation;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.step5.PolicyUpdater;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.step5.RewardModel;
 import com.zhongbo.mindos.assistant.memory.MemoryGateway;
@@ -217,22 +219,23 @@ public class DefaultMemoryEvolution implements MemoryEvolution {
         Map<String, Object> sharedState = execution == null || execution.sharedState() == null ? Map.of() : execution.sharedState();
         ReflectionResult reflection = reflect(safeUserId, safeGoal, execution, safeEvaluation, sharedState);
         TaskGraph taskGraph = objectValue(sharedState.get("multiAgent.plan.graph"), TaskGraph.class);
-        boolean procedureRecorded = false;
-        if (safeEvaluation.success() && proceduralMemory != null && taskGraph != null && !taskGraph.isEmpty()) {
-            Procedure strengthenedProcedure = memoryCommandService.recordProcedureSuccess(
-                    safeUserId,
-                    safeGoal.title(),
-                    safeGoal.objective(),
-                    taskGraph,
-                    sharedState
-            );
-            procedureRecorded = strengthenedProcedure != null && !strengthenedProcedure.id().isBlank();
-        }
-
-        boolean taskUpdated = updateLongTask(safeUserId, safeGoal, safeEvaluation, workerId);
-        int prunedProcedures = pruneLowEfficiencyProcedures(safeUserId, safeGoal, safeEvaluation, rewardModel);
-        boolean graphUpdated = writeGraph(safeUserId, safeGoal, safeEvaluation, rewardModel, durationMs, tokenEstimate, sharedState, taskGraph, prunedProcedures);
-        boolean semanticWritten = writeSemanticSummary(safeUserId, safeGoal, safeEvaluation, rewardModel, durationMs, tokenEstimate, prunedProcedures);
+        MemoryWriteBatch procedureWrites = procedureWrite(safeGoal, safeEvaluation, taskGraph, sharedState);
+        boolean procedureRecorded = !procedureWrites.isEmpty();
+        MemoryWriteBatch taskWrites = updateLongTask(safeGoal, safeEvaluation, workerId);
+        PruneResult pruneResult = pruneLowEfficiencyProcedures(safeUserId, safeGoal, safeEvaluation, rewardModel);
+        int prunedProcedures = pruneResult.count();
+        MemoryWriteBatch graphWrites = writeGraph(safeGoal, safeEvaluation, rewardModel, durationMs, tokenEstimate, sharedState, taskGraph, prunedProcedures);
+        boolean graphUpdated = !graphWrites.isEmpty();
+        MemoryWriteBatch semanticWrites = writeSemanticSummary(safeGoal, safeEvaluation, rewardModel, durationMs, tokenEstimate, prunedProcedures);
+        boolean semanticWritten = !semanticWrites.isEmpty();
+        boolean taskUpdated = !taskWrites.isEmpty();
+        MemoryWriteBatch memoryWrites = MemoryWriteBatch.empty()
+                .merge(reflection == null ? MemoryWriteBatch.empty() : reflection.memoryWrites())
+                .merge(procedureWrites)
+                .merge(taskWrites)
+                .merge(graphWrites)
+                .merge(semanticWrites)
+                .merge(pruneResult.memoryWrites());
 
         List<String> reasons = new ArrayList<>();
         reasons.add("reward=" + round(rewardModel.reward()));
@@ -254,7 +257,8 @@ public class DefaultMemoryEvolution implements MemoryEvolution {
                 taskUpdated,
                 graphUpdated,
                 buildSummary(safeGoal, safeEvaluation, rewardModel, durationMs, tokenEstimate, prunedProcedures),
-                reasons
+                reasons,
+                memoryWrites
         );
     }
 
@@ -276,31 +280,43 @@ public class DefaultMemoryEvolution implements MemoryEvolution {
         );
     }
 
-    private boolean writeSemanticSummary(String userId,
-                                         AutonomousGoal goal,
-                                         AutonomousEvaluation evaluation,
-                                         RewardModel rewardModel,
-                                         long durationMs,
-                                         int tokenEstimate,
-                                         int prunedProcedures) {
-        if (!dispatcherMemoryFacade.hasRuntimeMemory()) {
-            return false;
+    private MemoryWriteBatch procedureWrite(AutonomousGoal goal,
+                                            AutonomousEvaluation evaluation,
+                                            TaskGraph taskGraph,
+                                            Map<String, Object> sharedState) {
+        if (evaluation == null || !evaluation.success() || proceduralMemory == null || taskGraph == null || taskGraph.isEmpty()) {
+            return MemoryWriteBatch.empty();
         }
-        String summary = buildSummary(goal, evaluation, rewardModel, durationMs, tokenEstimate, prunedProcedures);
-        memoryCommandService.writeSemantic(userId, summary, List.of(), semanticBucket);
-        return true;
+        return MemoryWriteBatch.of(new MemoryWriteOperation.RecordProcedureSuccess(
+                goal.title(),
+                goal.objective(),
+                taskGraph,
+                sharedState
+        ));
     }
 
-    private boolean updateLongTask(String userId,
-                                   AutonomousGoal goal,
-                                   AutonomousEvaluation evaluation,
-                                   String workerId) {
+    private MemoryWriteBatch writeSemanticSummary(AutonomousGoal goal,
+                                                  AutonomousEvaluation evaluation,
+                                                  RewardModel rewardModel,
+                                                  long durationMs,
+                                                  int tokenEstimate,
+                                                  int prunedProcedures) {
+        if (!dispatcherMemoryFacade.hasRuntimeMemory()) {
+            return MemoryWriteBatch.empty();
+        }
+        String summary = buildSummary(goal, evaluation, rewardModel, durationMs, tokenEstimate, prunedProcedures);
+        return MemoryWriteBatch.of(new MemoryWriteOperation.WriteSemantic(summary, List.of(), semanticBucket));
+    }
+
+    private MemoryWriteBatch updateLongTask(AutonomousGoal goal,
+                                            AutonomousEvaluation evaluation,
+                                            String workerId) {
         if (!dispatcherMemoryFacade.hasRuntimeMemory() || goal == null || goal.type() != AutonomousGoalType.LONG_TASK) {
-            return false;
+            return MemoryWriteBatch.empty();
         }
         String taskId = stringValue(goal.params().get("taskId"));
         if (taskId.isBlank()) {
-            return false;
+            return MemoryWriteBatch.empty();
         }
         String focusStep = stringValue(goal.params().get("taskFocusStep"));
         boolean taskCompletable = booleanValue(goal.params().get("taskCompletable"));
@@ -309,8 +325,7 @@ public class DefaultMemoryEvolution implements MemoryEvolution {
                 ? ""
                 : firstNonBlank(evaluation == null ? "" : evaluation.nextAction(), note, "autonomous-loop-failure");
         Instant nextCheckAt = Instant.now().plusSeconds(nextCheckDelaySeconds);
-        return memoryCommandService.updateLongTaskProgress(
-                userId,
+        return MemoryWriteBatch.of(new MemoryWriteOperation.UpdateLongTaskProgress(
                 taskId,
                 firstNonBlank(workerId, "autonomous-loop"),
                 focusStep,
@@ -318,20 +333,19 @@ public class DefaultMemoryEvolution implements MemoryEvolution {
                 blockedReason,
                 nextCheckAt,
                 taskCompletable && evaluation != null && evaluation.success()
-        ) != null;
+        ));
     }
 
-    private boolean writeGraph(String userId,
-                               AutonomousGoal goal,
-                               AutonomousEvaluation evaluation,
-                               RewardModel rewardModel,
-                               long durationMs,
-                               int tokenEstimate,
-                               Map<String, Object> sharedState,
-                               TaskGraph taskGraph,
-                               int prunedProcedures) {
+    private MemoryWriteBatch writeGraph(AutonomousGoal goal,
+                                        AutonomousEvaluation evaluation,
+                                        RewardModel rewardModel,
+                                        long durationMs,
+                                        int tokenEstimate,
+                                        Map<String, Object> sharedState,
+                                        TaskGraph taskGraph,
+                                        int prunedProcedures) {
         if (!dispatcherMemoryFacade.hasGraphMemory() || goal == null || evaluation == null) {
-            return false;
+            return MemoryWriteBatch.empty();
         }
         String goalNodeId = "autonomous:goal:" + sanitizeId(goal.goalId());
         String evaluationNodeId = goalNodeId + ":evaluation:" + evaluation.evaluatedAt().toEpochMilli();
@@ -339,78 +353,75 @@ public class DefaultMemoryEvolution implements MemoryEvolution {
         String dagNodeId = "autonomous:dag:" + sanitizeId(goal.goalId());
 
         boolean success = evaluation.success();
-        memoryCommandService.upsertGraphNode(userId, new MemoryNode(
+        return MemoryWriteBatch.of(
+                new MemoryWriteOperation.UpsertGraphNode(new MemoryNode(
                 goalNodeId,
                 "autonomous.goal",
                 goalData(goal, rewardModel, sharedState),
                 Instant.now(),
                 Instant.now()
-        ));
-        memoryCommandService.upsertGraphNode(userId, new MemoryNode(
+        )),
+                new MemoryWriteOperation.UpsertGraphNode(new MemoryNode(
                 evaluationNodeId,
                 "autonomous.evaluation",
                 evaluationData(goal, evaluation, rewardModel, durationMs, tokenEstimate),
                 Instant.now(),
                 Instant.now()
-        ));
-        memoryCommandService.linkGraph(
-                userId,
+        )),
+                new MemoryWriteOperation.LinkGraph(
                 goalNodeId,
                 "evaluated-by",
                 evaluationNodeId,
                 Math.max(0.0, Math.min(1.0, evaluation.score())),
                 Map.of("reward", rewardModel.reward(), "success", success)
-        );
-        memoryCommandService.upsertGraphNode(userId, new MemoryNode(
+        ),
+                new MemoryWriteOperation.UpsertGraphNode(new MemoryNode(
                 strategyNodeId,
                 "autonomous.strategy",
                 strategyData(goal, evaluation, rewardModel),
                 Instant.now(),
                 Instant.now()
-        ));
-        memoryCommandService.upsertGraphNode(userId, new MemoryNode(
+        )),
+                new MemoryWriteOperation.UpsertGraphNode(new MemoryNode(
                 dagNodeId,
                 "autonomous.dag",
                 dagData(goal, evaluation, rewardModel, taskGraph, prunedProcedures),
                 Instant.now(),
                 Instant.now()
-        ));
-        memoryCommandService.linkGraph(
-                userId,
+        )),
+                new MemoryWriteOperation.LinkGraph(
                 evaluationNodeId,
                 success ? "reinforces" : "weakens",
                 strategyNodeId,
                 Math.max(0.1, rewardModel.normalizedReward()),
                 Map.of("goalId", goal.goalId(), "feedback", evaluation.feedback(), "routeType", rewardModel.routeType())
-        );
-        memoryCommandService.linkGraph(
-                userId,
+        ),
+                new MemoryWriteOperation.LinkGraph(
                 goalNodeId,
                 success ? "optimizes-dag" : "prunes-dag",
                 dagNodeId,
                 Math.max(0.1, rewardModel.normalizedReward()),
                 Map.of("nodeCount", taskGraph == null ? 0 : taskGraph.nodes().size(), "edgeCount", taskGraph == null ? 0 : taskGraph.edges().size(), "prunedProcedures", prunedProcedures)
-        );
-        return true;
+        ));
     }
 
-    private int pruneLowEfficiencyProcedures(String userId,
-                                             AutonomousGoal goal,
-                                             AutonomousEvaluation evaluation,
-                                             RewardModel rewardModel) {
+    private PruneResult pruneLowEfficiencyProcedures(String userId,
+                                                     AutonomousGoal goal,
+                                                     AutonomousEvaluation evaluation,
+                                                     RewardModel rewardModel) {
         if (proceduralMemory == null) {
-            return 0;
+            return new PruneResult(0, MemoryWriteBatch.empty());
         }
         boolean shouldPrune = rewardModel.reward() <= pruneRewardThreshold
                 || (evaluation != null && !evaluation.success())
                 || (evaluation != null && evaluation.score() < lowSuccessRateThreshold);
         if (!shouldPrune) {
-            return 0;
+            return new PruneResult(0, MemoryWriteBatch.empty());
         }
 
         List<Procedure> procedures = proceduralMemory.listProcedures(userId);
         if (procedures.isEmpty()) {
-            return 0;
+            return new PruneResult(0, MemoryWriteBatch.empty());
         }
 
         String goalHint = firstNonBlank(
@@ -419,6 +430,7 @@ public class DefaultMemoryEvolution implements MemoryEvolution {
                 goal == null ? "" : goal.title()
         );
         int pruned = 0;
+        MemoryWriteBatch deletes = MemoryWriteBatch.empty();
         for (Procedure procedure : procedures) {
             if (procedure == null || procedure.id().isBlank()) {
                 continue;
@@ -429,11 +441,13 @@ public class DefaultMemoryEvolution implements MemoryEvolution {
             if (!lowEfficiency && !failureMatched) {
                 continue;
             }
-            if (memoryCommandService.deleteProcedure(userId, procedure.id())) {
-                pruned++;
-            }
+            pruned++;
+            deletes = deletes.merge(MemoryWriteBatch.of(new MemoryWriteOperation.DeleteProcedure(procedure.id())));
         }
-        return pruned;
+        return new PruneResult(pruned, deletes);
+    }
+
+    private record PruneResult(int count, MemoryWriteBatch memoryWrites) {
     }
 
     private boolean matchesGoal(Procedure procedure, String goalHint) {

@@ -4,6 +4,7 @@ import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.memory.MemoryWriteBatch;
 
 public record ReflectionResult(boolean success,
                                String rootCause,
@@ -13,7 +14,8 @@ public record ReflectionResult(boolean success,
                                List<String> signals,
                                boolean proceduralWritten,
                                boolean semanticWritten,
-                               Instant reflectedAt) {
+                               Instant reflectedAt,
+                               MemoryWriteBatch memoryWrites) {
 
     public ReflectionResult {
         rootCause = rootCause == null ? "" : rootCause.trim();
@@ -22,9 +24,10 @@ public record ReflectionResult(boolean success,
         dimensionScores = dimensionScores == null ? Map.of() : Map.copyOf(new LinkedHashMap<>(dimensionScores));
         signals = signals == null ? List.of() : List.copyOf(signals);
         reflectedAt = reflectedAt == null ? Instant.now() : reflectedAt;
+        memoryWrites = memoryWrites == null ? MemoryWriteBatch.empty() : memoryWrites;
     }
 
-    public ReflectionResult withMemoryWrites(boolean proceduralWritten, boolean semanticWritten) {
+    public ReflectionResult withMemoryWrites(boolean proceduralWritten, boolean semanticWritten, MemoryWriteBatch memoryWrites) {
         return new ReflectionResult(
                 success,
                 rootCause,
@@ -34,7 +37,8 @@ public record ReflectionResult(boolean success,
                 signals,
                 proceduralWritten,
                 semanticWritten,
-                reflectedAt
+                reflectedAt,
+                memoryWrites
         );
     }
 

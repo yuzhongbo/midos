@@ -4,6 +4,7 @@ import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.common.dto.ExecutionTraceDto;
 import com.zhongbo.mindos.assistant.dispatcher.agent.multiagent.MasterOrchestrationResult;
 import com.zhongbo.mindos.assistant.dispatcher.agent.multiagent.MasterOrchestrator;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.memory.OrchestratorMemoryWriter;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
@@ -19,15 +20,25 @@ public class DefaultAgentLoop implements AgentLoop {
     private final MasterOrchestrator masterOrchestrator;
     private final EvaluatorAgent evaluatorAgent;
     private final MemoryEvolution memoryEvolution;
+    private final OrchestratorMemoryWriter memoryWriter;
 
     public DefaultAgentLoop(GoalGenerator goalGenerator,
                             MasterOrchestrator masterOrchestrator,
                             EvaluatorAgent evaluatorAgent,
                             MemoryEvolution memoryEvolution) {
+        this(goalGenerator, masterOrchestrator, evaluatorAgent, memoryEvolution, null);
+    }
+
+    public DefaultAgentLoop(GoalGenerator goalGenerator,
+                            MasterOrchestrator masterOrchestrator,
+                            EvaluatorAgent evaluatorAgent,
+                            MemoryEvolution memoryEvolution,
+                            OrchestratorMemoryWriter memoryWriter) {
         this.goalGenerator = goalGenerator;
         this.masterOrchestrator = masterOrchestrator;
         this.evaluatorAgent = evaluatorAgent;
         this.memoryEvolution = memoryEvolution;
+        this.memoryWriter = memoryWriter;
     }
 
     @Override
@@ -60,6 +71,9 @@ public class DefaultAgentLoop implements AgentLoop {
                         tokenEstimate,
                         safeRequest.workerId()
                 );
+        if (memoryWriter != null) {
+            memoryWriter.commit(safeRequest.userId(), evolution.memoryWrites());
+        }
         Instant finishedAt = Instant.now();
         return new AutonomousCycleResult(
                 candidates,
@@ -166,7 +180,8 @@ public class DefaultAgentLoop implements AgentLoop {
                 false,
                 false,
                 evaluation == null ? "" : evaluation.summary(),
-                List.of("fallback-memory-evolution")
+                List.of("fallback-memory-evolution"),
+                com.zhongbo.mindos.assistant.dispatcher.orchestrator.memory.MemoryWriteBatch.empty()
         );
     }
 

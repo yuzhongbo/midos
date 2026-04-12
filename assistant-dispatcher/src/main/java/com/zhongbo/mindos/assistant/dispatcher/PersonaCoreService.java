@@ -1,8 +1,9 @@
 package com.zhongbo.mindos.assistant.dispatcher;
 
 import com.zhongbo.mindos.assistant.common.SkillResult;
-import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryCommandService;
 import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryFacade;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.memory.MemoryWriteBatch;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.memory.MemoryWriteOperation;
 import com.zhongbo.mindos.assistant.memory.MemoryFacade;
 import com.zhongbo.mindos.assistant.memory.model.PreferenceProfile;
 import com.zhongbo.mindos.assistant.memory.model.ProceduralMemoryEntry;
@@ -21,7 +22,6 @@ import java.util.Set;
 public class PersonaCoreService {
 
     private final DispatcherMemoryFacade dispatcherMemoryFacade;
-    private final DispatcherMemoryCommandService memoryCommandService;
     private final boolean enabled;
     private final int preferredChannelMinConsecutiveSuccess;
     private final Set<String> ignoredProfileTerms;
@@ -35,14 +35,11 @@ public class PersonaCoreService {
 
     @Autowired
     public PersonaCoreService(DispatcherMemoryFacade dispatcherMemoryFacade,
-                              DispatcherMemoryCommandService memoryCommandService,
+                               com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryCommandService memoryCommandService,
                               @Value("${mindos.dispatcher.persona-core.enabled:true}") boolean enabled,
                               @Value("${mindos.dispatcher.persona-core.preferred-channel.min-consecutive-success:2}") int preferredChannelMinConsecutiveSuccess,
                               @Value("${mindos.dispatcher.persona-core.ignored-profile-terms:unknown,null,n/a,na,tbd,todo,随便,不知道,待定}") String ignoredProfileTerms) {
         this.dispatcherMemoryFacade = dispatcherMemoryFacade;
-        this.memoryCommandService = memoryCommandService == null
-                ? new DispatcherMemoryCommandService(dispatcherMemoryFacade, null)
-                : memoryCommandService;
         this.enabled = enabled;
         this.preferredChannelMinConsecutiveSuccess = Math.max(1, preferredChannelMinConsecutiveSuccess);
         this.ignoredProfileTerms = parseIgnoredTerms(ignoredProfileTerms);
@@ -66,11 +63,11 @@ public class PersonaCoreService {
         return merged;
     }
 
-    public void learnFromTurn(String userId,
-                              Map<String, Object> profileContext,
-                              SkillResult result) {
+    public MemoryWriteBatch learnFromTurn(String userId,
+                                          Map<String, Object> profileContext,
+                                          SkillResult result) {
         if (!enabled) {
-            return;
+            return MemoryWriteBatch.empty();
         }
         Map<String, Object> safeProfileContext = profileContext == null ? Map.of() : profileContext;
         PreferenceProfile incoming = new PreferenceProfile(
@@ -82,9 +79,9 @@ public class PersonaCoreService {
                 resolveLearnedPreferredChannel(userId, result)
         );
         if (incoming.equals(PreferenceProfile.empty())) {
-            return;
+            return MemoryWriteBatch.empty();
         }
-        memoryCommandService.updatePreferenceProfile(userId, incoming);
+        return MemoryWriteBatch.of(new MemoryWriteOperation.UpdatePreferenceProfile(incoming));
     }
 
     private void putIfAbsent(Map<String, Object> target, String key, String value) {

@@ -1,6 +1,7 @@
 package com.zhongbo.mindos.assistant.dispatcher;
 
 import com.zhongbo.mindos.assistant.common.dto.RoutingDecisionDto;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.memory.MemoryWriteBatch;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
@@ -12,6 +13,7 @@ final class DispatchExecutionState {
     private final AtomicBoolean finalResultSuccess = new AtomicBoolean(false);
     private final AtomicBoolean realtimeLookup = new AtomicBoolean(false);
     private final AtomicBoolean memoryDirectBypassed = new AtomicBoolean(false);
+    private final AtomicReference<MemoryWriteBatch> pendingMemoryWrites = new AtomicReference<>(MemoryWriteBatch.empty());
 
     RoutingDecisionDto routingDecision() {
         return routingDecision.get();
@@ -51,5 +53,16 @@ final class DispatchExecutionState {
 
     void setMemoryDirectBypassed(boolean value) {
         memoryDirectBypassed.set(value);
+    }
+
+    MemoryWriteBatch pendingMemoryWrites() {
+        return pendingMemoryWrites.get();
+    }
+
+    void mergeMemoryWrites(MemoryWriteBatch writes) {
+        if (writes == null || writes.isEmpty()) {
+            return;
+        }
+        pendingMemoryWrites.updateAndGet(existing -> existing == null ? writes : existing.merge(writes));
     }
 }

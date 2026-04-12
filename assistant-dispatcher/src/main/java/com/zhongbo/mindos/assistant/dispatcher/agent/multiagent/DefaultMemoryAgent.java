@@ -2,9 +2,10 @@ package com.zhongbo.mindos.assistant.dispatcher.agent.multiagent;
 
 import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.dispatcher.agent.procedure.ProceduralMemory;
-import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryCommandService;
 import com.zhongbo.mindos.assistant.memory.MemoryGateway;
 import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryFacade;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.memory.MemoryWriteBatch;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.memory.MemoryWriteOperation;
 import com.zhongbo.mindos.assistant.memory.graph.MemoryNode;
 import com.zhongbo.mindos.assistant.memory.model.ConversationTurn;
 import com.zhongbo.mindos.assistant.memory.model.SkillUsageStats;
@@ -24,23 +25,21 @@ import java.util.Set;
 @Component
 public class DefaultMemoryAgent implements MemoryAgent {
 
+    static final String WRITE_BATCH_KEY = "multiAgent.memory.writeBatch";
+
     private final DispatcherMemoryFacade dispatcherMemoryFacade;
-    private final DispatcherMemoryCommandService memoryCommandService;
 
     @Autowired
     public DefaultMemoryAgent(DispatcherMemoryFacade dispatcherMemoryFacade,
-                              DispatcherMemoryCommandService memoryCommandService) {
+                              com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryCommandService memoryCommandService) {
         this.dispatcherMemoryFacade = dispatcherMemoryFacade;
-        this.memoryCommandService = memoryCommandService == null
-                ? new DispatcherMemoryCommandService(dispatcherMemoryFacade, null)
-                : memoryCommandService;
     }
 
     public DefaultMemoryAgent(MemoryGateway memoryGateway,
                               com.zhongbo.mindos.assistant.memory.MemoryFacade memoryFacade,
                               ProceduralMemory proceduralMemory) {
         this(new DispatcherMemoryFacade(memoryFacade, memoryGateway, null, proceduralMemory),
-                new DispatcherMemoryCommandService(memoryGateway, null, proceduralMemory));
+                new com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryCommandService(memoryGateway, null, proceduralMemory));
     }
 
     @Override
@@ -158,20 +157,25 @@ public class DefaultMemoryAgent implements MemoryAgent {
             skillName = result.skillName();
         }
 
+        Map<String, Object> patch = new LinkedHashMap<>();
+
         if (result != null) {
-            if ("skill-usage".equalsIgnoreCase(kind)) {
-                memoryCommandService.recordSkillUsage(userId, skillName, trigger, success);
-                if (result.output() != null && !result.output().isBlank()) {
-                    memoryCommandService.appendAssistantConversation(userId, result.output());
-                }
-            }
+            patch.put(WRITE_BATCH_KEY, MemoryWriteBatch.of(
+                    new MemoryWriteOperation.RecordSkillUsage(skillName, trigger, success),
+                    result.output() == null || result.output().isBlank()
+                            ? null
+                            : new MemoryWriteOperation.AppendAssistantConversation(result.output())
+            ));
         }
 
         if ("procedure".equalsIgnoreCase(kind) && success && graph != null) {
-            memoryCommandService.recordProcedureSuccess(userId, intent, trigger, graph, contextAttributes);
+            MemoryWriteBatch existing = objectValue(patch.get(WRITE_BATCH_KEY), MemoryWriteBatch.class);
+            MemoryWriteBatch procedureWrite = MemoryWriteBatch.of(
+                    new MemoryWriteOperation.RecordProcedureSuccess(intent, trigger, graph, contextAttributes)
+            );
+            patch.put(WRITE_BATCH_KEY, existing == null ? procedureWrite : existing.merge(procedureWrite));
         }
 
-        Map<String, Object> patch = new LinkedHashMap<>();
         patch.put("multiAgent.memory.lastWriteKind", kind);
         patch.put("multiAgent.memory.lastSkill", skillName);
         patch.put("multiAgent.memory.lastSuccess", success);

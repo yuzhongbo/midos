@@ -1,8 +1,9 @@
 package com.zhongbo.mindos.assistant.dispatcher;
 
 import com.zhongbo.mindos.assistant.common.SkillResult;
-import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryCommandService;
 import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryFacade;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.memory.MemoryWriteBatch;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.memory.MemoryWriteOperation;
 
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -23,42 +24,40 @@ final class DispatchMemoryLifecycle {
             Pattern.CASE_INSENSITIVE
     );
 
-    private final DispatcherMemoryCommandService memoryCommandService;
     private final BehaviorRoutingSupport behaviorRoutingSupport;
     private final Function<String, String> memoryBucketResolver;
 
     DispatchMemoryLifecycle(DispatcherMemoryFacade dispatcherMemoryFacade,
-                            DispatcherMemoryCommandService memoryCommandService,
+                            com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryCommandService memoryCommandService,
                             BehaviorRoutingSupport behaviorRoutingSupport,
                             Function<String, String> memoryBucketResolver) {
-        this.memoryCommandService = memoryCommandService == null
-                ? new DispatcherMemoryCommandService(dispatcherMemoryFacade, null)
-                : memoryCommandService;
         this.behaviorRoutingSupport = behaviorRoutingSupport;
         this.memoryBucketResolver = memoryBucketResolver;
     }
 
-    void recordUserInput(String userId, String userInput) {
-        memoryCommandService.appendUserConversation(userId, userInput);
-        maybeStoreRememberedKnowledge(userId, userInput);
+    MemoryWriteBatch recordUserInput(String userId, String userInput) {
+        return MemoryWriteBatch.of(
+                new MemoryWriteOperation.AppendUserConversation(userInput),
+                rememberedKnowledgeWrite(userInput)
+        );
     }
 
-    void recordAssistantReply(String userId, String reply) {
-        memoryCommandService.appendAssistantConversation(userId, reply == null ? "" : reply);
+    MemoryWriteBatch recordAssistantReply(String userId, String reply) {
+        return MemoryWriteBatch.of(new MemoryWriteOperation.AppendAssistantConversation(reply == null ? "" : reply));
     }
 
-    void recordSkillOutcome(String userId, SkillResult result) {
+    MemoryWriteBatch recordSkillOutcome(String userId, SkillResult result) {
         if (result == null) {
-            return;
+            return MemoryWriteBatch.empty();
         }
-        recordAssistantReply(userId, result.output());
-        behaviorRoutingSupport.maybeStoreBehaviorProfile(userId, result);
+        return recordAssistantReply(userId, result.output())
+                .merge(behaviorRoutingSupport.maybeStoreBehaviorProfile(userId, result));
     }
 
-    private void maybeStoreRememberedKnowledge(String userId, String input) {
+    private MemoryWriteOperation rememberedKnowledgeWrite(String input) {
         String knowledge = extractRememberedKnowledge(input);
         if (knowledge == null || knowledge.isBlank()) {
-            return;
+            return null;
         }
 
         String explicitBucket = extractExplicitMemoryBucket(knowledge);
@@ -66,7 +65,7 @@ final class DispatchMemoryLifecycle {
             knowledge = stripExplicitMemoryBucket(knowledge);
         }
         if (knowledge.isBlank()) {
-            return;
+            return null;
         }
         String memoryBucket = explicitBucket == null ? resolveMemoryBucket(knowledge) : explicitBucket;
         Map<String, Object> embeddingSeed = new LinkedHashMap<>();
@@ -76,7 +75,7 @@ final class DispatchMemoryLifecycle {
                 (double) ((Integer) embeddingSeed.get("length")),
                 ((Integer) embeddingSeed.get("hash")) / 1000.0
         );
-        memoryCommandService.writeSemantic(userId, knowledge, embedding, memoryBucket);
+        return new MemoryWriteOperation.WriteSemantic(knowledge, embedding, memoryBucket);
     }
 
     private String resolveMemoryBucket(String knowledge) {

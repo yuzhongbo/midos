@@ -79,13 +79,15 @@ final class DispatchApplicationCoordinator {
             DispatchExecutionState executionState = new DispatchExecutionState();
             RoutingReplayProbe replayProbe = new RoutingReplayProbe();
 
-            dispatchMemoryLifecycle.recordUserInput(userId, userInput);
+            executionState.mergeMemoryWrites(dispatchMemoryLifecycle.recordUserInput(userId, userInput));
 
             String normalizedInputForBypass = bridge.normalize(userInput);
             if (semanticAnalysisSkipShortSimpleEnabled && bridge.isConversationalBypassInput(normalizedInputForBypass)) {
+                flushPendingMemoryWrites(userId, executionState);
                 return CompletableFuture.completedFuture(bridge.handleConversationalBypass(userId, normalizedInputForBypass));
             }
             if (bridge.isPromptInjectionAttempt(userInput)) {
+                flushPendingMemoryWrites(userId, executionState);
                 return CompletableFuture.completedFuture(promptInjectionResult(userId, executionState));
             }
 
@@ -101,6 +103,7 @@ final class DispatchApplicationCoordinator {
             PromptMemoryContextDto promptMemoryContext = preparedDispatch.promptMemoryContext();
             SemanticAnalysisResult semanticAnalysis = preparedDispatch.semanticAnalysis();
             boolean realtimeIntentInput = preparedDispatch.realtimeIntentInput();
+            executionState.mergeMemoryWrites(preparedDispatch.memoryWrites());
             executionState.setRealtimeLookup(preparedDispatch.realtimeLookup());
             String routingInput = preparedDispatch.routingInput();
             String effectiveMemoryContext = preparedDispatch.effectiveMemoryContext();
@@ -190,13 +193,15 @@ final class DispatchApplicationCoordinator {
             DispatchExecutionState executionState = new DispatchExecutionState();
             RoutingReplayProbe replayProbe = new RoutingReplayProbe();
 
-            dispatchMemoryLifecycle.recordUserInput(userId, userInput);
+            executionState.mergeMemoryWrites(dispatchMemoryLifecycle.recordUserInput(userId, userInput));
 
             String normalizedInputForBypass = bridge.normalize(userInput);
             if (semanticAnalysisSkipShortSimpleEnabled && bridge.isConversationalBypassInput(normalizedInputForBypass)) {
+                flushPendingMemoryWrites(userId, executionState);
                 return CompletableFuture.completedFuture(bridge.handleConversationalBypass(userId, normalizedInputForBypass));
             }
             if (bridge.isPromptInjectionAttempt(userInput)) {
+                flushPendingMemoryWrites(userId, executionState);
                 return CompletableFuture.completedFuture(promptInjectionStreamResult(userId));
             }
 
@@ -212,6 +217,7 @@ final class DispatchApplicationCoordinator {
             PromptMemoryContextDto promptMemoryContext = preparedDispatch.promptMemoryContext();
             SemanticAnalysisResult semanticAnalysis = preparedDispatch.semanticAnalysis();
             boolean realtimeIntentInput = preparedDispatch.realtimeIntentInput();
+            executionState.mergeMemoryWrites(preparedDispatch.memoryWrites());
             executionState.setRealtimeLookup(preparedDispatch.realtimeLookup());
             String routingInput = preparedDispatch.routingInput();
             String effectiveMemoryContext = preparedDispatch.effectiveMemoryContext();
@@ -285,6 +291,10 @@ final class DispatchApplicationCoordinator {
             }
         }
         return activeDispatchCount.get() <= 0L;
+    }
+
+    private void flushPendingMemoryWrites(String userId, DispatchExecutionState executionState) {
+        dispatchResultFinalizer.flushPendingMemoryWrites(userId, executionState);
     }
 
     private CompletableFuture<SkillResult> executeSinglePass(String userId,
