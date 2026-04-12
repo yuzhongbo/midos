@@ -165,6 +165,13 @@ public class SemanticAnalysisService implements SemanticAnalyzer {
         return sanitize(best, userInput);
     }
 
+    public SemanticAnalysisResult analyzeHeuristically(String userInput) {
+        if (userInput == null || userInput.isBlank()) {
+            return SemanticAnalysisResult.empty();
+        }
+        return sanitize(heuristicAnalysis(userInput), userInput);
+    }
+
     private Optional<SemanticAnalysisResult> analyzeWithLlm(String userId,
                                                             String userInput,
                                                             String memoryContext,

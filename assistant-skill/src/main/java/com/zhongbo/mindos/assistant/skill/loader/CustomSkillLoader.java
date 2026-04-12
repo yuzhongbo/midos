@@ -81,7 +81,7 @@ public class CustomSkillLoader {
                                 LOGGER.warning("CustomSkillLoader: skipping skill with empty name in " + jsonPath);
                                 return;
                             }
-                            skillRegistry.register(new ScriptSkill(def, llmClient));
+                            skillRegistry.register(createSkill(def));
                             loaded.add(def.name());
                             LOGGER.info("CustomSkillLoader: registered custom skill '" + def.name()
                                     + "' from " + jsonPath.getFileName());
@@ -101,5 +101,11 @@ public class CustomSkillLoader {
     public String getCustomSkillDir() {
         return customSkillDir;
     }
-}
 
+    private ScriptSkill createSkill(ScriptSkillDefinition definition) {
+        if ("llm".equalsIgnoreCase(definition.response())) {
+            return new LlmScriptSkill(definition, llmClient);
+        }
+        return new TemplateScriptSkill(definition);
+    }
+}
