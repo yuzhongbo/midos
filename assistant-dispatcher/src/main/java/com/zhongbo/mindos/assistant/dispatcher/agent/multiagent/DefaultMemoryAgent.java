@@ -4,6 +4,7 @@ import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.dispatcher.agent.procedure.ProceduralMemory;
 import com.zhongbo.mindos.assistant.memory.MemoryFacade;
 import com.zhongbo.mindos.assistant.memory.MemoryGateway;
+import com.zhongbo.mindos.assistant.dispatcher.memory.AgentMemoryFacade;
 import com.zhongbo.mindos.assistant.memory.graph.MemoryNode;
 import com.zhongbo.mindos.assistant.memory.model.ConversationTurn;
 import com.zhongbo.mindos.assistant.memory.model.SkillUsageStats;
@@ -26,6 +27,7 @@ public class DefaultMemoryAgent implements MemoryAgent {
     private final MemoryGateway memoryGateway;
     private final MemoryFacade memoryFacade;
     private final ProceduralMemory proceduralMemory;
+    private final AgentMemoryFacade agentMemoryFacade;
 
     @Autowired
     public DefaultMemoryAgent(MemoryGateway memoryGateway,
@@ -34,6 +36,7 @@ public class DefaultMemoryAgent implements MemoryAgent {
         this.memoryGateway = memoryGateway;
         this.memoryFacade = memoryFacade;
         this.proceduralMemory = proceduralMemory;
+        this.agentMemoryFacade = new AgentMemoryFacade(memoryGateway, null, proceduralMemory);
     }
 
     @Override
@@ -153,17 +156,17 @@ public class DefaultMemoryAgent implements MemoryAgent {
             skillName = result.skillName();
         }
 
-        if (memoryGateway != null && result != null) {
+        if (result != null) {
             if ("skill-usage".equalsIgnoreCase(kind)) {
-                memoryGateway.recordSkillUsage(userId, skillName, trigger, success);
+                agentMemoryFacade.recordSkillUsage(userId, skillName, trigger, success);
                 if (result.output() != null && !result.output().isBlank()) {
-                    memoryGateway.appendAssistantConversation(userId, result.output());
+                    agentMemoryFacade.appendAssistantConversation(userId, result.output());
                 }
             }
         }
 
-        if ("procedure".equalsIgnoreCase(kind) && success && graph != null && proceduralMemory != null) {
-            proceduralMemory.recordSuccess(userId, intent, trigger, graph, contextAttributes);
+        if ("procedure".equalsIgnoreCase(kind) && success && graph != null) {
+            agentMemoryFacade.recordProcedureSuccess(userId, intent, trigger, graph, contextAttributes);
         }
 
         Map<String, Object> patch = new LinkedHashMap<>();

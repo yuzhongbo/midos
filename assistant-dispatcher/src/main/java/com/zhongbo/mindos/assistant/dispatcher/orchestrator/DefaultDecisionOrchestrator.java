@@ -1,15 +1,9 @@
 package com.zhongbo.mindos.assistant.dispatcher.orchestrator;
 
-import com.zhongbo.mindos.assistant.dispatcher.agent.taskgraph.DAGExecutor;
 import com.zhongbo.mindos.assistant.dispatcher.agent.taskgraph.TaskGraph;
-import com.zhongbo.mindos.assistant.dispatcher.agent.taskgraph.TaskGraphExecutionResult;
-import com.zhongbo.mindos.assistant.dispatcher.agent.taskgraph.TaskNode;
-import com.zhongbo.mindos.assistant.dispatcher.agent.search.SearchCandidate;
 import com.zhongbo.mindos.assistant.dispatcher.agent.search.SearchPlanner;
-import com.zhongbo.mindos.assistant.dispatcher.agent.search.SearchPlanningRequest;
 import com.zhongbo.mindos.assistant.dispatcher.agent.procedure.ProceduralMemory;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.step5.AgentRouter;
-import com.zhongbo.mindos.assistant.dispatcher.orchestrator.step5.RecoveryAction;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.step5.PlannerLearningStore;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.step5.PolicyUpdater;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.step5.RewardModel;
@@ -31,7 +25,6 @@ import org.springframework.stereotype.Component;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -56,6 +49,9 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
     private final FallbackPlan fallbackPlan;
     private final CandidateChainBuilder candidateChainBuilder;
     private final FailureNormalizer failureNormalizer;
+    private final SlowPathPlanBuilder slowPathPlanBuilder;
+    private final TaskGraphCoordinator taskGraphCoordinator;
+    private final FastPathCoordinator fastPathCoordinator;
     private final SkillExecutionGateway skillExecutionGateway;
     private final MemoryGateway memoryGateway;
     private final PostExecutionMemoryRecorder memoryRecorder;
@@ -66,7 +62,6 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
     private final String eqCoachImTimeoutReply;
     private final List<String> mcpPriorityOrder;
     private final int maxLoops;
-    private final DAGExecutor dagExecutor = new DAGExecutor();
     private SearchPlanner searchPlanner;
     private ProceduralMemory proceduralMemory;
     private PlannerLearningStore plannerLearningStore;
@@ -95,18 +90,108 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
         this.fallbackPlan = fallbackPlan;
         this.candidateChainBuilder = new CandidateChainBuilder(candidatePlanner, fallbackPlan);
         this.failureNormalizer = new FailureNormalizer();
+        boolean effectiveMcpParallelEnabled = mcpParallelEnabled;
+        long effectiveMcpPerSkillTimeoutMs = Math.max(250, mcpPerSkillTimeoutMs);
+        long effectiveEqCoachImTimeoutMs = Math.max(0L, eqCoachImTimeoutMs);
+        String effectiveEqCoachImTimeoutReply = eqCoachImTimeoutReply == null || eqCoachImTimeoutReply.isBlank()
+                ? "我先给你一个简短结论：当前请求较复杂，我正在整理更完整建议，稍后继续发你。"
+                : eqCoachImTimeoutReply;
+        List<String> effectiveMcpPriorityOrder = DEFAULT_PARALLEL_MCP_PRIORITY_ORDER;
+        int effectiveMaxLoops = Math.max(1, Math.min(3, maxLoops));
+        this.slowPathPlanBuilder = new SlowPathPlanBuilder(
+                this.candidateChainBuilder,
+                () -> this.searchPlanner,
+                this::isMcpSkill
+        );
+        this.taskGraphCoordinator = new TaskGraphCoordinator(
+                () -> this.proceduralMemory,
+                () -> this.recoveryManager,
+                new TaskGraphCoordinator.TaskGraphBridge() {
+                    @Override
+                    public OrchestrationOutcome clarificationOutcome(String target, String message) {
+                        return DefaultDecisionOrchestrator.this.clarificationOutcome(target, message);
+                    }
+
+                    @Override
+                    public OrchestrationOutcome orchestrateFastPath(Decision decision,
+                                                                   String target,
+                                                                   Map<String, Object> params,
+                                                                   OrchestrationRequest request,
+                                                                   boolean allowParallelMcp,
+                                                                   String traceId) {
+                        return DefaultDecisionOrchestrator.this.orchestrateFastPath(
+                                decision,
+                                target,
+                                params,
+                                request,
+                                allowParallelMcp,
+                                traceId
+                        );
+                    }
+
+                    @Override
+                    public Map<String, Object> buildEffectiveParams(Map<String, Object> params, SkillContext skillContext) {
+                        return DefaultDecisionOrchestrator.this.buildEffectiveParams(params, skillContext);
+                    }
+
+                    @Override
+                    public Map<String, Object> applyContextPatch(Map<String, Object> baseContext, Map<String, Object> patch) {
+                        return DefaultDecisionOrchestrator.this.applyContextPatch(baseContext, patch);
+                    }
+
+                    @Override
+                    public void traceEvent(String traceId, String phase, String action, Map<String, Object> details) {
+                        DefaultDecisionOrchestrator.this.traceEvent(traceId, phase, action, details);
+                    }
+                }
+        );
+        this.fastPathCoordinator = new FastPathCoordinator(
+                this.candidateChainBuilder,
+                this.paramValidator,
+                skillExecutionGateway,
+                () -> this.agentRouter,
+                () -> this.plannerLearningStore,
+                () -> this.policyUpdater,
+                () -> this.recoveryManager,
+                new FastPathCoordinator.FastPathBridge() {
+                    @Override
+                    public OrchestrationOutcome clarificationOutcome(String target, String message) {
+                        return DefaultDecisionOrchestrator.this.clarificationOutcome(target, message);
+                    }
+
+                    @Override
+                    public Map<String, Object> buildEffectiveParams(Map<String, Object> params, SkillContext skillContext) {
+                        return DefaultDecisionOrchestrator.this.buildEffectiveParams(params, skillContext);
+                    }
+
+                    @Override
+                    public Map<String, Object> applyContextPatch(Map<String, Object> baseContext, Map<String, Object> patch) {
+                        return DefaultDecisionOrchestrator.this.applyContextPatch(baseContext, patch);
+                    }
+
+                    @Override
+                    public void traceEvent(String traceId, String phase, String action, Map<String, Object> details) {
+                        DefaultDecisionOrchestrator.this.traceEvent(traceId, phase, action, details);
+                }
+                },
+                TASK_PLAN_LOW_CONFIDENCE_THRESHOLD,
+                effectiveMcpParallelEnabled,
+                effectiveMcpPerSkillTimeoutMs,
+                effectiveEqCoachImTimeoutMs,
+                effectiveEqCoachImTimeoutReply,
+                effectiveMaxLoops,
+                effectiveMcpPriorityOrder
+        );
         this.skillExecutionGateway = skillExecutionGateway;
         this.memoryGateway = memoryGateway;
         this.memoryRecorder = memoryRecorder;
         this.taskExecutor = taskExecutor;
-        this.mcpParallelEnabled = mcpParallelEnabled;
-        this.mcpPerSkillTimeoutMs = Math.max(250, mcpPerSkillTimeoutMs);
-        this.eqCoachImTimeoutMs = Math.max(0L, eqCoachImTimeoutMs);
-        this.eqCoachImTimeoutReply = eqCoachImTimeoutReply == null || eqCoachImTimeoutReply.isBlank()
-                ? "我先给你一个简短结论：当前请求较复杂，我正在整理更完整建议，稍后继续发你。"
-                : eqCoachImTimeoutReply;
-        this.mcpPriorityOrder = DEFAULT_PARALLEL_MCP_PRIORITY_ORDER;
-        this.maxLoops = Math.max(1, Math.min(3, maxLoops));
+        this.mcpParallelEnabled = effectiveMcpParallelEnabled;
+        this.mcpPerSkillTimeoutMs = effectiveMcpPerSkillTimeoutMs;
+        this.eqCoachImTimeoutMs = effectiveEqCoachImTimeoutMs;
+        this.eqCoachImTimeoutReply = effectiveEqCoachImTimeoutReply;
+        this.mcpPriorityOrder = effectiveMcpPriorityOrder;
+        this.maxLoops = effectiveMaxLoops;
     }
 
     @Autowired(required = false)
@@ -253,10 +338,10 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
         if (TaskGraph.fromDsl(effectiveParams).isEmpty()) {
             java.util.Optional<ProceduralMemory.ReusableProcedure> reusableProcedure = matchReusableProcedure(decision, request, effectiveParams);
             if (reusableProcedure.isPresent() && !reusableProcedure.get().taskGraph().isEmpty()) {
-                return orchestrateTaskGraph(
+                return taskGraphCoordinator.orchestrateTaskGraph(
                         decision,
                         reusableProcedure.get().taskGraph(),
-                        attachTaskGraph(effectiveParams, reusableProcedure.get().taskGraph()),
+                        slowPathPlanBuilder.attachTaskGraph(effectiveParams, reusableProcedure.get().taskGraph()),
                         request,
                         traceId,
                         "procedural-memory",
@@ -265,7 +350,7 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
                 );
             }
         }
-        TaskGraph taskGraph = buildSlowPathTaskGraph(
+        TaskGraph taskGraph = slowPathPlanBuilder.buildTaskGraph(
                 decision,
                 effectiveParams,
                 request,
@@ -273,7 +358,7 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
                 fastOutcome == null
         );
         if (taskGraph.isEmpty()) {
-            TaskPlan taskPlan = buildSlowPathTaskPlan(
+            TaskPlan taskPlan = slowPathPlanBuilder.buildTaskPlan(
                     decision,
                     effectiveParams,
                     request,
@@ -283,124 +368,27 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
             if (taskPlan.isEmpty()) {
                 return fastOutcome == null ? clarificationOutcome(decision.target(), "无法生成 task plan") : fastOutcome;
             }
-            return orchestrateTaskPlan(decision, taskPlan, attachTaskPlan(effectiveParams, taskPlan), request, traceId, "slow-path", decision.intent(), request == null ? "" : request.userInput());
-        }
-         return orchestrateTaskGraph(decision, taskGraph, attachTaskGraph(effectiveParams, taskGraph), request, traceId, "slow-path", decision.intent(), request == null ? "" : request.userInput());
-    }
-
-    private OrchestrationOutcome orchestrateTaskPlan(Decision decision,
-                                                     TaskPlan taskPlan,
-                                                     Map<String, Object> effectiveParams,
-                                                     OrchestrationRequest request,
-                                                     String traceId,
-                                                     String strategy,
-                                                     String intent,
-                                                     String trigger) {
-        return orchestrateTaskGraph(decision, TaskGraph.fromDsl(effectiveParams), effectiveParams, request, traceId, strategy, intent, trigger);
-    }
-
-    private OrchestrationOutcome orchestrateTaskGraph(Decision decision,
-                                                      TaskGraph taskGraph,
-                                                      Map<String, Object> effectiveParams,
-                                                      OrchestrationRequest request,
-                                                      String traceId,
-                                                      String strategy,
-                                                      String intent,
-                                                      String trigger) {
-        if (taskGraph == null || taskGraph.isEmpty()) {
-            return clarificationOutcome("task.graph", "缺少 task graph");
-        }
-        if (taskGraph.nodes().isEmpty()) {
-            return clarificationOutcome("task.graph", "缺少 task nodes");
-        }
-        SkillContext baseContext = request == null
-                ? new SkillContext("", "", effectiveParams)
-                : new SkillContext(request.userId(), request.userInput(), buildEffectiveParams(effectiveParams, request.skillContext()));
-        TaskGraphExecutionResult taskResult = executeTaskGraphAttempt(
-                decision,
-                taskGraph,
-                baseContext,
-                request,
-                traceId,
-                Map.of(),
-                Map.of()
-        );
-        if (taskResult.finalResult() == null) {
-            return clarificationOutcome("task.graph", "未能执行任何 task node");
-        }
-        RecoveryManager.RecoveryReport rollbackReport = null;
-        if (!taskResult.finalResult().success()) {
-            rollbackReport = recoveryManager == null
-                    ? RecoveryManager.RecoveryReport.noop(traceId, "rollback", "recovery manager unavailable")
-                    : recoveryManager.planRollback(traceId, taskGraph, taskResult, taskResult.contextAttributes());
-            Map<String, Object> rollbackTrace = new LinkedHashMap<>();
-            if (rollbackReport != null) {
-                rollbackTrace.put("summary", rollbackReport.summary());
-                rollbackTrace.put("clearKeys", rollbackReport.clearKeys());
-                rollbackTrace.put("contextPatch", rollbackReport.contextPatch());
-                rollbackTrace.put("retryNodeIds", rollbackReport.retryNodeIds());
-                rollbackTrace.put("fallbackNodeIds", rollbackReport.fallbackNodeIds());
-                rollbackTrace.put("skippedNodeIds", rollbackReport.skippedNodeIds());
-            }
-            traceEvent(traceId, "recovery", "rollback", rollbackTrace);
-            if (rollbackReport != null && rollbackReport.shouldReexecute()) {
-                Map<String, Object> recoveryAttributes = buildRecoveryContext(taskResult.contextAttributes(), rollbackReport);
-                SkillContext recoveryBaseContext = new SkillContext(baseContext.userId(), baseContext.input(), recoveryAttributes);
-                TaskGraphExecutionResult recoveredResult = executeTaskGraphAttempt(
-                        decision,
-                        rollbackReport.hasRecoveryGraph() ? rollbackReport.recoveryGraph() : taskGraph,
-                        recoveryBaseContext,
-                        request,
-                        traceId,
-                        rollbackReport.actionMap(),
-                        indexNodeResults(taskResult)
-                );
-                traceEvent(traceId, "recovery", "reexecute", Map.of(
-                        "success", recoveredResult.finalResult() != null && recoveredResult.finalResult().success(),
-                        "actions", rollbackReport.actions().size(),
-                        "summary", rollbackReport.summary()
-                ));
-                if (recoveredResult.finalResult() != null) {
-                    taskResult = recoveredResult;
-                }
-            }
-        }
-        if (taskResult.finalResult().success() && proceduralMemory != null) {
-            proceduralMemory.recordSuccess(
-                    request == null ? "" : request.userId(),
-                    intent == null || intent.isBlank() ? taskResult.finalResult().skillName() : intent,
-                    trigger == null ? "" : trigger,
-                    taskGraph,
-                    taskResult.contextAttributes()
+            return taskGraphCoordinator.orchestrateTaskPlan(
+                    decision,
+                    taskPlan,
+                    slowPathPlanBuilder.attachTaskPlan(effectiveParams, taskPlan),
+                    request,
+                    traceId,
+                    "slow-path",
+                    decision.intent(),
+                    request == null ? "" : request.userInput()
             );
         }
-        List<PlanStepDto> steps = taskResult.nodeResults().stream()
-                .map(node -> new PlanStepDto(
-                        node.nodeId(),
-                        node.status(),
-                        node.result() == null ? node.target() : node.result().skillName(),
-                        node.result() == null ? "no result" : node.result().output(),
-                        Instant.now().minusMillis(1),
-                        Instant.now()
-                ))
-                .toList();
-        ExecutionTraceDto trace = new ExecutionTraceDto(
-                strategy == null || strategy.isBlank() ? "task-graph" : strategy,
-                Math.max(0, steps.size() - 1),
-                new CritiqueReportDto(taskResult.finalResult().success(),
-                        taskResult.finalResult().success() ? "task graph success" : taskResult.finalResult().output(),
-                taskResult.nodeResults().stream().anyMatch(TaskGraphExecutionResult.NodeResult::usedFallback) ? "fallback" : "none"),
-                steps
+        return taskGraphCoordinator.orchestrateTaskGraph(
+                decision,
+                taskGraph,
+                slowPathPlanBuilder.attachTaskGraph(effectiveParams, taskGraph),
+                request,
+                traceId,
+                "slow-path",
+                decision.intent(),
+                request == null ? "" : request.userInput()
         );
-        OrchestrationOutcome outcome = new OrchestrationOutcome(
-                taskResult.finalResult(),
-                new SkillDsl(taskResult.finalResult().skillName(), effectiveParams),
-                null,
-                trace,
-                taskResult.finalResult().skillName(),
-                taskResult.nodeResults().stream().anyMatch(TaskGraphExecutionResult.NodeResult::usedFallback)
-        );
-        return outcome;
     }
 
     private java.util.Optional<ProceduralMemory.ReusableProcedure> matchReusableProcedure(Decision decision,
@@ -423,262 +411,14 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
                                                      OrchestrationRequest request,
                                                      boolean allowParallelMcp,
                                                      String traceId) {
-        List<ScoredCandidate> plannedCandidates = candidateChainBuilder.build(suggestedTarget, request);
-        if (plannedCandidates.isEmpty()) {
-            plannedCandidates = List.of(candidateChainBuilder.explicitTarget(suggestedTarget));
-        }
-        traceEvent(traceId, "planner", "candidate-chain", Map.of(
-                "suggestedTarget", suggestedTarget == null ? "" : suggestedTarget,
-                "candidateCount", plannedCandidates.size()
-        ));
-        List<PlanStepDto> steps = new ArrayList<>();
-        List<CandidateExecution> executableCandidates = new ArrayList<>();
-        String lastFailure = null;
-        for (ScoredCandidate candidate : plannedCandidates) {
-            ParamValidator.ValidationResult namespaceValidation = validateNamespace(candidate.skillName());
-            if (!namespaceValidation.valid()) {
-                lastFailure = namespaceValidation.message();
-                continue;
-            }
-            ParamValidator.ValidationResult validation = paramValidator.validate(candidate.skillName(), params, request);
-            if (!validation.valid()) {
-                lastFailure = validation.message();
-                continue;
-            }
-            executableCandidates.add(new CandidateExecution(
-                    candidate,
-                    validation.normalizedParams().isEmpty() ? params : validation.normalizedParams(),
-                    !Objects.equals(candidate.skillName(), suggestedTarget)
-            ));
-        }
-        if (executableCandidates.isEmpty()) {
-            return clarificationOutcome(suggestedTarget, lastFailure == null ? "缺少可执行候选" : lastFailure);
-        }
-        if (allowParallelMcp && shouldRunMcpParallel(executableCandidates)) {
-            return orchestrateMcpInParallel(decision, executableCandidates, request, steps, 0, "fast-path", traceId);
-        }
-        CandidateExecution execution = executableCandidates.get(0);
-        int replans = 0;
-        String lastCandidate = execution.skillName();
-        boolean usedFallback = execution.usedFallback();
-        SkillResult result = executeSingleAttempt(decision, execution, request, steps, "fast-attempt-1", traceId);
-        if (result.success()) {
-            return successOutcome(result, execution.params(), steps, replans, execution.skillName(), usedFallback, "fast-path");
-        }
-        lastFailure = result.output();
-        if (maxLoops > 1) {
-            ParamValidator.ValidationResult repaired = paramValidator.repairAfterFailure(
-                    execution.skillName(),
-                    execution.params(),
-                    result,
-                    request
-            );
-            if (repaired.valid() && !Objects.equals(repaired.normalizedParams(), execution.params())) {
-                replans++;
-                CandidateExecution retriedExecution = new CandidateExecution(
-                        execution.candidate(),
-                        repaired.normalizedParams(),
-                        execution.usedFallback()
-                );
-                SkillResult retryResult = executeSingleAttempt(decision, retriedExecution, request, steps, "fast-retry-" + replans, traceId);
-                if (retryResult.success()) {
-                    return successOutcome(retryResult, retriedExecution.params(), steps, replans, retriedExecution.skillName(), usedFallback, "fast-path");
-                }
-                result = retryResult;
-                lastFailure = retryResult.output();
-            }
-        }
-        ExecutionTraceDto trace = new ExecutionTraceDto(
-                "fast-path",
-                replans,
-                new CritiqueReportDto(false, lastFailure == null ? "unknown" : lastFailure, "fallback"),
-                steps
+        return fastPathCoordinator.orchestrate(
+                decision,
+                suggestedTarget,
+                params,
+                request,
+                allowParallelMcp,
+                traceId
         );
-        SkillResult failedResult = result == null
-                ? SkillResult.failure(lastCandidate == null ? suggestedTarget : lastCandidate, lastFailure == null ? "unknown" : lastFailure)
-                : result;
-        return new OrchestrationOutcome(
-                failedResult,
-                lastCandidate == null ? null : new SkillDsl(lastCandidate, params),
-                null,
-                trace,
-                lastCandidate,
-                usedFallback
-        );
-    }
-
-    private SkillResult executeSingleAttempt(Decision decision,
-                                             CandidateExecution execution,
-                                             OrchestrationRequest request,
-                                             List<PlanStepDto> steps,
-                                             String stepName,
-                                             String traceId) {
-        Instant startedAt = Instant.now();
-        PreparedExecution prepared = prepareExecution(decision, execution, request, traceId);
-        SkillResult result = executeWithTimeout(
-                execution.skillName(),
-                execution.params(),
-                prepared.context()
-        );
-        Instant finishedAt = Instant.now();
-        steps.add(new PlanStepDto(
-                stepName,
-                result.success() ? "success" : "failed",
-                execution.skillName(),
-                buildStepNote(execution.candidate(), result),
-                startedAt,
-                finishedAt
-        ));
-        if (!result.success()) {
-            RecoveryManager.RecoveryReport retryReport = recoveryManager == null
-                    ? RecoveryManager.RecoveryReport.noop(traceId, "retry", "recovery manager unavailable")
-                    : recoveryManager.planRetry(traceId, execution.skillName(), result, prepared.context().attributes(), steps);
-            Map<String, Object> retryTrace = new LinkedHashMap<>();
-            if (retryReport != null) {
-                retryTrace.put("summary", retryReport.summary());
-                retryTrace.put("clearKeys", retryReport.clearKeys());
-                retryTrace.put("contextPatch", retryReport.contextPatch());
-            }
-            traceEvent(traceId, "recovery", "retry", retryTrace);
-            if (retryReport != null && retryReport.shouldReexecute()) {
-                SkillContext retryContext = new SkillContext(
-                        prepared.context().userId(),
-                        prepared.context().input(),
-                        buildRecoveryContext(prepared.context().attributes(), retryReport)
-                );
-                SkillResult retryResult = executeWithTimeout(
-                        execution.skillName(),
-                        execution.params(),
-                        retryContext
-                );
-                Instant retryFinished = Instant.now();
-                steps.add(new PlanStepDto(
-                        stepName + ".retry",
-                        retryResult.success() ? "success" : "failed",
-                        execution.skillName(),
-                        buildStepNote(execution.candidate(), retryResult),
-                        finishedAt,
-                        retryFinished
-                ));
-                result = retryResult;
-                finishedAt = retryFinished;
-                traceEvent(traceId, "recovery", "retry-result", Map.of(
-                        "skill", execution.skillName(),
-                        "success", retryResult.success(),
-                        "retryCount", 1,
-                        "summary", retryReport.summary()
-                ));
-            }
-        }
-        long durationMs = Math.max(0L, java.time.Duration.between(startedAt, finishedAt).toMillis());
-        observeLearning(request, execution, prepared.routeDecision(), result, durationMs, traceId);
-        traceEvent(traceId, "execute", "attempt", Map.of(
-                "skill", execution.skillName(),
-                "success", result.success(),
-                "routeType", prepared.routeDecision().routeType().name(),
-                "durationMs", durationMs,
-                "retried", steps.stream().anyMatch(step -> step.stepName().equals(stepName + ".retry"))
-        ));
-        return result;
-    }
-
-    private OrchestrationOutcome orchestrateMcpInParallel(Decision decision,
-                                                          List<CandidateExecution> candidates,
-                                                          OrchestrationRequest request,
-                                                          List<PlanStepDto> inheritedSteps,
-                                                          int inheritedReplans,
-                                                          String strategy,
-                                                          String traceId) {
-        List<CompletableFuture<SkillResult>> futures = new ArrayList<>();
-        List<PreparedExecution> preparedExecutions = new ArrayList<>();
-        List<Instant> startedTimes = new ArrayList<>();
-        for (CandidateExecution candidate : candidates) {
-            PreparedExecution prepared = prepareExecution(decision, candidate, request, traceId);
-            SkillContext skillContext = prepared.context();
-            CompletableFuture<SkillResult> execution = applySkillTimeoutIfNeeded(
-                    candidate.skillName(),
-                    skillContext,
-                    skillExecutionGateway.executeDslAsync(new SkillDsl(candidate.skillName(), candidate.params()), skillContext)
-            )
-                    .completeOnTimeout(SkillResult.failure(candidate.skillName(), "timeout"), mcpPerSkillTimeoutMs, TimeUnit.MILLISECONDS)
-                    .exceptionally(error -> SkillResult.failure(candidate.skillName(), String.valueOf(error.getMessage())));
-            futures.add(execution);
-            preparedExecutions.add(prepared);
-            startedTimes.add(Instant.now());
-        }
-        CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
-        List<PlanStepDto> steps = new ArrayList<>(inheritedSteps == null ? List.of() : inheritedSteps);
-        List<SkillResult> successes = new ArrayList<>();
-        for (int i = 0; i < candidates.size(); i++) {
-            SkillResult result = futures.get(i).join();
-            CandidateExecution candidate = candidates.get(i);
-            PreparedExecution prepared = preparedExecutions.get(i);
-            long durationMs = Math.max(0L, java.time.Duration.between(startedTimes.get(i), Instant.now()).toMillis());
-            steps.add(new PlanStepDto(
-                    "parallel-" + (i + 1),
-                    result.success() ? "success" : "failed",
-                    candidate.skillName(),
-                    buildStepNote(candidate.candidate(), result),
-                    Instant.now().minusMillis(1),
-                    Instant.now()
-            ));
-            observeLearning(request, candidate, prepared.routeDecision(), result, durationMs, traceId);
-            traceEvent(traceId, "execute", "mcp-step", Map.of(
-                    "skill", candidate.skillName(),
-                    "success", result.success(),
-                    "routeType", prepared.routeDecision().routeType().name(),
-                    "durationMs", durationMs
-            ));
-            if (result.success()) {
-                successes.add(result);
-            }
-        }
-        if (successes.isEmpty()) {
-            SkillResult failedResult = candidates.isEmpty()
-                    ? SkillResult.failure("unknown", "MCP 调用失败或超时")
-                    : futures.get(0).join();
-            ExecutionTraceDto trace = new ExecutionTraceDto(
-                    strategy == null || strategy.isBlank() ? "decision-orchestrator" : strategy,
-                    inheritedReplans,
-                    new CritiqueReportDto(false, "all mcp candidates failed", "failed"),
-                    steps
-            );
-            return new OrchestrationOutcome(
-                    failedResult,
-                    candidates.isEmpty() ? null : new SkillDsl(candidates.get(0).skillName(), candidates.get(0).params()),
-                    null,
-                    trace,
-                    candidates.isEmpty() ? null : candidates.get(0).skillName(),
-                    true
-            );
-        }
-        SkillResult selected = successes.stream()
-                .sorted((left, right) -> Integer.compare(priorityRank(left.skillName()), priorityRank(right.skillName())))
-                .findFirst()
-                .orElse(successes.get(0));
-        ExecutionTraceDto trace = new ExecutionTraceDto(
-                strategy == null || strategy.isBlank() ? "decision-orchestrator" : strategy,
-                inheritedReplans,
-                new CritiqueReportDto(true, "parallel mcp success", "none"),
-                steps
-        );
-        return new OrchestrationOutcome(selected, new SkillDsl(selected.skillName(), candidates.get(0).params()), null, trace, selected.skillName(), true);
-    }
-
-    private OrchestrationOutcome successOutcome(SkillResult result,
-                                                Map<String, Object> params,
-                                                List<PlanStepDto> steps,
-                                                int replans,
-                                                String selectedSkill,
-                                                boolean usedFallback,
-                                                String strategy) {
-        ExecutionTraceDto trace = new ExecutionTraceDto(
-                strategy == null || strategy.isBlank() ? "decision-orchestrator" : strategy,
-                replans,
-                new CritiqueReportDto(true, "success", usedFallback ? "fallback" : "none"),
-                steps
-        );
-        return new OrchestrationOutcome(result, new SkillDsl(selectedSkill, params), null, trace, selectedSkill, usedFallback);
     }
 
     private OrchestrationOutcome clarificationOutcome(String target, String message) {
@@ -692,94 +432,8 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
         );
     }
 
-    private boolean shouldRunMcpParallel(List<CandidateExecution> candidates) {
-        if (!mcpParallelEnabled) {
-            return false;
-        }
-        if (candidates == null || candidates.size() < 2) {
-            return false;
-        }
-        return candidates.stream().allMatch(candidate -> isMcpSkill(candidate.skillName()));
-    }
-
     private boolean isMcpSkill(String target) {
         return target != null && target.startsWith("mcp.");
-    }
-
-    private SkillResult executeWithTimeout(String candidate,
-                                           Map<String, Object> params,
-                                           SkillContext skillContext) {
-        try {
-            CompletableFuture<SkillResult> future = applySkillTimeoutIfNeeded(
-                    candidate,
-                    skillContext,
-                    skillExecutionGateway.executeDslAsync(new SkillDsl(candidate, params), skillContext)
-            );
-            if (isMcpSkill(candidate)) {
-                future = future.completeOnTimeout(
-                        SkillResult.failure(candidate, "timeout"),
-                        mcpPerSkillTimeoutMs,
-                        TimeUnit.MILLISECONDS
-                );
-            }
-            return future.join();
-        } catch (Exception ex) {
-            return SkillResult.failure(candidate, ex.getMessage());
-        }
-    }
-
-    private CompletableFuture<SkillResult> applySkillTimeoutIfNeeded(String skillName,
-                                                                      SkillContext skillContext,
-                                                                      CompletableFuture<SkillResult> executionFuture) {
-        if (executionFuture == null
-                || eqCoachImTimeoutMs <= 0L
-                || !"eq.coach".equals(skillName)
-                || skillContext == null
-                || !isImInteractionContext(skillContext.attributes())) {
-            return executionFuture;
-        }
-        SkillResult timeoutFallback = SkillResult.success(skillName, eqCoachImTimeoutReply);
-        CompletableFuture<SkillResult> timeoutFuture = CompletableFuture.supplyAsync(
-                () -> timeoutFallback,
-                CompletableFuture.delayedExecutor(eqCoachImTimeoutMs, TimeUnit.MILLISECONDS)
-        );
-        return executionFuture.applyToEither(timeoutFuture, result -> result);
-    }
-
-    private boolean isImInteractionContext(Map<String, Object> attributes) {
-        if (attributes == null || attributes.isEmpty()) {
-            return false;
-        }
-        if (attributes.containsKey("imPlatform") || attributes.containsKey("imSenderId") || attributes.containsKey("imChatId")) {
-            return true;
-        }
-        Object channel = attributes.get("interactionChannel");
-        return channel != null && "im".equalsIgnoreCase(String.valueOf(channel));
-    }
-
-    private int priorityRank(String skillName) {
-        if (skillName == null || skillName.isBlank() || mcpPriorityOrder.isEmpty()) {
-            return Integer.MAX_VALUE;
-        }
-        String normalized = skillName.trim().toLowerCase();
-        for (int i = 0; i < mcpPriorityOrder.size(); i++) {
-            String configured = mcpPriorityOrder.get(i);
-            if (normalized.equals(configured)) {
-                return i;
-            }
-        }
-        return Integer.MAX_VALUE;
-    }
-
-    private ParamValidator.ValidationResult validateNamespace(String target) {
-        if (target == null || target.isBlank() || !target.startsWith("mcp.")) {
-            return ParamValidator.ValidationResult.ok();
-        }
-        String[] parts = target.split("\\.");
-        if (parts.length < 3 || parts[1].isBlank() || parts[2].isBlank()) {
-            return ParamValidator.ValidationResult.error("MCP 名称需为 mcp.<alias>.<tool>");
-        }
-        return ParamValidator.ValidationResult.ok();
     }
 
     private Map<String, Object> buildEffectiveParams(Map<String, Object> params, SkillContext skillContext) {
@@ -817,345 +471,6 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
                 && !fastOutcome.result().success();
     }
 
-    private TaskPlan buildSlowPathTaskPlan(Decision decision,
-                                           Map<String, Object> effectiveParams,
-                                           OrchestrationRequest request,
-                                           String excludeSkill,
-                                           boolean requireMultipleSteps) {
-        TaskPlan explicitPlan = TaskPlan.from(effectiveParams);
-        if ("task.plan".equalsIgnoreCase(decision == null ? "" : decision.target()) || !explicitPlan.isEmpty()) {
-            return explicitPlan;
-        }
-        if (decision == null
-                || decision.target() == null
-                || decision.target().isBlank()
-                || isMcpSkill(decision.target())) {
-            return new TaskPlan(List.of());
-        }
-        List<ScoredCandidate> candidates = candidateChainBuilder.build(decision.target(), request).stream()
-                .filter(candidate -> candidate != null && candidate.skillName() != null && !candidate.skillName().isBlank())
-                .filter(candidate -> !isMcpSkill(candidate.skillName()))
-                .filter(candidate -> excludeSkill == null || excludeSkill.isBlank() || !excludeSkill.equals(candidate.skillName()))
-                .filter(candidate -> !requireMultipleSteps || !candidate.skillName().equals(decision.target()))
-                .toList();
-        if (candidates.isEmpty()) {
-            return new TaskPlan(List.of());
-        }
-        List<TaskStep> steps = new ArrayList<>();
-        LinkedHashSet<String> seen = new LinkedHashSet<>();
-        int index = 1;
-        for (ScoredCandidate candidate : candidates) {
-            if (!seen.add(candidate.skillName())) {
-                continue;
-            }
-            Map<String, Object> stepParams = steps.isEmpty() ? (effectiveParams == null ? Map.of() : effectiveParams) : Map.of();
-            steps.add(new TaskStep("auto-step-" + index, candidate.skillName(), stepParams, "auto" + index, false));
-            index++;
-            if (steps.size() >= 3) {
-                break;
-            }
-        }
-        if (requireMultipleSteps && steps.size() < 2) {
-            return new TaskPlan(List.of());
-        }
-        return new TaskPlan(steps);
-    }
-
-    private TaskGraph buildSlowPathTaskGraph(Decision decision,
-                                             Map<String, Object> effectiveParams,
-                                             OrchestrationRequest request,
-                                             String excludeSkill,
-                                             boolean requireMultipleSteps) {
-        TaskGraph explicitGraph = TaskGraph.fromDsl(effectiveParams);
-        if (!explicitGraph.isEmpty()) {
-            return explicitGraph;
-        }
-        TaskGraph searchGraph = buildSearchTaskGraph(decision, effectiveParams, request, excludeSkill, requireMultipleSteps);
-        if (!searchGraph.isEmpty()) {
-            return searchGraph;
-        }
-        if (decision == null
-                || decision.target() == null
-                || decision.target().isBlank()
-                || isMcpSkill(decision.target())) {
-            return new TaskGraph(List.of(), List.of());
-        }
-        List<ScoredCandidate> candidates = candidateChainBuilder.build(decision.target(), request).stream()
-                .filter(candidate -> candidate != null && candidate.skillName() != null && !candidate.skillName().isBlank())
-                .filter(candidate -> !isMcpSkill(candidate.skillName()))
-                .filter(candidate -> excludeSkill == null || excludeSkill.isBlank() || !excludeSkill.equals(candidate.skillName()))
-                .filter(candidate -> !requireMultipleSteps || !candidate.skillName().equals(decision.target()))
-                .toList();
-        if (candidates.isEmpty()) {
-            return new TaskGraph(List.of(), List.of());
-        }
-        List<TaskNode> nodes = new ArrayList<>();
-        List<String> path = new ArrayList<>();
-        LinkedHashSet<String> seen = new LinkedHashSet<>();
-        for (ScoredCandidate candidate : candidates) {
-            if (!seen.add(candidate.skillName())) {
-                continue;
-            }
-            path.add(candidate.skillName());
-            if (path.size() >= 3) {
-                break;
-            }
-        }
-        if (requireMultipleSteps && path.size() < 2) {
-            return new TaskGraph(List.of(), List.of());
-        }
-        TaskGraph linearGraph = TaskGraph.linear(path, effectiveParams);
-        nodes.addAll(linearGraph.nodes());
-        return new TaskGraph(nodes, linearGraph.edges());
-    }
-
-    private TaskGraph buildSearchTaskGraph(Decision decision,
-                                           Map<String, Object> effectiveParams,
-                                           OrchestrationRequest request,
-                                           String excludeSkill,
-                                           boolean requireMultipleSteps) {
-        if (searchPlanner == null || decision == null || decision.target() == null || decision.target().isBlank()) {
-            return new TaskGraph(List.of(), List.of());
-        }
-        List<SearchCandidate> candidates = searchPlanner.search(new SearchPlanningRequest(
-                request == null ? "" : request.userId(),
-                request == null ? "" : request.userInput(),
-                decision.target(),
-                effectiveParams,
-                3,
-                3
-        ));
-        if (candidates.isEmpty()) {
-            return new TaskGraph(List.of(), List.of());
-        }
-        List<String> path = candidates.get(0).path().stream()
-                .filter(skill -> excludeSkill == null || excludeSkill.isBlank() || !excludeSkill.equals(skill))
-                .filter(skill -> !requireMultipleSteps || !decision.target().equals(skill))
-                .distinct()
-                .limit(3)
-                .toList();
-        if (path.isEmpty() || (requireMultipleSteps && path.size() < 2)) {
-            return new TaskGraph(List.of(), List.of());
-        }
-        return TaskGraph.linear(path, effectiveParams);
-    }
-
-    private Map<String, Object> attachTaskGraph(Map<String, Object> effectiveParams, TaskGraph taskGraph) {
-        Map<String, Object> enriched = new LinkedHashMap<>(effectiveParams == null ? Map.of() : effectiveParams);
-        enriched.put("nodes", taskGraph.nodes().stream()
-                .map(node -> Map.of(
-                        "id", node.id(),
-                        "target", node.target(),
-                        "params", node.params(),
-                        "saveAs", node.saveAs(),
-                        "optional", node.optional(),
-                        "dependsOn", node.dependsOn()))
-                .toList());
-        enriched.put("edges", taskGraph.edges().stream()
-                .map(edge -> Map.of("from", edge.from(), "to", edge.to()))
-                .toList());
-        enriched.put("tasks", taskGraph.nodes().stream()
-                .map(node -> Map.of(
-                        "id", node.id(),
-                        "target", node.target(),
-                        "params", node.params(),
-                        "saveAs", node.saveAs(),
-                        "optional", node.optional(),
-                        "dependsOn", node.dependsOn()))
-                .toList());
-        return Map.copyOf(enriched);
-    }
-
-    private Map<String, Object> attachTaskPlan(Map<String, Object> effectiveParams, TaskPlan taskPlan) {
-        Map<String, Object> enriched = new LinkedHashMap<>(effectiveParams == null ? Map.of() : effectiveParams);
-        enriched.put("tasks", taskPlan.steps().stream()
-                .map(step -> Map.of(
-                        "id", step.id(),
-                        "target", step.target(),
-                        "params", step.params(),
-                        "saveAs", step.saveAs(),
-                        "optional", step.optional()))
-                .toList());
-        return Map.copyOf(enriched);
-    }
-
-    private TaskGraphExecutionResult executeTaskGraphAttempt(Decision decision,
-                                                             TaskGraph taskGraph,
-                                                             SkillContext baseContext,
-                                                             OrchestrationRequest request,
-                                                             String traceId,
-                                                             Map<String, RecoveryAction> recoveryActions,
-                                                             Map<String, TaskGraphExecutionResult.NodeResult> cachedResults) {
-        Map<String, RecoveryAction> safeActions = recoveryActions == null ? Map.of() : recoveryActions;
-        Map<String, TaskGraphExecutionResult.NodeResult> safeCachedResults = cachedResults == null ? Map.of() : cachedResults;
-        return dagExecutor.execute(taskGraph, baseContext, (node, nodeContext) ->
-                executeTaskGraphNode(decision, node, nodeContext, request, traceId, safeActions, safeCachedResults));
-    }
-
-    private DAGExecutor.NodeExecution executeTaskGraphNode(Decision decision,
-                                                           TaskNode node,
-                                                           SkillContext nodeContext,
-                                                           OrchestrationRequest request,
-                                                           String traceId,
-                                                           Map<String, RecoveryAction> recoveryActions,
-                                                           Map<String, TaskGraphExecutionResult.NodeResult> cachedResults) {
-        if (node == null) {
-            return new DAGExecutor.NodeExecution(SkillResult.failure("unknown", "missing task node"), false);
-        }
-        RecoveryAction action = recoveryActions == null ? null : recoveryActions.get(node.id());
-        if (action != null) {
-            return switch (action.type()) {
-                case RETRY_NODE -> executeRecoveredTarget(decision, node.target(), nodeContext, request, traceId, false);
-                case FALLBACK_NODE -> {
-                    if (!action.fallbackTarget().isBlank()) {
-                        yield executeRecoveredTarget(decision, action.fallbackTarget(), nodeContext, request, traceId, true);
-                    }
-                    String syntheticOutput = action.syntheticOutput().isBlank() ? "fallback" : action.syntheticOutput();
-                    yield new DAGExecutor.NodeExecution(SkillResult.success(action.target().isBlank() ? node.target() : action.target(), syntheticOutput), true);
-                }
-                case SKIP_NODE -> {
-                    String syntheticOutput = action.syntheticOutput().isBlank() ? "skipped" : action.syntheticOutput();
-                    yield new DAGExecutor.NodeExecution(SkillResult.success(node.target(), syntheticOutput), true);
-                }
-                case ROLLBACK_STEP, PATCH_CONTEXT -> executeTaskGraphCachedOrNormal(decision, node, nodeContext, request, traceId, cachedResults);
-            };
-        }
-        return executeTaskGraphCachedOrNormal(decision, node, nodeContext, request, traceId, cachedResults);
-    }
-
-    private DAGExecutor.NodeExecution executeTaskGraphCachedOrNormal(Decision decision,
-                                                                     TaskNode node,
-                                                                     SkillContext nodeContext,
-                                                                     OrchestrationRequest request,
-                                                                     String traceId,
-                                                                     Map<String, TaskGraphExecutionResult.NodeResult> cachedResults) {
-        TaskGraphExecutionResult.NodeResult cachedResult = cachedResults == null ? null : cachedResults.get(node.id());
-        if (cachedResult != null && cachedResult.result() != null && cachedResult.result().success()) {
-            return new DAGExecutor.NodeExecution(cachedResult.result(), cachedResult.usedFallback());
-        }
-        if ("task.plan".equalsIgnoreCase(node.target())) {
-            return new DAGExecutor.NodeExecution(
-                    SkillResult.failure("task.plan", "nested task.plan is not supported"),
-                    false
-            );
-        }
-        return executeTaskNode(decision, node.target(), nodeContext, request, traceId, false);
-    }
-
-    private DAGExecutor.NodeExecution executeRecoveredTarget(Decision decision,
-                                                             String target,
-                                                             SkillContext nodeContext,
-                                                             OrchestrationRequest request,
-                                                             String traceId,
-                                                             boolean usedFallback) {
-        if (target == null || target.isBlank()) {
-            return new DAGExecutor.NodeExecution(SkillResult.failure("unknown", "missing recovery target"), usedFallback);
-        }
-        return executeTaskNode(decision, target, nodeContext, request, traceId, usedFallback);
-    }
-
-    private DAGExecutor.NodeExecution executeTaskNode(Decision decision,
-                                                      String target,
-                                                      SkillContext nodeContext,
-                                                      OrchestrationRequest request,
-                                                      String traceId,
-                                                      boolean usedFallback) {
-        if ("task.plan".equalsIgnoreCase(target)) {
-            return new DAGExecutor.NodeExecution(
-                    SkillResult.failure("task.plan", "nested task.plan is not supported"),
-                    usedFallback
-            );
-        }
-        OrchestrationRequest nestedRequest = request == null
-                ? new OrchestrationRequest(nodeContext.userId(), nodeContext.input(), nodeContext, Map.of())
-                : new OrchestrationRequest(request.userId(), request.userInput(), nodeContext, request.safeProfileContext());
-        OrchestrationOutcome outcome = orchestrateFastPath(
-                decision,
-                target,
-                nodeContext.attributes(),
-                nestedRequest,
-                false,
-                traceId
-        );
-        SkillResult stepResult = outcome.hasResult() ? outcome.result() : outcome.clarification();
-        return new DAGExecutor.NodeExecution(stepResult, usedFallback || outcome.usedFallback());
-    }
-
-    private Map<String, Object> buildRecoveryContext(Map<String, Object> baseContext,
-                                                     RecoveryManager.RecoveryReport report) {
-        Map<String, Object> cleared = applyClearKeys(baseContext, report == null ? List.of() : report.clearKeys());
-        return applyContextPatch(cleared, report == null ? Map.of() : report.contextPatch());
-    }
-
-    private Map<String, Object> applyClearKeys(Map<String, Object> baseContext, List<String> clearKeys) {
-        Map<String, Object> merged = new LinkedHashMap<>();
-        if (baseContext != null && !baseContext.isEmpty()) {
-            merged.putAll(baseContext);
-        }
-        if (clearKeys != null) {
-            for (String key : clearKeys) {
-                if (key == null || key.isBlank()) {
-                    continue;
-                }
-                merged.remove(key);
-            }
-        }
-        return merged.isEmpty() ? Map.of() : Map.copyOf(merged);
-    }
-
-    private Map<String, TaskGraphExecutionResult.NodeResult> indexNodeResults(TaskGraphExecutionResult result) {
-        if (result == null || result.nodeResults() == null || result.nodeResults().isEmpty()) {
-            return Map.of();
-        }
-        Map<String, TaskGraphExecutionResult.NodeResult> indexed = new LinkedHashMap<>();
-        for (TaskGraphExecutionResult.NodeResult nodeResult : result.nodeResults()) {
-            if (nodeResult == null || nodeResult.nodeId() == null || nodeResult.nodeId().isBlank()) {
-                continue;
-            }
-            indexed.put(nodeResult.nodeId(), nodeResult);
-        }
-        return indexed.isEmpty() ? Map.of() : Map.copyOf(indexed);
-    }
-
-    private PreparedExecution prepareExecution(Decision decision,
-                                               CandidateExecution execution,
-                                               OrchestrationRequest request,
-                                               String traceId) {
-        SkillContext baseContext = buildExecutionContext(request, execution.params());
-        AgentRouter.AgentRouteDecision routeDecision = resolveRouteDecision(decision, execution, request, baseContext, traceId);
-        Map<String, Object> routedAttributes = applyContextPatch(baseContext.attributes(), routeDecision.contextPatch());
-        SkillContext routedContext = new SkillContext(baseContext.userId(), baseContext.input(), routedAttributes);
-        traceEvent(traceId, "route", "selected", Map.of(
-                "skill", execution.skillName(),
-                "routeType", routeDecision.routeType().name(),
-                "provider", routeDecision.provider(),
-                "preset", routeDecision.preset(),
-                "model", routeDecision.model(),
-                "confidence", routeDecision.confidence()
-        ));
-        return new PreparedExecution(routedContext, routeDecision);
-    }
-
-    private AgentRouter.AgentRouteDecision resolveRouteDecision(Decision decision,
-                                                                CandidateExecution execution,
-                                                                OrchestrationRequest request,
-                                                                SkillContext baseContext,
-                                                                String traceId) {
-        if (agentRouter != null) {
-            return agentRouter.route(decision, request, execution.candidate(), baseContext == null ? Map.of() : baseContext.attributes());
-        }
-        List<String> reasons = List.of("fallback-router", execution.usedFallback() ? "fallback" : "direct");
-        String candidateName = execution.skillName();
-        if (isMcpSkill(candidateName)) {
-            return AgentRouter.AgentRouteDecision.mcp("", "", "", execution.candidate() == null ? 0.5 : execution.candidate().finalScore(), reasons, Map.of("routeType", "mcp"));
-        }
-        double score = execution.candidate() == null ? 0.5 : execution.candidate().finalScore();
-        if (decision != null && decision.confidence() >= TASK_PLAN_LOW_CONFIDENCE_THRESHOLD) {
-            return AgentRouter.AgentRouteDecision.local("local", "cost", "", score, reasons, Map.of("routeType", "local", "llmProvider", "local", "llmPreset", "cost"));
-        }
-        return AgentRouter.AgentRouteDecision.remote("", "", "", score, reasons, Map.of("routeType", "remote"));
-    }
-
     private Map<String, Object> applyContextPatch(Map<String, Object> baseContext, Map<String, Object> patch) {
         Map<String, Object> merged = new LinkedHashMap<>();
         if (baseContext != null && !baseContext.isEmpty()) {
@@ -1174,73 +489,6 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
             }
         }
         return merged.isEmpty() ? Map.of() : Map.copyOf(merged);
-    }
-
-    private void observeLearning(OrchestrationRequest request,
-                                 CandidateExecution execution,
-                                 AgentRouter.AgentRouteDecision routeDecision,
-                                 SkillResult result,
-                                 long durationMs,
-                                 String traceId) {
-        if (request == null || execution == null) {
-            return;
-        }
-        int tokenEstimate = estimateTokens(request.userInput())
-                + estimateTokens(execution.params() == null ? "" : execution.params().toString())
-                + estimateTokens(result == null ? "" : result.output());
-        String routeType = routeDecision == null ? "unknown" : routeDecision.routeType().name();
-        boolean success = result != null && result.success();
-        RewardModel rewardModel;
-        if (policyUpdater != null) {
-            rewardModel = policyUpdater.update(
-                    request.userId(),
-                    execution.skillName(),
-                    routeType,
-                    success,
-                    durationMs,
-                    tokenEstimate,
-                    execution.usedFallback()
-            );
-        } else {
-            rewardModel = RewardModel.evaluate(
-                    execution.skillName(),
-                    routeType,
-                    success,
-                    durationMs,
-                    tokenEstimate,
-                    execution.usedFallback(),
-                    1800L
-            );
-            if (plannerLearningStore != null) {
-                plannerLearningStore.observe(
-                        request.userId(),
-                        execution.skillName(),
-                        routeType,
-                        success,
-                        durationMs,
-                        tokenEstimate,
-                        execution.usedFallback(),
-                        rewardModel.reward()
-                );
-            }
-        }
-        traceEvent(traceId, "learning", "observe", Map.of(
-                "skill", execution.skillName(),
-                "success", success,
-                "durationMs", durationMs,
-                "tokenEstimate", tokenEstimate,
-                "routeType", routeType,
-                "reward", rewardModel.reward(),
-                "rewardScore", rewardModel.normalizedReward(),
-                "rewardReasons", rewardModel.reasons()
-        ));
-    }
-
-    private int estimateTokens(String text) {
-        if (text == null || text.isBlank()) {
-            return 0;
-        }
-        return Math.max(1, (text.length() + 3) / 4);
     }
 
     private String startTrace(Decision decision, OrchestrationRequest request) {
@@ -1285,39 +533,6 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
         details.put("usedFallback", outcome != null && outcome.usedFallback());
         details.put("strategy", outcome != null && outcome.trace() != null ? outcome.trace().strategy() : "");
         traceLogger.finish(traceId, success, success ? "success" : "failure", details);
-    }
-
-    private SkillContext buildExecutionContext(OrchestrationRequest request, Map<String, Object> params) {
-        SkillContext baseContext = request == null ? null : request.skillContext();
-        String userId = request == null ? "" : request.userId();
-        String input = request == null ? "" : request.userInput();
-        Map<String, Object> merged = buildEffectiveParams(params, baseContext);
-        return new SkillContext(
-                baseContext == null ? userId : baseContext.userId(),
-                baseContext == null ? input : baseContext.input(),
-                merged
-        );
-    }
-
-    private String buildStepNote(ScoredCandidate candidate, SkillResult result) {
-        StringBuilder note = new StringBuilder();
-        note.append("score=").append(candidate.finalScore());
-        if (!candidate.reasons().isEmpty()) {
-            note.append(", reasons=").append(candidate.reasons());
-        }
-        if (result != null && result.output() != null && !result.output().isBlank()) {
-            note.append(", result=").append(result.output());
-        }
-        return note.toString();
-    }
-
-    private record PreparedExecution(SkillContext context, AgentRouter.AgentRouteDecision routeDecision) {
-    }
-
-    private record CandidateExecution(ScoredCandidate candidate, Map<String, Object> params, boolean usedFallback) {
-        private String skillName() {
-            return candidate.skillName();
-        }
     }
 
 }

@@ -6,7 +6,7 @@ import com.zhongbo.mindos.assistant.common.dto.ExecutionTraceDto;
 import com.zhongbo.mindos.assistant.common.dto.PlanStepDto;
 import com.zhongbo.mindos.assistant.common.dto.RoutingDecisionDto;
 import com.zhongbo.mindos.assistant.dispatcher.agent.multiagent.SharedMemorySnapshot;
-import com.zhongbo.mindos.assistant.memory.MemoryGateway;
+import com.zhongbo.mindos.assistant.dispatcher.memory.AgentMemoryFacade;
 import com.zhongbo.mindos.assistant.memory.model.ProceduralMemoryEntry;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -23,7 +23,7 @@ import java.util.Map;
 @Component
 public class DefaultReflectionAgent implements ReflectionAgent {
 
-    private final MemoryGateway memoryGateway;
+    private final AgentMemoryFacade agentMemoryFacade;
     private final String semanticBucket;
     private final String proceduralSkillName;
 
@@ -31,15 +31,15 @@ public class DefaultReflectionAgent implements ReflectionAgent {
         this(null, "autonomous.reflection", "reflection");
     }
 
-    public DefaultReflectionAgent(MemoryGateway memoryGateway) {
+    public DefaultReflectionAgent(com.zhongbo.mindos.assistant.memory.MemoryGateway memoryGateway) {
         this(memoryGateway, "autonomous.reflection", "reflection");
     }
 
     @Autowired
-    public DefaultReflectionAgent(MemoryGateway memoryGateway,
+    public DefaultReflectionAgent(com.zhongbo.mindos.assistant.memory.MemoryGateway memoryGateway,
                                   @Value("${mindos.autonomous.reflection.semantic-bucket:autonomous.reflection}") String semanticBucket,
                                   @Value("${mindos.autonomous.reflection.procedural-skill:reflection}") String proceduralSkillName) {
-        this.memoryGateway = memoryGateway;
+        this.agentMemoryFacade = new AgentMemoryFacade(memoryGateway, null, null);
         this.semanticBucket = normalizeBucket(semanticBucket);
         this.proceduralSkillName = normalizeName(proceduralSkillName, "reflection");
     }
@@ -388,23 +388,21 @@ public class DefaultReflectionAgent implements ReflectionAgent {
     }
 
     private boolean writeProcedural(ReflectionRequest request, ReflectionResult result) {
-        if (memoryGateway == null || request.userId().isBlank()) {
+        if (request.userId().isBlank()) {
             return false;
         }
-        memoryGateway.writeProcedural(
+        return agentMemoryFacade.writeProcedural(
                 request.userId(),
                 ProceduralMemoryEntry.of(proceduralSkillName, result.summary(), result.success())
         );
-        return true;
     }
 
     private boolean writeSemantic(ReflectionRequest request, ReflectionResult result, ReflectionFacts facts) {
-        if (memoryGateway == null || request.userId().isBlank()) {
+        if (request.userId().isBlank()) {
             return false;
         }
         String semanticText = buildSemanticText(result, facts);
-        memoryGateway.writeSemantic(request.userId(), semanticText, buildEmbedding(result, facts), semanticBucket);
-        return true;
+        return agentMemoryFacade.writeSemantic(request.userId(), semanticText, buildEmbedding(result, facts), semanticBucket);
     }
 
     private String buildSemanticText(ReflectionResult result, ReflectionFacts facts) {
