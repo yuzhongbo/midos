@@ -94,6 +94,7 @@ final class SkillCommandAssembler {
             case "eq.coach" -> Optional.of(new SkillDsl(skillName, mergeInto(seed, eqCoachCommandSupport.resolveAttributes(context))));
             case "file.search" -> Optional.of(new SkillDsl(skillName, mergeInto(seed, fileSearchCommandSupport.resolveAttributes(context))));
             case "news_search" -> Optional.of(new SkillDsl(skillName, mergeInto(seed, newsSearchCommandSupport.resolveAttributes(context))));
+            case "semantic.analyze" -> Optional.of(new SkillDsl(skillName, buildSemanticAnalyzePayload(userInput, seed)));
             case "echo", "time" -> Optional.of(SkillDsl.of(skillName));
             default -> Optional.empty();
         };
@@ -205,6 +206,20 @@ final class SkillCommandAssembler {
         return new LinkedHashMap<>(newsSearchCommandSupport.resolveAttributes(new SkillContext("", userInput, Map.of())));
     }
 
+    private Map<String, Object> buildSemanticAnalyzePayload(String userInput, Map<String, Object> existingAttributes) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        String explicitInput = asString(existingAttributes.get("input"));
+        String resolvedInput = firstNonBlank(explicitInput, userInput);
+        if (resolvedInput != null) {
+            payload.put("input", resolvedInput);
+        }
+        copyIfPresent(existingAttributes, payload, "responseFormat");
+        copyIfPresent(existingAttributes, payload, "memoryContext");
+        copyIfPresent(existingAttributes, payload, "profile");
+        copyIfPresent(existingAttributes, payload, "availableSkills");
+        return payload;
+    }
+
     private void mergeTeachingPlanFromProfile(Map<String, Object> payload, Map<String, Object> profileContext) {
         if (!preferenceReuseEnabled || profileContext == null || profileContext.isEmpty()) {
             return;
@@ -275,6 +290,15 @@ final class SkillCommandAssembler {
             return value == null ? "" : String.valueOf(value).trim();
         }
         return "task".equals(fieldName) ? historicalInput : "";
+    }
+
+    private void copyIfPresent(Map<String, Object> source, Map<String, Object> target, String key) {
+        if (source == null || target == null || key == null || key.isBlank()) {
+            return;
+        }
+        if (source.containsKey(key) && source.get(key) != null) {
+            target.put(key, source.get(key));
+        }
     }
 
     private void mergeMissing(Map<String, Object> payload, Map<String, Object> additions) {

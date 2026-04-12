@@ -27,6 +27,12 @@ final class DecisionParamAssembler {
             return null;
         }
         Map<String, Object> params = dsl.input() == null ? new LinkedHashMap<>() : new LinkedHashMap<>(dsl.input());
+        if (usesCanonicalCommands(dsl.skill()) && skillCommandAssembler != null) {
+            params = skillCommandAssembler.buildDetectedSkillDsl(dsl.skill(), context == null ? "" : context.input(), params)
+                    .map(SkillDsl::input)
+                    .map(input -> (Map<String, Object>) new LinkedHashMap<>(input))
+                    .orElse(params);
+        }
         return new Decision(null, dsl.skill(), params, confidence, false);
     }
 
@@ -86,7 +92,7 @@ final class DecisionParamAssembler {
             return false;
         }
         return switch (skillName) {
-            case "teaching.plan", "todo.create", "eq.coach", "file.search", "news_search", "code.generate", "echo", "time" -> true;
+            case "teaching.plan", "todo.create", "eq.coach", "file.search", "news_search", "code.generate", "semantic.analyze", "echo", "time" -> true;
             default -> false;
         };
     }

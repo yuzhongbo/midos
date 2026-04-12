@@ -24,7 +24,7 @@ class SemanticAnalyzeSkillTest {
         SemanticAnalysisService service = new SemanticAnalysisService((prompt, context) -> "stub", registry, true, false, true, "", "local", "cost", 120);
         SemanticAnalyzeSkill skill = new SemanticAnalyzeSkill(service);
 
-        String output = skill.run(new SkillContext("u1", "", Map.of("input", "请帮我修复 Spring 接口 bug"))).output();
+        String output = skill.run(new SkillContext("u1", "请帮我修复 Spring 接口 bug", Map.of())).output();
 
         assertTrue(output.contains("[semantic.analyze]"));
         assertTrue(output.contains("候选意图:"));
@@ -40,8 +40,8 @@ class SemanticAnalyzeSkillTest {
 
         String output = skill.run(new SkillContext(
                 "u1",
-                "",
-                Map.of("input", "帮我创建待办，明天提醒", "responseFormat", "json", "memoryContext", "最近用户连续创建待办并关注截止日期")
+                "帮我创建待办，明天提醒",
+                Map.of("responseFormat", "json", "memoryContext", "最近用户连续创建待办并关注截止日期")
         )).output();
 
         Map<String, Object> json = objectMapper.readValue(output, new TypeReference<>() {
@@ -54,22 +54,15 @@ class SemanticAnalyzeSkillTest {
     }
 
     @Test
-    void shouldRejectMismatchedActorWithoutApprovalInJsonMode() throws Exception {
+    void shouldIgnoreLegacyTargetInputAndUseCanonicalInput() {
         SkillRegistry registry = new SkillRegistry(List.of(new FixedSkill("todo.create")));
         SemanticAnalysisService service = new SemanticAnalysisService((prompt, context) -> "stub", registry, true, false, true, "", "local", "cost", 120);
         SemanticAnalyzeSkill skill = new SemanticAnalyzeSkill(service);
 
-        String output = skill.run(new SkillContext(
-                "u-owner",
-                "",
-                Map.of("input", "帮我创建待办", "responseFormat", "json", "actorId", "u-guest")
-        )).output();
+        String output = skill.run(new SkillContext("u1", "查询天气", Map.of("targetInput", "帮我创建待办"))).output();
 
-        Map<String, Object> json = objectMapper.readValue(output, new TypeReference<>() {
-        });
-        assertEquals("access_denied", String.valueOf(json.get("intent")));
-        assertEquals(0.0, ((Number) json.get("confidence")).doubleValue());
-        assertTrue(json.containsKey("candidateIntents"));
+        assertTrue(output.contains("原始输入: 查询天气"));
+        assertTrue(output.contains("天气"));
     }
 
     private record FixedSkill(String name) implements Skill {
