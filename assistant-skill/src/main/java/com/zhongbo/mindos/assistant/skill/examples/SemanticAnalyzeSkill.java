@@ -71,18 +71,18 @@ public class SemanticAnalyzeSkill implements Skill, SkillDescriptorProvider {
     }
 
     private String resolveTargetInput(SkillContext context) {
+        if (context == null || context.attributes() == null) {
+            return "";
+        }
         Object explicit = context.attributes().get("input");
         if (explicit != null && !String.valueOf(explicit).isBlank()) {
             return String.valueOf(explicit).trim();
         }
-        String input = context.input() == null ? "" : context.input().trim();
-        if (input.toLowerCase().startsWith("semantic.analyze")) {
-            return input.substring("semantic.analyze".length()).trim();
+        Object targetInput = context.attributes().get("targetInput");
+        if (targetInput != null && !String.valueOf(targetInput).isBlank()) {
+            return String.valueOf(targetInput).trim();
         }
-        if (input.toLowerCase().startsWith("semantic ")) {
-            return input.substring("semantic ".length()).trim();
-        }
-        return input;
+        return "";
     }
 
     private String renderText(SemanticAnalysisResult result, String targetInput) {

@@ -619,52 +619,15 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                 this.semanticAnalyzer,
                 this.semanticRoutingSupport,
                 this.intentModelRoutingPolicy,
-                new DispatchPreparationSupport.PreparationBridge() {
-                    @Override
-                    public void recordContextCompressionMetrics(int rawChars,
-                                                                int finalChars,
-                                                                boolean compressed,
-                                                                int summarizedTurns) {
-                        DispatcherService.this.recordContextCompressionMetrics(
-                                rawChars,
-                                finalChars,
-                                compressed,
-                                summarizedTurns
-                        );
-                    }
-
-                    @Override
-                    public boolean shouldSkipSemanticAnalysis(String userInput) {
-                        return DispatcherService.this.dispatchHeuristicsSupport.shouldSkipSemanticAnalysis(userInput);
-                    }
-
-                    @Override
-                    public boolean isRealtimeIntent(String userInput, SemanticAnalysisResult semanticAnalysis) {
-                        return DispatcherService.this.dispatchHeuristicsSupport.isRealtimeIntent(userInput, semanticAnalysis);
-                    }
-
-                    @Override
-                    public boolean isRealtimeLikeInput(String userInput, SemanticAnalysisResult semanticAnalysis) {
-                        return DispatcherService.this.dispatchHeuristicsSupport.isRealtimeLikeInput(userInput, semanticAnalysis);
-                    }
-
-                    @Override
-                    public void copyEscalationHints(Map<String, Object> source, Map<String, Object> llmContext) {
-                        DispatcherService.this.copyEscalationHints(source, llmContext);
-                    }
-
-                    @Override
-                    public void copyInteractionContext(Map<String, Object> profileContext, Map<String, Object> llmContext) {
-                        DispatcherService.this.copyInteractionContext(profileContext, llmContext);
-                    }
-
-                    @Override
-                    public void applyStageLlmRoute(String stage,
-                                                  Map<String, Object> profileContext,
-                                                  Map<String, Object> llmContext) {
-                        DispatcherService.this.dispatchLlmSupport.applyStageLlmRoute(stage, profileContext, llmContext);
-                    }
-                },
+                new DispatcherPreparationBridgeAdapter(
+                        this::recordContextCompressionMetrics,
+                        this.dispatchHeuristicsSupport::shouldSkipSemanticAnalysis,
+                        this.dispatchHeuristicsSupport::isRealtimeIntent,
+                        this.dispatchHeuristicsSupport::isRealtimeLikeInput,
+                        this::copyEscalationHints,
+                        this::copyInteractionContext,
+                        this.dispatchLlmSupport::applyStageLlmRoute
+                ),
                 this.memoryContextMaxChars,
                 this.realtimeIntentMemoryShrinkEnabled,
                 this.realtimeIntentMemoryShrinkIncludePersona,
@@ -674,60 +637,14 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                 this.decisionOrchestrator,
                 this.dispatchMemoryLifecycle,
                 this.personaCoreService,
-                new DispatchResultFinalizer.FinalizationBridge() {
-                    @Override
-                    public DispatchResultFinalizer.FinalizedSkill finalizeSkillResult(String userInput,
-                                                                                      SkillResult result,
-                                                                                      Map<String, Object> llmContext) {
-                        SkillFinalizeOutcome outcome = DispatcherService.this.dispatchLlmSupport.maybeFinalizeSkillResultWithLlm(userInput, result, llmContext);
-                        return new DispatchResultFinalizer.FinalizedSkill(outcome.result(), outcome.applied());
-                    }
-
-                    @Override
-                    public String capLlmReply(String output) {
-                        return DispatcherService.this.dispatchLlmSupport.capLlmReply(output);
-                    }
-
-                    @Override
-                    public String classifyMcpSearchSource(String skillName) {
-                        return DispatcherService.this.dispatchLlmSupport.classifyMcpSearchSource(skillName);
-                    }
-
-                    @Override
-                    public RoutingDecisionDto enrichRoutingDecisionWithFinalObservability(RoutingDecisionDto routingDecision,
-                                                                                          String finalChannel,
-                                                                                          boolean realtimeLookup,
-                                                                                          boolean memoryDirectBypassed,
-                                                                                          String actualSearchSource) {
-                        return DispatcherService.this.enrichRoutingDecisionWithFinalObservability(
-                                routingDecision,
-                                finalChannel,
-                                realtimeLookup,
-                                memoryDirectBypassed,
-                                actualSearchSource
-                        );
-                    }
-
-                    @Override
-                    public ExecutionTraceDto enrichTraceWithRouting(ExecutionTraceDto trace, RoutingDecisionDto routingDecision) {
-                        return DispatcherService.this.enrichTraceWithRouting(trace, routingDecision);
-                    }
-
-                    @Override
-                    public void recordRoutingReplaySample(String userInput,
-                                                          RoutingDecisionDto routingDecision,
-                                                          RoutingReplayProbe replayProbe,
-                                                          PromptMemoryContextDto promptMemoryContext,
-                                                          String finalChannel) {
-                        DispatcherService.this.recordRoutingReplaySample(
-                                userInput,
-                                routingDecision,
-                                replayProbe,
-                                promptMemoryContext,
-                                finalChannel
-                        );
-                    }
-                }
+                new DispatcherResultFinalizationBridgeAdapter(
+                        this.dispatchLlmSupport::maybeFinalizeSkillResultWithLlm,
+                        this.dispatchLlmSupport::capLlmReply,
+                        this.dispatchLlmSupport::classifyMcpSearchSource,
+                        this::enrichRoutingDecisionWithFinalObservability,
+                        this::enrichTraceWithRouting,
+                        this::recordRoutingReplaySample
+                )
         );
         this.dispatchRoutingPipeline = new DispatchRoutingPipeline(
                 this.skillEngine,
@@ -737,51 +654,15 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                 this.semanticRoutingSupport,
                 this.decisionOrchestrator,
                 this.decisionParamAssembler,
-                new DispatchRoutingPipeline.RoutingBridge() {
-                    @Override
-                    public Optional<SkillResult> maybeBlockByCapability(String skillName) {
-                        return DispatcherService.this.maybeBlockByCapability(skillName);
-                    }
-
-                    @Override
-                    public boolean isSkillPreExecuteGuardBlocked(String userId, String skillName, String userInput) {
-                        return DispatcherService.this.isSkillPreExecuteGuardBlocked(userId, skillName, userInput);
-                    }
-
-                    @Override
-                    public boolean isSkillLoopGuardBlocked(String userId, String skillName, String userInput) {
-                        return DispatcherService.this.isSkillLoopGuardBlocked(userId, skillName, userInput);
-                    }
-
-                    @Override
-                    public boolean isRealtimeIntent(String userInput, SemanticAnalysisResult semanticAnalysis) {
-                        return DispatcherService.this.dispatchHeuristicsSupport.isRealtimeIntent(userInput, semanticAnalysis);
-                    }
-
-                    @Override
-                    public boolean isRealtimeLikeInput(String userInput, SemanticAnalysisResult semanticAnalysis) {
-                        return DispatcherService.this.dispatchHeuristicsSupport.isRealtimeLikeInput(userInput, semanticAnalysis);
-                    }
-
-                    @Override
-                    public boolean shouldRunSkillPreAnalyze(String userId, String userInput) {
-                        return DispatcherService.this.shouldRunSkillPreAnalyze(userId, userInput);
-                    }
-
-                    @Override
-                    public LlmDetectionResult detectSkillWithLlm(String userId,
-                                                                 String userInput,
-                                                                 String memoryContext,
-                                                                 SkillContext context,
-                                                                 Map<String, Object> profileContext) {
-                        return DispatcherService.this.detectSkillWithLlm(userId, userInput, memoryContext, context, profileContext);
-                    }
-
-                    @Override
-                    public SkillResult enrichMemoryHabitResult(SkillResult result, String routedSkill, Map<String, Object> profileContext) {
-                        return DispatcherService.this.enrichMemoryHabitResult(result, routedSkill, profileContext);
-                    }
-                },
+                new DispatcherRoutingBridgeAdapter(
+                        this.dispatchHeuristicsSupport,
+                        this::maybeBlockByCapability,
+                        this::isSkillPreExecuteGuardBlocked,
+                        this::isSkillLoopGuardBlocked,
+                        this::shouldRunSkillPreAnalyze,
+                        this::detectSkillWithLlm,
+                        this::enrichMemoryHabitResult
+                ),
                 this.braveFirstSearchRoutingEnabled,
                 this.parallelDetectedSkillRoutingEnabled,
                 this.parallelDetectedSkillRoutingMaxCandidates,
@@ -804,112 +685,17 @@ public class DispatcherService implements ContextCompressionMetricsReader, Dispa
                 this.dispatchResultFinalizer,
                 () -> this.masterOrchestrator,
                 () -> this.routingCoordinator,
-                new DispatchApplicationCoordinator.CoordinatorBridge() {
-                    @Override
-                    public String clip(String value) {
-                        return DispatcherService.this.clip(value);
-                    }
-
-                    @Override
-                    public String normalize(String value) {
-                        return DispatcherService.this.normalize(value);
-                    }
-
-                    @Override
-                    public boolean isConversationalBypassInput(String normalizedInput) {
-                        return DispatcherService.this.dispatchHeuristicsSupport.isConversationalBypassInput(normalizedInput);
-                    }
-
-                    @Override
-                    public DispatchResult handleConversationalBypass(String userId, String normalizedInput) {
-                        return DispatcherService.this.dispatchHeuristicsSupport.handleConversationalBypass(userId, normalizedInput);
-                    }
-
-                    @Override
-                    public boolean isPromptInjectionAttempt(String userInput) {
-                        return DispatcherService.this.dispatchHeuristicsSupport.isPromptInjectionAttempt(userInput);
-                    }
-
-                    @Override
-                    public boolean isRealtimeLikeInput(String userInput, SemanticAnalysisResult semanticAnalysis) {
-                        return DispatcherService.this.dispatchHeuristicsSupport.isRealtimeLikeInput(userInput, semanticAnalysis);
-                    }
-
-                    @Override
-                    public boolean shouldUseMasterOrchestrator(Map<String, Object> profileContext) {
-                        return DispatcherService.this.masterOrchestrator != null
-                                && DispatcherService.this.routingCoordinator != null
-                                && DispatcherService.this.routingCoordinator.shouldUseMasterOrchestrator(profileContext);
-                    }
-
-                    @Override
-                    public Decision buildMultiAgentDecision(String userInput,
-                                                            SemanticAnalysisResult semanticAnalysis,
-                                                            SkillContext context) {
-                        return DispatcherService.this.routingCoordinator == null
-                                ? null
-                                : DispatcherService.this.routingCoordinator.buildMultiAgentDecision(userInput, semanticAnalysis, context);
-                    }
-
-                    @Override
-                    public SkillResult buildFallbackResult(String memoryContext,
-                                                           PromptMemoryContextDto promptMemoryContext,
-                                                           String userInput,
-                                                           Map<String, Object> llmContext,
-                                                           boolean realtimeIntentInput) {
-                        return DispatcherService.this.dispatchLlmSupport.buildFallbackResult(
-                                memoryContext,
-                                promptMemoryContext,
-                                userInput,
-                                llmContext,
-                                realtimeIntentInput
-                        );
-                    }
-
-                    @Override
-                    public SkillResult buildLlmFallbackStreamResult(String memoryContext,
-                                                                    PromptMemoryContextDto promptMemoryContext,
-                                                                    String userInput,
-                                                                    Map<String, Object> llmContext,
-                                                                    boolean realtimeIntentInput,
-                                                                    Consumer<String> deltaConsumer) {
-                        return DispatcherService.this.dispatchLlmSupport.buildLlmFallbackStreamResult(
-                                memoryContext,
-                                promptMemoryContext,
-                                userInput,
-                                llmContext,
-                                realtimeIntentInput,
-                                deltaConsumer
-                        );
-                    }
-
-                    @Override
-                    public DispatchResult buildDrainingResult(String userInput) {
-                        return DispatcherService.this.buildDrainingResult(userInput);
-                    }
-
-                    @Override
-                    public void logDispatchCompletion(String userId,
-                                                      DispatchResult result,
-                                                      DispatchExecutionState executionState,
-                                                      boolean streamMode,
-                                                      Instant startTime,
-                                                      Throwable error) {
-                        DispatcherService.this.logDispatchCompletion(
-                                userId,
-                                result,
-                                executionState,
-                                streamMode,
-                                startTime,
-                                error
-                        );
-                    }
-
-                    @Override
-                    public String firstNonBlank(String... values) {
-                        return DispatcherService.this.firstNonBlank(values);
-                    }
-                },
+                new DispatcherApplicationCoordinatorBridgeAdapter(
+                        this.dispatchHeuristicsSupport,
+                        this.dispatchLlmSupport,
+                        () -> this.masterOrchestrator,
+                        () -> this.routingCoordinator,
+                        this::clip,
+                        this::normalize,
+                        this::buildDrainingResult,
+                        this::logDispatchCompletion,
+                        this::firstNonBlank
+                ),
                 this.semanticAnalysisSkipShortSimpleEnabled,
                 this.promptInjectionSafeReply
         );

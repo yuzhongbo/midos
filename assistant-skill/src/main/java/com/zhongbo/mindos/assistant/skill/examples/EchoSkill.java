@@ -71,11 +71,7 @@ public class EchoSkill implements Skill, SkillDescriptorProvider {
                 return normalized;
             }
         }
-        String input = context == null ? null : context.input();
-        if (input == null || input.length() <= "echo ".length() || !input.toLowerCase().startsWith("echo ")) {
-            return null;
-        }
-        return input.substring("echo ".length()).trim();
+        return null;
     }
 
     private Map<String, Object> buildLlmContext(SkillContext context) {

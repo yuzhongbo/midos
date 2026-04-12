@@ -157,44 +157,13 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
         this.taskGraphCoordinator = new TaskGraphCoordinator(
                 this::activeProcedureMemoryFacade,
                 () -> this.recoveryManager,
-                new TaskGraphCoordinator.TaskGraphBridge() {
-                    @Override
-                    public OrchestrationOutcome clarificationOutcome(String target, String message) {
-                        return DefaultDecisionOrchestrator.this.clarificationOutcome(target, message);
-                    }
-
-                    @Override
-                    public OrchestrationOutcome orchestrateFastPath(Decision decision,
-                                                                   String target,
-                                                                   Map<String, Object> params,
-                                                                   OrchestrationRequest request,
-                                                                   boolean allowParallelMcp,
-                                                                   String traceId) {
-                        return DefaultDecisionOrchestrator.this.orchestrateFastPath(
-                                decision,
-                                target,
-                                params,
-                                request,
-                                allowParallelMcp,
-                                traceId
-                        );
-                    }
-
-                    @Override
-                    public Map<String, Object> buildEffectiveParams(Map<String, Object> params, SkillContext skillContext) {
-                        return DefaultDecisionOrchestrator.this.buildEffectiveParams(params, skillContext);
-                    }
-
-                    @Override
-                    public Map<String, Object> applyContextPatch(Map<String, Object> baseContext, Map<String, Object> patch) {
-                        return DefaultDecisionOrchestrator.this.applyContextPatch(baseContext, patch);
-                    }
-
-                    @Override
-                    public void traceEvent(String traceId, String phase, String action, Map<String, Object> details) {
-                        DefaultDecisionOrchestrator.this.traceEvent(traceId, phase, action, details);
-                    }
-                }
+                new TaskGraphCoordinatorBridgeAdapter(
+                        this::clarificationOutcome,
+                        this::orchestrateFastPath,
+                        this::buildEffectiveParams,
+                        this::applyContextPatch,
+                        this::traceEvent
+                )
         );
         this.fastPathCoordinator = new FastPathCoordinator(
                 this.candidateChainBuilder,
@@ -204,27 +173,12 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
                 () -> this.plannerLearningStore,
                 () -> this.policyUpdater,
                 () -> this.recoveryManager,
-                new FastPathCoordinator.FastPathBridge() {
-                    @Override
-                    public OrchestrationOutcome clarificationOutcome(String target, String message) {
-                        return DefaultDecisionOrchestrator.this.clarificationOutcome(target, message);
-                    }
-
-                    @Override
-                    public Map<String, Object> buildEffectiveParams(Map<String, Object> params, SkillContext skillContext) {
-                        return DefaultDecisionOrchestrator.this.buildEffectiveParams(params, skillContext);
-                    }
-
-                    @Override
-                    public Map<String, Object> applyContextPatch(Map<String, Object> baseContext, Map<String, Object> patch) {
-                        return DefaultDecisionOrchestrator.this.applyContextPatch(baseContext, patch);
-                    }
-
-                    @Override
-                    public void traceEvent(String traceId, String phase, String action, Map<String, Object> details) {
-                        DefaultDecisionOrchestrator.this.traceEvent(traceId, phase, action, details);
-                }
-                },
+                new FastPathCoordinatorBridgeAdapter(
+                        this::clarificationOutcome,
+                        this::buildEffectiveParams,
+                        this::applyContextPatch,
+                        this::traceEvent
+                ),
                 TASK_PLAN_LOW_CONFIDENCE_THRESHOLD,
                 effectiveMcpParallelEnabled,
                 effectiveMcpPerSkillTimeoutMs,

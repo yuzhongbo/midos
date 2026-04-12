@@ -42,6 +42,7 @@ public class SkillController {
     private final CloudApiSkillLoader cloudApiSkillLoader;
     private final ToolLearningService toolLearningService;
     private final SecurityPolicyGuard securityPolicyGuard;
+    private final SkillControllerRequestParser requestParser = new SkillControllerRequestParser();
 
     public SkillController(SkillRegistry skillRegistry,
                            CustomSkillLoader customSkillLoader,
@@ -101,21 +102,23 @@ public class SkillController {
     @PostMapping("/load-jar")
     public Map<String, Object> loadExternalJar(@RequestBody Map<String, String> request,
                                                HttpServletRequest servletRequest) {
-        String jarUrl = request == null ? null : request.get("url");
+        SkillControllerRequestParser.ValidationResult<SkillControllerRequestParser.LoadJarRequest> parsedRequest =
+                requestParser.parseLoadJar(request);
+        String jarUrl = parsedRequest.valid() ? parsedRequest.value().url() : null;
         securityPolicyGuard.verifyRiskyOperationApproval(
                 servletRequest,
                 "skills.load-jar",
                 jarUrl == null ? "" : jarUrl.trim(),
                 "system"
         );
-        if (jarUrl == null || jarUrl.isBlank()) {
-            return Map.of("status", "error", "error", "Field 'url' is required.");
+        if (!parsedRequest.valid()) {
+            return parsedRequest.errorResponse();
         }
         securityPolicyGuard.verifyExternalSkillUrl(jarUrl, true);
-        int count = externalSkillLoader.loadFromJar(jarUrl.trim());
+        int count = externalSkillLoader.loadFromJar(jarUrl);
         return Map.of(
                 "loaded", count,
-                "url", jarUrl.trim(),
+                "url", jarUrl,
                 "status", count > 0 ? "ok" : "no_skills_found"
         );
     }
@@ -133,8 +136,10 @@ public class SkillController {
     @PostMapping("/load-mcp")
     public Map<String, Object> loadMcpServer(@RequestBody Map<String, Object> request,
                                              HttpServletRequest servletRequest) {
-        String alias = request == null ? null : asTrimmedString(request.get("alias"));
-        String url = request == null ? null : asTrimmedString(request.get("url"));
+        SkillControllerRequestParser.ValidationResult<SkillControllerRequestParser.LoadMcpRequest> parsedRequest =
+                requestParser.parseLoadMcp(request);
+        String alias = parsedRequest.valid() ? parsedRequest.value().alias() : null;
+        String url = parsedRequest.valid() ? parsedRequest.value().url() : null;
         String resource = (alias == null ? "" : alias) + "@" + (url == null ? "" : url);
         securityPolicyGuard.verifyRiskyOperationApproval(
                 servletRequest,
@@ -142,14 +147,11 @@ public class SkillController {
                 resource,
                 "system"
         );
-        if (alias == null || alias.isBlank()) {
-            return Map.of("status", "error", "error", "Field 'alias' is required.");
-        }
-        if (url == null || url.isBlank()) {
-            return Map.of("status", "error", "error", "Field 'url' is required.");
+        if (!parsedRequest.valid()) {
+            return parsedRequest.errorResponse();
         }
         securityPolicyGuard.verifyExternalSkillUrl(url, false);
-        Map<String, String> headers = extractHeaders(request == null ? null : request.get("headers"));
+        Map<String, String> headers = parsedRequest.value().headers();
         int count = mcpSkillLoader.loadServer(alias, url, headers);
         Map<String, Object> response = new LinkedHashMap<>();
         response.put("loaded", count);
@@ -183,22 +185,21 @@ public class SkillController {
     @PostMapping("/generate")
     public Map<String, Object> generateSkill(@RequestBody Map<String, Object> request,
                                              HttpServletRequest servletRequest) {
-        String prompt = request == null ? null : asTrimmedString(request.get("request"));
+        SkillControllerRequestParser.ValidationResult<SkillControllerRequestParser.GenerateSkillRequest> parsedRequest =
+                requestParser.parseGenerate(request);
+        String prompt = parsedRequest.valid() ? parsedRequest.value().prompt() : null;
         securityPolicyGuard.verifyRiskyOperationApproval(
                 servletRequest,
                 "skills.generate",
                 prompt == null ? "" : prompt,
                 "system"
         );
-        if (prompt == null || prompt.isBlank()) {
-            return Map.of("status", "error", "error", "Field 'request' is required.");
+        if (!parsedRequest.valid()) {
+            return parsedRequest.errorResponse();
         }
-
-        String skillName = request == null ? null : asTrimmedString(request.get("skillName"));
-        String userId = request == null ? null : asTrimmedString(request.get("userId"));
-        Map<String, Object> hints = extractObjectMap(request == null ? null : request.get("hints"));
+        SkillControllerRequestParser.GenerateSkillRequest validated = parsedRequest.value();
         GeneratedSkillDeployment deployment = toolLearningService.generateAndRegister(
-                new ToolGenerationRequest(userId, prompt, skillName, hints)
+                new ToolGenerationRequest(validated.userId(), validated.prompt(), validated.skillName(), validated.hints())
         );
 
         Map<String, Object> response = new LinkedHashMap<>();
@@ -213,45 +214,5 @@ public class SkillController {
         response.put("source", deployment.artifact().sourceCode());
         response.put("rationale", deployment.artifact().rationale());
         return response;
-    }
-
-    private String asTrimmedString(Object rawValue) {
-        if (rawValue == null) {
-            return null;
-        }
-        String value = String.valueOf(rawValue).trim();
-        return value.isBlank() ? null : value;
-    }
-
-    private Map<String, String> extractHeaders(Object rawHeaders) {
-        if (!(rawHeaders instanceof Map<?, ?> headerMap)) {
-            return Map.of();
-        }
-        Map<String, String> parsed = new LinkedHashMap<>();
-        for (Map.Entry<?, ?> entry : headerMap.entrySet()) {
-            String key = asTrimmedString(entry.getKey());
-            String value = asTrimmedString(entry.getValue());
-            if (key == null || value == null) {
-                continue;
-            }
-            parsed.put(key, value);
-        }
-        return parsed.isEmpty() ? Map.of() : Map.copyOf(parsed);
-    }
-
-    private Map<String, Object> extractObjectMap(Object rawValue) {
-        if (!(rawValue instanceof Map<?, ?> rawMap)) {
-            return Map.of();
-        }
-        Map<String, Object> parsed = new LinkedHashMap<>();
-        for (Map.Entry<?, ?> entry : rawMap.entrySet()) {
-            String key = asTrimmedString(entry.getKey());
-            Object value = entry.getValue();
-            if (key == null || value == null) {
-                continue;
-            }
-            parsed.put(key, value);
-        }
-        return parsed.isEmpty() ? Map.of() : Map.copyOf(parsed);
     }
 }

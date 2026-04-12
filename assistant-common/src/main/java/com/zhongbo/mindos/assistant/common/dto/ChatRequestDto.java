@@ -6,4 +6,3 @@ public record ChatRequestDto(String userId, String message, AssistantProfileDto 
 		this(userId, message, null);
 	}
 }
-

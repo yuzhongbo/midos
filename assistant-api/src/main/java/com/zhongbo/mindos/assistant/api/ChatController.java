@@ -2,7 +2,7 @@ package com.zhongbo.mindos.assistant.api;
 
 import com.zhongbo.mindos.assistant.common.dto.ChatRequestDto;
 import com.zhongbo.mindos.assistant.common.dto.ChatResponseDto;
-import com.zhongbo.mindos.assistant.dispatcher.DispatcherService;
+import com.zhongbo.mindos.assistant.dispatcher.DispatcherFacade;
 import com.zhongbo.mindos.assistant.dispatcher.DispatchResult;
 import com.zhongbo.mindos.assistant.memory.MemoryFacade;
 import com.zhongbo.mindos.assistant.memory.model.ConversationTurn;
@@ -24,12 +24,16 @@ import java.util.concurrent.CompletableFuture;
 @RequestMapping({"/chat", "/api/chat"})
 public class ChatController {
 
-    private final DispatcherService dispatcherService;
+    private final DispatcherFacade dispatcherService;
     private final MemoryFacade memoryFacade;
+    private final ChatRequestValidator requestValidator;
 
-    public ChatController(DispatcherService dispatcherService, MemoryFacade memoryFacade) {
+    public ChatController(DispatcherFacade dispatcherService,
+                          MemoryFacade memoryFacade,
+                          ChatRequestValidator requestValidator) {
         this.dispatcherService = dispatcherService;
         this.memoryFacade = memoryFacade;
+        this.requestValidator = requestValidator;
     }
 
     /**
@@ -38,6 +42,7 @@ public class ChatController {
      */
     @PostMapping(produces = MediaType.APPLICATION_JSON_VALUE)
     public ChatResponseDto chat(@RequestBody ChatRequestDto request) {
+        requestValidator.requireValid(request);
         Map<String, Object> profileContext = buildProfileContext(request);
         DispatchResult result = dispatcherService.dispatch(request.userId(), request.message(), profileContext);
         return new ChatResponseDto(result.reply(), result.channel(), result.executionTrace());
@@ -45,6 +50,7 @@ public class ChatController {
 
     @PostMapping(produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter chatStream(@RequestBody ChatRequestDto request) {
+        requestValidator.requireValid(request);
         SseEmitter emitter = new SseEmitter(0L);
         Map<String, Object> profileContext = buildProfileContext(request);
 

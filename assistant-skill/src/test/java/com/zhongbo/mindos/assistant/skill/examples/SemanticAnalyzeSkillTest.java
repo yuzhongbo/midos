@@ -24,7 +24,7 @@ class SemanticAnalyzeSkillTest {
         SemanticAnalysisService service = new SemanticAnalysisService((prompt, context) -> "stub", registry, true, false, true, "", "local", "cost", 120);
         SemanticAnalyzeSkill skill = new SemanticAnalyzeSkill(service);
 
-        String output = skill.run(new SkillContext("u1", "请帮我修复 Spring 接口 bug", Map.of())).output();
+        String output = skill.run(new SkillContext("u1", "", Map.of("input", "请帮我修复 Spring 接口 bug"))).output();
 
         assertTrue(output.contains("[semantic.analyze]"));
         assertTrue(output.contains("候选意图:"));
@@ -40,8 +40,8 @@ class SemanticAnalyzeSkillTest {
 
         String output = skill.run(new SkillContext(
                 "u1",
-                "帮我创建待办，明天提醒",
-                Map.of("responseFormat", "json", "memoryContext", "最近用户连续创建待办并关注截止日期")
+                "",
+                Map.of("input", "帮我创建待办，明天提醒", "responseFormat", "json", "memoryContext", "最近用户连续创建待办并关注截止日期")
         )).output();
 
         Map<String, Object> json = objectMapper.readValue(output, new TypeReference<>() {
@@ -61,8 +61,8 @@ class SemanticAnalyzeSkillTest {
 
         String output = skill.run(new SkillContext(
                 "u-owner",
-                "帮我创建待办",
-                Map.of("responseFormat", "json", "actorId", "u-guest")
+                "",
+                Map.of("input", "帮我创建待办", "responseFormat", "json", "actorId", "u-guest")
         )).output();
 
         Map<String, Object> json = objectMapper.readValue(output, new TypeReference<>() {

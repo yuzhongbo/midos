@@ -23,6 +23,7 @@ class LlmOrchestrateSkillTest {
 
         LlmOrchestrateSkill skill = new LlmOrchestrateSkill(llm, List.of("p1", "p2"), 2, 1200, 4);
         Map<String, Object> attrs = new LinkedHashMap<>();
+        attrs.put("input", "问答");
         attrs.put("preferredProvider", "p1");
         attrs.put("memoryContext", "memo-ctx");
         attrs.put("chatHistory", List.of(Map.of("role", "user", "content", "hi")));
@@ -40,7 +41,7 @@ class LlmOrchestrateSkillTest {
         llm.stub("only", "[LLM error] missing");
 
         LlmOrchestrateSkill skill = new LlmOrchestrateSkill(llm, List.of("only"), 1, 800, 4);
-        SkillResult result = skill.run(new SkillContext("u1", "ping", Map.of("preferredProvider", "only")));
+        SkillResult result = skill.run(new SkillContext("u1", "", Map.of("input", "ping", "preferredProvider", "only")));
 
         assertTrue(result.output().contains("provider=only"));
         assertEquals(1, llm.capturedContexts().size());

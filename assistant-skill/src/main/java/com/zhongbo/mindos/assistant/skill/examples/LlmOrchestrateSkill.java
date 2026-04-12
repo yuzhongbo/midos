@@ -70,8 +70,8 @@ public class LlmOrchestrateSkill implements Skill, SkillDescriptorProvider {
         if (llmClient == null) {
             return SkillResult.failure(name(), "[llm.orchestrate] LLM client unavailable.");
         }
-        String userInput = context.input() == null ? "" : context.input();
-        Map<String, Object> attrs = context.attributes();
+        Map<String, Object> attrs = context == null || context.attributes() == null ? Map.of() : context.attributes();
+        String userInput = firstNonBlank(asText(attrs.get("input")), asText(attrs.get("prompt")));
         String memoryContext = asText(attrs.get("memoryContext"));
         List<Map<String, Object>> chatHistory = limitHistory(asHistory(attrs.get("chatHistory")));
         String preferred = firstNonBlank(asText(attrs.get("preferredProvider")), asText(attrs.get("llmProvider")));
