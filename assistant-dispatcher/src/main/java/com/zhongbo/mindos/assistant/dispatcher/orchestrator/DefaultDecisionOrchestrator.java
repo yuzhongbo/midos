@@ -4,6 +4,7 @@ import com.zhongbo.mindos.assistant.dispatcher.agent.taskgraph.TaskGraph;
 import com.zhongbo.mindos.assistant.dispatcher.agent.search.SearchPlanner;
 import com.zhongbo.mindos.assistant.dispatcher.agent.procedure.ProceduralMemory;
 import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryFacade;
+import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryCommandService;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.step5.AgentRouter;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.step5.PlannerLearningStore;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.step5.PolicyUpdater;
@@ -81,7 +82,9 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
                         maxLoops
                 ),
                 memoryRecorder,
-                null
+                new OrchestratorMemoryWriter(
+                        new DispatcherMemoryCommandService(new DispatcherMemoryFacade(memoryGateway, null, null), null)
+                )
         );
     }
 
@@ -120,7 +123,7 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
                         maxLoops
                 ),
                 memoryRecorder,
-                null
+                new OrchestratorMemoryWriter(new DispatcherMemoryCommandService(dispatcherMemoryFacade, null))
         );
     }
 

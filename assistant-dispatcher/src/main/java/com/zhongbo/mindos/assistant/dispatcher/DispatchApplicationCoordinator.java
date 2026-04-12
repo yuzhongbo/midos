@@ -197,7 +197,12 @@ final class DispatchApplicationCoordinator {
                                 userInput,
                                 new MetaOrchestrationResult(
                                         result,
-                                        new ExecutionTraceDto("compatibility-single-pass", 0, null, List.of())
+                                        new ExecutionTraceDto(
+                                                "compatibility-single-pass",
+                                                compatibilityReplanCount(executionState.routingDecision(), result),
+                                                null,
+                                                List.of()
+                                        )
                                 ),
                                 llmContext,
                                 resolvedProfileContext,
@@ -281,7 +286,7 @@ final class DispatchApplicationCoordinator {
                                     .thenApply(routingOutcome -> {
                                         executionState.setRoutingDecision(routingOutcome.routingDecision());
                                         SkillResult routedResult = routingOutcome.result().orElse(null);
-                                        if (routedResult != null && routedResult.success()) {
+                                        if (!shouldFallbackFromCompatibilityResult(routedResult)) {
                                             return routedResult;
                                         }
                                         return bridge.buildLlmFallbackStreamResult(
@@ -316,7 +321,7 @@ final class DispatchApplicationCoordinator {
                         .thenApply(routingOutcome -> {
                             executionState.setRoutingDecision(routingOutcome.routingDecision());
                             SkillResult routedResult = routingOutcome.result().orElse(null);
-                            if (routedResult != null && routedResult.success()) {
+                            if (!shouldFallbackFromCompatibilityResult(routedResult)) {
                                 return routedResult;
                             }
                             return bridge.buildLlmFallbackStreamResult(
@@ -441,6 +446,30 @@ final class DispatchApplicationCoordinator {
         return normalized.isBlank() ? null : normalized;
     }
 
+    private int compatibilityReplanCount(RoutingDecisionDto routingDecision, SkillResult result) {
+        if (routingDecision == null || result == null || result.skillName() == null || result.skillName().isBlank()) {
+            return 0;
+        }
+        String selectedSkill = routingDecision.selectedSkill();
+        if (selectedSkill == null || selectedSkill.isBlank()) {
+            return 0;
+        }
+        return selectedSkill.equals(result.skillName()) ? 0 : 1;
+    }
+
+    private boolean shouldFallbackFromCompatibilityResult(SkillResult routedResult) {
+        if (routedResult == null) {
+            return true;
+        }
+        if (routedResult.success()) {
+            return false;
+        }
+        String skillName = routedResult.skillName();
+        return skillName == null
+                || skillName.isBlank()
+                || "decision.orchestrator".equals(skillName);
+    }
+
     private CompletableFuture<SkillResult> executeCompatibilityPass(String userId,
                                                                     String userInput,
                                                                     SkillContext context,
@@ -455,7 +484,7 @@ final class DispatchApplicationCoordinator {
                 .thenApply(routingOutcome -> {
                     executionState.setRoutingDecision(routingOutcome.routingDecision());
                     SkillResult routedResult = routingOutcome.result().orElse(null);
-                    if (routedResult != null && routedResult.success()) {
+                    if (!shouldFallbackFromCompatibilityResult(routedResult)) {
                         return routedResult;
                     }
                     return bridge.buildFallbackResult(
