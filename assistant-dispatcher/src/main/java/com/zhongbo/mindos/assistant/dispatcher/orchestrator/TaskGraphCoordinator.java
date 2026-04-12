@@ -7,6 +7,7 @@ import com.zhongbo.mindos.assistant.common.dto.CritiqueReportDto;
 import com.zhongbo.mindos.assistant.common.dto.ExecutionTraceDto;
 import com.zhongbo.mindos.assistant.common.dto.PlanStepDto;
 import com.zhongbo.mindos.assistant.dispatcher.agent.taskgraph.DAGExecutor;
+import com.zhongbo.mindos.assistant.dispatcher.agent.taskgraph.StructuredExecutionRuntime;
 import com.zhongbo.mindos.assistant.dispatcher.agent.taskgraph.TaskGraph;
 import com.zhongbo.mindos.assistant.dispatcher.agent.taskgraph.TaskGraphExecutionResult;
 import com.zhongbo.mindos.assistant.dispatcher.agent.taskgraph.TaskNode;
@@ -28,7 +29,7 @@ final class TaskGraphCoordinator {
     private final Supplier<DispatcherMemoryFacade> memoryFacadeSupplier;
     private final Supplier<RecoveryManager> recoveryManagerSupplier;
     private final TaskGraphBridge bridge;
-    private final DAGExecutor dagExecutor = new DAGExecutor();
+    private final StructuredExecutionRuntime structuredExecutionRuntime = new StructuredExecutionRuntime();
 
     TaskGraphCoordinator(Supplier<DispatcherMemoryFacade> memoryFacadeSupplier,
                          Supplier<RecoveryManager> recoveryManagerSupplier,
@@ -192,7 +193,7 @@ final class TaskGraphCoordinator {
                                                              Map<String, TaskGraphExecutionResult.NodeResult> cachedResults) {
         Map<String, RecoveryAction> safeActions = recoveryActions == null ? Map.of() : recoveryActions;
         Map<String, TaskGraphExecutionResult.NodeResult> safeCachedResults = cachedResults == null ? Map.of() : cachedResults;
-        return dagExecutor.execute(taskGraph, baseContext, (node, nodeContext) ->
+        return structuredExecutionRuntime.execute(taskGraph, baseContext, (node, nodeContext) ->
                 executeTaskGraphNode(decision, node, nodeContext, request, traceId, safeActions, safeCachedResults));
     }
 

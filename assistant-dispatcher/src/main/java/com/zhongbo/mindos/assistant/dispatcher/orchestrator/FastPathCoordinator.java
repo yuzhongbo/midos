@@ -6,6 +6,9 @@ import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.common.dto.CritiqueReportDto;
 import com.zhongbo.mindos.assistant.common.dto.ExecutionTraceDto;
 import com.zhongbo.mindos.assistant.common.dto.PlanStepDto;
+import com.zhongbo.mindos.assistant.dispatcher.agent.taskgraph.DAGExecutor;
+import com.zhongbo.mindos.assistant.dispatcher.agent.taskgraph.StructuredExecutionRuntime;
+import com.zhongbo.mindos.assistant.dispatcher.agent.taskgraph.TaskGraphExecutionResult;
 import com.zhongbo.mindos.assistant.dispatcher.decision.Decision;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.DecisionOrchestrator.OrchestrationOutcome;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.DecisionOrchestrator.OrchestrationRequest;
@@ -45,6 +48,7 @@ final class FastPathCoordinator {
     private final String eqCoachImTimeoutReply;
     private final int maxLoops;
     private final List<String> mcpPriorityOrder;
+    private final StructuredExecutionRuntime structuredExecutionRuntime = new StructuredExecutionRuntime();
 
     FastPathCoordinator(CandidateChainBuilder candidateChainBuilder,
                         ParamValidator paramValidator,
@@ -181,15 +185,17 @@ final class FastPathCoordinator {
                                              String traceId) {
         Instant startedAt = Instant.now();
         PreparedExecution prepared = prepareExecution(decision, execution, request, traceId);
-        SkillResult result = executeWithTimeout(
-                execution.skillName(),
-                execution.params(),
-                prepared.context()
-        );
+        TaskGraphExecutionResult initialExecution = executeStructuredAttempt(stepName, execution, prepared.context());
+        SkillResult result = initialExecution.finalResult() == null
+                ? SkillResult.failure(execution.skillName(), "structured execution returned no result")
+                : initialExecution.finalResult();
+        String initialStatus = initialExecution.nodeResults().isEmpty()
+                ? (result.success() ? "success" : "failed")
+                : initialExecution.nodeResults().get(0).status();
         Instant finishedAt = Instant.now();
         steps.add(new PlanStepDto(
                 stepName,
-                result.success() ? "success" : "failed",
+                initialStatus,
                 execution.skillName(),
                 buildStepNote(execution.candidate(), result),
                 startedAt,
@@ -213,15 +219,17 @@ final class FastPathCoordinator {
                         prepared.context().input(),
                         buildRecoveryContext(prepared.context().attributes(), retryReport)
                 );
-                SkillResult retryResult = executeWithTimeout(
-                        execution.skillName(),
-                        execution.params(),
-                        retryContext
-                );
+                TaskGraphExecutionResult retryExecution = executeStructuredAttempt(stepName + ".retry", execution, retryContext);
+                SkillResult retryResult = retryExecution.finalResult() == null
+                        ? SkillResult.failure(execution.skillName(), "structured execution returned no result")
+                        : retryExecution.finalResult();
+                String retryStatus = retryExecution.nodeResults().isEmpty()
+                        ? (retryResult.success() ? "success" : "failed")
+                        : retryExecution.nodeResults().get(0).status();
                 Instant retryFinished = Instant.now();
                 steps.add(new PlanStepDto(
                         stepName + ".retry",
-                        retryResult.success() ? "success" : "failed",
+                        retryStatus,
                         execution.skillName(),
                         buildStepNote(execution.candidate(), retryResult),
                         finishedAt,
@@ -247,6 +255,22 @@ final class FastPathCoordinator {
                 "retried", steps.stream().anyMatch(step -> step.stepName().equals(stepName + ".retry"))
         ));
         return result;
+    }
+
+    private TaskGraphExecutionResult executeStructuredAttempt(String nodeId,
+                                                              CandidateExecution execution,
+                                                              SkillContext skillContext) {
+        return structuredExecutionRuntime.executeSingle(
+                nodeId,
+                execution.skillName(),
+                execution.params(),
+                "",
+                skillContext,
+                (node, nodeContext) -> new DAGExecutor.NodeExecution(
+                        executeWithTimeout(node.target(), node.params(), nodeContext),
+                        false
+                )
+        );
     }
 
     private OrchestrationOutcome orchestrateMcpInParallel(Decision decision,

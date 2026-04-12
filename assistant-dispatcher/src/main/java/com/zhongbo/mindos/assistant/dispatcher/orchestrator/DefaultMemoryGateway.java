@@ -9,14 +9,11 @@ import com.zhongbo.mindos.assistant.memory.model.PreferenceProfile;
 import com.zhongbo.mindos.assistant.memory.model.ProceduralMemoryEntry;
 import com.zhongbo.mindos.assistant.memory.model.SemanticMemoryEntry;
 import com.zhongbo.mindos.assistant.memory.model.SkillUsageStats;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.stereotype.Component;
 
 import java.time.Instant;
 import java.util.List;
 
-@Component
 public class DefaultMemoryGateway implements MemoryGateway {
 
     private final MemoryFacade memoryFacade;
@@ -26,7 +23,6 @@ public class DefaultMemoryGateway implements MemoryGateway {
         this(memoryFacade, 12);
     }
 
-    @Autowired
     public DefaultMemoryGateway(MemoryFacade memoryFacade,
                                 @Value("${mindos.dispatcher.memory.history.recent-turns:12}") int historyWindow) {
         this.memoryFacade = memoryFacade;

@@ -23,7 +23,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 @Service
-public class SemanticAnalysisService {
+public class SemanticAnalysisService implements SemanticAnalyzer {
 
     private static final Logger LOGGER = Logger.getLogger(SemanticAnalysisService.class.getName());
     private static final Pattern JSON_BLOCK_PATTERN = Pattern.compile("\\{.*}", Pattern.DOTALL);
@@ -151,6 +151,7 @@ public class SemanticAnalysisService {
                 DEFAULT_LLM_COMPLEXITY_TRIGGER_TERMS);
     }
 
+    @Override
     public SemanticAnalysisResult analyze(String userId,
                                           String userInput,
                                           String memoryContext,

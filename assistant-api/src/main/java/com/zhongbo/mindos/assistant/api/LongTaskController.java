@@ -5,9 +5,9 @@ import com.zhongbo.mindos.assistant.common.dto.LongTaskAutoRunResultDto;
 import com.zhongbo.mindos.assistant.common.dto.LongTaskDto;
 import com.zhongbo.mindos.assistant.common.dto.LongTaskProgressUpdateDto;
 import com.zhongbo.mindos.assistant.common.dto.LongTaskStatusUpdateDto;
+import com.zhongbo.mindos.assistant.memory.LongTaskCommandService;
 import com.zhongbo.mindos.assistant.memory.MemoryFacade;
 import com.zhongbo.mindos.assistant.memory.model.LongTask;
-import com.zhongbo.mindos.assistant.memory.model.LongTaskStatus;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -20,20 +20,22 @@ import org.springframework.web.server.ResponseStatusException;
 import jakarta.servlet.http.HttpServletRequest;
 
 import java.util.List;
-import java.util.Locale;
 
 @RestController
 @RequestMapping("/api/tasks")
 public class LongTaskController {
 
     private final MemoryFacade memoryFacade;
+    private final LongTaskCommandService longTaskCommandService;
     private final LongTaskAutoRunner longTaskAutoRunner;
     private final SecurityPolicyGuard securityPolicyGuard;
 
     public LongTaskController(MemoryFacade memoryFacade,
+                              LongTaskCommandService longTaskCommandService,
                               LongTaskAutoRunner longTaskAutoRunner,
                               SecurityPolicyGuard securityPolicyGuard) {
         this.memoryFacade = memoryFacade;
+        this.longTaskCommandService = longTaskCommandService;
         this.longTaskAutoRunner = longTaskAutoRunner;
         this.securityPolicyGuard = securityPolicyGuard;
     }
@@ -41,7 +43,7 @@ public class LongTaskController {
     @PostMapping("/{userId}")
     public LongTaskDto createTask(@PathVariable String userId,
                                   @RequestBody LongTaskCreateRequestDto request) {
-        LongTask created = memoryFacade.createLongTask(
+        LongTask created = longTaskCommandService.createTask(
                 userId,
                 request == null ? null : request.title(),
                 request == null ? null : request.objective(),
@@ -73,7 +75,7 @@ public class LongTaskController {
                                              @RequestParam(defaultValue = "assistant-worker") String workerId,
                                              @RequestParam(defaultValue = "1") int limit,
                                              @RequestParam(defaultValue = "300") long leaseSeconds) {
-        return memoryFacade.claimReadyLongTasks(userId, workerId, limit, leaseSeconds)
+        return longTaskCommandService.claimReadyTasks(userId, workerId, limit, leaseSeconds)
                 .stream().map(this::toDto).toList();
     }
 
@@ -96,7 +98,7 @@ public class LongTaskController {
                                       @PathVariable String taskId,
                                       @RequestBody LongTaskProgressUpdateDto request) {
         try {
-            LongTask updated = memoryFacade.updateLongTaskProgress(
+            LongTask updated = longTaskCommandService.updateProgress(
                     userId,
                     taskId,
                     request == null ? null : request.workerId(),
@@ -111,7 +113,7 @@ public class LongTaskController {
             }
             return toDto(updated);
         } catch (IllegalArgumentException ex) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, ex.getMessage());
+            throw translateCommandFailure(ex);
         }
     }
 
@@ -119,29 +121,29 @@ public class LongTaskController {
     public LongTaskDto updateStatus(@PathVariable String userId,
                                     @PathVariable String taskId,
                                     @RequestBody LongTaskStatusUpdateDto request) {
-        LongTaskStatus status = parseStatus(request == null ? null : request.status());
-        LongTask updated = memoryFacade.updateLongTaskStatus(
-                userId,
-                taskId,
-                status,
-                request == null ? null : request.note(),
-                request == null ? null : request.nextCheckAt()
-        );
-        if (updated == null) {
-            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "task not found");
+        try {
+            LongTask updated = longTaskCommandService.updateStatus(
+                    userId,
+                    taskId,
+                    request == null ? null : request.status(),
+                    request == null ? null : request.note(),
+                    request == null ? null : request.nextCheckAt()
+            );
+            if (updated == null) {
+                throw new ResponseStatusException(HttpStatus.NOT_FOUND, "task not found");
+            }
+            return toDto(updated);
+        } catch (IllegalArgumentException ex) {
+            throw translateCommandFailure(ex);
         }
-        return toDto(updated);
     }
 
-    private LongTaskStatus parseStatus(String status) {
-        if (status == null || status.isBlank()) {
-            return null;
-        }
-        try {
-            return LongTaskStatus.valueOf(status.trim().toUpperCase(Locale.ROOT));
-        } catch (IllegalArgumentException ex) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "invalid status: " + status);
-        }
+    private ResponseStatusException translateCommandFailure(IllegalArgumentException ex) {
+        String message = ex == null || ex.getMessage() == null || ex.getMessage().isBlank()
+                ? "invalid task command"
+                : ex.getMessage();
+        HttpStatus status = message.startsWith("invalid status:") ? HttpStatus.BAD_REQUEST : HttpStatus.CONFLICT;
+        return new ResponseStatusException(status, message, ex);
     }
 
     private LongTaskDto toDto(LongTask task) {

@@ -172,21 +172,27 @@ class DispatcherServiceTest {
 
     @Test
     void shouldPreferSerperSearchWhenSerperAndBraveAreBothAvailable() {
-        MemoryManager memoryManager = createMemoryManager();
-        RecordingLlmClient llmClient = new RecordingLlmClient(List.of("不应走到 llm"));
-        DispatcherService service = createDispatcher(memoryManager, llmClient, List.of(
-                newMcpSkill("mcp.serper.webSearch", "Serper latest web search", "serper result"),
-                newMcpSkill("mcp.bravesearch.webSearch", "Brave latest web news search", "brave result")
-        ), 2, true, true);
+        System.setProperty("mindos.dispatcher.parallel-routing.search-priority-order",
+                "mcp.serper.websearch,mcp.bravesearch.websearch");
+        try {
+            MemoryManager memoryManager = createMemoryManager();
+            RecordingLlmClient llmClient = new RecordingLlmClient(List.of("不应走到 llm"));
+            DispatcherService service = createDispatcher(memoryManager, llmClient, List.of(
+                    newMcpSkill("mcp.serper.webSearch", "Serper latest web search", "serper result"),
+                    newMcpSkill("mcp.bravesearch.webSearch", "Brave latest web news search", "brave result")
+            ), 2, true, true);
 
-        DispatchResult result = service.dispatch("news-user", "今天新闻");
+            DispatchResult result = service.dispatch("news-user", "今天新闻");
 
-        assertEquals("mcp.serper.webSearch", result.channel());
-        assertEquals("serper result", result.reply());
-        assertEquals("detected-skill-parallel", result.executionTrace().routing().route());
-        assertEquals("mcp.serper.webSearch", result.executionTrace().routing().selectedSkill());
-        assertEquals(0, llmClient.routingCallCount());
-        assertEquals(0, llmClient.fallbackCallCount());
+            assertEquals("mcp.serper.webSearch", result.channel());
+            assertEquals("serper result", result.reply());
+            assertEquals("detected-skill-parallel", result.executionTrace().routing().route());
+            assertEquals("mcp.serper.webSearch", result.executionTrace().routing().selectedSkill());
+            assertEquals(0, llmClient.routingCallCount());
+            assertEquals(0, llmClient.fallbackCallCount());
+        } finally {
+            System.clearProperty("mindos.dispatcher.parallel-routing.search-priority-order");
+        }
     }
 
     @Test
@@ -1828,7 +1834,6 @@ class DispatcherServiceTest {
                 new PromptBuilder(),
                 new LLMDecisionEngine(),
                 new DecisionParser(),
-                memoryGateway,
                 false,
                 true,
                 2,
@@ -1962,7 +1967,6 @@ class DispatcherServiceTest {
                 new PromptBuilder(),
                 new LLMDecisionEngine(),
                 new DecisionParser(),
-                memoryGateway,
                 false,
                 true,
                 2,
@@ -2442,7 +2446,6 @@ class DispatcherServiceTest {
                 new PromptBuilder(),
                 new LLMDecisionEngine(),
                 new DecisionParser(),
-                memoryGateway,
                 false,
                 true,
                 2,
@@ -2587,7 +2590,6 @@ class DispatcherServiceTest {
                 new PromptBuilder(),
                 new LLMDecisionEngine(),
                 new DecisionParser(),
-                memoryGateway,
                 false,
                 true,
                 2,

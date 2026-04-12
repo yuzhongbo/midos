@@ -28,14 +28,6 @@ final class DispatchRoutingPipeline {
 
     private static final Logger LOGGER = Logger.getLogger(DispatchRoutingPipeline.class.getName());
     private static final String SKILL_HELP_CHANNEL = "skills.help";
-    private static final List<String> DEFAULT_PARALLEL_SEARCH_PRIORITY_ORDER = List.of(
-            "mcp.serper.websearch",
-            "mcp.serpapi.websearch",
-            "mcp.bravesearch.websearch",
-            "mcp.brave.websearch",
-            "mcp.qwensearch.websearch",
-            "mcp.qwen.websearch"
-    );
     private static final Pattern ROUTING_TOKEN_SPLIT_PATTERN = Pattern.compile("[^\\p{L}\\p{N}.#_-]+");
 
     private final SkillEngineFacade skillEngine;
@@ -49,6 +41,7 @@ final class DispatchRoutingPipeline {
     private final boolean parallelDetectedSkillRoutingEnabled;
     private final int parallelDetectedSkillRoutingMaxCandidates;
     private final long parallelDetectedSkillRoutingTimeoutMs;
+    private final List<String> parallelSearchPriorityOrder;
     private final double semanticAnalysisRouteMinConfidence;
     private final Set<String> skillPreAnalyzeSkipSkills;
     private final AtomicLong skillPreAnalyzeRequestCount;
@@ -57,6 +50,7 @@ final class DispatchRoutingPipeline {
     private final AtomicLong skillPreAnalyzeSkippedByGateCount;
     private final AtomicLong skillPreAnalyzeSkippedBySkillCount;
     private final AtomicLong detectedSkillLoopSkipBlockedCount;
+    private final List<RoutingStage> routingStages;
 
     DispatchRoutingPipeline(SkillEngineFacade skillEngine,
                             SkillDslParser skillDslParser,
@@ -65,12 +59,13 @@ final class DispatchRoutingPipeline {
                             DecisionOrchestrator decisionOrchestrator,
                             DecisionParamAssembler decisionParamAssembler,
                             RoutingBridge bridge,
-                            boolean braveFirstSearchRoutingEnabled,
-                            boolean parallelDetectedSkillRoutingEnabled,
-                            int parallelDetectedSkillRoutingMaxCandidates,
-                            long parallelDetectedSkillRoutingTimeoutMs,
-                            double semanticAnalysisRouteMinConfidence,
-                            Set<String> skillPreAnalyzeSkipSkills,
+                             boolean braveFirstSearchRoutingEnabled,
+                             boolean parallelDetectedSkillRoutingEnabled,
+                             int parallelDetectedSkillRoutingMaxCandidates,
+                             long parallelDetectedSkillRoutingTimeoutMs,
+                             List<String> parallelSearchPriorityOrder,
+                             double semanticAnalysisRouteMinConfidence,
+                             Set<String> skillPreAnalyzeSkipSkills,
                             AtomicLong skillPreAnalyzeRequestCount,
                             AtomicLong skillPreAnalyzeExecutedCount,
                             AtomicLong skillPreAnalyzeAcceptedCount,
@@ -88,6 +83,12 @@ final class DispatchRoutingPipeline {
         this.parallelDetectedSkillRoutingEnabled = parallelDetectedSkillRoutingEnabled;
         this.parallelDetectedSkillRoutingMaxCandidates = parallelDetectedSkillRoutingMaxCandidates;
         this.parallelDetectedSkillRoutingTimeoutMs = parallelDetectedSkillRoutingTimeoutMs;
+        this.parallelSearchPriorityOrder = parallelSearchPriorityOrder == null
+                ? List.of()
+                : parallelSearchPriorityOrder.stream()
+                .map(this::normalize)
+                .filter(value -> !value.isBlank())
+                .toList();
         this.semanticAnalysisRouteMinConfidence = semanticAnalysisRouteMinConfidence;
         this.skillPreAnalyzeSkipSkills = skillPreAnalyzeSkipSkills == null ? Set.of() : Set.copyOf(skillPreAnalyzeSkipSkills);
         this.skillPreAnalyzeRequestCount = skillPreAnalyzeRequestCount;
@@ -96,6 +97,15 @@ final class DispatchRoutingPipeline {
         this.skillPreAnalyzeSkippedByGateCount = skillPreAnalyzeSkippedByGateCount;
         this.skillPreAnalyzeSkippedBySkillCount = skillPreAnalyzeSkippedBySkillCount;
         this.detectedSkillLoopSkipBlockedCount = detectedSkillLoopSkipBlockedCount;
+        this.routingStages = List.of(
+                new ExplicitRoutingStage(),
+                new SemanticRoutingStage(),
+                new RuleRoutingStage(),
+                new MetaHelpRoutingStage(),
+                new RealtimeSearchRoutingStage(),
+                new DetectedOrHabitRoutingStage(),
+                new LlmPreAnalyzeRoutingStage()
+        );
     }
 
     CompletableFuture<RoutingOutcome> routeToSkillAsync(String userId,
@@ -105,37 +115,121 @@ final class DispatchRoutingPipeline {
                                                         SemanticAnalysisResult semanticAnalysis,
                                                         RoutingReplayProbe replayProbe) {
         List<String> rejectedReasons = new ArrayList<>();
-        Optional<CompletableFuture<RoutingOutcome>> explicitRoute = routeExplicitStage(userId, userInput, context, rejectedReasons);
-        if (explicitRoute.isPresent()) {
-            return explicitRoute.get();
-        }
-        Optional<CompletableFuture<RoutingOutcome>> semanticRoute = routeSemanticStage(userId, userInput, context, semanticAnalysis, rejectedReasons);
-        if (semanticRoute.isPresent()) {
-            return semanticRoute.get();
-        }
-        Optional<CompletableFuture<RoutingOutcome>> ruleRoute = routeRuleStage(userId, userInput, context, replayProbe, rejectedReasons);
-        if (ruleRoute.isPresent()) {
-            return ruleRoute.get();
-        }
-        Optional<CompletableFuture<RoutingOutcome>> metaHelpRoute = routeMetaHelpStage(userId, userInput, rejectedReasons);
-        if (metaHelpRoute.isPresent()) {
-            return metaHelpRoute.get();
-        }
-        Optional<CompletableFuture<RoutingOutcome>> realtimeSearchRoute = routeRealtimeSearchStage(userId, userInput, context, semanticAnalysis, rejectedReasons);
-        if (realtimeSearchRoute.isPresent()) {
-            return realtimeSearchRoute.get();
-        }
-        Optional<CompletableFuture<RoutingOutcome>> detectedOrHabitRoute = routeDetectedOrHabitStage(
+        RoutingStageRequest request = new RoutingStageRequest(
                 userId,
                 userInput,
                 context,
+                memoryContext,
                 semanticAnalysis,
-                rejectedReasons
+                replayProbe
         );
-        if (detectedOrHabitRoute.isPresent()) {
-            return detectedOrHabitRoute.get();
+        for (RoutingStage stage : routingStages) {
+            Optional<CompletableFuture<RoutingOutcome>> routed = stage.route(request, rejectedReasons);
+            if (routed.isPresent()) {
+                return routed.get();
+            }
         }
-        return routeViaLlmPreAnalyze(userId, userInput, context, memoryContext, semanticAnalysis, replayProbe, rejectedReasons);
+        return CompletableFuture.completedFuture(new RoutingOutcome(Optional.empty(), fallbackRoutingDecision(rejectedReasons)));
+    }
+
+    private interface RoutingStage {
+        Optional<CompletableFuture<RoutingOutcome>> route(RoutingStageRequest request, List<String> rejectedReasons);
+    }
+
+    private record RoutingStageRequest(String userId,
+                                       String userInput,
+                                       SkillContext context,
+                                       String memoryContext,
+                                       SemanticAnalysisResult semanticAnalysis,
+                                       RoutingReplayProbe replayProbe) {
+    }
+
+    private final class ExplicitRoutingStage implements RoutingStage {
+        @Override
+        public Optional<CompletableFuture<RoutingOutcome>> route(RoutingStageRequest request,
+                                                                 List<String> rejectedReasons) {
+            return routeExplicitStage(request.userId(), request.userInput(), request.context(), rejectedReasons);
+        }
+    }
+
+    private final class SemanticRoutingStage implements RoutingStage {
+        @Override
+        public Optional<CompletableFuture<RoutingOutcome>> route(RoutingStageRequest request,
+                                                                 List<String> rejectedReasons) {
+            return routeSemanticStage(
+                    request.userId(),
+                    request.userInput(),
+                    request.context(),
+                    request.semanticAnalysis(),
+                    rejectedReasons
+            );
+        }
+    }
+
+    private final class RuleRoutingStage implements RoutingStage {
+        @Override
+        public Optional<CompletableFuture<RoutingOutcome>> route(RoutingStageRequest request,
+                                                                 List<String> rejectedReasons) {
+            return routeRuleStage(
+                    request.userId(),
+                    request.userInput(),
+                    request.context(),
+                    request.replayProbe(),
+                    rejectedReasons
+            );
+        }
+    }
+
+    private final class MetaHelpRoutingStage implements RoutingStage {
+        @Override
+        public Optional<CompletableFuture<RoutingOutcome>> route(RoutingStageRequest request,
+                                                                 List<String> rejectedReasons) {
+            return routeMetaHelpStage(request.userId(), request.userInput(), rejectedReasons);
+        }
+    }
+
+    private final class RealtimeSearchRoutingStage implements RoutingStage {
+        @Override
+        public Optional<CompletableFuture<RoutingOutcome>> route(RoutingStageRequest request,
+                                                                 List<String> rejectedReasons) {
+            return routeRealtimeSearchStage(
+                    request.userId(),
+                    request.userInput(),
+                    request.context(),
+                    request.semanticAnalysis(),
+                    rejectedReasons
+            );
+        }
+    }
+
+    private final class DetectedOrHabitRoutingStage implements RoutingStage {
+        @Override
+        public Optional<CompletableFuture<RoutingOutcome>> route(RoutingStageRequest request,
+                                                                 List<String> rejectedReasons) {
+            return routeDetectedOrHabitStage(
+                    request.userId(),
+                    request.userInput(),
+                    request.context(),
+                    request.semanticAnalysis(),
+                    rejectedReasons
+            );
+        }
+    }
+
+    private final class LlmPreAnalyzeRoutingStage implements RoutingStage {
+        @Override
+        public Optional<CompletableFuture<RoutingOutcome>> route(RoutingStageRequest request,
+                                                                 List<String> rejectedReasons) {
+            return Optional.of(routeViaLlmPreAnalyze(
+                    request.userId(),
+                    request.userInput(),
+                    request.context(),
+                    request.memoryContext(),
+                    request.semanticAnalysis(),
+                    request.replayProbe(),
+                    rejectedReasons
+            ));
+        }
     }
 
     private Optional<CompletableFuture<RoutingOutcome>> routeExplicitStage(String userId,
@@ -796,8 +890,8 @@ final class DispatchRoutingPipeline {
             return Integer.MAX_VALUE;
         }
         String normalized = normalize(skillName);
-        for (int i = 0; i < DEFAULT_PARALLEL_SEARCH_PRIORITY_ORDER.size(); i++) {
-            if (DEFAULT_PARALLEL_SEARCH_PRIORITY_ORDER.get(i).equals(normalized)) {
+        for (int i = 0; i < parallelSearchPriorityOrder.size(); i++) {
+            if (parallelSearchPriorityOrder.get(i).equals(normalized)) {
                 return i;
             }
         }

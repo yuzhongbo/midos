@@ -34,14 +34,6 @@ import java.util.concurrent.TimeUnit;
 
 @Component
 public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
-    private static final List<String> DEFAULT_PARALLEL_MCP_PRIORITY_ORDER = List.of(
-            "mcp.serper.websearch",
-            "mcp.serpapi.websearch",
-            "mcp.bravesearch.websearch",
-            "mcp.brave.websearch",
-            "mcp.qwensearch.websearch",
-            "mcp.qwen.websearch"
-    );
     private static final double TASK_PLAN_LOW_CONFIDENCE_THRESHOLD = 0.70;
 
     private final CandidatePlanner candidatePlanner;
@@ -56,7 +48,6 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
     private final SkillExecutionGateway skillExecutionGateway;
     private final DispatcherMemoryFacade dispatcherMemoryFacade;
     private final PostExecutionMemoryRecorder memoryRecorder;
-    private final TaskExecutor taskExecutor;
     private final boolean mcpParallelEnabled;
     private final long mcpPerSkillTimeoutMs;
     private final long eqCoachImTimeoutMs;
@@ -102,7 +93,6 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
         );
     }
 
-    @Autowired
     public DefaultDecisionOrchestrator(CandidatePlanner candidatePlanner,
                                        ParamValidator paramValidator,
                                        ConversationLoop conversationLoop,
@@ -111,6 +101,35 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
                                        DispatcherMemoryFacade dispatcherMemoryFacade,
                                        PostExecutionMemoryRecorder memoryRecorder,
                                        TaskExecutor taskExecutor,
+                                       @Value("${mindos.dispatcher.parallel-routing.enabled:false}") boolean mcpParallelEnabled,
+                                       @Value("${mindos.dispatcher.parallel-routing.per-skill-timeout-ms:2500}") long mcpPerSkillTimeoutMs,
+                                       @Value("${mindos.dispatcher.skill.timeout.eq-coach-im-ms:12000}") long eqCoachImTimeoutMs,
+                                       @Value("${mindos.dispatcher.skill.timeout.eq-coach-im-reply:我先给你一个简短结论：当前请求较复杂，我正在整理更完整建议，稍后继续发你。}") String eqCoachImTimeoutReply,
+                                       @Value("${mindos.dispatcher.orchestrator.max-loops:3}") int maxLoops) {
+        this(
+                candidatePlanner,
+                paramValidator,
+                conversationLoop,
+                fallbackPlan,
+                skillExecutionGateway,
+                dispatcherMemoryFacade,
+                memoryRecorder,
+                mcpParallelEnabled,
+                mcpPerSkillTimeoutMs,
+                eqCoachImTimeoutMs,
+                eqCoachImTimeoutReply,
+                maxLoops
+        );
+    }
+
+    @Autowired
+    public DefaultDecisionOrchestrator(CandidatePlanner candidatePlanner,
+                                       ParamValidator paramValidator,
+                                       ConversationLoop conversationLoop,
+                                       FallbackPlan fallbackPlan,
+                                       SkillExecutionGateway skillExecutionGateway,
+                                       DispatcherMemoryFacade dispatcherMemoryFacade,
+                                       PostExecutionMemoryRecorder memoryRecorder,
                                        @Value("${mindos.dispatcher.parallel-routing.enabled:false}") boolean mcpParallelEnabled,
                                        @Value("${mindos.dispatcher.parallel-routing.per-skill-timeout-ms:2500}") long mcpPerSkillTimeoutMs,
                                        @Value("${mindos.dispatcher.skill.timeout.eq-coach-im-ms:12000}") long eqCoachImTimeoutMs,
@@ -128,7 +147,7 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
         String effectiveEqCoachImTimeoutReply = eqCoachImTimeoutReply == null || eqCoachImTimeoutReply.isBlank()
                 ? "我先给你一个简短结论：当前请求较复杂，我正在整理更完整建议，稍后继续发你。"
                 : eqCoachImTimeoutReply;
-        List<String> effectiveMcpPriorityOrder = DEFAULT_PARALLEL_MCP_PRIORITY_ORDER;
+        List<String> effectiveMcpPriorityOrder = parseCsvList(System.getProperty("mindos.dispatcher.parallel-routing.mcp-priority-order", ""));
         int effectiveMaxLoops = Math.max(1, Math.min(3, maxLoops));
         this.slowPathPlanBuilder = new SlowPathPlanBuilder(
                 this.candidateChainBuilder,
@@ -217,13 +236,22 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
         this.skillExecutionGateway = skillExecutionGateway;
         this.dispatcherMemoryFacade = dispatcherMemoryFacade;
         this.memoryRecorder = memoryRecorder;
-        this.taskExecutor = taskExecutor;
         this.mcpParallelEnabled = effectiveMcpParallelEnabled;
         this.mcpPerSkillTimeoutMs = effectiveMcpPerSkillTimeoutMs;
         this.eqCoachImTimeoutMs = effectiveEqCoachImTimeoutMs;
         this.eqCoachImTimeoutReply = effectiveEqCoachImTimeoutReply;
         this.mcpPriorityOrder = effectiveMcpPriorityOrder;
         this.maxLoops = effectiveMaxLoops;
+    }
+
+    private static List<String> parseCsvList(String rawCsv) {
+        if (rawCsv == null || rawCsv.isBlank()) {
+            return List.of();
+        }
+        return java.util.Arrays.stream(rawCsv.split(","))
+                .map(String::trim)
+                .filter(value -> !value.isBlank())
+                .toList();
     }
 
     @Autowired(required = false)

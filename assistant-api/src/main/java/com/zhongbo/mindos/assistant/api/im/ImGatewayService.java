@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zhongbo.mindos.assistant.common.nlu.MemoryIntentNlu;
 import com.zhongbo.mindos.assistant.dispatcher.DispatchResult;
 import com.zhongbo.mindos.assistant.dispatcher.DispatcherService;
+import com.zhongbo.mindos.assistant.memory.LongTaskCommandService;
 import com.zhongbo.mindos.assistant.memory.MemoryConsolidationService;
 import com.zhongbo.mindos.assistant.memory.MemoryFacade;
 import com.zhongbo.mindos.assistant.memory.model.LongTask;
@@ -75,6 +76,7 @@ public class ImGatewayService {
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final com.zhongbo.mindos.assistant.dispatcher.DispatcherFacade dispatcherService;
     private final MemoryFacade memoryFacade;
+    private final LongTaskCommandService longTaskCommandService;
     private final MemoryConsolidationService memoryConsolidationService;
     private final DingtalkAsyncReplyClient dingtalkAsyncReplyClient;
     private final DingtalkOpenApiMessageClient dingtalkOpenApiMessageClient;
@@ -93,6 +95,7 @@ public class ImGatewayService {
                      MemoryConsolidationService memoryConsolidationService) {
         this(dispatcherService,
                 memoryFacade,
+                new LongTaskCommandService(memoryFacade),
                 memoryConsolidationService,
                 new DingtalkAsyncReplyClient(
                         java.net.http.HttpClient.newBuilder()
@@ -133,6 +136,21 @@ public class ImGatewayService {
                      DingtalkOpenApiMessageClient dingtalkOpenApiMessageClient) {
         this(dispatcherService,
                 memoryFacade,
+                new LongTaskCommandService(memoryFacade),
+                memoryConsolidationService,
+                dingtalkAsyncReplyClient,
+                dingtalkOpenApiMessageClient);
+    }
+
+    ImGatewayService(com.zhongbo.mindos.assistant.dispatcher.DispatcherFacade dispatcherService,
+                     MemoryFacade memoryFacade,
+                     LongTaskCommandService longTaskCommandService,
+                     MemoryConsolidationService memoryConsolidationService,
+                     DingtalkAsyncReplyClient dingtalkAsyncReplyClient,
+                     DingtalkOpenApiMessageClient dingtalkOpenApiMessageClient) {
+        this(dispatcherService,
+                memoryFacade,
+                longTaskCommandService,
                 memoryConsolidationService,
                 dingtalkAsyncReplyClient,
                 dingtalkOpenApiMessageClient,
@@ -146,6 +164,7 @@ public class ImGatewayService {
     @Autowired
     ImGatewayService(com.zhongbo.mindos.assistant.dispatcher.DispatcherFacade dispatcherService,
                      MemoryFacade memoryFacade,
+                     LongTaskCommandService longTaskCommandService,
                      MemoryConsolidationService memoryConsolidationService,
                      DingtalkAsyncReplyClient dingtalkAsyncReplyClient,
                      DingtalkOpenApiMessageClient dingtalkOpenApiMessageClient,
@@ -156,6 +175,7 @@ public class ImGatewayService {
                       @Value("${mindos.im.dingtalk.async-reply.result-prefix:处理完成，以下是完整结果：}") String dingtalkAsyncResultPrefix) {
         this.dispatcherService = dispatcherService;
         this.memoryFacade = memoryFacade;
+        this.longTaskCommandService = longTaskCommandService;
         this.memoryConsolidationService = memoryConsolidationService;
         this.dingtalkAsyncReplyClient = dingtalkAsyncReplyClient;
         this.dingtalkOpenApiMessageClient = dingtalkOpenApiMessageClient;
@@ -259,7 +279,7 @@ public class ImGatewayService {
             return null;
         }
         String userId = buildUserId(ImPlatform.DINGTALK, senderId);
-        LongTask task = memoryFacade.createLongTask(
+        LongTask task = longTaskCommandService.createTask(
                 userId,
                 DINGTALK_ASYNC_TASK_TITLE,
                 normalizedText,
@@ -295,7 +315,7 @@ public class ImGatewayService {
     }
 
     private void processDingtalkAsyncReply(DingtalkAsyncTaskContext context) {
-        memoryFacade.updateLongTaskProgress(
+        longTaskCommandService.updateProgress(
                 context.userId(),
                 context.taskId(),
                 "im-dingtalk-async",
@@ -307,7 +327,7 @@ public class ImGatewayService {
         );
         try {
             String reply = buildReply(ImPlatform.DINGTALK, context.senderId(), context.chatId(), context.inputText());
-            memoryFacade.updateLongTaskProgress(
+            longTaskCommandService.updateProgress(
                     context.userId(),
                     context.taskId(),
                     "im-dingtalk-async",
@@ -321,7 +341,7 @@ public class ImGatewayService {
                 if (tryPushViaDingtalkOpenApi(context, reply)) {
                     return;
                 }
-                memoryFacade.updateLongTaskProgress(
+                longTaskCommandService.updateProgress(
                         context.userId(),
                         context.taskId(),
                         "im-dingtalk-async",
@@ -335,7 +355,7 @@ public class ImGatewayService {
             }
             boolean sent = dingtalkAsyncReplyClient.sendText(context.sessionWebhook(), formatAsyncResult(reply));
             if (sent) {
-                memoryFacade.updateLongTaskProgress(
+                longTaskCommandService.updateProgress(
                         context.userId(),
                         context.taskId(),
                         "im-dingtalk-async",
@@ -349,7 +369,7 @@ public class ImGatewayService {
                 if (tryPushViaDingtalkOpenApi(context, reply)) {
                     return;
                 }
-                memoryFacade.updateLongTaskProgress(
+                longTaskCommandService.updateProgress(
                         context.userId(),
                         context.taskId(),
                         "im-dingtalk-async",
@@ -361,7 +381,7 @@ public class ImGatewayService {
                 );
             }
         } catch (Exception ex) {
-            memoryFacade.updateLongTaskProgress(
+            longTaskCommandService.updateProgress(
                     context.userId(),
                     context.taskId(),
                     "im-dingtalk-async",
@@ -504,7 +524,7 @@ public class ImGatewayService {
         if (!dingtalkOpenApiMessageClient.sendText(senderId, chatId, formatAsyncResult(reply))) {
             return false;
         }
-        memoryFacade.updateLongTaskProgress(
+        longTaskCommandService.updateProgress(
                 userId,
                 taskId,
                 "im-dingtalk-openapi",
@@ -614,7 +634,7 @@ public class ImGatewayService {
         String completedStep = task.pendingSteps().contains("回推钉钉结果")
                 ? "回推钉钉结果"
                 : null;
-        memoryFacade.updateLongTaskProgress(
+        longTaskCommandService.updateProgress(
                 task.userId(),
                 task.taskId(),
                 "im-dingtalk-compensation",

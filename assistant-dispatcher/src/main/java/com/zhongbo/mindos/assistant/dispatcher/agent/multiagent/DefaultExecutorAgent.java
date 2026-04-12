@@ -2,9 +2,9 @@ package com.zhongbo.mindos.assistant.dispatcher.agent.multiagent;
 
 import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.dispatcher.agent.taskgraph.DAGExecutor;
+import com.zhongbo.mindos.assistant.dispatcher.agent.taskgraph.StructuredExecutionRuntime;
 import com.zhongbo.mindos.assistant.dispatcher.agent.taskgraph.TaskGraph;
 import com.zhongbo.mindos.assistant.dispatcher.agent.taskgraph.TaskGraphExecutionResult;
-import com.zhongbo.mindos.assistant.dispatcher.agent.taskgraph.TaskGraphExecutor;
 import com.zhongbo.mindos.assistant.dispatcher.agent.taskgraph.TaskNode;
 import org.springframework.stereotype.Component;
 
@@ -16,7 +16,7 @@ import java.util.Map;
 @Component
 public class DefaultExecutorAgent implements ExecutorAgent {
 
-    private final TaskGraphExecutor taskGraphExecutor = new TaskGraphExecutor();
+    private final StructuredExecutionRuntime structuredExecutionRuntime = new StructuredExecutionRuntime();
 
     @Override
     public String name() {
@@ -44,7 +44,7 @@ public class DefaultExecutorAgent implements ExecutorAgent {
         }
 
         String graphId = firstNonBlank(stringValue(payload.get("graphId")), message.taskId());
-        TaskGraphExecutionResult graphResult = taskGraphExecutor.execute(graph, context.mergedSkillContext(), (node, nodeContext) ->
+        TaskGraphExecutionResult graphResult = structuredExecutionRuntime.execute(graph, context.mergedSkillContext(), (node, nodeContext) ->
                 executeNode(message, context, node, nodeContext, graphId)
         );
 

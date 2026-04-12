@@ -6,7 +6,7 @@ import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryFacade;
 import com.zhongbo.mindos.assistant.dispatcher.routing.RoutingCoordinator;
 import com.zhongbo.mindos.assistant.skill.SkillEngineFacade;
 import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalysisResult;
-import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalysisService;
+import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalyzer;
 
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -20,7 +20,7 @@ final class DispatchPreparationSupport {
     private final DispatcherMemoryFacade dispatcherMemoryFacade;
     private final SkillEngineFacade skillEngine;
     private final PersonaCoreService personaCoreService;
-    private final SemanticAnalysisService semanticAnalysisService;
+    private final SemanticAnalyzer semanticAnalyzer;
     private final SemanticRoutingSupport semanticRoutingSupport;
     private final IntentModelRoutingPolicy intentModelRoutingPolicy;
     private final PreparationBridge bridge;
@@ -32,7 +32,7 @@ final class DispatchPreparationSupport {
     DispatchPreparationSupport(DispatcherMemoryFacade dispatcherMemoryFacade,
                                SkillEngineFacade skillEngine,
                                PersonaCoreService personaCoreService,
-                               SemanticAnalysisService semanticAnalysisService,
+                               SemanticAnalyzer semanticAnalyzer,
                                SemanticRoutingSupport semanticRoutingSupport,
                                IntentModelRoutingPolicy intentModelRoutingPolicy,
                                PreparationBridge bridge,
@@ -43,7 +43,7 @@ final class DispatchPreparationSupport {
         this.dispatcherMemoryFacade = dispatcherMemoryFacade;
         this.skillEngine = skillEngine;
         this.personaCoreService = personaCoreService;
-        this.semanticAnalysisService = semanticAnalysisService;
+        this.semanticAnalyzer = semanticAnalyzer;
         this.semanticRoutingSupport = semanticRoutingSupport;
         this.intentModelRoutingPolicy = intentModelRoutingPolicy;
         this.bridge = bridge;
@@ -83,7 +83,7 @@ final class DispatchPreparationSupport {
         );
         SemanticAnalysisResult semanticAnalysis = bridge.shouldSkipSemanticAnalysis(userInput)
                 ? SemanticAnalysisResult.empty()
-                : semanticAnalysisService.analyze(
+                : semanticAnalyzer.analyze(
                         userId,
                         userInput,
                         memoryContext,
