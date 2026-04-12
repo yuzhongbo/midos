@@ -1,8 +1,6 @@
 package com.zhongbo.mindos.assistant.dispatcher.orchestrator;
 
 import com.zhongbo.mindos.assistant.common.SkillContext;
-import com.zhongbo.mindos.assistant.dispatcher.decision.Decision;
-
 import java.util.Map;
 
 final class TaskGraphCoordinatorBridgeAdapter implements TaskGraphCoordinator.TaskGraphBridge {
@@ -10,16 +8,6 @@ final class TaskGraphCoordinatorBridgeAdapter implements TaskGraphCoordinator.Ta
     @FunctionalInterface
     interface ClarificationOutcomeBuilder {
         DecisionOrchestrator.OrchestrationOutcome build(String target, String message);
-    }
-
-    @FunctionalInterface
-    interface FastPathOrchestrator {
-        DecisionOrchestrator.OrchestrationOutcome orchestrate(Decision decision,
-                                                              String target,
-                                                              Map<String, Object> params,
-                                                              DecisionOrchestrator.OrchestrationRequest request,
-                                                              boolean allowParallelMcp,
-                                                              String traceId);
     }
 
     @FunctionalInterface
@@ -38,18 +26,15 @@ final class TaskGraphCoordinatorBridgeAdapter implements TaskGraphCoordinator.Ta
     }
 
     private final ClarificationOutcomeBuilder clarificationOutcomeBuilder;
-    private final FastPathOrchestrator fastPathOrchestrator;
     private final EffectiveParamsBuilder effectiveParamsBuilder;
     private final ContextPatchApplier contextPatchApplier;
     private final TraceEventRecorder traceEventRecorder;
 
     TaskGraphCoordinatorBridgeAdapter(ClarificationOutcomeBuilder clarificationOutcomeBuilder,
-                                      FastPathOrchestrator fastPathOrchestrator,
                                       EffectiveParamsBuilder effectiveParamsBuilder,
                                       ContextPatchApplier contextPatchApplier,
                                       TraceEventRecorder traceEventRecorder) {
         this.clarificationOutcomeBuilder = clarificationOutcomeBuilder;
-        this.fastPathOrchestrator = fastPathOrchestrator;
         this.effectiveParamsBuilder = effectiveParamsBuilder;
         this.contextPatchApplier = contextPatchApplier;
         this.traceEventRecorder = traceEventRecorder;
@@ -58,16 +43,6 @@ final class TaskGraphCoordinatorBridgeAdapter implements TaskGraphCoordinator.Ta
     @Override
     public DecisionOrchestrator.OrchestrationOutcome clarificationOutcome(String target, String message) {
         return clarificationOutcomeBuilder.build(target, message);
-    }
-
-    @Override
-    public DecisionOrchestrator.OrchestrationOutcome orchestrateFastPath(Decision decision,
-                                                                         String target,
-                                                                         Map<String, Object> params,
-                                                                         DecisionOrchestrator.OrchestrationRequest request,
-                                                                         boolean allowParallelMcp,
-                                                                         String traceId) {
-        return fastPathOrchestrator.orchestrate(decision, target, params, request, allowParallelMcp, traceId);
     }
 
     @Override

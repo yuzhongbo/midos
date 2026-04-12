@@ -274,23 +274,9 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
 final class DefaultDecisionExecutor implements DecisionExecutor {
     private static final double TASK_PLAN_LOW_CONFIDENCE_THRESHOLD = 0.70;
 
-    private final CandidatePlanner candidatePlanner;
-    private final ParamValidator paramValidator;
     private final ConversationLoop conversationLoop;
-    private final FallbackPlan fallbackPlan;
-    private final CandidateChainBuilder candidateChainBuilder;
-    private final SlowPathPlanBuilder slowPathPlanBuilder;
     private final TaskGraphCoordinator taskGraphCoordinator;
-    private final FastPathCoordinator fastPathCoordinator;
-    private final SkillExecutionGateway skillExecutionGateway;
     private final DispatcherMemoryFacade dispatcherMemoryFacade;
-    private final boolean mcpParallelEnabled;
-    private final long mcpPerSkillTimeoutMs;
-    private final long eqCoachImTimeoutMs;
-    private final String eqCoachImTimeoutReply;
-    private final List<String> mcpPriorityOrder;
-    private final int maxLoops;
-    private SearchPlanner searchPlanner;
     private ProceduralMemory proceduralMemory;
     private DispatcherMemoryFacade proceduralMemoryFacade;
     private PlannerLearningStore plannerLearningStore;
@@ -311,80 +297,32 @@ final class DefaultDecisionExecutor implements DecisionExecutor {
                             @Value("${mindos.dispatcher.skill.timeout.eq-coach-im-ms:12000}") long eqCoachImTimeoutMs,
                             @Value("${mindos.dispatcher.skill.timeout.eq-coach-im-reply:我先给你一个简短结论：当前请求较复杂，我正在整理更完整建议，稍后继续发你。}") String eqCoachImTimeoutReply,
                             @Value("${mindos.dispatcher.orchestrator.max-loops:3}") int maxLoops) {
-        this.candidatePlanner = candidatePlanner;
-        this.paramValidator = paramValidator;
         this.conversationLoop = conversationLoop;
-        this.fallbackPlan = fallbackPlan;
-        this.candidateChainBuilder = new CandidateChainBuilder(candidatePlanner, fallbackPlan);
-        boolean effectiveMcpParallelEnabled = mcpParallelEnabled;
         long effectiveMcpPerSkillTimeoutMs = Math.max(250, mcpPerSkillTimeoutMs);
         long effectiveEqCoachImTimeoutMs = Math.max(0L, eqCoachImTimeoutMs);
         String effectiveEqCoachImTimeoutReply = eqCoachImTimeoutReply == null || eqCoachImTimeoutReply.isBlank()
                 ? "我先给你一个简短结论：当前请求较复杂，我正在整理更完整建议，稍后继续发你。"
                 : eqCoachImTimeoutReply;
-        List<String> effectiveMcpPriorityOrder = parseCsvList(System.getProperty("mindos.dispatcher.parallel-routing.mcp-priority-order", ""));
-        int effectiveMaxLoops = Math.max(1, Math.min(3, maxLoops));
-        this.slowPathPlanBuilder = new SlowPathPlanBuilder(
-                this.candidateChainBuilder,
-                () -> this.searchPlanner,
-                this::isMcpSkill
-        );
         this.taskGraphCoordinator = new TaskGraphCoordinator(
                 this::activeProcedureMemoryFacade,
                 () -> this.recoveryManager,
-                new TaskGraphCoordinatorBridgeAdapter(
-                        this::clarificationOutcome,
-                        this::orchestrateFastPath,
-                        this::buildEffectiveParams,
-                        this::applyContextPatch,
-                        this::traceEvent
-                )
-        );
-        this.fastPathCoordinator = new FastPathCoordinator(
-                this.candidateChainBuilder,
-                this.paramValidator,
-                skillExecutionGateway,
                 () -> this.agentRouter,
                 () -> this.plannerLearningStore,
                 () -> this.policyUpdater,
-                () -> this.recoveryManager,
-                new FastPathCoordinatorBridgeAdapter(
+                paramValidator,
+                skillExecutionGateway,
+                new TaskGraphCoordinatorBridgeAdapter(
                         this::clarificationOutcome,
                         this::buildEffectiveParams,
                         this::applyContextPatch,
                         this::traceEvent
                 ),
                 TASK_PLAN_LOW_CONFIDENCE_THRESHOLD,
-                effectiveMcpParallelEnabled,
                 effectiveMcpPerSkillTimeoutMs,
                 effectiveEqCoachImTimeoutMs,
-                effectiveEqCoachImTimeoutReply,
-                effectiveMaxLoops,
-                effectiveMcpPriorityOrder
+                effectiveEqCoachImTimeoutReply
         );
-        this.skillExecutionGateway = skillExecutionGateway;
         this.dispatcherMemoryFacade = dispatcherMemoryFacade;
-        this.mcpParallelEnabled = effectiveMcpParallelEnabled;
-        this.mcpPerSkillTimeoutMs = effectiveMcpPerSkillTimeoutMs;
-        this.eqCoachImTimeoutMs = effectiveEqCoachImTimeoutMs;
-        this.eqCoachImTimeoutReply = effectiveEqCoachImTimeoutReply;
-        this.mcpPriorityOrder = effectiveMcpPriorityOrder;
-        this.maxLoops = effectiveMaxLoops;
-    }
-
-    private static List<String> parseCsvList(String rawCsv) {
-        if (rawCsv == null || rawCsv.isBlank()) {
-            return List.of();
-        }
-        return java.util.Arrays.stream(rawCsv.split(","))
-                .map(String::trim)
-                .filter(value -> !value.isBlank())
-                .toList();
-    }
-
-    @Autowired(required = false)
-    void setSearchPlanner(SearchPlanner searchPlanner) {
-        this.searchPlanner = searchPlanner;
     }
 
     @Autowired(required = false)
@@ -470,17 +408,6 @@ final class DefaultDecisionExecutor implements DecisionExecutor {
         if (plan == null) {
             return clarificationOutcome("", "missing task graph plan");
         }
-        if (isSingleNodeFastPath(plan)) {
-            String target = plan.taskGraph().nodes().get(0).target();
-            return orchestrateFastPath(
-                    plan.decision(),
-                    target,
-                    plan.effectiveParams(),
-                    request,
-                    true,
-                    traceId
-            );
-        }
         return taskGraphCoordinator.orchestrateTaskGraph(
                 plan.decision(),
                 plan.taskGraph(),
@@ -493,22 +420,6 @@ final class DefaultDecisionExecutor implements DecisionExecutor {
         );
     }
 
-    private OrchestrationOutcome orchestrateFastPath(Decision decision,
-                                                     String suggestedTarget,
-                                                     Map<String, Object> params,
-                                                     OrchestrationRequest request,
-                                                     boolean allowParallelMcp,
-                                                     String traceId) {
-        return fastPathCoordinator.orchestrate(
-                decision,
-                suggestedTarget,
-                params,
-                request,
-                allowParallelMcp,
-                traceId
-        );
-    }
-
     private OrchestrationOutcome clarificationOutcome(String target, String message) {
         return new OrchestrationOutcome(
                 null,
@@ -518,10 +429,6 @@ final class DefaultDecisionExecutor implements DecisionExecutor {
                 null,
                 false
         );
-    }
-
-    private boolean isMcpSkill(String target) {
-        return target != null && target.startsWith("mcp.");
     }
 
     private Map<String, Object> buildEffectiveParams(Map<String, Object> params, SkillContext skillContext) {
@@ -542,13 +449,6 @@ final class DefaultDecisionExecutor implements DecisionExecutor {
                 && outcome.hasResult()
                 && outcome.result() != null
                 && !outcome.result().success();
-    }
-
-    private boolean isSingleNodeFastPath(TaskGraphPlan plan) {
-        return plan != null
-                && "fast-path".equalsIgnoreCase(plan.strategy())
-                && plan.taskGraph() != null
-                && plan.taskGraph().nodes().size() == 1;
     }
 
     private DispatcherMemoryFacade activeProcedureMemoryFacade() {

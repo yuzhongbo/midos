@@ -86,17 +86,17 @@ public class DefaultTaskGraphPlanner implements TaskGraphPlanner {
         if ("task.plan".equalsIgnoreCase(decision.target()) || shouldUseSlowPath(decision)) {
             return slowPathPlan(decision, effectiveParams, request, null, "slow-path", true);
         }
-        TaskGraph fastPathGraph = buildSingleNodeGraph(decision, effectiveParams, request);
-        if (fastPathGraph.isEmpty()) {
+        TaskGraph singleNodeGraph = buildSingleNodeGraph(decision, effectiveParams, request);
+        if (singleNodeGraph.isEmpty()) {
             return TaskGraphPlan.clarification(decision, decision.target(), "缺少可执行候选");
         }
-        String selectedSkill = fastPathGraph.nodes().get(0).target();
+        String selectedSkill = singleNodeGraph.nodes().get(0).target();
         TaskGraphPlan fallbackPlan = slowPathPlan(decision, effectiveParams, request, selectedSkill, "slow-path", false);
         return new TaskGraphPlan(
                 decision,
-                fastPathGraph,
-                slowPathPlanBuilder.attachTaskGraph(effectiveParams, fastPathGraph),
-                "fast-path",
+                singleNodeGraph,
+                slowPathPlanBuilder.attachTaskGraph(effectiveParams, singleNodeGraph),
+                "single-task-graph",
                 resolveIntent(decision),
                 request == null ? "" : request.userInput(),
                 fallbackPlan.taskGraph(),

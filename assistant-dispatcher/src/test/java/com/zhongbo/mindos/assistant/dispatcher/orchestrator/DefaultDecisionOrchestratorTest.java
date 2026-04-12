@@ -109,7 +109,7 @@ class DefaultDecisionOrchestratorTest {
 
         assertTrue(outcome.hasSkillDsl());
         assertTrue(outcome.hasResult());
-        assertEquals("fast-path", outcome.trace().strategy());
+        assertEquals("single-task-graph", outcome.trace().strategy());
         assertEquals("todo.create", outcome.skillDsl().skill());
         assertEquals("todo.create", outcome.result().skillName());
     }
@@ -771,7 +771,7 @@ class DefaultDecisionOrchestratorTest {
         assertTrue(outcome.result().success());
         assertEquals("backup.fetch", outcome.result().skillName());
         assertEquals("backup recovered", outcome.result().output());
-        assertEquals(1, outcome.trace().steps().size());
+        assertEquals(2, outcome.trace().steps().size());
     }
 
     @Test

@@ -3,6 +3,9 @@ package com.zhongbo.mindos.assistant.dispatcher.agent.multiagent;
 import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.common.SkillDsl;
 import com.zhongbo.mindos.assistant.common.SkillResult;
+import com.zhongbo.mindos.assistant.dispatcher.agent.taskgraph.DAGExecutor;
+import com.zhongbo.mindos.assistant.dispatcher.agent.taskgraph.StructuredExecutionRuntime;
+import com.zhongbo.mindos.assistant.dispatcher.agent.taskgraph.TaskGraphExecutionResult;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.DecisionOrchestrator;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.ParamValidator;
 import com.zhongbo.mindos.assistant.skill.SkillExecutionGateway;
@@ -19,6 +22,7 @@ public class DefaultToolAgent implements ToolAgent {
 
     private final SkillExecutionGateway skillExecutionGateway;
     private final ParamValidator paramValidator;
+    private final StructuredExecutionRuntime structuredExecutionRuntime = new StructuredExecutionRuntime();
 
     public DefaultToolAgent(SkillExecutionGateway skillExecutionGateway) {
         this(skillExecutionGateway, null);
@@ -98,7 +102,20 @@ public class DefaultToolAgent implements ToolAgent {
                 ? params
                 : validation.normalizedParams();
         skillContext = new SkillContext(baseRequest.userId(), baseRequest.userInput(), normalizedParams);
-        SkillResult result = skillExecutionGateway.executeDslAsync(new SkillDsl(skillName, normalizedParams), skillContext).join();
+        TaskGraphExecutionResult executionResult = structuredExecutionRuntime.executeSingle(
+                "tool-agent-task",
+                skillName,
+                normalizedParams,
+                "result",
+                skillContext,
+                (node, nodeContext) -> new DAGExecutor.NodeExecution(
+                        skillExecutionGateway.executeDslAsync(new SkillDsl(node.target(), node.params()), nodeContext).join(),
+                        usedFallback
+                )
+        );
+        SkillResult result = executionResult.finalResult() == null
+                ? SkillResult.failure(skillName, "structured tool execution returned no result")
+                : executionResult.finalResult();
 
         Map<String, Object> memoryPayload = new LinkedHashMap<>();
         memoryPayload.put("kind", "skill-usage");
