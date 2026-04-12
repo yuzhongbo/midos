@@ -5,6 +5,7 @@ import com.zhongbo.mindos.assistant.common.SkillDsl;
 import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.common.dto.RoutingDecisionDto;
 import com.zhongbo.mindos.assistant.dispatcher.decision.Decision;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.DecisionPlanner;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.DecisionOrchestrator;
 import com.zhongbo.mindos.assistant.skill.SkillCandidate;
 import com.zhongbo.mindos.assistant.skill.SkillEngineFacade;
@@ -34,6 +35,7 @@ final class DispatchRoutingPipeline {
     private final BehaviorRoutingSupport behaviorRoutingSupport;
     private final DispatchRuleCatalog dispatchRuleCatalog;
     private final SemanticRoutingSupport semanticRoutingSupport;
+    private final DecisionPlanner decisionPlanner;
     private final DecisionOrchestrator decisionOrchestrator;
     private final DecisionParamAssembler decisionParamAssembler;
     private final RoutingBridge bridge;
@@ -54,11 +56,12 @@ final class DispatchRoutingPipeline {
 
     DispatchRoutingPipeline(SkillEngineFacade skillEngine,
                             SkillDslParser skillDslParser,
-                            BehaviorRoutingSupport behaviorRoutingSupport,
-                            DispatchRuleCatalog dispatchRuleCatalog,
-                            SemanticRoutingSupport semanticRoutingSupport,
-                            DecisionOrchestrator decisionOrchestrator,
-                            DecisionParamAssembler decisionParamAssembler,
+                             BehaviorRoutingSupport behaviorRoutingSupport,
+                             DispatchRuleCatalog dispatchRuleCatalog,
+                             SemanticRoutingSupport semanticRoutingSupport,
+                             DecisionPlanner decisionPlanner,
+                             DecisionOrchestrator decisionOrchestrator,
+                             DecisionParamAssembler decisionParamAssembler,
                             RoutingBridge bridge,
                              boolean braveFirstSearchRoutingEnabled,
                              boolean parallelDetectedSkillRoutingEnabled,
@@ -78,6 +81,7 @@ final class DispatchRoutingPipeline {
         this.behaviorRoutingSupport = behaviorRoutingSupport;
         this.dispatchRuleCatalog = dispatchRuleCatalog;
         this.semanticRoutingSupport = semanticRoutingSupport;
+        this.decisionPlanner = decisionPlanner;
         this.decisionOrchestrator = decisionOrchestrator;
         this.decisionParamAssembler = decisionParamAssembler;
         this.bridge = bridge;
@@ -303,7 +307,7 @@ final class DispatchRoutingPipeline {
             if (blocked.isPresent()) {
                 return Optional.of(CompletableFuture.completedFuture(blocked.get()));
             }
-            if (bridge.isSkillLoopGuardBlocked(userId, semanticDsl.get().skill(), context.input())) {
+            if (bridge.isSemanticRouteLoopGuardBlocked(userId, semanticDsl.get().skill(), context.input())) {
                 return Optional.of(loopBlockedRoute(userId, semanticDsl.get().skill(), "semantic analysis route blocked by loop guard", rejectedReasons));
             }
             double confidence = Math.max(semanticAnalysisRouteMinConfidence, semanticPlan.confidence());
@@ -330,41 +334,49 @@ final class DispatchRoutingPipeline {
                                                                        SkillContext context,
                                                                        RoutingReplayProbe replayProbe,
                                                                        List<String> rejectedReasons) {
-        Optional<SkillDsl> ruleDsl = detectSkillWithRules(userInput);
-        if (ruleDsl.isPresent()
-                && "code.generate".equals(ruleDsl.get().skill())
+        Decision plannerDecision = decisionPlanner == null
+                ? null
+                : decisionPlanner.plan(
+                userInput,
+                "",
+                context == null || context.attributes() == null ? Map.of() : context.attributes(),
+                context
+        );
+        Optional<Decision> fallbackDecision = dispatchRuleCatalog.selectLowConfidenceFallback(plannerDecision);
+        if (fallbackDecision.isPresent()
+                && "code.generate".equals(fallbackDecision.get().target())
                 && !dispatchRuleCatalog.isCodeGenerationIntent(userInput)
                 && !behaviorRoutingSupport.isContinuationOnlyInput(userInput)) {
-            rejectedReasons.add("rule-based code.generate rejected because input does not look like a code task");
-            ruleDsl = Optional.empty();
+            rejectedReasons.add("planner fallback code.generate rejected because input does not look like a code task");
+            fallbackDecision = Optional.empty();
         }
-        if (ruleDsl.isEmpty()) {
+        if (fallbackDecision.isEmpty()) {
             replayProbe.setRuleCandidate("NONE");
-            rejectedReasons.add("no deterministic rule matched");
+            rejectedReasons.add("planner did not produce a low-confidence fallback target");
             return Optional.empty();
         }
-        if (bridge.isSkillPreExecuteGuardBlocked(userId, ruleDsl.get().skill(), userInput)) {
-            return Optional.of(loopBlockedRoute(userId, ruleDsl.get().skill(), "rule-based skill blocked by loop guard before execution", rejectedReasons));
+        if (bridge.isSkillPreExecuteGuardBlocked(userId, fallbackDecision.get().target(), userInput)) {
+            return Optional.of(loopBlockedRoute(userId, fallbackDecision.get().target(), "planner fallback skill blocked by loop guard before execution", rejectedReasons));
         }
-        replayProbe.setRuleCandidate(ruleDsl.get().skill());
+        replayProbe.setRuleCandidate(fallbackDecision.get().target());
         Optional<RoutingOutcome> blocked = capabilityBlockedRoute(
-                ruleDsl.get().skill(),
-                0.99,
-                "rule-based route matched but capability guard blocked execution",
+                fallbackDecision.get().target(),
+                fallbackDecision.get().confidence(),
+                "planner fallback route matched but capability guard blocked execution",
                 rejectedReasons
         );
         if (blocked.isPresent()) {
             return Optional.of(CompletableFuture.completedFuture(blocked.get()));
         }
-        LOGGER.info("Dispatcher route=rule, userId=" + userId + ", skill=" + ruleDsl.get().skill());
+        LOGGER.info("Dispatcher route=rule-fallback, userId=" + userId + ", target=" + fallbackDecision.get().target());
         return Optional.of(executeDecisionRoute(
-                decisionParamAssembler.toDecision(ruleDsl.get(), context, 0.98),
+                fallbackDecision.get(),
                 userId,
                 userInput,
                 context,
-                "rule",
-                0.98,
-                List.of("matched deterministic built-in routing rule"),
+                "rule-fallback",
+                fallbackDecision.get().confidence(),
+                List.of("planner produced low-confidence fallback target"),
                 rejectedReasons
         ));
     }
@@ -901,10 +913,6 @@ final class DispatchRoutingPipeline {
         return Integer.MAX_VALUE;
     }
 
-    private Optional<SkillDsl> detectSkillWithRules(String userInput) {
-        return dispatchRuleCatalog.detectSkillWithRules(userInput);
-    }
-
     private Optional<CompletableFuture<RoutingOutcome>> routeToBraveSearchFirst(String userId,
                                                                                 String userInput,
                                                                                 SkillContext context,
@@ -1015,6 +1023,8 @@ final class DispatchRoutingPipeline {
         boolean isSkillPreExecuteGuardBlocked(String userId, String skillName, String userInput);
 
         boolean isSkillLoopGuardBlocked(String userId, String skillName, String userInput);
+
+        boolean isSemanticRouteLoopGuardBlocked(String userId, String skillName, String userInput);
 
         boolean isRealtimeIntent(String userInput, SemanticAnalysisResult semanticAnalysis);
 

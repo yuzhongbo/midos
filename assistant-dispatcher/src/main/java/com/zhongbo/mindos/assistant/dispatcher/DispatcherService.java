@@ -528,7 +528,7 @@ public class DispatcherService implements ContextCompressionMetricsReader,
                 this.behaviorLearningWindowSize,
                 this.behaviorLearningDefaultParamThreshold
         );
-        this.dispatchRuleCatalog = new DispatchRuleCatalog(this.skillEngine, this.behaviorRoutingSupport);
+        this.dispatchRuleCatalog = new DispatchRuleCatalog(this.skillEngine);
         DecisionPlanner compatibilityDecisionPlanner = new DefaultDecisionPlanner(this.skillEngine);
         this.skillRoutingSupport = new SkillRoutingSupport(
                 this.skillEngine,
@@ -683,6 +683,7 @@ public class DispatcherService implements ContextCompressionMetricsReader,
                 this.behaviorRoutingSupport,
                 this.dispatchRuleCatalog,
                 this.semanticRoutingSupport,
+                compatibilityDecisionPlanner,
                 this.decisionOrchestrator,
                 this.decisionParamAssembler,
                 new DispatcherRoutingBridgeAdapter(
@@ -690,6 +691,7 @@ public class DispatcherService implements ContextCompressionMetricsReader,
                         this.dispatcherRoutingCompatibilitySupport::maybeBlockByCapability,
                         this.dispatcherRoutingCompatibilitySupport::isSkillPreExecuteGuardBlocked,
                         this.dispatcherRoutingCompatibilitySupport::isSkillLoopGuardBlocked,
+                        this.dispatcherRoutingCompatibilitySupport::isSemanticRouteLoopGuardBlocked,
                         this.dispatcherRoutingCompatibilitySupport::shouldRunSkillPreAnalyze,
                         this.dispatcherRoutingCompatibilitySupport::detectSkillWithLlm,
                         this.dispatcherRoutingCompatibilitySupport::enrichMemoryHabitResult
@@ -712,6 +714,7 @@ public class DispatcherService implements ContextCompressionMetricsReader,
                 this.dispatchMemoryLifecycle,
                 this.dispatchPreparationSupport,
                 this.dispatchRoutingPipeline,
+                compatibilityDecisionPlanner,
                 this.decisionOrchestrator,
                 this.metaOrchestratorService,
                 this.dispatchResultFinalizer,

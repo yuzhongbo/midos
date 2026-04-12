@@ -203,7 +203,9 @@ final class DispatchResultFinalizer {
                 .merge(dispatchMemoryLifecycle.recordSkillOutcome(userId, result))
                 .merge(personaCoreService.learnFromTurn(userId, resolvedProfileContext, result));
         decisionOrchestrator.commitMemoryWrites(userId, memoryWrites);
-        decisionOrchestrator.recordOutcome(userId, userInput, result, trace);
+        if (!state.outcomeAlreadyRecorded()) {
+            decisionOrchestrator.recordOutcome(userId, userInput, result, trace);
+        }
         bridge.recordRoutingReplaySample(userInput, replayRoutingDecision, replayProbe, promptMemoryContext, result.skillName());
         return new DispatchResult(result.output(), result.skillName(), trace);
     }

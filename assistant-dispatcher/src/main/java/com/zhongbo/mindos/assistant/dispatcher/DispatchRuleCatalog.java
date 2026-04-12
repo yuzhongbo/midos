@@ -1,44 +1,52 @@
 package com.zhongbo.mindos.assistant.dispatcher;
 
-import com.zhongbo.mindos.assistant.common.SkillDsl;
 import com.zhongbo.mindos.assistant.common.SkillResult;
+import com.zhongbo.mindos.assistant.dispatcher.decision.Decision;
 import com.zhongbo.mindos.assistant.skill.SkillEngineFacade;
 
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 final class DispatchRuleCatalog {
 
     private static final String SKILL_HELP_CHANNEL = "skills.help";
+    private static final String PLANNER_ROUTE_SOURCE_KEY = "_plannerRouteSource";
+    private static final String RULE_FALLBACK_SOURCE = "rule-fallback";
+    private static final Set<String> LOW_CONFIDENCE_FALLBACK_TARGETS = Set.of(
+            "echo",
+            "time",
+            "code.generate",
+            "teaching.plan"
+    );
 
     private final SkillEngineFacade skillEngine;
-    private final BehaviorRoutingSupport behaviorRoutingSupport;
 
-    DispatchRuleCatalog(SkillEngineFacade skillEngine, BehaviorRoutingSupport behaviorRoutingSupport) {
+    DispatchRuleCatalog(SkillEngineFacade skillEngine) {
         this.skillEngine = skillEngine;
-        this.behaviorRoutingSupport = behaviorRoutingSupport;
     }
 
-    Optional<SkillDsl> detectSkillWithRules(String userInput) {
-        if (userInput == null || userInput.isBlank()) {
+    Optional<Decision> selectLowConfidenceFallback(Decision plannedDecision) {
+        if (plannedDecision == null) {
             return Optional.empty();
         }
-        String normalized = normalize(userInput);
-        if (normalized.startsWith("echo ")) {
-            return Optional.of(new SkillDsl("echo", Map.of("text", userInput.substring("echo ".length()))));
+        if (plannedDecision.target() == null || plannedDecision.target().isBlank()) {
+            return Optional.empty();
         }
-        if (containsAny(normalized, "time", "clock", "几点", "时间", "what time")) {
-            return Optional.of(SkillDsl.of("time"));
+        if (!LOW_CONFIDENCE_FALLBACK_TARGETS.contains(normalize(plannedDecision.target()))) {
+            return Optional.empty();
         }
-        if ((normalized.startsWith("code ") || normalized.contains("generate code")) && isCodeGenerationIntent(userInput)) {
-            return Optional.of(new SkillDsl("code.generate", Map.of("task", userInput)));
+        Map<String, Object> params = plannedDecision.params() == null ? Map.of() : plannedDecision.params();
+        String routeSource = normalize(String.valueOf(params.getOrDefault(PLANNER_ROUTE_SOURCE_KEY, "")));
+        if (!RULE_FALLBACK_SOURCE.equals(routeSource)) {
+            return Optional.empty();
         }
-        if (isTeachingPlanIntent(normalized)) {
-            return Optional.of(new SkillDsl("teaching.plan", behaviorRoutingSupport.extractTeachingPlanPayload(userInput)));
+        if (plannedDecision.confidence() >= 1.0) {
+            return Optional.empty();
         }
-        return Optional.empty();
+        return Optional.of(plannedDecision);
     }
 
     boolean isCodeGenerationIntent(String input) {
@@ -115,17 +123,6 @@ final class DispatchRuleCatalog {
             return "coding";
         }
         return "general";
-    }
-
-    private boolean isTeachingPlanIntent(String normalized) {
-        return containsAny(normalized,
-                "教学规划",
-                "学习计划",
-                "复习计划",
-                "课程规划",
-                "学习路线",
-                "study plan",
-                "teaching plan");
     }
 
     private boolean isAvailableSkillsQuestion(String normalized) {

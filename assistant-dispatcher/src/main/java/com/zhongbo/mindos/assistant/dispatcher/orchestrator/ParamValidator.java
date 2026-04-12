@@ -1,6 +1,7 @@
 package com.zhongbo.mindos.assistant.dispatcher.orchestrator;
 
 import com.zhongbo.mindos.assistant.common.SkillResult;
+import com.zhongbo.mindos.assistant.dispatcher.decision.Decision;
 
 import java.util.List;
 import java.util.Map;
@@ -11,6 +12,17 @@ public interface ParamValidator {
 
     default ValidationResult validate(String target, Map<String, Object> params) {
         return validate(target, params, null);
+    }
+
+    default ValidationResult validate(Decision decision) {
+        if (decision == null) {
+            return ValidationResult.error("missing decision");
+        }
+        return validate(
+                decision.target(),
+                DecisionInputMetadata.businessParams(decision.params()),
+                DecisionInputMetadata.requestOf(decision)
+        );
     }
 
     default ValidationResult repairAfterFailure(String target,
@@ -42,6 +54,16 @@ public interface ParamValidator {
 
         public static ValidationResult error(String message) {
             return clarify(message, List.of(), Map.of(), Map.of());
+        }
+
+        public Decision applyTo(Decision decision) {
+            if (decision == null) {
+                return null;
+            }
+            Map<String, Object> effectiveParams = normalizedParams == null || normalizedParams.isEmpty()
+                    ? DecisionInputMetadata.businessParams(decision.params())
+                    : normalizedParams;
+            return DecisionInputMetadata.mergeBusinessParams(decision, effectiveParams, needsClarification, message);
         }
 
         public static ValidationResult clarify(String message,

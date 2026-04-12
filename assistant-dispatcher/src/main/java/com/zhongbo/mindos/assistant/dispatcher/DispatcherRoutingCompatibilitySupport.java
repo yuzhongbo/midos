@@ -122,6 +122,17 @@ final class DispatcherRoutingCompatibilitySupport {
         return isRepeatedInputLoop(history, skillName, userInput);
     }
 
+    boolean isSemanticRouteLoopGuardBlocked(String userId, String skillName, String userInput) {
+        if (skillName == null || skillName.isBlank()) {
+            return false;
+        }
+        if (normalize(skillName).contains("search")) {
+            return false;
+        }
+        List<ProceduralMemoryEntry> history = dispatcherMemoryFacade.getSkillUsageHistory(userId);
+        return isRepeatedInputLoop(history, skillName, userInput);
+    }
+
     boolean shouldRunSkillPreAnalyze(String userId, String userInput) {
         if ("never".equals(skillPreAnalyzeMode)) {
             return false;

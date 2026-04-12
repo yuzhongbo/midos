@@ -13,6 +13,7 @@ final class DispatchExecutionState {
     private final AtomicBoolean finalResultSuccess = new AtomicBoolean(false);
     private final AtomicBoolean realtimeLookup = new AtomicBoolean(false);
     private final AtomicBoolean memoryDirectBypassed = new AtomicBoolean(false);
+    private final AtomicBoolean outcomeAlreadyRecorded = new AtomicBoolean(false);
     private final AtomicReference<MemoryWriteBatch> pendingMemoryWrites = new AtomicReference<>(MemoryWriteBatch.empty());
 
     RoutingDecisionDto routingDecision() {
@@ -53,6 +54,14 @@ final class DispatchExecutionState {
 
     void setMemoryDirectBypassed(boolean value) {
         memoryDirectBypassed.set(value);
+    }
+
+    boolean outcomeAlreadyRecorded() {
+        return outcomeAlreadyRecorded.get();
+    }
+
+    void setOutcomeAlreadyRecorded(boolean value) {
+        outcomeAlreadyRecorded.set(value);
     }
 
     MemoryWriteBatch pendingMemoryWrites() {

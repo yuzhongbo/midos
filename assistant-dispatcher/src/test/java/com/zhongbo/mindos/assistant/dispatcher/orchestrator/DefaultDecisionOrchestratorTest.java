@@ -863,7 +863,15 @@ class DefaultDecisionOrchestratorTest {
         SkillRuntime skillRuntime = simpleSkillRuntime(Map.of("todo.create", SkillResult.success("todo.create", "created")));
         DefaultDecisionOrchestrator orchestrator = orchestrator(skillRuntime, false);
 
-        SkillResult result = orchestrator.execute("创建待办", "todo.create", Map.of("task", "demo"));
+        DecisionOrchestrator.OrchestrationOutcome outcome = orchestrator.handle(
+                new DecisionOrchestrator.UserInput(
+                        "user",
+                        "创建待办",
+                        new SkillContext("user", "创建待办", Map.of("_target", "todo.create", "task", "demo")),
+                        Map.of()
+                )
+        );
+        SkillResult result = outcome.result();
 
         assertTrue(result.success());
         assertEquals("todo.create", result.skillName());
@@ -900,7 +908,15 @@ class DefaultDecisionOrchestratorTest {
                 3
         );
 
-        SkillResult result = orchestrator.execute("创建待办", "todo.create", Map.of("task", "demo"));
+        DecisionOrchestrator.OrchestrationOutcome outcome = orchestrator.handle(
+                new DecisionOrchestrator.UserInput(
+                        "user",
+                        "创建待办",
+                        new SkillContext("user", "创建待办", Map.of("_target", "todo.create", "task", "demo")),
+                        Map.of()
+                )
+        );
+        SkillResult result = outcome.result();
 
         assertFalse(result.success());
         assertEquals("decision.orchestrator", result.skillName());

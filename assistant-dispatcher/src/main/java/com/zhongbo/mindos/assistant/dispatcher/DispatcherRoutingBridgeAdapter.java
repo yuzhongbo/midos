@@ -38,6 +38,7 @@ final class DispatcherRoutingBridgeAdapter implements DispatchRoutingPipeline.Ro
     private final Function<String, Optional<SkillResult>> capabilityBlocker;
     private final SkillGuard preExecuteGuard;
     private final SkillGuard skillLoopGuard;
+    private final SkillGuard semanticRouteLoopGuard;
     private final UserInputGate skillPreAnalyzeGate;
     private final LlmDetector llmDetector;
     private final MemoryHabitEnricher memoryHabitEnricher;
@@ -46,6 +47,7 @@ final class DispatcherRoutingBridgeAdapter implements DispatchRoutingPipeline.Ro
                                    Function<String, Optional<SkillResult>> capabilityBlocker,
                                    SkillGuard preExecuteGuard,
                                    SkillGuard skillLoopGuard,
+                                   SkillGuard semanticRouteLoopGuard,
                                    UserInputGate skillPreAnalyzeGate,
                                    LlmDetector llmDetector,
                                    MemoryHabitEnricher memoryHabitEnricher) {
@@ -53,6 +55,7 @@ final class DispatcherRoutingBridgeAdapter implements DispatchRoutingPipeline.Ro
         this.capabilityBlocker = capabilityBlocker;
         this.preExecuteGuard = preExecuteGuard;
         this.skillLoopGuard = skillLoopGuard;
+        this.semanticRouteLoopGuard = semanticRouteLoopGuard;
         this.skillPreAnalyzeGate = skillPreAnalyzeGate;
         this.llmDetector = llmDetector;
         this.memoryHabitEnricher = memoryHabitEnricher;
@@ -71,6 +74,11 @@ final class DispatcherRoutingBridgeAdapter implements DispatchRoutingPipeline.Ro
     @Override
     public boolean isSkillLoopGuardBlocked(String userId, String skillName, String userInput) {
         return skillLoopGuard.test(userId, skillName, userInput);
+    }
+
+    @Override
+    public boolean isSemanticRouteLoopGuardBlocked(String userId, String skillName, String userInput) {
+        return semanticRouteLoopGuard.test(userId, skillName, userInput);
     }
 
     @Override

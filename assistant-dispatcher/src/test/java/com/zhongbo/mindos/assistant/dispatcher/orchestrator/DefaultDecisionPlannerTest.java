@@ -13,6 +13,7 @@ import java.util.Map;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class DefaultDecisionPlannerTest {
 
@@ -49,6 +50,29 @@ class DefaultDecisionPlannerTest {
         assertEquals("learning", decision.intent());
         assertEquals("teaching.plan", decision.target());
         assertEquals(0.82, decision.confidence());
+    }
+
+    @Test
+    void shouldMoveEchoRuleFallbackIntoPlanner() {
+        DefaultDecisionPlanner planner = new DefaultDecisionPlanner(new StubSkillEngineFacade());
+
+        Decision decision = planner.plan("echo hello planner", "", Map.of(), new SkillContext("u1", "echo hello planner", Map.of()));
+
+        assertEquals("echo", decision.target());
+        assertEquals("hello planner", decision.params().get("text"));
+        assertEquals("rule-fallback", decision.params().get("_plannerRouteSource"));
+        assertEquals(0.75, decision.confidence());
+    }
+
+    @Test
+    void shouldMoveTeachingPlanRuleFallbackIntoPlanner() {
+        DefaultDecisionPlanner planner = new DefaultDecisionPlanner(new StubSkillEngineFacade());
+
+        Decision decision = planner.plan("帮我做一个六周数学学习计划", "", Map.of(), new SkillContext("u1", "帮我做一个六周数学学习计划", Map.of()));
+
+        assertEquals("teaching.plan", decision.target());
+        assertEquals("rule-fallback", decision.params().get("_plannerRouteSource"));
+        assertTrue(decision.params().containsKey("topic"));
     }
 
     private static final class StubSkillEngineFacade implements SkillEngineFacade {

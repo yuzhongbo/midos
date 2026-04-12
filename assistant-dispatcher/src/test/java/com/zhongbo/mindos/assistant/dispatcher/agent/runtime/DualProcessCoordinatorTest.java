@@ -20,8 +20,15 @@ class DualProcessCoordinatorTest {
     void shouldUseSystem2WhenConfidenceIsLow() {
         DecisionOrchestrator orchestrator = new DecisionOrchestrator() {
             @Override
-            public SkillResult execute(String userInput, String intent, Map<String, Object> params) {
-                return SkillResult.success(intent, "ok");
+            public OrchestrationOutcome handle(UserInput input) {
+                return new OrchestrationOutcome(
+                        SkillResult.success("handle", "ok"),
+                        null,
+                        null,
+                        null,
+                        "handle",
+                        false
+                );
             }
 
             @Override

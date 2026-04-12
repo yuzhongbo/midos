@@ -11,12 +11,7 @@ import java.util.Map;
 
 public interface DecisionOrchestrator {
 
-    SkillResult execute(String userInput, String intent, Map<String, Object> params);
-
-    default OrchestrationOutcome planAndExecute(OrchestrationRequest request, String intent, Map<String, Object> params) {
-        String userInput = request == null ? "" : request.userInput();
-        return new OrchestrationOutcome(execute(userInput, intent, params), null, null, null, "", false);
-    }
+    OrchestrationOutcome handle(UserInput input);
 
     OrchestrationOutcome orchestrate(Decision decision, OrchestrationRequest request);
 
@@ -58,6 +53,57 @@ public interface DecisionOrchestrator {
                                 Map<String, Object> profileContext) {
         public Map<String, Object> safeProfileContext() {
             return profileContext == null ? Map.of() : profileContext;
+        }
+    }
+
+    record UserInput(String userId,
+                     String userInput,
+                     SkillContext skillContext,
+                     Map<String, Object> profileContext) {
+        public UserInput {
+            userId = normalize(userId);
+            userInput = normalize(userInput);
+            skillContext = normalizeContext(skillContext, userId, userInput);
+            profileContext = profileContext == null ? Map.of() : Map.copyOf(profileContext);
+        }
+
+        public static UserInput empty() {
+            return new UserInput("", "", null, Map.of());
+        }
+
+        public static UserInput safe(UserInput input) {
+            return input == null ? empty() : input;
+        }
+
+        public static UserInput from(OrchestrationRequest request) {
+            if (request == null) {
+                return empty();
+            }
+            return new UserInput(
+                    request.userId(),
+                    request.userInput(),
+                    request.skillContext(),
+                    request.safeProfileContext()
+            );
+        }
+
+        public OrchestrationRequest toRequest() {
+            return new OrchestrationRequest(userId, userInput, skillContext, profileContext);
+        }
+
+        private static SkillContext normalizeContext(SkillContext context, String userId, String userInput) {
+            if (context == null) {
+                return new SkillContext(userId, userInput, Map.of());
+            }
+            return new SkillContext(
+                    normalize(context.userId()).isBlank() ? userId : normalize(context.userId()),
+                    normalize(context.input()).isBlank() ? userInput : normalize(context.input()),
+                    context.attributes() == null ? Map.of() : Map.copyOf(context.attributes())
+            );
+        }
+
+        private static String normalize(String value) {
+            return value == null ? "" : value.trim();
         }
     }
 }

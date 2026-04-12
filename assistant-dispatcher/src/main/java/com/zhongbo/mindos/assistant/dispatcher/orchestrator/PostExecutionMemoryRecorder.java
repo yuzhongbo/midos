@@ -89,13 +89,21 @@ public class PostExecutionMemoryRecorder {
                                    String userInput,
                                    SkillResult result,
                                    ExecutionTraceDto trace) {
+        return record(userId, userInput, result, trace, null);
+    }
+
+    public MemoryWriteBatch record(String userId,
+                                   String userInput,
+                                   SkillResult result,
+                                   ExecutionTraceDto trace,
+                                   ReflectionResult reflection) {
         if (result == null) {
             return MemoryWriteBatch.empty();
         }
         return proceduralLoggingWrite(userInput, result)
                 .merge(postSkillSummaryWrite(userInput, result))
                 .merge(executionTraceWrite(trace))
-                .merge(reflectionWrites(userId, userInput, result, trace));
+                .merge(resolveReflectionWrites(userId, userInput, result, trace, reflection));
     }
 
     private MemoryWriteBatch executionTraceWrite(ExecutionTraceDto trace) {
@@ -118,6 +126,17 @@ public class PostExecutionMemoryRecorder {
         }
         ReflectionResult reflection = reflectionAgent.reflect(userId, userInput, trace, result, Map.of(), Map.of());
         return reflection == null ? MemoryWriteBatch.empty() : reflection.memoryWrites();
+    }
+
+    private MemoryWriteBatch resolveReflectionWrites(String userId,
+                                                     String userInput,
+                                                     SkillResult result,
+                                                     ExecutionTraceDto trace,
+                                                     ReflectionResult reflection) {
+        if (reflection != null) {
+            return reflection.memoryWrites();
+        }
+        return reflectionWrites(userId, userInput, result, trace);
     }
 
     private MemoryWriteBatch postSkillSummaryWrite(String userInput, SkillResult result) {

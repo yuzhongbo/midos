@@ -22,6 +22,7 @@ import com.zhongbo.mindos.assistant.dispatcher.orchestrator.memory.MemoryWriteBa
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.memory.OrchestratorMemoryWriter;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.DecisionOrchestrator.OrchestrationOutcome;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.DecisionOrchestrator.OrchestrationRequest;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.DecisionOrchestrator.UserInput;
 import com.zhongbo.mindos.assistant.memory.MemoryGateway;
 import com.zhongbo.mindos.assistant.skill.SkillExecutionGateway;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -33,19 +34,19 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 
 @Component
 public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
 
-    private final DecisionPlanner decisionPlanner;
-    private final TaskGraphPlanner taskGraphPlanner;
-    private final DecisionExecutor decisionExecutor;
-    private final PostExecutionMemoryRecorder memoryRecorder;
-    private final OrchestratorMemoryWriter memoryWriter;
-    private final FailureNormalizer failureNormalizer;
+    private final OrchestrationPlanner planner;
+    private final ParamValidator paramValidator;
+    private final GraphExecutor executor;
+    private final OrchestrationReflectionAnalyzer reflection;
+    private final ExecutionMemoryFacade memoryFacade;
 
     public DefaultDecisionOrchestrator(CandidatePlanner candidatePlanner,
                                        ParamValidator paramValidator,
@@ -61,30 +62,22 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
                                        @Value("${mindos.dispatcher.skill.timeout.eq-coach-im-reply:我先给你一个简短结论：当前请求较复杂，我正在整理更完整建议，稍后继续发你。}") String eqCoachImTimeoutReply,
                                        @Value("${mindos.dispatcher.orchestrator.max-loops:3}") int maxLoops) {
         this(
-                new DefaultDecisionPlanner(),
-                new DefaultTaskGraphPlanner(
-                        candidatePlanner,
-                        fallbackPlan,
-                        new DispatcherMemoryFacade(memoryGateway, null, null),
-                        maxLoops
-                ),
-                new DefaultDecisionExecutor(
+                buildManualWiring(
                         candidatePlanner,
                         paramValidator,
                         conversationLoop,
                         fallbackPlan,
                         skillExecutionGateway,
                         new DispatcherMemoryFacade(memoryGateway, null, null),
+                        memoryRecorder,
                         mcpParallelEnabled,
                         mcpPerSkillTimeoutMs,
                         eqCoachImTimeoutMs,
                         eqCoachImTimeoutReply,
                         maxLoops
                 ),
-                memoryRecorder,
-                new OrchestratorMemoryWriter(
-                        new DispatcherMemoryCommandService(new DispatcherMemoryFacade(memoryGateway, null, null), null)
-                )
+                paramValidator,
+                new DefaultOrchestrationReflectionAnalyzer(null)
         );
     }
 
@@ -102,171 +95,158 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
                                        @Value("${mindos.dispatcher.skill.timeout.eq-coach-im-reply:我先给你一个简短结论：当前请求较复杂，我正在整理更完整建议，稍后继续发你。}") String eqCoachImTimeoutReply,
                                        @Value("${mindos.dispatcher.orchestrator.max-loops:3}") int maxLoops) {
         this(
-                new DefaultDecisionPlanner(),
-                new DefaultTaskGraphPlanner(
-                        candidatePlanner,
-                        fallbackPlan,
-                        dispatcherMemoryFacade,
-                        maxLoops
-                ),
-                new DefaultDecisionExecutor(
+                buildManualWiring(
                         candidatePlanner,
                         paramValidator,
                         conversationLoop,
                         fallbackPlan,
                         skillExecutionGateway,
                         dispatcherMemoryFacade,
+                        memoryRecorder,
                         mcpParallelEnabled,
                         mcpPerSkillTimeoutMs,
                         eqCoachImTimeoutMs,
                         eqCoachImTimeoutReply,
                         maxLoops
                 ),
-                memoryRecorder,
-                new OrchestratorMemoryWriter(new DispatcherMemoryCommandService(dispatcherMemoryFacade, null))
+                paramValidator,
+                new DefaultOrchestrationReflectionAnalyzer(null)
         );
+    }
+
+    private DefaultDecisionOrchestrator(ManualWiring wiring,
+                                        ParamValidator paramValidator,
+                                        OrchestrationReflectionAnalyzer reflection) {
+        this(wiring.planner(), paramValidator, wiring.executor(), reflection, wiring.memoryFacade());
     }
 
     @Autowired
-    public DefaultDecisionOrchestrator(DecisionPlanner decisionPlanner,
-                                       TaskGraphPlanner taskGraphPlanner,
-                                       DecisionExecutor decisionExecutor,
-                                       PostExecutionMemoryRecorder memoryRecorder,
-                                       OrchestratorMemoryWriter memoryWriter) {
-        this.decisionPlanner = decisionPlanner;
-        this.taskGraphPlanner = taskGraphPlanner;
-        this.decisionExecutor = decisionExecutor;
-        this.memoryRecorder = memoryRecorder;
-        this.memoryWriter = memoryWriter;
-        this.failureNormalizer = new FailureNormalizer();
+    public DefaultDecisionOrchestrator(OrchestrationPlanner planner,
+                                       ParamValidator paramValidator,
+                                       GraphExecutor executor,
+                                       OrchestrationReflectionAnalyzer reflection,
+                                       ExecutionMemoryFacade memoryFacade) {
+        this.planner = planner;
+        this.paramValidator = paramValidator;
+        this.executor = executor;
+        this.reflection = reflection;
+        this.memoryFacade = memoryFacade;
     }
 
     @Override
-    public SkillResult execute(String userInput, String intent, Map<String, Object> params) {
-        Map<String, Object> safeParams = params == null ? Map.of() : Map.copyOf(params);
-        SkillContext context = new SkillContext("", userInput == null ? "" : userInput, safeParams);
-        Decision decision = decisionPlanner.plan(userInput, intent, safeParams, context);
-        OrchestrationRequest request = new OrchestrationRequest("", userInput == null ? "" : userInput, context, Map.of());
-        TaskGraphPlan taskGraphPlan = taskGraphPlanner.plan(decision, request);
-        OrchestrationOutcome outcome = decisionExecutor.execute(taskGraphPlan, request);
-        if (outcome.hasResult() && outcome.result() != null && outcome.result().success()) {
-            return outcome.result();
-        }
-        if (outcome.hasClarification()) {
-            return outcome.clarification();
-        }
-        if (outcome.hasResult()) {
-            List<String> attemptedCandidates = outcome.trace() == null || outcome.trace().steps() == null
-                    ? List.of()
-                    : outcome.trace().steps().stream()
-                    .map(PlanStepDto::channel)
-                    .filter(channel -> channel != null && !channel.isBlank())
-                    .distinct()
-                    .toList();
-            return failureNormalizer.unifiedFailureResult(userInput, intent, attemptedCandidates, outcome.result());
-        }
-        return failureNormalizer.unifiedFailureResult(
-                userInput,
-                intent,
-                List.of(),
-                SkillResult.failure("decision.orchestrator", "all candidates failed")
-        );
-    }
-
-    @Override
-    public OrchestrationOutcome planAndExecute(OrchestrationRequest request, String intent, Map<String, Object> params) {
-        Map<String, Object> safeParams = params == null ? Map.of() : Map.copyOf(params);
-        SkillContext context = request == null || request.skillContext() == null
-                ? new SkillContext(request == null ? "" : request.userId(), request == null ? "" : request.userInput(), safeParams)
-                : request.skillContext();
-        Decision decision = decisionPlanner.plan(
-                request == null ? "" : request.userInput(),
-                intent,
-                safeParams,
-                context
-        );
-        OrchestrationRequest effectiveRequest = request == null
-                ? new OrchestrationRequest("", context.input(), context, Map.of())
-                : new OrchestrationRequest(request.userId(), request.userInput(), context, request.safeProfileContext());
-        return decisionExecutor.execute(taskGraphPlanner.plan(decision, effectiveRequest), effectiveRequest);
+    public OrchestrationOutcome handle(UserInput input) {
+        Decision decision = planner.plan(UserInput.safe(input));
+        ParamValidator.ValidationResult validation = paramValidator.validate(decision);
+        TaskGraph graph = planner.buildGraph(validation.applyTo(decision));
+        OrchestrationExecutionResult result = reflection.analyze(executor.execute(graph).normalizeFailures());
+        memoryFacade.record(result);
+        return result.outcome();
     }
 
     @Override
     public OrchestrationOutcome orchestrate(Decision decision, OrchestrationRequest request) {
-        return decisionExecutor.execute(taskGraphPlanner.plan(decision, request), request);
+        Decision validatedDecision = paramValidator.validate(
+                DecisionInputMetadata.enrich(decision, UserInput.from(request))
+        ).applyTo(DecisionInputMetadata.enrich(decision, UserInput.from(request)));
+        return executor.execute(planner.buildGraph(validatedDecision)).outcome();
     }
 
     @Override
     public void recordOutcome(String userId, String userInput, SkillResult result, ExecutionTraceDto trace) {
-        commitMemoryWrites(userId, memoryRecorder.record(userId, userInput, result, trace));
+        memoryFacade.record(userId, userInput, result, trace);
     }
 
     @Override
     public void commitMemoryWrites(String userId, MemoryWriteBatch batch) {
-        if (memoryWriter != null) {
-            memoryWriter.commit(userId, batch);
-        }
+        memoryFacade.commit(userId, batch);
     }
 
     void setSearchPlanner(SearchPlanner searchPlanner) {
-        DefaultTaskGraphPlanner planner = defaultTaskGraphPlanner();
-        if (planner != null) {
-            planner.setSearchPlanner(searchPlanner);
-        }
+        configure(defaultPlanner(), planner -> planner.setSearchPlanner(searchPlanner));
     }
 
     void setProceduralMemory(ProceduralMemory proceduralMemory) {
-        DefaultTaskGraphPlanner planner = defaultTaskGraphPlanner();
-        if (planner != null) {
-            planner.setProceduralMemory(proceduralMemory);
-        }
-        DefaultDecisionExecutor executor = defaultExecutor();
-        if (executor != null) {
-            executor.setProceduralMemory(proceduralMemory);
-        }
+        configure(defaultPlanner(), planner -> planner.setProceduralMemory(proceduralMemory));
+        configure(defaultExecutor(), graphExecutor -> graphExecutor.setProceduralMemory(proceduralMemory));
     }
 
     void setPlannerLearningStore(PlannerLearningStore plannerLearningStore) {
-        DefaultDecisionExecutor executor = defaultExecutor();
-        if (executor != null) {
-            executor.setPlannerLearningStore(plannerLearningStore);
-        }
+        configure(defaultExecutor(), graphExecutor -> graphExecutor.setPlannerLearningStore(plannerLearningStore));
     }
 
     void setPolicyUpdater(PolicyUpdater policyUpdater) {
-        DefaultDecisionExecutor executor = defaultExecutor();
-        if (executor != null) {
-            executor.setPolicyUpdater(policyUpdater);
-        }
+        configure(defaultExecutor(), graphExecutor -> graphExecutor.setPolicyUpdater(policyUpdater));
     }
 
     void setAgentRouter(AgentRouter agentRouter) {
-        DefaultDecisionExecutor executor = defaultExecutor();
-        if (executor != null) {
-            executor.setAgentRouter(agentRouter);
-        }
+        configure(defaultExecutor(), graphExecutor -> graphExecutor.setAgentRouter(agentRouter));
     }
 
     void setRecoveryManager(RecoveryManager recoveryManager) {
-        DefaultDecisionExecutor executor = defaultExecutor();
-        if (executor != null) {
-            executor.setRecoveryManager(recoveryManager);
-        }
+        configure(defaultExecutor(), graphExecutor -> graphExecutor.setRecoveryManager(recoveryManager));
     }
 
     void setTraceLogger(TraceLogger traceLogger) {
-        DefaultDecisionExecutor executor = defaultExecutor();
-        if (executor != null) {
-            executor.setTraceLogger(traceLogger);
-        }
+        configure(defaultExecutor(), graphExecutor -> graphExecutor.setTraceLogger(traceLogger));
     }
 
-    private DefaultDecisionExecutor defaultExecutor() {
-        return decisionExecutor instanceof DefaultDecisionExecutor executor ? executor : null;
+    private DefaultGraphExecutor defaultExecutor() {
+        return executor instanceof DefaultGraphExecutor graphExecutor ? graphExecutor : null;
     }
 
-    private DefaultTaskGraphPlanner defaultTaskGraphPlanner() {
-        return taskGraphPlanner instanceof DefaultTaskGraphPlanner planner ? planner : null;
+    private DefaultOrchestrationPlanner defaultPlanner() {
+        return planner instanceof DefaultOrchestrationPlanner orchestrationPlanner ? orchestrationPlanner : null;
+    }
+
+    private <T> void configure(T value, Consumer<T> action) {
+        Optional.ofNullable(value).ifPresent(action);
+    }
+
+    private static ManualWiring buildManualWiring(CandidatePlanner candidatePlanner,
+                                                  ParamValidator paramValidator,
+                                                  ConversationLoop conversationLoop,
+                                                  FallbackPlan fallbackPlan,
+                                                  SkillExecutionGateway skillExecutionGateway,
+                                                  DispatcherMemoryFacade dispatcherMemoryFacade,
+                                                  PostExecutionMemoryRecorder memoryRecorder,
+                                                  boolean mcpParallelEnabled,
+                                                  long mcpPerSkillTimeoutMs,
+                                                  long eqCoachImTimeoutMs,
+                                                  String eqCoachImTimeoutReply,
+                                                  int maxLoops) {
+        GraphExecutionPlanStore planStore = new GraphExecutionPlanStore();
+        DefaultTaskGraphPlanner taskGraphPlanner = new DefaultTaskGraphPlanner(
+                candidatePlanner,
+                fallbackPlan,
+                dispatcherMemoryFacade,
+                maxLoops
+        );
+        DefaultDecisionExecutor decisionExecutor = new DefaultDecisionExecutor(
+                candidatePlanner,
+                paramValidator,
+                conversationLoop,
+                fallbackPlan,
+                skillExecutionGateway,
+                dispatcherMemoryFacade,
+                mcpParallelEnabled,
+                mcpPerSkillTimeoutMs,
+                eqCoachImTimeoutMs,
+                eqCoachImTimeoutReply,
+                maxLoops
+        );
+        return new ManualWiring(
+                new DefaultOrchestrationPlanner(new DefaultDecisionPlanner(), taskGraphPlanner, planStore),
+                new DefaultGraphExecutor(decisionExecutor, planStore),
+                new DefaultExecutionMemoryFacade(
+                        memoryRecorder,
+                        new OrchestratorMemoryWriter(new DispatcherMemoryCommandService(dispatcherMemoryFacade, null))
+                )
+        );
+    }
+
+    private record ManualWiring(OrchestrationPlanner planner,
+                                GraphExecutor executor,
+                                ExecutionMemoryFacade memoryFacade) {
     }
 }
 

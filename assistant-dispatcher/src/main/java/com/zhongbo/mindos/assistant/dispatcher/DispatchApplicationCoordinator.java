@@ -11,6 +11,7 @@ import com.zhongbo.mindos.assistant.dispatcher.agent.multiagent.MasterOrchestrat
 import com.zhongbo.mindos.assistant.dispatcher.agent.multiagent.MasterOrchestrator;
 import com.zhongbo.mindos.assistant.dispatcher.decision.Decision;
 import com.zhongbo.mindos.assistant.dispatcher.MetaOrchestratorService.MetaOrchestrationResult;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.DecisionPlanner;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.DecisionOrchestrator;
 import com.zhongbo.mindos.assistant.dispatcher.routing.DispatchPlan;
 import com.zhongbo.mindos.assistant.dispatcher.routing.RoutingCoordinator;
@@ -32,10 +33,13 @@ import java.util.logging.Logger;
 final class DispatchApplicationCoordinator {
 
     private static final Logger LOGGER = Logger.getLogger(DispatchApplicationCoordinator.class.getName());
+    private static final String PLANNER_ROUTE_SOURCE_KEY = "_plannerRouteSource";
+    private static final String RULE_FALLBACK_SOURCE = "rule-fallback";
 
     private final DispatchMemoryLifecycle dispatchMemoryLifecycle;
     private final DispatchPreparationSupport dispatchPreparationSupport;
     private final DispatchRoutingPipeline dispatchRoutingPipeline;
+    private final DecisionPlanner decisionPlanner;
     private final DecisionOrchestrator decisionOrchestrator;
     private final MetaOrchestratorService metaOrchestratorService;
     private final DispatchResultFinalizer dispatchResultFinalizer;
@@ -50,6 +54,7 @@ final class DispatchApplicationCoordinator {
     DispatchApplicationCoordinator(DispatchMemoryLifecycle dispatchMemoryLifecycle,
                                    DispatchPreparationSupport dispatchPreparationSupport,
                                    DispatchRoutingPipeline dispatchRoutingPipeline,
+                                   DecisionPlanner decisionPlanner,
                                    DecisionOrchestrator decisionOrchestrator,
                                    MetaOrchestratorService metaOrchestratorService,
                                    DispatchResultFinalizer dispatchResultFinalizer,
@@ -61,6 +66,7 @@ final class DispatchApplicationCoordinator {
         this.dispatchMemoryLifecycle = dispatchMemoryLifecycle;
         this.dispatchPreparationSupport = dispatchPreparationSupport;
         this.dispatchRoutingPipeline = dispatchRoutingPipeline;
+        this.decisionPlanner = decisionPlanner;
         this.decisionOrchestrator = decisionOrchestrator;
         this.metaOrchestratorService = metaOrchestratorService;
         this.dispatchResultFinalizer = dispatchResultFinalizer;
@@ -393,12 +399,16 @@ final class DispatchApplicationCoordinator {
                                                               DispatchExecutionState executionState,
                                                               Map<String, Object> resolvedProfileContext) {
         return CompletableFuture.supplyAsync(() -> {
-            DecisionOrchestrator.OrchestrationOutcome outcome = decisionOrchestrator.planAndExecute(
-                    new DecisionOrchestrator.OrchestrationRequest(userId, userInput, context, resolvedProfileContext),
-                    "",
-                    context == null || context.attributes() == null ? Map.of() : context.attributes()
+            DecisionOrchestrator.OrchestrationOutcome outcome = decisionOrchestrator.handle(
+                    new DecisionOrchestrator.UserInput(
+                            userId,
+                            userInput,
+                            context,
+                            resolvedProfileContext
+                    )
             );
             executionState.setRoutingDecision(buildPrimaryRoutingDecision(outcome));
+            executionState.setOutcomeAlreadyRecorded(outcome != null);
             if (outcome == null) {
                 return SkillResult.failure("decision.orchestrator", "primary orchestrator produced no result");
             }
@@ -424,14 +434,25 @@ final class DispatchApplicationCoordinator {
                 ? Map.of()
                 : context.attributes();
         Object explicitRoute = attributes.get("dispatcherPrimaryRoute");
-        if (explicitRoute instanceof Boolean booleanValue && booleanValue) {
-            return true;
+        if (explicitRoute instanceof Boolean booleanValue) {
+            return booleanValue;
         }
         String explicitTarget = attributeText(attributes, "explicitTarget");
         if (explicitTarget != null) {
             return true;
         }
-        return attributeText(attributes, "explicitSkill") != null;
+        if (attributeText(attributes, "explicitSkill") != null) {
+            return true;
+        }
+        if (decisionPlanner == null) {
+            return false;
+        }
+        Decision plannedDecision = decisionPlanner.plan(userInput, "", attributes, context);
+        if (plannedDecision == null || plannedDecision.params() == null) {
+            return false;
+        }
+        Object routeSource = plannedDecision.params().get(PLANNER_ROUTE_SOURCE_KEY);
+        return RULE_FALLBACK_SOURCE.equals(String.valueOf(routeSource).trim());
     }
 
     private String attributeText(Map<String, Object> attributes, String key) {
