@@ -14,6 +14,7 @@ import java.util.Map;
 public class DefaultDecisionPlanner implements DecisionPlanner {
 
     private final SkillEngineFacade skillEngine;
+    private final DecisionTargetResolver targetResolver;
 
     public DefaultDecisionPlanner() {
         this(null);
@@ -22,6 +23,7 @@ public class DefaultDecisionPlanner implements DecisionPlanner {
     @Autowired
     public DefaultDecisionPlanner(SkillEngineFacade skillEngine) {
         this.skillEngine = skillEngine;
+        this.targetResolver = new DecisionTargetResolver();
     }
 
     @Override
@@ -29,7 +31,7 @@ public class DefaultDecisionPlanner implements DecisionPlanner {
         Map<String, Object> plannedParams = enrichParams(params, context);
         String target = resolveTarget(intent, plannedParams, context, userInput);
         double confidence = resolveConfidence(target, intent, plannedParams, context);
-        String effectiveIntent = hasTarget(intent) ? intent.trim() : target;
+        String effectiveIntent = resolveIntent(intent, context, target);
         return new Decision(effectiveIntent == null ? "" : effectiveIntent, target, plannedParams, confidence, false);
     }
 
@@ -68,22 +70,27 @@ public class DefaultDecisionPlanner implements DecisionPlanner {
                                  SkillContext context,
                                  String userInput) {
         if (params != null) {
-            Object explicitTarget = params.get("_target");
-            if (explicitTarget instanceof String target && hasTarget(target)) {
-                return target.trim();
+            String explicitTarget = targetResolver.canonicalize(stringValue(params.get("_target")));
+            if (hasTarget(explicitTarget)) {
+                return explicitTarget;
             }
-            Object paramTarget = params.get("target");
-            if ((intent == null || intent.isBlank()) && paramTarget instanceof String target && hasTarget(target)) {
-                return target.trim();
+            String paramTarget = targetResolver.canonicalize(stringValue(params.get("target")));
+            if ((intent == null || intent.isBlank()) && hasTarget(paramTarget)) {
+                return paramTarget;
             }
         }
-        if (hasTarget(intent)) {
-            return intent.trim();
+        String intentTarget = targetResolver.canonicalize(intent);
+        if (hasTarget(intentTarget)) {
+            return intentTarget;
         }
         Map<String, Object> attributes = context == null || context.attributes() == null ? Map.of() : context.attributes();
-        String semanticTarget = stringValue(attributes.get(SemanticAnalysisResult.ATTR_SUGGESTED_SKILL));
+        String semanticTarget = targetResolver.canonicalize(stringValue(attributes.get(SemanticAnalysisResult.ATTR_SUGGESTED_SKILL)));
         if (hasTarget(semanticTarget)) {
-            return semanticTarget.trim();
+            return semanticTarget;
+        }
+        String semanticIntentTarget = targetResolver.canonicalize(stringValue(attributes.get(SemanticAnalysisResult.ATTR_INTENT)));
+        if (hasTarget(semanticIntentTarget)) {
+            return semanticIntentTarget;
         }
         if (skillEngine != null) {
             String detectionInput = firstNonBlank(
@@ -92,7 +99,7 @@ public class DefaultDecisionPlanner implements DecisionPlanner {
                     userInput
             );
             if (hasTarget(detectionInput)) {
-                return skillEngine.detectSkillName(detectionInput).orElse("");
+                return targetResolver.canonicalize(skillEngine.detectSkillName(detectionInput).orElse(""));
             }
         }
         return "";
@@ -102,18 +109,34 @@ public class DefaultDecisionPlanner implements DecisionPlanner {
         if (!hasTarget(target)) {
             return 0.0;
         }
-        if (hasTarget(intent) || hasTarget(stringValue(params.get("_target"))) || hasTarget(stringValue(params.get("target")))) {
+        String explicitTarget = params == null ? "" : targetResolver.canonicalize(stringValue(params.get("_target")));
+        String paramTarget = params == null ? "" : targetResolver.canonicalize(stringValue(params.get("target")));
+        String intentTarget = targetResolver.canonicalize(intent);
+        if (target.equals(explicitTarget) || target.equals(paramTarget) || target.equals(intentTarget)) {
             return 1.0;
         }
         Map<String, Object> attributes = context == null || context.attributes() == null ? Map.of() : context.attributes();
-        String semanticTarget = stringValue(attributes.get(SemanticAnalysisResult.ATTR_SUGGESTED_SKILL));
-        if (target.equals(semanticTarget)) {
+        String semanticTarget = targetResolver.canonicalize(stringValue(attributes.get(SemanticAnalysisResult.ATTR_SUGGESTED_SKILL)));
+        String semanticIntentTarget = targetResolver.canonicalize(stringValue(attributes.get(SemanticAnalysisResult.ATTR_INTENT)));
+        if (target.equals(semanticTarget) || target.equals(semanticIntentTarget)) {
             Object semanticConfidence = attributes.get(SemanticAnalysisResult.ATTR_CONFIDENCE);
             if (semanticConfidence instanceof Number number) {
                 return Math.max(0.0, Math.min(1.0, number.doubleValue()));
             }
         }
         return 0.6;
+    }
+
+    private String resolveIntent(String intent, SkillContext context, String target) {
+        if (hasTarget(intent)) {
+            return intent.trim();
+        }
+        Map<String, Object> attributes = context == null || context.attributes() == null ? Map.of() : context.attributes();
+        String semanticIntent = stringValue(attributes.get(SemanticAnalysisResult.ATTR_INTENT));
+        if (hasTarget(semanticIntent)) {
+            return semanticIntent;
+        }
+        return target;
     }
 
     private boolean hasTarget(String target) {

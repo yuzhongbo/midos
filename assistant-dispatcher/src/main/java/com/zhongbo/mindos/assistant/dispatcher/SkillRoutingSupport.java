@@ -1,11 +1,14 @@
 package com.zhongbo.mindos.assistant.dispatcher;
 
+import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryFacade;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.DecisionPlanner;
 import com.zhongbo.mindos.assistant.skill.SkillEngineFacade;
 
 import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
@@ -16,17 +19,20 @@ final class SkillRoutingSupport {
     private static final Pattern ROUTING_TOKEN_SPLIT_PATTERN = Pattern.compile("[^\\p{L}\\p{N}.#_-]+");
 
     private final SkillEngineFacade skillEngine;
+    private final DecisionPlanner decisionPlanner;
     private final DispatcherMemoryFacade dispatcherMemoryFacade;
     private final BehaviorRoutingSupport behaviorRoutingSupport;
     private final int shortlistMaxSkills;
     private final Function<String, String> memoryBucketResolver;
 
     SkillRoutingSupport(SkillEngineFacade skillEngine,
+                        DecisionPlanner decisionPlanner,
                         DispatcherMemoryFacade dispatcherMemoryFacade,
                         BehaviorRoutingSupport behaviorRoutingSupport,
                         int shortlistMaxSkills,
                         Function<String, String> memoryBucketResolver) {
         this.skillEngine = skillEngine;
+        this.decisionPlanner = decisionPlanner;
         this.dispatcherMemoryFacade = dispatcherMemoryFacade;
         this.behaviorRoutingSupport = behaviorRoutingSupport;
         this.shortlistMaxSkills = Math.max(1, shortlistMaxSkills);
@@ -69,7 +75,7 @@ final class SkillRoutingSupport {
             return List.of();
         }
         Set<String> inputTokens = routingTokens(userInput);
-        String memoryBucket = resolveMemoryBucket(userInput);
+        String plannedTarget = resolvePlannedTarget(userId, userInput);
         Optional<String> preferredFromStats = behaviorRoutingSupport.preferredSkillFromStats(userId);
         Optional<String> preferredFromHistory = behaviorRoutingSupport.preferredSkillFromHistory(
                 dispatcherMemoryFacade.getSkillUsageHistory(userId)
@@ -81,7 +87,7 @@ final class SkillRoutingSupport {
                         summary,
                         normalizedInput,
                         inputTokens,
-                        memoryBucket,
+                        plannedTarget,
                         preferredFromStats,
                         preferredFromHistory)))
                 .sorted(Comparator.comparingInt(SkillRoutingCandidate::score).reversed()
@@ -92,7 +98,7 @@ final class SkillRoutingSupport {
     private int skillRoutingScore(String summary,
                                   String normalizedInput,
                                   Set<String> inputTokens,
-                                  String memoryBucket,
+                                  String plannedTarget,
                                   Optional<String> preferredFromStats,
                                   Optional<String> preferredFromHistory) {
         String skillName = summary;
@@ -107,6 +113,9 @@ final class SkillRoutingSupport {
         if (!normalizedSkillName.isBlank() && normalizedInput.contains(normalizedSkillName)) {
             score += 80;
         }
+        if (!plannedTarget.isBlank() && plannedTarget.equals(normalizedSkillName)) {
+            score += 80;
+        }
         Set<String> skillTokens = routingTokens(skillName + " " + description);
         for (String token : inputTokens) {
             if (skillTokens.contains(token)) {
@@ -119,23 +128,7 @@ final class SkillRoutingSupport {
         if (preferredFromHistory.filter(normalizedSkillName::equals).isPresent()) {
             score += 20;
         }
-        score += bucketRoutingBoost(memoryBucket, normalizedSkillName);
         return score;
-    }
-
-    private int bucketRoutingBoost(String memoryBucket, String skillName) {
-        return switch (memoryBucket) {
-            case "learning" -> "teaching.plan".equals(skillName) ? 80 : 0;
-            case "eq" -> "eq.coach".equals(skillName) ? 80 : 0;
-            case "task" -> "todo.create".equals(skillName) ? 60 : 0;
-            case "coding" -> {
-                if ("code.generate".equals(skillName)) {
-                    yield 80;
-                }
-                yield "file.search".equals(skillName) ? 40 : 0;
-            }
-            default -> 0;
-        };
     }
 
     private Set<String> routingTokens(String text) {
@@ -164,12 +157,21 @@ final class SkillRoutingSupport {
         return value.codePoints().anyMatch(codePoint -> Character.UnicodeScript.of(codePoint) == Character.UnicodeScript.HAN);
     }
 
-    private String resolveMemoryBucket(String input) {
-        if (memoryBucketResolver == null) {
-            return "general";
+    private String resolvePlannedTarget(String userId, String userInput) {
+        if (decisionPlanner == null) {
+            return "";
         }
-        String resolved = memoryBucketResolver.apply(input);
-        return resolved == null || resolved.isBlank() ? "general" : resolved;
+        String routingIntent = "";
+        if (memoryBucketResolver != null) {
+            String resolved = memoryBucketResolver.apply(userInput);
+            routingIntent = resolved == null ? "" : resolved.trim();
+        }
+        return normalize(decisionPlanner.plan(
+                userInput,
+                routingIntent,
+                Map.of(),
+                new SkillContext(userId == null ? "" : userId, userInput == null ? "" : userInput, Map.of())
+        ).target());
     }
 
     private String normalize(String value) {

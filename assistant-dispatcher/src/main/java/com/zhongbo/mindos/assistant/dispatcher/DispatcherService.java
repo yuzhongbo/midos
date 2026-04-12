@@ -24,7 +24,9 @@ import com.zhongbo.mindos.assistant.skill.SkillEngineFacade;
 import com.zhongbo.mindos.assistant.dispatcher.decision.Decision;
 import com.zhongbo.mindos.assistant.dispatcher.decision.DecisionParser;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.CandidatePlanner;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.DecisionPlanner;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.DecisionOrchestrator;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.DefaultDecisionPlanner;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.ParamValidator;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.SimpleCandidatePlanner;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.SimpleConversationLoop;
@@ -527,8 +529,10 @@ public class DispatcherService implements ContextCompressionMetricsReader,
                 this.behaviorLearningDefaultParamThreshold
         );
         this.dispatchRuleCatalog = new DispatchRuleCatalog(this.skillEngine, this.behaviorRoutingSupport);
+        DecisionPlanner compatibilityDecisionPlanner = new DefaultDecisionPlanner(this.skillEngine);
         this.skillRoutingSupport = new SkillRoutingSupport(
                 this.skillEngine,
+                compatibilityDecisionPlanner,
                 this.dispatcherMemoryFacade,
                 this.behaviorRoutingSupport,
                 this.llmRoutingShortlistMaxSkills,
