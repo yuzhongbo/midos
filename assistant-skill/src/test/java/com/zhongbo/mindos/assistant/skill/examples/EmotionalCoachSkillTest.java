@@ -2,8 +2,12 @@ package com.zhongbo.mindos.assistant.skill.examples;
 
 import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.common.SkillResult;
+import com.zhongbo.mindos.assistant.common.command.EqCoachCommandSupport;
 import com.zhongbo.mindos.assistant.skill.SkillRegistry;
 import org.junit.jupiter.api.Test;
+
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -27,7 +31,7 @@ class EmotionalCoachSkillTest {
 
     @Test
     void shouldReturnCoachingPlanForScenario() {
-        SkillResult result = skill.run(new SkillContext("u1", "我和同事沟通有点僵，怎么说更好", java.util.Map.of()));
+        SkillResult result = skill.run(eqContext("u1", "我和同事沟通有点僵，怎么说更好"));
 
         assertTrue(result.success());
         assertEquals("eq.coach", result.skillName());
@@ -72,7 +76,7 @@ class EmotionalCoachSkillTest {
 
     @Test
     void shouldFailWhenScenarioIsBlank() {
-        SkillResult result = skill.run(new SkillContext("u1", "   ", java.util.Map.of()));
+        SkillResult result = skill.run(eqContext("u1", "   "));
 
         assertFalse(result.success());
         assertTrue(result.output().contains("请告诉我一个具体场景"));
@@ -141,11 +145,7 @@ class EmotionalCoachSkillTest {
 
     @Test
     void shouldInferStyleModeAndPriorityFromNaturalLanguage() {
-        SkillResult result = skill.run(new SkillContext(
-                "u1",
-                "请给我职场版，只分析，先看最重要的：我和老板沟通越来越僵",
-                java.util.Map.of()
-        ));
+        SkillResult result = skill.run(eqContext("u1", "请给我职场版，只分析，先看最重要的：我和老板沟通越来越僵"));
 
         assertTrue(result.success());
         assertTrue(result.output().contains("职场版"));
@@ -156,14 +156,21 @@ class EmotionalCoachSkillTest {
 
     @Test
     void shouldAddSafetyHintForHighRiskScenario() {
-        SkillResult result = skill.run(new SkillContext(
-                "u1",
-                "我最近因为关系问题快崩溃了，甚至有点不想活",
-                java.util.Map.of("mode", "analysis")
-        ));
+        SkillResult result = skill.run(eqContext("u1", "我最近因为关系问题快崩溃了，甚至有点不想活", Map.of("mode", "analysis")));
 
         assertTrue(result.success());
         assertTrue(result.output().contains("风险等级: 高"));
         assertTrue(result.output().contains("可信任的人"));
+    }
+
+    private SkillContext eqContext(String userId, String input) {
+        return eqContext(userId, input, Map.of());
+    }
+
+    private SkillContext eqContext(String userId, String input, Map<String, Object> extraAttributes) {
+        SkillContext raw = new SkillContext(userId, input, extraAttributes);
+        Map<String, Object> attributes = new LinkedHashMap<>(new EqCoachCommandSupport().resolveAttributes(raw));
+        attributes.putAll(extraAttributes);
+        return new SkillContext(userId, input, attributes);
     }
 }

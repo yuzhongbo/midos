@@ -2,7 +2,6 @@ package com.zhongbo.mindos.assistant.skill.examples;
 
 import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.common.SkillResult;
-import com.zhongbo.mindos.assistant.common.command.EqCoachCommandSupport;
 import com.zhongbo.mindos.assistant.skill.Skill;
 import com.zhongbo.mindos.assistant.skill.SkillDescriptor;
 import com.zhongbo.mindos.assistant.skill.SkillDescriptorProvider;
@@ -28,8 +27,6 @@ public class EmotionalCoachSkill implements Skill, SkillDescriptorProvider {
             "workplace", "职场版",
             "intimate", "亲密关系版"
     );
-    private final EqCoachCommandSupport commandSupport = new EqCoachCommandSupport();
-
     @Override
     public String name() {
         return "eq.coach";
@@ -51,16 +48,16 @@ public class EmotionalCoachSkill implements Skill, SkillDescriptorProvider {
 
     @Override
     public SkillResult run(SkillContext context) {
-        Map<String, Object> resolved = commandSupport.resolveAttributes(context);
-        String scenario = text(resolved.get("query"));
+        Map<String, Object> attributes = attributes(context);
+        String scenario = text(attributes.get("query"));
         if (scenario.isBlank()) {
             return SkillResult.failure(name(), "请告诉我一个具体场景，我会给你高情商沟通建议。");
         }
 
-        String style = normalizeStyle(text(resolved.get("style")));
+        String style = normalizeStyle(text(attributes.get("style")));
         String styleLabel = STYLE_LABELS.getOrDefault(style, "温和版");
-        String mode = normalizeMode(text(resolved.get("mode")));
-        String priorityFocus = normalizePriorityFocus(text(resolved.get("priorityFocus")));
+        String mode = normalizeMode(text(attributes.get("mode")));
+        String priorityFocus = normalizePriorityFocus(text(attributes.get("priorityFocus")));
         String riskLevel = assessRiskLevel(scenario);
         int confidence = estimateConfidence(scenario);
 
@@ -82,6 +79,13 @@ public class EmotionalCoachSkill implements Skill, SkillDescriptorProvider {
         output.append(build24HourChecklist(riskLevel, priorityFocus));
 
         return SkillResult.success(name(), output.toString());
+    }
+
+    private Map<String, Object> attributes(SkillContext context) {
+        if (context == null || context.attributes() == null) {
+            return Map.of();
+        }
+        return context.attributes();
     }
 
     private String buildReplyByStyle(String style, String scenario, String styleLabel) {

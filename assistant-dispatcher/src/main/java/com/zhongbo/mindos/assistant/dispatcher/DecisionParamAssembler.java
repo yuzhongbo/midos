@@ -51,7 +51,7 @@ final class DecisionParamAssembler {
             if (skillCommandAssembler != null) {
                 return skillCommandAssembler.buildDetectedSkillDsl(skillName, context.input(), params)
                         .map(SkillDsl::input)
-                        .map(LinkedHashMap::new)
+                        .map(input -> (Map<String, Object>) new LinkedHashMap<>(input))
                         .orElse(params);
             }
             return params;

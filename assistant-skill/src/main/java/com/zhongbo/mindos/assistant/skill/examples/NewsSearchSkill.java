@@ -4,7 +4,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zhongbo.mindos.assistant.common.LlmClient;
 import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.common.SkillResult;
-import com.zhongbo.mindos.assistant.common.command.NewsSearchCommandSupport;
 import com.zhongbo.mindos.assistant.skill.Skill;
 import com.zhongbo.mindos.assistant.skill.SkillDescriptor;
 import com.zhongbo.mindos.assistant.skill.SkillDescriptorProvider;
@@ -83,7 +82,6 @@ public class NewsSearchSkill implements Skill, SkillDescriptorProvider {
     private final String serperSearchUrl;
     private final String serperApiKey;
     private final ConcurrentHashMap<String, CacheEntry> cache = new ConcurrentHashMap<>();
-    private final NewsSearchCommandSupport commandSupport = new NewsSearchCommandSupport();
 
     @Autowired
     public NewsSearchSkill(LlmClient llmClient,
@@ -257,7 +255,7 @@ public class NewsSearchSkill implements Skill, SkillDescriptorProvider {
         if (!enabled) {
             return SkillResult.failure(name(), "news_search 已禁用，请联系管理员开启。");
         }
-        Map<String, Object> resolved = commandSupport.resolveAttributes(context);
+        Map<String, Object> resolved = attributes(context);
         String query = asTrimmedText(resolved.get("query"));
         if (query.isBlank()) {
             return SkillResult.failure(name(), "请提供新闻关键词，例如：news_search AI 芯片");
@@ -872,7 +870,24 @@ public class NewsSearchSkill implements Skill, SkillDescriptorProvider {
         if (rawLimit instanceof Number number && number.intValue() > 0) {
             return number.intValue();
         }
-        return maxItems;
+        if (rawLimit != null) {
+            try {
+                int parsed = Integer.parseInt(String.valueOf(rawLimit).trim());
+                if (parsed > 0) {
+                    return parsed;
+                }
+            } catch (NumberFormatException ignored) {
+                return 5;
+            }
+        }
+        return 5;
+    }
+
+    private Map<String, Object> attributes(SkillContext context) {
+        if (context == null || context.attributes() == null) {
+            return Map.of();
+        }
+        return context.attributes();
     }
 
     private List<NewsItem> parseFeed(String xml, String source) throws Exception {
@@ -1025,19 +1040,6 @@ public class NewsSearchSkill implements Skill, SkillDescriptorProvider {
 
     private String normalize(String value) {
         return value == null ? "" : value.trim().toLowerCase(Locale.ROOT).replaceAll("\\s+", " ");
-    }
-
-    private boolean containsAny(String text, String... terms) {
-        if (text == null || text.isBlank() || terms == null || terms.length == 0) {
-            return false;
-        }
-        for (String term : terms) {
-            String normalizedTerm = normalize(term);
-            if (!normalizedTerm.isBlank() && text.contains(normalizedTerm)) {
-                return true;
-            }
-        }
-        return false;
     }
 
     private void trySetFeature(DocumentBuilderFactory factory, String feature, boolean enabled) {

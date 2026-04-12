@@ -38,7 +38,10 @@ public final class NewsSearchCommandSupport {
         if (!sort.isBlank()) {
             resolved.put("sort", sort);
         }
-        resolved.put("limit", resolveLimit(context));
+        int limit = resolveLimit(context);
+        if (limit > 0) {
+            resolved.put("limit", limit);
+        }
         return Map.copyOf(resolved);
     }
 

@@ -8,7 +8,9 @@ import com.zhongbo.mindos.assistant.common.dto.ExecutionTraceDto;
 import com.zhongbo.mindos.assistant.common.dto.PlanStepDto;
 import com.zhongbo.mindos.assistant.dispatcher.agent.taskgraph.DAGExecutor;
 import com.zhongbo.mindos.assistant.dispatcher.agent.taskgraph.StructuredExecutionRuntime;
+import com.zhongbo.mindos.assistant.dispatcher.agent.taskgraph.TaskGraph;
 import com.zhongbo.mindos.assistant.dispatcher.agent.taskgraph.TaskGraphExecutionResult;
+import com.zhongbo.mindos.assistant.dispatcher.agent.taskgraph.TaskNode;
 import com.zhongbo.mindos.assistant.dispatcher.decision.Decision;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.DecisionOrchestrator.OrchestrationOutcome;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.DecisionOrchestrator.OrchestrationRequest;
@@ -280,54 +282,69 @@ final class FastPathCoordinator {
                                                           int inheritedReplans,
                                                           String strategy,
                                                           String traceId) {
-        List<CompletableFuture<SkillResult>> futures = new ArrayList<>();
-        List<PreparedExecution> preparedExecutions = new ArrayList<>();
-        List<Instant> startedTimes = new ArrayList<>();
-        for (CandidateExecution candidate : candidates) {
-            PreparedExecution prepared = prepareExecution(decision, candidate, request, traceId);
-            SkillContext skillContext = prepared.context();
-            CompletableFuture<SkillResult> execution = applySkillTimeoutIfNeeded(
-                    candidate.skillName(),
-                    skillContext,
-                    skillExecutionGateway.executeDslAsync(new SkillDsl(candidate.skillName(), candidate.params()), skillContext)
-            )
-                    .completeOnTimeout(SkillResult.failure(candidate.skillName(), "timeout"), mcpPerSkillTimeoutMs, TimeUnit.MILLISECONDS)
-                    .exceptionally(error -> SkillResult.failure(candidate.skillName(), String.valueOf(error.getMessage())));
-            futures.add(execution);
-            preparedExecutions.add(prepared);
-            startedTimes.add(Instant.now());
-        }
-        CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
-        List<PlanStepDto> steps = new ArrayList<>(inheritedSteps == null ? List.of() : inheritedSteps);
-        List<SkillResult> successes = new ArrayList<>();
+        Map<String, CandidateExecution> candidatesByNodeId = new LinkedHashMap<>();
+        Map<String, PreparedExecution> preparedByNodeId = new LinkedHashMap<>();
+        Map<String, Instant> startedTimes = new LinkedHashMap<>();
+        List<TaskNode> nodes = new ArrayList<>();
         for (int i = 0; i < candidates.size(); i++) {
-            SkillResult result = futures.get(i).join();
             CandidateExecution candidate = candidates.get(i);
-            PreparedExecution prepared = preparedExecutions.get(i);
-            long durationMs = Math.max(0L, java.time.Duration.between(startedTimes.get(i), Instant.now()).toMillis());
+            String nodeId = "parallel-" + (i + 1);
+            PreparedExecution prepared = prepareExecution(decision, candidate, request, traceId);
+            candidatesByNodeId.put(nodeId, candidate);
+            preparedByNodeId.put(nodeId, prepared);
+            startedTimes.put(nodeId, Instant.now());
+            nodes.add(new TaskNode(nodeId, candidate.skillName(), candidate.params(), List.of(), "", false));
+        }
+        TaskGraphExecutionResult executionResult = structuredExecutionRuntime.execute(
+                new TaskGraph(nodes),
+                request == null ? null : request.skillContext(),
+                (node, nodeContext) -> {
+                    CandidateExecution candidate = candidatesByNodeId.get(node.id());
+                    PreparedExecution prepared = preparedByNodeId.get(node.id());
+                    SkillResult result = candidate == null || prepared == null
+                            ? SkillResult.failure(node.target(), "parallel candidate missing")
+                            : executeWithTimeout(candidate.skillName(), candidate.params(), prepared.context());
+                    return new DAGExecutor.NodeExecution(result, candidate != null && candidate.usedFallback());
+                }
+        );
+        List<PlanStepDto> steps = new ArrayList<>(inheritedSteps == null ? List.of() : inheritedSteps);
+        List<ParallelSuccess> successes = new ArrayList<>();
+        for (TaskGraphExecutionResult.NodeResult nodeResult : executionResult.nodeResults()) {
+            CandidateExecution candidate = candidatesByNodeId.get(nodeResult.nodeId());
+            PreparedExecution prepared = preparedByNodeId.get(nodeResult.nodeId());
+            SkillResult result = nodeResult.result() == null
+                    ? SkillResult.failure(nodeResult.target(), "structured execution returned no result")
+                    : nodeResult.result();
+            Instant startedAt = startedTimes.getOrDefault(nodeResult.nodeId(), Instant.now());
+            Instant finishedAt = Instant.now();
+            long durationMs = Math.max(0L, java.time.Duration.between(startedAt, finishedAt).toMillis());
             steps.add(new PlanStepDto(
-                    "parallel-" + (i + 1),
-                    result.success() ? "success" : "failed",
-                    candidate.skillName(),
-                    buildStepNote(candidate.candidate(), result),
-                    Instant.now().minusMillis(1),
-                    Instant.now()
+                    nodeResult.nodeId(),
+                    nodeResult.status(),
+                    nodeResult.target(),
+                    candidate == null ? result.output() : buildStepNote(candidate.candidate(), result),
+                    startedAt,
+                    finishedAt
             ));
-            observeLearning(request, candidate, prepared.routeDecision(), result, durationMs, traceId);
+            if (candidate != null && prepared != null) {
+                observeLearning(request, candidate, prepared.routeDecision(), result, durationMs, traceId);
+            }
             bridge.traceEvent(traceId, "execute", "mcp-step", Map.of(
-                    "skill", candidate.skillName(),
+                    "skill", nodeResult.target(),
                     "success", result.success(),
-                    "routeType", prepared.routeDecision().routeType().name(),
+                    "routeType", prepared == null ? "UNKNOWN" : prepared.routeDecision().routeType().name(),
                     "durationMs", durationMs
             ));
             if (result.success()) {
-                successes.add(result);
+                successes.add(new ParallelSuccess(candidate, result));
             }
         }
         if (successes.isEmpty()) {
-            SkillResult failedResult = candidates.isEmpty()
+            SkillResult failedResult = executionResult.finalResult() == null
+                    ? (candidates.isEmpty()
                     ? SkillResult.failure("unknown", "MCP 调用失败或超时")
-                    : futures.get(0).join();
+                    : SkillResult.failure(candidates.get(0).skillName(), "MCP 调用失败或超时"))
+                    : executionResult.finalResult();
             ExecutionTraceDto trace = new ExecutionTraceDto(
                     strategy == null || strategy.isBlank() ? "decision-orchestrator" : strategy,
                     inheritedReplans,
@@ -343,8 +360,8 @@ final class FastPathCoordinator {
                     true
             );
         }
-        SkillResult selected = successes.stream()
-                .sorted((left, right) -> Integer.compare(priorityRank(left.skillName()), priorityRank(right.skillName())))
+        ParallelSuccess selected = successes.stream()
+                .sorted((left, right) -> Integer.compare(priorityRank(left.result().skillName()), priorityRank(right.result().skillName())))
                 .findFirst()
                 .orElse(successes.get(0));
         ExecutionTraceDto trace = new ExecutionTraceDto(
@@ -354,11 +371,14 @@ final class FastPathCoordinator {
                 steps
         );
         return new OrchestrationOutcome(
-                selected,
-                new SkillDsl(selected.skillName(), candidates.get(0).params()),
+                selected.result(),
+                new SkillDsl(
+                        selected.result().skillName(),
+                        selected.candidate() == null ? Map.of() : selected.candidate().params()
+                ),
                 null,
                 trace,
-                selected.skillName(),
+                selected.result().skillName(),
                 true
         );
     }
@@ -627,6 +647,9 @@ final class FastPathCoordinator {
     }
 
     private record PreparedExecution(SkillContext context, AgentRouter.AgentRouteDecision routeDecision) {
+    }
+
+    private record ParallelSuccess(CandidateExecution candidate, SkillResult result) {
     }
 
     private record CandidateExecution(ScoredCandidate candidate, Map<String, Object> params, boolean usedFallback) {

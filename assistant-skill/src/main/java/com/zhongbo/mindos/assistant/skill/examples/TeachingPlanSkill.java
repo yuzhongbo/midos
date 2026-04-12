@@ -5,7 +5,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zhongbo.mindos.assistant.common.LlmClient;
 import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.common.SkillResult;
-import com.zhongbo.mindos.assistant.common.command.TeachingPlanCommandSupport;
 import com.zhongbo.mindos.assistant.skill.Skill;
 import com.zhongbo.mindos.assistant.skill.SkillDescriptor;
 import com.zhongbo.mindos.assistant.skill.SkillDescriptorProvider;
@@ -70,14 +69,14 @@ public class TeachingPlanSkill implements Skill, SkillDescriptorProvider {
     }
 
     private PlanRequest buildRequest(SkillContext context) {
-        Map<String, Object> attributes = TeachingPlanCommandSupport.resolveAttributes(context);
+        Map<String, Object> attributes = attributes(context);
         String studentId = firstNonBlank(
                 asString(attributes, "studentId"),
                 context.userId()
         );
         String topic = firstNonBlank(asString(attributes, "topic"), "通用能力提升");
         String goal = firstNonBlank(asString(attributes, "goal"), "夯实基础并稳定提升");
-        int durationWeeks = asInt(attributes.get("durationWeeks"), 8);
+        int durationWeeks = asInt(attributes.get("durationWeeks"), 4);
         int weeklyHours = asInt(attributes.get("weeklyHours"), 6);
 
         return new PlanRequest(
@@ -93,6 +92,13 @@ public class TeachingPlanSkill implements Skill, SkillDescriptorProvider {
                 asStringList(attributes.get("constraints")),
                 asStringList(attributes.get("resourcePreference"))
         );
+    }
+
+    private Map<String, Object> attributes(SkillContext context) {
+        if (context == null || context.attributes() == null) {
+            return Map.of();
+        }
+        return context.attributes();
     }
 
     private Optional<Map<String, Object>> generatePlanWithLlm(PlanRequest request, SkillContext context) {

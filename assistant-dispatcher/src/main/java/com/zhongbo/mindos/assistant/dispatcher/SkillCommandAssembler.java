@@ -2,6 +2,7 @@ package com.zhongbo.mindos.assistant.dispatcher;
 
 import com.zhongbo.mindos.assistant.common.SkillDsl;
 import com.zhongbo.mindos.assistant.common.SkillContext;
+import com.zhongbo.mindos.assistant.common.command.CodeGenerateCommandSupport;
 import com.zhongbo.mindos.assistant.common.command.EqCoachCommandSupport;
 import com.zhongbo.mindos.assistant.common.command.FileSearchCommandSupport;
 import com.zhongbo.mindos.assistant.common.command.NewsSearchCommandSupport;
@@ -27,6 +28,7 @@ final class SkillCommandAssembler {
     private final FileSearchCommandSupport fileSearchCommandSupport;
     private final EqCoachCommandSupport eqCoachCommandSupport;
     private final NewsSearchCommandSupport newsSearchCommandSupport;
+    private final CodeGenerateCommandSupport codeGenerateCommandSupport;
     private final boolean preferenceReuseEnabled;
 
     SkillCommandAssembler(SkillDslParser skillDslParser,
@@ -44,6 +46,7 @@ final class SkillCommandAssembler {
         this.fileSearchCommandSupport = new FileSearchCommandSupport();
         this.eqCoachCommandSupport = new EqCoachCommandSupport();
         this.newsSearchCommandSupport = new NewsSearchCommandSupport();
+        this.codeGenerateCommandSupport = new CodeGenerateCommandSupport();
         this.preferenceReuseEnabled = preferenceReuseEnabled;
     }
 
@@ -87,7 +90,7 @@ final class SkillCommandAssembler {
         return switch (skillName) {
             case "teaching.plan" -> Optional.of(new SkillDsl(skillName, mergeInto(seed, TeachingPlanCommandSupport.extractPayload(userInput))));
             case "todo.create" -> Optional.of(new SkillDsl(skillName, mergeInto(seed, todoCreateCommandSupport.extractPayload(userInput, asString(seed.get("timezone"))))));
-            case "code.generate" -> Optional.of(new SkillDsl(skillName, mergeInto(seed, Map.of("task", sanitizeContinuationPrefix(userInput)))));
+            case "code.generate" -> Optional.of(new SkillDsl(skillName, mergeInto(seed, codeGenerateCommandSupport.resolveAttributes(context))));
             case "eq.coach" -> Optional.of(new SkillDsl(skillName, mergeInto(seed, eqCoachCommandSupport.resolveAttributes(context))));
             case "file.search" -> Optional.of(new SkillDsl(skillName, mergeInto(seed, fileSearchCommandSupport.resolveAttributes(context))));
             case "news_search" -> Optional.of(new SkillDsl(skillName, mergeInto(seed, newsSearchCommandSupport.resolveAttributes(context))));
@@ -107,7 +110,10 @@ final class SkillCommandAssembler {
         }
         Map<String, Object> payload = new LinkedHashMap<>(seedPayload == null ? Map.of() : seedPayload);
         switch (targetSkill) {
-            case "code.generate" -> putIfBlank(payload, "task", firstNonBlank(asString(payload.get("task")), routingInput, originalInput));
+            case "code.generate" -> {
+                mergeMissing(payload, codeGenerateCommandSupport.resolveAttributes(new SkillContext("", originalInput, payload)));
+                putIfBlank(payload, "task", firstNonBlank(asString(payload.get("task")), routingInput, originalInput));
+            }
             case "todo.create" -> {
                 mergeMissing(payload, todoCreateCommandSupport.extractPayload(originalInput, asString(payload.get("timezone"))));
                 putIfBlank(payload, "task", firstNonBlank(asString(payload.get("task")), summary, memoryHint, routingInput, originalInput));

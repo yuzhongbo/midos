@@ -61,9 +61,13 @@ public class CodeGenerateSkill implements Skill, SkillDescriptorProvider {
 
     @Override
     public SkillResult run(SkillContext context) {
-        String taskDescription = asString(context, "task", context.input());
-        String style = asString(context, "style", "");
-        String language = asString(context, "language", "");
+        Map<String, Object> resolved = attributes(context);
+        String taskDescription = text(resolved.get("task"));
+        if (taskDescription == null || taskDescription.isBlank()) {
+            return SkillResult.failure(name(), "请提供 task 参数，我才能生成对应代码。");
+        }
+        String style = text(resolved.get("style"));
+        String language = text(resolved.get("language"));
         if (llmClient != null) {
             try {
                 StringBuilder prompt = new StringBuilder("你是一个代码生成助手，请根据如下任务描述生成代码，仅输出代码内容。任务描述：")
@@ -74,7 +78,7 @@ public class CodeGenerateSkill implements Skill, SkillDescriptorProvider {
                 if (!language.isBlank()) {
                     prompt.append("。输出语言偏好：").append(language);
                 }
-                String llmReply = llmClient.generateResponse(prompt.toString(), buildLlmContext(context));
+                String llmReply = llmClient.generateResponse(prompt.toString(), buildLlmContext(context, taskDescription));
                 if (llmReply != null && !llmReply.isBlank()) {
                     return SkillResult.success(name(), llmReply.trim());
                 }
@@ -88,7 +92,7 @@ public class CodeGenerateSkill implements Skill, SkillDescriptorProvider {
         return SkillResult.success(name(), output);
     }
 
-    private Map<String, Object> buildLlmContext(SkillContext context) {
+    private Map<String, Object> buildLlmContext(SkillContext context, String taskDescription) {
         Map<String, Object> llmContext = new LinkedHashMap<>();
         llmContext.put("userId", context.userId() == null ? "" : context.userId());
         llmContext.put("channel", name());
@@ -102,12 +106,19 @@ public class CodeGenerateSkill implements Skill, SkillDescriptorProvider {
             explicitModel = asString(context, "llmModel", "");
         }
         String selectedModel = explicitModel == null || explicitModel.isBlank()
-                ? modelByDifficulty(estimateDifficulty(asString(context, "task", context.input())))
+                ? modelByDifficulty(estimateDifficulty(taskDescription))
                 : explicitModel.trim();
         if (selectedModel != null && !selectedModel.isBlank()) {
             llmContext.put("model", selectedModel);
         }
         return llmContext;
+    }
+
+    private Map<String, Object> attributes(SkillContext context) {
+        if (context == null || context.attributes() == null) {
+            return Map.of();
+        }
+        return context.attributes();
     }
 
     private String modelByDifficulty(Difficulty difficulty) {
@@ -184,7 +195,14 @@ public class CodeGenerateSkill implements Skill, SkillDescriptorProvider {
     }
 
     private String asString(SkillContext context, String key, String defaultValue) {
-        Object value = context.attributes().get(key);
+        Object value = context == null || context.attributes() == null ? null : context.attributes().get(key);
         return value == null ? defaultValue : String.valueOf(value);
+    }
+
+    private String text(Object value) {
+        if (value == null) {
+            return "";
+        }
+        return String.valueOf(value).trim();
     }
 }

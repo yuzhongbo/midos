@@ -3,7 +3,6 @@ package com.zhongbo.mindos.assistant.skill.examples;
 import com.zhongbo.mindos.assistant.common.LlmClient;
 import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.common.SkillResult;
-import com.zhongbo.mindos.assistant.common.command.TodoCreateCommandSupport;
 import com.zhongbo.mindos.assistant.skill.Skill;
 import com.zhongbo.mindos.assistant.skill.SkillDescriptor;
 import com.zhongbo.mindos.assistant.skill.SkillDescriptorProvider;
@@ -20,7 +19,6 @@ import java.util.logging.Logger;
 public class TodoCreateSkill implements Skill, SkillDescriptorProvider {
     private static final Logger LOGGER = Logger.getLogger(TodoCreateSkill.class.getName());
     private final LlmClient llmClient;
-    private final TodoCreateCommandSupport commandSupport;
 
     public TodoCreateSkill(LlmClient llmClient) {
         this(llmClient, Clock.systemDefaultZone());
@@ -28,7 +26,6 @@ public class TodoCreateSkill implements Skill, SkillDescriptorProvider {
 
     TodoCreateSkill(LlmClient llmClient, Clock clock) {
         this.llmClient = llmClient;
-        this.commandSupport = new TodoCreateCommandSupport(clock == null ? Clock.systemDefaultZone() : clock);
     }
 
     public TodoCreateSkill() {
@@ -106,7 +103,7 @@ public class TodoCreateSkill implements Skill, SkillDescriptorProvider {
     }
 
     private TodoDraft resolveDraft(SkillContext context) {
-        Map<String, Object> resolved = commandSupport.resolveAttributes(context);
+        Map<String, Object> resolved = attributes(context);
         String timezone = asString(resolved.get("timezone"));
         String task = asString(resolved.get("task"));
         String dueDate = firstNonBlank(asString(resolved.get("dueDate")), "未指定");
@@ -114,6 +111,13 @@ public class TodoCreateSkill implements Skill, SkillDescriptorProvider {
         String reminder = asString(resolved.get("reminder"));
         String style = asString(resolved.get("style"));
         return new TodoDraft(task, dueDate, priority, reminder, timezone, style);
+    }
+
+    private Map<String, Object> attributes(SkillContext context) {
+        if (context == null || context.attributes() == null) {
+            return Map.of();
+        }
+        return context.attributes();
     }
 
     private String firstNonBlank(String... values) {

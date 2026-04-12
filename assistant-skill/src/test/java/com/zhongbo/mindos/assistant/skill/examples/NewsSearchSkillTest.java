@@ -2,6 +2,7 @@ package com.zhongbo.mindos.assistant.skill.examples;
 
 import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.common.SkillResult;
+import com.zhongbo.mindos.assistant.common.command.NewsSearchCommandSupport;
 import com.zhongbo.mindos.assistant.skill.SkillRegistry;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
@@ -11,6 +12,7 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -51,7 +53,7 @@ class NewsSearchSkillTest {
                 220
         );
 
-        SkillResult result = skill.run(new SkillContext("u1", "news_search AI 芯片", Map.of(
+        SkillResult result = skill.run(newsContext("u1", "news_search AI 芯片", Map.of(
                 "memoryContext", "用户最近一直关注芯片和创业投资。"
         )));
 
@@ -92,8 +94,8 @@ class NewsSearchSkillTest {
                 220
         );
 
-        skill.run(new SkillContext("u1", "news_search AI", Map.of()));
-        skill.run(new SkillContext("u1", "news_search AI", Map.of()));
+        skill.run(newsContext("u1", "news_search AI"));
+        skill.run(newsContext("u1", "news_search AI"));
 
         assertEquals(1, fetchCount.get(), "cache命中时第二次不应再次拉取feed");
         assertEquals(1, llmCallCount.get(), "缓存命中时第二次不应再次生成摘要");
@@ -161,7 +163,7 @@ class NewsSearchSkillTest {
                 220
         );
 
-        SkillResult result = skill.run(new SkillContext("u1", "news_search AI source=36kr sort=relevance 前一条", Map.of()));
+        SkillResult result = skill.run(newsContext("u1", "news_search AI source=36kr sort=relevance 前一条"));
 
         assertTrue(result.success());
         assertTrue(result.output().contains("来源: 36kr"));
@@ -197,7 +199,7 @@ class NewsSearchSkillTest {
                 220
         );
 
-        SkillResult result = skill.run(new SkillContext("u1", "news_search 只看36kr最新三条AI融资新闻", Map.of()));
+        SkillResult result = skill.run(newsContext("u1", "news_search 只看36kr最新三条AI融资新闻"));
 
         assertTrue(result.success());
         assertTrue(result.output().contains("关键词: AI融资"));
@@ -257,7 +259,7 @@ class NewsSearchSkillTest {
                 220
         );
 
-        SkillResult result = skill.run(new SkillContext("u1", "帮我看今天的国际新闻并总结一下", Map.of()));
+        SkillResult result = skill.run(newsContext("u1", "帮我看今天的国际新闻并总结一下"));
 
         assertTrue(result.success());
         assertTrue(result.output().contains("关键词: 国际"));
@@ -309,7 +311,7 @@ class NewsSearchSkillTest {
                     ""
             );
 
-            SkillResult result = skill.run(new SkillContext("u1", "news_search AI", Map.of()));
+            SkillResult result = skill.run(newsContext("u1", "news_search AI"));
 
             assertTrue(result.success());
             assertTrue(result.output().contains("来源:"));
@@ -365,7 +367,7 @@ class NewsSearchSkillTest {
                     ""
             );
 
-            SkillResult result = skill.run(new SkillContext("u1", "news_search AI source=36kr", Map.of()));
+            SkillResult result = skill.run(newsContext("u1", "news_search AI source=36kr"));
 
             assertTrue(result.success());
             assertTrue(result.output().contains("来源: 36kr"));
@@ -421,7 +423,7 @@ class NewsSearchSkillTest {
                     ""
             );
 
-            skill.run(new SkillContext("u1", "news_search AI", Map.of()));
+            skill.run(newsContext("u1", "news_search AI"));
 
             assertTrue(capture.messages().stream().anyMatch(msg -> msg.contains("stage=configured-primary-hit") && msg.contains("source=serper")));
             assertTrue(capture.messages().stream().anyMatch(msg -> msg.contains("stage=final") && msg.contains("topSources=serper")));
@@ -492,7 +494,7 @@ class NewsSearchSkillTest {
                     ""
             );
 
-            SkillResult result = skill.run(new SkillContext("u1", "news_search OpenAI o3-mini pricing source=serpapi", Map.of()));
+            SkillResult result = skill.run(newsContext("u1", "news_search OpenAI o3-mini pricing source=serpapi"));
 
             assertTrue(result.success());
             assertTrue(result.output().contains("OpenAI o3-mini pricing update"));
@@ -539,7 +541,7 @@ class NewsSearchSkillTest {
                     ""
             );
 
-            skill.run(new SkillContext("u1", "news_search AI", Map.of()));
+            skill.run(newsContext("u1", "news_search AI"));
 
             assertTrue(capture.messages().stream().anyMatch(msg -> msg.contains("stage=configured-primary-empty") && msg.contains("source=serper")));
             assertTrue(capture.messages().stream().anyMatch(msg -> msg.contains("stage=36kr-hit") && msg.contains("items=1")));
@@ -570,6 +572,17 @@ class NewsSearchSkillTest {
         server.createContext("/news", exchange -> respondJson(exchange, requestCount, body));
         server.start();
         return server;
+    }
+
+    private SkillContext newsContext(String userId, String input) {
+        return newsContext(userId, input, Map.of());
+    }
+
+    private SkillContext newsContext(String userId, String input, Map<String, Object> extraAttributes) {
+        SkillContext raw = new SkillContext(userId, input, extraAttributes);
+        Map<String, Object> attributes = new LinkedHashMap<>(new NewsSearchCommandSupport().resolveAttributes(raw));
+        attributes.putAll(extraAttributes);
+        return new SkillContext(userId, input, attributes);
     }
 
     private Map<String, String> parseQuery(String rawQuery) {

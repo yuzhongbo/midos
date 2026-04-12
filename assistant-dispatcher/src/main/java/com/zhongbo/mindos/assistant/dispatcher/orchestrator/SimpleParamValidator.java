@@ -3,7 +3,6 @@ package com.zhongbo.mindos.assistant.dispatcher.orchestrator;
 import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryFacade;
 import com.zhongbo.mindos.assistant.memory.MemoryGateway;
-import com.zhongbo.mindos.assistant.memory.model.ConversationTurn;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
@@ -24,9 +23,6 @@ public class SimpleParamValidator implements ParamValidator {
 
     private static final Pattern INTEGER_PATTERN = Pattern.compile("(-?\\d+)");
     private static final Pattern DOUBLE_PATTERN = Pattern.compile("(-?\\d+(?:\\.\\d+)?)");
-    private static final Pattern WEEKS_PATTERN = Pattern.compile("(\\d+)\\s*周");
-    private static final Pattern HOURS_PATTERN = Pattern.compile("(\\d+)\\s*小时");
-    private static final Pattern IDENTIFIER_PATTERN = Pattern.compile("([A-Za-z]{2,}[-_][A-Za-z0-9_-]+|stu-[A-Za-z0-9_-]+)");
     private static final Pattern MISSING_PARAMS_PATTERN = Pattern.compile("(?:缺少必填参数|至少需要提供以下参数之一):\\s*([^。\\n]+)");
 
     private final ParamSchemaRegistry registry;
@@ -133,19 +129,12 @@ public class SimpleParamValidator implements ParamValidator {
                 ? Map.of()
                 : request.skillContext().attributes();
         Map<String, Object> profileContext = request == null ? Map.of() : request.safeProfileContext();
-        String userInput = firstNonBlank(
-                request == null ? "" : request.userInput(),
-                request == null || request.skillContext() == null ? "" : request.skillContext().input()
-        );
         Set<String> candidateKeys = collectCandidateKeys(schema, extraRequired);
         for (String key : candidateKeys) {
             if (hasValue(currentParams, key)) {
                 continue;
             }
             Object value = findByAliases(key, schema.aliases(), currentParams, requestAttributes, profileContext);
-            if (isBlank(value)) {
-                value = inferFromInput(key, schema.types().get(key), userInput);
-            }
             if (!isBlank(value)) {
                 resolved.put(key, value);
             }
@@ -215,47 +204,6 @@ public class SimpleParamValidator implements ParamValidator {
             }
             if (hasValue(profileContext, alias)) {
                 return profileContext.get(alias);
-            }
-        }
-        return null;
-    }
-
-    private Object inferFromInput(String key, ParamType type, String text) {
-        if (text == null || text.isBlank()) {
-            return null;
-        }
-        String normalizedKey = key == null ? "" : key.toLowerCase(Locale.ROOT);
-        if ("input".equals(normalizedKey)) {
-            return text.trim();
-        }
-        if (normalizedKey.contains("query") || normalizedKey.contains("task") || normalizedKey.contains("topic")) {
-            return text.trim();
-        }
-        if (normalizedKey.endsWith("id")) {
-            Matcher matcher = IDENTIFIER_PATTERN.matcher(text);
-            return matcher.find() ? matcher.group(1) : null;
-        }
-        if (type == ParamType.INTEGER || normalizedKey.contains("week") || normalizedKey.contains("hour") || normalizedKey.contains("count")) {
-            Matcher keySpecific = normalizedKey.contains("week") ? WEEKS_PATTERN.matcher(text)
-                    : normalizedKey.contains("hour") ? HOURS_PATTERN.matcher(text)
-                    : INTEGER_PATTERN.matcher(text);
-            if (keySpecific.find()) {
-                return Integer.parseInt(keySpecific.group(1));
-            }
-        }
-        if (type == ParamType.DOUBLE) {
-            Matcher matcher = DOUBLE_PATTERN.matcher(text);
-            if (matcher.find()) {
-                return Double.parseDouble(matcher.group(1));
-            }
-        }
-        if (type == ParamType.BOOLEAN) {
-            String normalized = text.toLowerCase(Locale.ROOT);
-            if (normalized.contains("是") || normalized.contains("true") || normalized.contains("yes")) {
-                return Boolean.TRUE;
-            }
-            if (normalized.contains("否") || normalized.contains("false") || normalized.contains("no")) {
-                return Boolean.FALSE;
             }
         }
         return null;
@@ -422,14 +370,5 @@ public class SimpleParamValidator implements ParamValidator {
         }
         String text = String.valueOf(value);
         return text.isBlank();
-    }
-
-    private String firstNonBlank(String... values) {
-        for (String value : values) {
-            if (value != null && !value.isBlank()) {
-                return value;
-            }
-        }
-        return "";
     }
 }

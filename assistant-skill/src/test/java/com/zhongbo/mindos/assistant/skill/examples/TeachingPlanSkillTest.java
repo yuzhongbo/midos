@@ -2,9 +2,11 @@ package com.zhongbo.mindos.assistant.skill.examples;
 
 import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.common.SkillResult;
+import com.zhongbo.mindos.assistant.common.command.TeachingPlanCommandSupport;
 import com.zhongbo.mindos.assistant.skill.SkillRegistry;
 import org.junit.jupiter.api.Test;
 
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -97,10 +99,9 @@ class TeachingPlanSkillTest {
 
     @Test
     void shouldInferStructuredFieldsFromNaturalLanguageInput() {
-        SkillResult result = skill.run(new SkillContext(
+        SkillResult result = skill.run(teachingContext(
                 "u1",
-                "请给 stu-1 做一个 6 周的数学提分计划，每周 8 小时，目标是期末提升15分",
-                Map.of()
+                "请给 stu-1 做一个 6 周的数学提分计划，每周 8 小时，目标是期末提升15分"
         ));
 
         assertTrue(result.success());
@@ -113,10 +114,9 @@ class TeachingPlanSkillTest {
 
     @Test
     void shouldInferChineseNumeralWeeksAndHoursFromNaturalLanguageInput() {
-        SkillResult result = skill.run(new SkillContext(
+        SkillResult result = skill.run(teachingContext(
                 "u2",
-                "帮我给 stu-9 做一个六周的英语学习规划，每周十小时",
-                Map.of()
+                "帮我给 stu-9 做一个六周的英语学习规划，每周十小时"
         ));
 
         assertTrue(result.success());
@@ -124,5 +124,11 @@ class TeachingPlanSkillTest {
         assertTrue(result.output().contains("这次会以 英语 为主线"));
         assertTrue(result.output().contains("周期 6 周"));
         assertTrue(result.output().contains("每周大约 10 小时"));
+    }
+
+    private SkillContext teachingContext(String userId, String input) {
+        SkillContext raw = new SkillContext(userId, input, Map.of());
+        Map<String, Object> attributes = new LinkedHashMap<>(TeachingPlanCommandSupport.resolveAttributes(raw));
+        return new SkillContext(userId, input, attributes);
     }
 }

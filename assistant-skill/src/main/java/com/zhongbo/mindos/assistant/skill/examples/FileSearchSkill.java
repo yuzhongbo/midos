@@ -3,7 +3,6 @@ package com.zhongbo.mindos.assistant.skill.examples;
 import com.zhongbo.mindos.assistant.common.LlmClient;
 import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.common.SkillResult;
-import com.zhongbo.mindos.assistant.common.command.FileSearchCommandSupport;
 import com.zhongbo.mindos.assistant.skill.Skill;
 import com.zhongbo.mindos.assistant.skill.SkillDescriptor;
 import com.zhongbo.mindos.assistant.skill.SkillDescriptorProvider;
@@ -21,7 +20,6 @@ import java.util.logging.Logger;
 public class FileSearchSkill implements Skill, SkillDescriptorProvider {
     private static final Logger LOGGER = Logger.getLogger(FileSearchSkill.class.getName());
     private final LlmClient llmClient;
-    private final FileSearchCommandSupport commandSupport = new FileSearchCommandSupport();
 
     public FileSearchSkill(LlmClient llmClient) {
         this.llmClient = llmClient;
@@ -78,13 +76,34 @@ public class FileSearchSkill implements Skill, SkillDescriptorProvider {
     }
 
     private SearchRequest resolveRequest(SkillContext context) {
-        Map<String, Object> resolved = commandSupport.resolveAttributes(context);
+        Map<String, Object> resolved = attributes(context);
         return new SearchRequest(
                 String.valueOf(resolved.getOrDefault("path", "./")),
                 String.valueOf(resolved.getOrDefault("keyword", "")),
-                String.valueOf(resolved.getOrDefault("fileType", "")),
-                resolved.get("limit") instanceof Number number ? number.intValue() : 3
+                String.valueOf(resolved.getOrDefault("fileType", resolved.getOrDefault("type", ""))),
+                asInt(resolved.get("limit"), 5)
         );
+    }
+
+    private Map<String, Object> attributes(SkillContext context) {
+        if (context == null || context.attributes() == null) {
+            return Map.of();
+        }
+        return context.attributes();
+    }
+
+    private int asInt(Object value, int defaultValue) {
+        if (value instanceof Number number) {
+            return number.intValue();
+        }
+        if (value != null) {
+            try {
+                return Integer.parseInt(String.valueOf(value).trim());
+            } catch (NumberFormatException ignored) {
+                return defaultValue;
+            }
+        }
+        return defaultValue;
     }
 
     private String buildDeterministicOutput(SearchRequest request) {
