@@ -1,11 +1,13 @@
 package com.zhongbo.mindos.assistant.dispatcher.agent.autonomous;
 
 import com.zhongbo.mindos.assistant.common.SkillResult;
+import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.civilization.CivilizationCycleResult;
+import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.civilization.CivilizationMemory;
+import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.civilization.DigitalCivilization;
+import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.civilization.DigitalCivilizationRuntime;
 import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.organization.AIOrganization;
-import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.organization.AIOrganizationRuntime;
 import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.organization.OrgMemory;
 import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.organization.OrganizationAssessment;
-import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.organization.OrganizationCycleResult;
 import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.organization.PlanningOutcome;
 import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.worldmodel.WorldMemory;
 import com.zhongbo.mindos.assistant.dispatcher.agent.taskgraph.TaskGraph;
@@ -23,17 +25,17 @@ import java.util.Map;
 @Component
 public class AutonomousLoopEngine {
 
-    private final AIOrganizationRuntime organizationRuntime;
+    private final DigitalCivilizationRuntime civilizationRuntime;
     private final GoalMemory goalMemory;
     private final ExecutionMemoryFacade executionMemoryFacade;
     private final int maxIterations;
 
     @Autowired
-    public AutonomousLoopEngine(AIOrganizationRuntime organizationRuntime,
+    public AutonomousLoopEngine(DigitalCivilizationRuntime civilizationRuntime,
                                 GoalMemory goalMemory,
                                 ExecutionMemoryFacade executionMemoryFacade,
                                 @Value("${mindos.autonomous.loop.max-iterations:5}") int maxIterations) {
-        this.organizationRuntime = organizationRuntime;
+        this.civilizationRuntime = civilizationRuntime;
         this.goalMemory = goalMemory;
         this.executionMemoryFacade = executionMemoryFacade;
         this.maxIterations = Math.max(1, maxIterations);
@@ -58,7 +60,9 @@ public class AutonomousLoopEngine {
         List<GoalMemory.GoalTrace> traces = new ArrayList<>();
         List<WorldMemory.ExecutionTrace> worldTraces = new ArrayList<>();
         List<OrgMemory.OrgExecutionTrace> orgTraces = new ArrayList<>();
-        AIOrganization currentOrganization = organizationRuntime == null ? null : organizationRuntime.currentOrganization();
+        List<CivilizationMemory.CivilizationTrace> civilizationTraces = new ArrayList<>();
+        AIOrganization currentOrganization = null;
+        DigitalCivilization currentCivilization = civilizationRuntime == null ? null : civilizationRuntime.currentCivilization();
         EvaluationResult lastEvaluation = EvaluationResult.initial(currentGoal);
         AutonomousPlanningContext planningContext = new AutonomousPlanningContext(
                 userId,
@@ -72,24 +76,28 @@ public class AutonomousLoopEngine {
         );
         String stopReason = "";
         for (int iteration = 1; iteration <= maxIterations && !currentGoal.isTerminal(); iteration++) {
-            OrganizationCycleResult cycle = organizationRuntime == null
+            CivilizationCycleResult cycle = civilizationRuntime == null
                     ? null
-                    : organizationRuntime.runCycle(currentGoal, planningContext);
+                    : civilizationRuntime.runCycle(currentGoal, planningContext);
             if (cycle != null) {
-                currentOrganization = cycle.organizationAfter();
+                currentOrganization = cycle.selectedOrganization();
+                currentCivilization = cycle.civilizationAfter();
                 if (cycle.worldTrace() != null) {
                     worldTraces.add(cycle.worldTrace());
                 }
                 if (cycle.orgTrace() != null) {
                     orgTraces.add(cycle.orgTrace());
                 }
+                if (cycle.trace() != null) {
+                    civilizationTraces.add(cycle.trace());
+                }
             }
-            PlanningOutcome planningOutcome = cycle == null ? null : cycle.planningOutcome();
+            PlanningOutcome planningOutcome = cycle == null || cycle.organizationCycle() == null ? null : cycle.organizationCycle().planningOutcome();
             TaskGraph graph = planningOutcome == null ? null : planningOutcome.graph();
             if (graph == null || graph.isEmpty()) {
                 GoalExecutionResult planFailure = syntheticFailure(currentGoal, planningContext, "planner produced empty task graph");
-                EvaluationResult evaluation = cycle != null && cycle.assessment() != null
-                        ? cycle.assessment().evaluation()
+                EvaluationResult evaluation = cycle != null && cycle.organizationCycle() != null && cycle.organizationCycle().assessment() != null
+                        ? cycle.organizationCycle().assessment().evaluation()
                         : new EvaluationResult(
                         currentGoal.goalId(),
                         GoalStatus.FAILED,
@@ -117,10 +125,10 @@ public class AutonomousLoopEngine {
                 break;
             }
             GoalExecutionResult executionResult = cycle == null
-                    ? syntheticFailure(currentGoal, planningContext, graph, "organization runtime unavailable")
-                    : cycle.executionResult() == null
+                    ? syntheticFailure(currentGoal, planningContext, graph, "civilization runtime unavailable")
+                    : cycle.organizationCycle() == null || cycle.organizationCycle().executionResult() == null
                     ? syntheticFailure(currentGoal, planningContext, graph, "execution department produced no result")
-                    : cycle.executionResult();
+                    : cycle.organizationCycle().executionResult();
             if (executionMemoryFacade != null) {
                 executionMemoryFacade.record(
                         executionResult.userId(),
@@ -129,7 +137,7 @@ public class AutonomousLoopEngine {
                         executionResult.executionTrace()
                 );
             }
-            OrganizationAssessment assessment = cycle == null ? null : cycle.assessment();
+            OrganizationAssessment assessment = cycle == null || cycle.organizationCycle() == null ? null : cycle.organizationCycle().assessment();
             EvaluationResult evaluation = assessment == null || assessment.evaluation() == null
                     ? EvaluationResult.initial(currentGoal)
                     : assessment.evaluation();
@@ -170,7 +178,18 @@ public class AutonomousLoopEngine {
             }
             stopReason = currentGoal.isCompleted() ? "completed" : "max-iterations";
         }
-        return new AutonomousGoalRunResult(currentGoal, traces, worldTraces, currentOrganization, orgTraces, stopReason, startedAt, Instant.now());
+        return new AutonomousGoalRunResult(
+                currentGoal,
+                traces,
+                worldTraces,
+                currentOrganization,
+                orgTraces,
+                currentCivilization,
+                civilizationTraces,
+                stopReason,
+                startedAt,
+                Instant.now()
+        );
     }
 
     private GoalExecutionResult syntheticFailure(Goal goal,

@@ -2,12 +2,20 @@ package com.zhongbo.mindos.assistant.dispatcher.agent.autonomous;
 
 import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.common.dto.ExecutionTraceDto;
-import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.organization.AIOrganizationRuntime;
+import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.civilization.AIOrganizationMarket;
+import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.civilization.CivilizationFactory;
+import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.civilization.CivilizationMemory;
+import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.civilization.CivilizationScheduler;
+import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.civilization.DigitalCivilizationRuntime;
+import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.civilization.EconomicSystem;
+import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.civilization.ReputationSystem;
+import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.civilization.ResourceSystem;
+import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.civilization.RuleSystem;
+import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.civilization.CivilizationEvolutionEngine;
 import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.organization.EvaluationDepartmentService;
 import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.organization.ExecutionDepartmentService;
 import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.organization.KpiSystem;
 import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.organization.OrgDecisionEngine;
-import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.organization.OrgMemory;
 import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.organization.OrgRestructuringEngine;
 import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.organization.PlanningDepartmentService;
 import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.organization.StrategyDepartmentService;
@@ -96,19 +104,30 @@ class AutonomousLoopEngineTest {
                 );
             }
         };
-        AIOrganizationRuntime organizationRuntime = new AIOrganizationRuntime(
+        RuleSystem ruleSystem = new RuleSystem();
+        ResourceSystem resourceSystem = new ResourceSystem();
+        EconomicSystem economicSystem = new EconomicSystem(resourceSystem, ruleSystem);
+        CivilizationFactory civilizationFactory = new CivilizationFactory();
+        DigitalCivilizationRuntime civilizationRuntime = new DigitalCivilizationRuntime(
                 new StrategyDepartmentService(),
                 new PlanningDepartmentService(coordinator),
                 new ExecutionDepartmentService(executor),
                 new EvaluationDepartmentService(new DefaultEvaluator(), new KpiSystem(), worldMemory, evolutionEngine),
                 new OrgDecisionEngine(),
                 new OrgRestructuringEngine(),
-                new OrgMemory(),
+                new CivilizationScheduler(new AIOrganizationMarket(), economicSystem, ruleSystem, new ReputationSystem()),
+                new CivilizationEvolutionEngine(civilizationFactory),
+                new CivilizationMemory(),
+                new ReputationSystem(),
+                civilizationFactory,
+                economicSystem,
+                ruleSystem,
+                resourceSystem,
                 List.of()
         );
 
         AutonomousLoopEngine engine = new AutonomousLoopEngine(
-                organizationRuntime,
+                civilizationRuntime,
                 goalMemory,
                 memoryFacade,
                 3
@@ -125,7 +144,9 @@ class AutonomousLoopEngineTest {
         assertTrue(goalMemory.failedTargets(goal.goalId()).contains("file.search"));
         assertEquals(2, runResult.worldTraces().size());
         assertEquals(2, runResult.orgTraces().size());
+        assertEquals(2, runResult.civilizationTraces().size());
         assertTrue(runResult.organization() != null && runResult.organization().revision() >= 2);
+        assertTrue(runResult.civilization() != null && runResult.civilization().organizations().size() >= 3);
         assertTrue(evolutionEngine.weightOf("conservative-planner") > evolutionEngine.weightOf("aggressive-planner"));
     }
 

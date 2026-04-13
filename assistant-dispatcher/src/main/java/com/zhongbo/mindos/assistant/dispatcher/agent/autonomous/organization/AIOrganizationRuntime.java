@@ -31,6 +31,29 @@ public class AIOrganizationRuntime {
                                  OrgRestructuringEngine orgRestructuringEngine,
                                  OrgMemory orgMemory,
                                  List<PlannerAgent> plannerAgents) {
+        this(
+                strategyDepartmentService,
+                planningDepartmentService,
+                executionDepartmentService,
+                evaluationDepartmentService,
+                orgDecisionEngine,
+                orgRestructuringEngine,
+                orgMemory,
+                AIOrganization.bootstrap(
+                        "MindOS Organization",
+                        plannerAgents == null ? List.of() : plannerAgents.stream().map(PlannerAgent::agentId).toList()
+                )
+        );
+    }
+
+    public AIOrganizationRuntime(StrategyDepartmentService strategyDepartmentService,
+                                 PlanningDepartmentService planningDepartmentService,
+                                 ExecutionDepartmentService executionDepartmentService,
+                                 EvaluationDepartmentService evaluationDepartmentService,
+                                 OrgDecisionEngine orgDecisionEngine,
+                                 OrgRestructuringEngine orgRestructuringEngine,
+                                 OrgMemory orgMemory,
+                                 AIOrganization initialOrganization) {
         this.strategyDepartmentService = strategyDepartmentService;
         this.planningDepartmentService = planningDepartmentService;
         this.executionDepartmentService = executionDepartmentService;
@@ -38,10 +61,9 @@ public class AIOrganizationRuntime {
         this.orgDecisionEngine = orgDecisionEngine;
         this.orgRestructuringEngine = orgRestructuringEngine;
         this.orgMemory = orgMemory;
-        this.organization = AIOrganization.bootstrap(
-                "MindOS Organization",
-                plannerAgents == null ? List.of() : plannerAgents.stream().map(PlannerAgent::agentId).toList()
-        );
+        this.organization = initialOrganization == null
+                ? AIOrganization.bootstrap("MindOS Organization", List.of())
+                : initialOrganization;
     }
 
     public OrganizationCycleResult runCycle(Goal goal, AutonomousPlanningContext context) {

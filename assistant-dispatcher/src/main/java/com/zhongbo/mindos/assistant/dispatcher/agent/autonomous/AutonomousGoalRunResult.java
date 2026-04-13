@@ -1,5 +1,7 @@
 package com.zhongbo.mindos.assistant.dispatcher.agent.autonomous;
 
+import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.civilization.CivilizationMemory;
+import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.civilization.DigitalCivilization;
 import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.organization.AIOrganization;
 import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.organization.KPI;
 import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.organization.OrgMemory;
@@ -14,6 +16,8 @@ public record AutonomousGoalRunResult(Goal goal,
                                       List<WorldMemory.ExecutionTrace> worldTraces,
                                       AIOrganization organization,
                                       List<OrgMemory.OrgExecutionTrace> orgTraces,
+                                      DigitalCivilization civilization,
+                                      List<CivilizationMemory.CivilizationTrace> civilizationTraces,
                                       String stopReason,
                                       Instant startedAt,
                                       Instant finishedAt) {
@@ -23,7 +27,7 @@ public record AutonomousGoalRunResult(Goal goal,
                                    String stopReason,
                                    Instant startedAt,
                                    Instant finishedAt) {
-        this(goal, traces, List.of(), null, List.of(), stopReason, startedAt, finishedAt);
+        this(goal, traces, List.of(), null, List.of(), null, List.of(), stopReason, startedAt, finishedAt);
     }
 
     public AutonomousGoalRunResult(Goal goal,
@@ -32,13 +36,14 @@ public record AutonomousGoalRunResult(Goal goal,
                                    String stopReason,
                                    Instant startedAt,
                                    Instant finishedAt) {
-        this(goal, traces, worldTraces, null, List.of(), stopReason, startedAt, finishedAt);
+        this(goal, traces, worldTraces, null, List.of(), null, List.of(), stopReason, startedAt, finishedAt);
     }
 
     public AutonomousGoalRunResult {
         traces = traces == null ? List.of() : List.copyOf(traces);
         worldTraces = worldTraces == null ? List.of() : List.copyOf(worldTraces);
         orgTraces = orgTraces == null ? List.of() : List.copyOf(orgTraces);
+        civilizationTraces = civilizationTraces == null ? List.of() : List.copyOf(civilizationTraces);
         stopReason = stopReason == null ? "" : stopReason.trim();
         startedAt = startedAt == null ? Instant.now() : startedAt;
         finishedAt = finishedAt == null ? startedAt : finishedAt;
