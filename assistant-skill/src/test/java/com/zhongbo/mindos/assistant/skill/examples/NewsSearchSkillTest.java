@@ -3,6 +3,7 @@ package com.zhongbo.mindos.assistant.skill.examples;
 import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.common.command.NewsSearchCommandSupport;
+import com.zhongbo.mindos.assistant.skill.DefaultSkillCatalog;
 import com.zhongbo.mindos.assistant.skill.SkillRegistry;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
@@ -228,8 +229,9 @@ class NewsSearchSkillTest {
         );
 
         SkillRegistry registry = new SkillRegistry(List.of(skill));
-        assertEquals("news_search", registry.detect("查看新闻 AI 前五条，并总结").map(found -> found.name()).orElse(""));
-        assertEquals("news_search", registry.detect("最近的国际新闻").map(found -> found.name()).orElse(""));
+        DefaultSkillCatalog catalog = new DefaultSkillCatalog(registry, null, new com.zhongbo.mindos.assistant.skill.SkillRoutingProperties());
+        assertEquals("news_search", catalog.detectSkillName("查看新闻 AI 前五条，并总结").orElse(""));
+        assertEquals("news_search", catalog.detectSkillName("最近的国际新闻").orElse(""));
     }
 
     @Test

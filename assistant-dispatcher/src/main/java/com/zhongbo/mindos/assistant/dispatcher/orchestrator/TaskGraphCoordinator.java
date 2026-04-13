@@ -12,8 +12,8 @@ import com.zhongbo.mindos.assistant.dispatcher.agent.taskgraph.TaskGraph;
 import com.zhongbo.mindos.assistant.dispatcher.agent.taskgraph.TaskGraphExecutionResult;
 import com.zhongbo.mindos.assistant.dispatcher.agent.taskgraph.TaskNode;
 import com.zhongbo.mindos.assistant.dispatcher.decision.Decision;
-import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryCommandService;
-import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryFacade;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.memory.MemoryWriteBatch;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.memory.MemoryWriteOperation;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.DecisionOrchestrator.OrchestrationOutcome;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.DecisionOrchestrator.OrchestrationRequest;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.step5.AgentRouter;
@@ -37,7 +37,6 @@ import java.util.function.Supplier;
 final class TaskGraphCoordinator {
     private static final double DEFAULT_ROUTE_SCORE = 0.5;
 
-    private final Supplier<DispatcherMemoryFacade> memoryFacadeSupplier;
     private final Supplier<RecoveryManager> recoveryManagerSupplier;
     private final Supplier<AgentRouter> agentRouterSupplier;
     private final Supplier<PlannerLearningStore> plannerLearningStoreSupplier;
@@ -51,8 +50,7 @@ final class TaskGraphCoordinator {
     private final String eqCoachImTimeoutReply;
     private final StructuredExecutionRuntime structuredExecutionRuntime = new StructuredExecutionRuntime();
 
-    TaskGraphCoordinator(Supplier<DispatcherMemoryFacade> memoryFacadeSupplier,
-                         Supplier<RecoveryManager> recoveryManagerSupplier,
+    TaskGraphCoordinator(Supplier<RecoveryManager> recoveryManagerSupplier,
                          Supplier<AgentRouter> agentRouterSupplier,
                          Supplier<PlannerLearningStore> plannerLearningStoreSupplier,
                          Supplier<PolicyUpdater> policyUpdaterSupplier,
@@ -63,7 +61,6 @@ final class TaskGraphCoordinator {
                          long mcpPerSkillTimeoutMs,
                          long eqCoachImTimeoutMs,
                          String eqCoachImTimeoutReply) {
-        this.memoryFacadeSupplier = memoryFacadeSupplier;
         this.recoveryManagerSupplier = recoveryManagerSupplier;
         this.agentRouterSupplier = agentRouterSupplier;
         this.plannerLearningStoreSupplier = plannerLearningStoreSupplier;
@@ -79,14 +76,14 @@ final class TaskGraphCoordinator {
                 : eqCoachImTimeoutReply;
     }
 
-    OrchestrationOutcome orchestrateTaskPlan(Decision decision,
-                                             TaskPlan taskPlan,
-                                             Map<String, Object> effectiveParams,
-                                             OrchestrationRequest request,
-                                             String traceId,
-                                             String strategy,
-                                             String intent,
-                                             String trigger) {
+    TaskGraphOrchestrationResult orchestrateTaskPlan(Decision decision,
+                                                     TaskPlan taskPlan,
+                                                     Map<String, Object> effectiveParams,
+                                                     OrchestrationRequest request,
+                                                     String traceId,
+                                                     String strategy,
+                                                     String intent,
+                                                     String trigger) {
         return orchestrateTaskGraph(
                 decision,
                 TaskGraph.fromDsl(effectiveParams),
@@ -99,26 +96,26 @@ final class TaskGraphCoordinator {
         );
     }
 
-    OrchestrationOutcome orchestrateTaskGraph(Decision decision,
-                                              TaskGraph taskGraph,
-                                              Map<String, Object> effectiveParams,
-                                              OrchestrationRequest request,
-                                              String traceId,
-                                              String strategy,
-                                              String intent,
-                                              String trigger) {
+    TaskGraphOrchestrationResult orchestrateTaskGraph(Decision decision,
+                                                      TaskGraph taskGraph,
+                                                      Map<String, Object> effectiveParams,
+                                                      OrchestrationRequest request,
+                                                      String traceId,
+                                                      String strategy,
+                                                      String intent,
+                                                      String trigger) {
         if (taskGraph == null || taskGraph.isEmpty()) {
-            return bridge.clarificationOutcome("task.graph", "缺少 task graph");
+            return TaskGraphOrchestrationResult.clarification(bridge.clarificationOutcome("task.graph", "缺少 task graph"));
         }
         if (taskGraph.nodes().isEmpty()) {
-            return bridge.clarificationOutcome("task.graph", "缺少 task nodes");
+            return TaskGraphOrchestrationResult.clarification(bridge.clarificationOutcome("task.graph", "缺少 task nodes"));
         }
         SkillContext baseContext = request == null
                 ? new SkillContext("", "", effectiveParams)
                 : new SkillContext(request.userId(), request.userInput(), bridge.buildEffectiveParams(effectiveParams, request.skillContext()));
         OrchestrationOutcome preflightOutcome = preflightClarification(taskGraph, baseContext, request);
         if (preflightOutcome != null) {
-            return preflightOutcome;
+            return TaskGraphOrchestrationResult.clarification(preflightOutcome);
         }
         ExecutionTraceCollector traceCollector = new ExecutionTraceCollector();
         TaskGraphExecutionResult taskResult = executeTaskGraphAttempt(
@@ -132,7 +129,7 @@ final class TaskGraphCoordinator {
                 Map.of()
         );
         if (taskResult.finalResult() == null) {
-            return bridge.clarificationOutcome("task.graph", "未能执行任何 task node");
+            return TaskGraphOrchestrationResult.clarification(bridge.clarificationOutcome("task.graph", "未能执行任何 task node"));
         }
         RecoveryManager recoveryManager = recoveryManagerSupplier.get();
         RecoveryManager.RecoveryReport rollbackReport = null;
@@ -173,16 +170,6 @@ final class TaskGraphCoordinator {
                 }
             }
         }
-        DispatcherMemoryFacade dispatcherMemoryFacade = memoryFacadeSupplier.get();
-        if (taskResult.finalResult().success() && dispatcherMemoryFacade != null) {
-            new DispatcherMemoryCommandService(dispatcherMemoryFacade, null).recordProcedureSuccess(
-                    request == null ? "" : request.userId(),
-                    intent == null || intent.isBlank() ? taskResult.finalResult().skillName() : intent,
-                    trigger == null ? "" : trigger,
-                    taskGraph,
-                    taskResult.contextAttributes()
-            );
-        }
         List<PlanStepDto> steps = traceCollector.steps().isEmpty()
                 ? taskResult.nodeResults().stream()
                 .map(node -> new PlanStepDto(
@@ -206,14 +193,46 @@ final class TaskGraphCoordinator {
                 ),
                 steps
         );
-        return new OrchestrationOutcome(
-                taskResult.finalResult(),
-                new SkillDsl(taskResult.finalResult().skillName(), effectiveParams),
-                null,
-                trace,
-                taskResult.finalResult().skillName(),
-                usedFallback
+        return new TaskGraphOrchestrationResult(
+                new OrchestrationOutcome(
+                        taskResult.finalResult(),
+                        new SkillDsl(taskResult.finalResult().skillName(), effectiveParams),
+                        null,
+                        trace,
+                        taskResult.finalResult().skillName(),
+                        usedFallback
+                ),
+                procedureSuccessWrite(taskResult, taskGraph, intent, trigger)
         );
+    }
+
+    private MemoryWriteBatch procedureSuccessWrite(TaskGraphExecutionResult taskResult,
+                                                   TaskGraph taskGraph,
+                                                   String intent,
+                                                   String trigger) {
+        if (taskResult == null || taskGraph == null || taskGraph.isEmpty() || !taskResult.success()) {
+            return MemoryWriteBatch.empty();
+        }
+        String resolvedIntent = intent == null || intent.isBlank()
+                ? (taskResult.finalResult() == null ? "" : taskResult.finalResult().skillName())
+                : intent;
+        return MemoryWriteBatch.of(new MemoryWriteOperation.RecordProcedureSuccess(
+                resolvedIntent,
+                trigger == null ? "" : trigger,
+                taskGraph,
+                taskResult.contextAttributes()
+        ));
+    }
+
+    record TaskGraphOrchestrationResult(OrchestrationOutcome outcome,
+                                        MemoryWriteBatch memoryWrites) {
+        TaskGraphOrchestrationResult {
+            memoryWrites = memoryWrites == null ? MemoryWriteBatch.empty() : memoryWrites;
+        }
+
+        static TaskGraphOrchestrationResult clarification(OrchestrationOutcome outcome) {
+            return new TaskGraphOrchestrationResult(outcome, MemoryWriteBatch.empty());
+        }
     }
 
     interface TaskGraphBridge {

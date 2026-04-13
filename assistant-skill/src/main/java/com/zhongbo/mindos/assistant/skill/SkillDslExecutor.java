@@ -15,7 +15,7 @@ public class SkillDslExecutor {
     }
 
     public SkillResult execute(SkillDsl dsl, SkillContext context) {
-        return skillRegistry.getSkill(dsl.skill())
+        return skillRegistry.get(dsl.skill())
                 .map(skill -> skill.run(context))
                 .orElseGet(() -> SkillResult.failure("dsl", "Unknown skill: " + dsl.skill()));
     }

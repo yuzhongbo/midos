@@ -3,8 +3,8 @@ package com.zhongbo.mindos.assistant.dispatcher.routing;
 import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.dispatcher.decision.Decision;
 import com.zhongbo.mindos.assistant.skill.Skill;
+import com.zhongbo.mindos.assistant.skill.SkillCatalogFacade;
 import com.zhongbo.mindos.assistant.skill.SkillDescriptor;
-import com.zhongbo.mindos.assistant.skill.SkillEngine;
 import com.zhongbo.mindos.assistant.skill.SkillRegistry;
 import com.zhongbo.mindos.assistant.skill.SkillRoutingProperties;
 import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalysisResult;
@@ -12,6 +12,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -24,15 +25,35 @@ class RoutingCoordinatorTest {
         List<SkillDescriptor> descriptors = List.of(
                 new SkillDescriptor("todo.create", "Create todo", List.of("todo", "create"))
         );
-        SkillEngine skillEngine = new SkillEngine(new SkillRegistry(List.of(new TestSkill("todo.create")), new SkillRoutingProperties()), null) {
+        SkillCatalogFacade skillEngine = new SkillCatalogFacade() {
             @Override
-            public List<String> listAvailableSkillSummaries() {
-                return List.of("todo.create - Create todo");
+            public Optional<String> detectSkillName(String input) {
+                return Optional.empty();
+            }
+
+            @Override
+            public List<com.zhongbo.mindos.assistant.skill.SkillCandidate> detectSkillCandidates(String input, int limit) {
+                return List.of();
+            }
+
+            @Override
+            public Optional<SkillDescriptor> describeSkill(String skillName) {
+                return Optional.empty();
             }
 
             @Override
             public List<SkillDescriptor> listSkillDescriptors() {
                 return descriptors;
+            }
+
+            @Override
+            public String describeAvailableSkills() {
+                return String.join(", ", listAvailableSkillSummaries());
+            }
+
+            @Override
+            public List<String> listAvailableSkillSummaries() {
+                return List.of("todo.create - Create todo");
             }
         };
 

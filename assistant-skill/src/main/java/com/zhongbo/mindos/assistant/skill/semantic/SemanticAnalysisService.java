@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.zhongbo.mindos.assistant.common.LlmClient;
+import com.zhongbo.mindos.assistant.skill.DefaultSkillCatalog;
 import com.zhongbo.mindos.assistant.skill.SkillRegistry;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -37,6 +38,7 @@ public class SemanticAnalysisService implements SemanticAnalyzer {
 
     private final LlmClient llmClient;
     private final SkillRegistry skillRegistry;
+    private final DefaultSkillCatalog skillCatalog;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final boolean enabled;
     private final boolean llmEnabled;
@@ -57,6 +59,7 @@ public class SemanticAnalysisService implements SemanticAnalyzer {
     @Autowired
     public SemanticAnalysisService(LlmClient llmClient,
                                    @Lazy SkillRegistry skillRegistry,
+                                   @Lazy DefaultSkillCatalog skillCatalog,
                                    @Value("${mindos.dispatcher.semantic-analysis.enabled:true}") boolean enabled,
                                    @Value("${mindos.dispatcher.semantic-analysis.llm-enabled:false}") boolean llmEnabled,
                                    @Value("${mindos.dispatcher.semantic-analysis.force-local:true}") boolean forceLocalProvider,
@@ -74,6 +77,7 @@ public class SemanticAnalysisService implements SemanticAnalyzer {
                                    @Value("${mindos.dispatcher.semantic-analysis.llm-complexity.trigger-terms:新闻,搜索,实时,分析,规划,计划,代码,排查,debug,search,latest,news,plan,report}") String llmComplexityTriggerTerms) {
         this.llmClient = llmClient;
         this.skillRegistry = skillRegistry;
+        this.skillCatalog = skillCatalog;
         this.enabled = enabled;
         this.llmEnabled = llmEnabled;
         this.forceLocalProvider = forceLocalProvider;
@@ -92,8 +96,8 @@ public class SemanticAnalysisService implements SemanticAnalyzer {
     }
 
     public SemanticAnalysisService(LlmClient llmClient,
-                                   SkillRegistry skillRegistry,
-                                   boolean enabled,
+                                    SkillRegistry skillRegistry,
+                                    boolean enabled,
                                    boolean llmEnabled,
                                    boolean forceLocalProvider,
                                    String delegateSkillName,
@@ -102,6 +106,29 @@ public class SemanticAnalysisService implements SemanticAnalyzer {
                                    int llmMaxTokens) {
         this(llmClient,
                 skillRegistry,
+                new DefaultSkillCatalog(skillRegistry, null, new com.zhongbo.mindos.assistant.skill.SkillRoutingProperties()),
+                enabled,
+                llmEnabled,
+                forceLocalProvider,
+                delegateSkillName,
+                llmProvider,
+                llmPreset,
+                llmMaxTokens);
+    }
+
+    public SemanticAnalysisService(LlmClient llmClient,
+                                    SkillRegistry skillRegistry,
+                                    DefaultSkillCatalog skillCatalog,
+                                    boolean enabled,
+                                   boolean llmEnabled,
+                                   boolean forceLocalProvider,
+                                   String delegateSkillName,
+                                   String llmProvider,
+                                   String llmPreset,
+                                   int llmMaxTokens) {
+        this(llmClient,
+                skillRegistry,
+                skillCatalog,
                 enabled,
                 llmEnabled,
                 forceLocalProvider,
@@ -120,8 +147,8 @@ public class SemanticAnalysisService implements SemanticAnalyzer {
     }
 
     public SemanticAnalysisService(LlmClient llmClient,
-                                   SkillRegistry skillRegistry,
-                                   boolean enabled,
+                                    SkillRegistry skillRegistry,
+                                    boolean enabled,
                                    boolean llmEnabled,
                                    boolean forceLocalProvider,
                                    String delegateSkillName,
@@ -134,6 +161,37 @@ public class SemanticAnalysisService implements SemanticAnalyzer {
                                    double semanticLocalEscalationMinConfidence) {
         this(llmClient,
                 skillRegistry,
+                new DefaultSkillCatalog(skillRegistry, null, new com.zhongbo.mindos.assistant.skill.SkillRoutingProperties()),
+                enabled,
+                llmEnabled,
+                forceLocalProvider,
+                delegateSkillName,
+                llmProvider,
+                llmPreset,
+                llmMaxTokens,
+                semanticLocalEscalationEnabled,
+                semanticCloudProvider,
+                semanticCloudPreset,
+                semanticLocalEscalationMinConfidence);
+    }
+
+    public SemanticAnalysisService(LlmClient llmClient,
+                                    SkillRegistry skillRegistry,
+                                    DefaultSkillCatalog skillCatalog,
+                                    boolean enabled,
+                                   boolean llmEnabled,
+                                   boolean forceLocalProvider,
+                                   String delegateSkillName,
+                                   String llmProvider,
+                                   String llmPreset,
+                                   int llmMaxTokens,
+                                   boolean semanticLocalEscalationEnabled,
+                                   String semanticCloudProvider,
+                                   String semanticCloudPreset,
+                                   double semanticLocalEscalationMinConfidence) {
+        this(llmClient,
+                skillRegistry,
+                skillCatalog,
                 enabled,
                 llmEnabled,
                 forceLocalProvider,
@@ -863,7 +921,7 @@ public class SemanticAnalysisService implements SemanticAnalyzer {
     }
 
     private boolean matchesSkill(String originalInput, String normalizedInput, String skillName, String... fallbackTerms) {
-        if (skillRegistry.routingScore(skillName, originalInput) > 0) {
+        if (skillCatalog.routingScore(skillName, originalInput) > 0) {
             return true;
         }
         return containsAny(normalizedInput, fallbackTerms);
@@ -872,7 +930,7 @@ public class SemanticAnalysisService implements SemanticAnalyzer {
     private List<String> routingKeywordHints(String userInput, String skillName, String... fallbackTerms) {
         List<String> matched = new ArrayList<>();
         String normalized = normalize(userInput);
-        for (String keyword : skillRegistry.resolvedRoutingKeywords(skillName)) {
+        for (String keyword : skillCatalog.resolvedRoutingKeywords(skillName)) {
             String candidate = normalize(keyword);
             if (!candidate.isBlank() && normalized.contains(candidate)) {
                 matched.add(keyword);

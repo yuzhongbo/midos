@@ -16,6 +16,30 @@ import java.util.Set;
 
 @Component
 public class EmotionalCoachSkill implements Skill, SkillDescriptorProvider {
+    private final EmotionalCoachSkillExecutor executor = new EmotionalCoachSkillExecutor();
+
+    @Override
+    public String name() {
+        return executor.name();
+    }
+
+    @Override
+    public String description() {
+        return executor.description();
+    }
+
+    @Override
+    public SkillDescriptor skillDescriptor() {
+        return executor.skillDescriptor();
+    }
+
+    @Override
+    public SkillResult run(SkillContext context) {
+        return executor.execute(context);
+    }
+}
+
+final class EmotionalCoachSkillExecutor {
 
     private static final String RISK_HIGH_TERMS_PROP = "mindos.eq.coach.risk.high-terms";
     private static final String RISK_MEDIUM_TERMS_PROP = "mindos.eq.coach.risk.medium-terms";
@@ -27,18 +51,15 @@ public class EmotionalCoachSkill implements Skill, SkillDescriptorProvider {
             "workplace", "职场版",
             "intimate", "亲密关系版"
     );
-    @Override
-    public String name() {
+    String name() {
         return "eq.coach";
     }
 
-    @Override
-    public String description() {
+    String description() {
         return "针对沟通、冲突、道歉或安慰场景，给出高情商分析与话术建议。";
     }
 
-    @Override
-    public SkillDescriptor skillDescriptor() {
+    SkillDescriptor skillDescriptor() {
         return new SkillDescriptor(
                 name(),
                 description(),
@@ -46,8 +67,7 @@ public class EmotionalCoachSkill implements Skill, SkillDescriptorProvider {
         );
     }
 
-    @Override
-    public SkillResult run(SkillContext context) {
+    SkillResult execute(SkillContext context) {
         Map<String, Object> attributes = attributes(context);
         String scenario = text(attributes.get("query"));
         if (scenario.isBlank()) {

@@ -9,8 +9,8 @@ import com.zhongbo.mindos.assistant.memory.model.ConversationTurn;
 import com.zhongbo.mindos.assistant.memory.model.ProceduralMemoryEntry;
 import com.zhongbo.mindos.assistant.memory.model.SkillUsageStats;
 import com.zhongbo.mindos.assistant.skill.SkillCandidate;
+import com.zhongbo.mindos.assistant.skill.SkillCatalogFacade;
 import com.zhongbo.mindos.assistant.skill.SkillDescriptor;
-import com.zhongbo.mindos.assistant.skill.SkillEngineFacade;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
@@ -26,7 +26,7 @@ class BeamSearchCandidatePlannerTest {
 
     @Test
     void shouldUseKeywordGraphAndProceduralSignals() {
-        SkillEngineFacade skillEngine = skillEngine(Map.of(
+        SkillCatalogFacade skillEngine = skillEngine(Map.of(
                 "student.get", 930,
                 "student.analyze", 860,
                 "teaching.plan", 820
@@ -69,8 +69,8 @@ class BeamSearchCandidatePlannerTest {
         assertTrue(candidates.get(0).reasons().stream().anyMatch(reason -> reason.contains("keyword") || reason.contains("memory") || reason.contains("success")));
     }
 
-    private SkillEngineFacade skillEngine(Map<String, Integer> scores) {
-        return new SkillEngineFacade() {
+    private SkillCatalogFacade skillEngine(Map<String, Integer> scores) {
+        return new SkillCatalogFacade() {
             @Override
             public Optional<String> detectSkillName(String input) {
                 return detectSkillCandidates(input, 1).stream().findFirst().map(SkillCandidate::skillName);

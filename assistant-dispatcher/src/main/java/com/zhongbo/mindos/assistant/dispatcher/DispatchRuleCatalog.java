@@ -2,7 +2,7 @@ package com.zhongbo.mindos.assistant.dispatcher;
 
 import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.dispatcher.decision.Decision;
-import com.zhongbo.mindos.assistant.skill.SkillEngineFacade;
+import com.zhongbo.mindos.assistant.skill.SkillCatalogFacade;
 
 import java.util.List;
 import java.util.Locale;
@@ -22,31 +22,31 @@ final class DispatchRuleCatalog {
             "teaching.plan"
     );
 
-    private final SkillEngineFacade skillEngine;
+    private final SkillCatalogFacade skillEngine;
 
-    DispatchRuleCatalog(SkillEngineFacade skillEngine) {
+    DispatchRuleCatalog(SkillCatalogFacade skillEngine) {
         this.skillEngine = skillEngine;
     }
 
-    Optional<Decision> selectLowConfidenceFallback(Decision plannedDecision) {
+    List<Candidate> lowConfidenceFallbackCandidates(Decision plannedDecision) {
         if (plannedDecision == null) {
-            return Optional.empty();
+            return List.of();
         }
         if (plannedDecision.target() == null || plannedDecision.target().isBlank()) {
-            return Optional.empty();
+            return List.of();
         }
         if (!LOW_CONFIDENCE_FALLBACK_TARGETS.contains(normalize(plannedDecision.target()))) {
-            return Optional.empty();
+            return List.of();
         }
         Map<String, Object> params = plannedDecision.params() == null ? Map.of() : plannedDecision.params();
         String routeSource = normalize(String.valueOf(params.getOrDefault(PLANNER_ROUTE_SOURCE_KEY, "")));
         if (!RULE_FALLBACK_SOURCE.equals(routeSource)) {
-            return Optional.empty();
+            return List.of();
         }
         if (plannedDecision.confidence() >= 1.0) {
-            return Optional.empty();
+            return List.of();
         }
-        return Optional.of(plannedDecision);
+        return List.of(new Candidate(plannedDecision.target(), plannedDecision.confidence(), "rule"));
     }
 
     boolean isCodeGenerationIntent(String input) {

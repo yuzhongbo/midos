@@ -18,11 +18,10 @@ import java.util.logging.Logger;
 
 @Component
 public class FileSearchSkill implements Skill, SkillDescriptorProvider {
-    private static final Logger LOGGER = Logger.getLogger(FileSearchSkill.class.getName());
-    private final LlmClient llmClient;
+    private final FileSearchSkillExecutor executor;
 
     public FileSearchSkill(LlmClient llmClient) {
-        this.llmClient = llmClient;
+        this.executor = new FileSearchSkillExecutor(llmClient);
     }
 
     public FileSearchSkill() {
@@ -31,21 +30,46 @@ public class FileSearchSkill implements Skill, SkillDescriptorProvider {
 
     @Override
     public String name() {
-        return "file.search";
+        return executor.name();
     }
 
     @Override
     public String description() {
-        return "按路径和关键词整理候选文件，适合快速缩小排查范围。";
+        return executor.description();
     }
 
     @Override
     public SkillDescriptor skillDescriptor() {
-        return new SkillDescriptor(name(), description(), List.of("找文件", "查文件", "搜索文件", "search file", "grep", "目录", "路径"));
+        return executor.skillDescriptor();
     }
 
     @Override
     public SkillResult run(SkillContext context) {
+        return executor.execute(context);
+    }
+}
+
+final class FileSearchSkillExecutor {
+    private static final Logger LOGGER = Logger.getLogger(FileSearchSkill.class.getName());
+    private final LlmClient llmClient;
+
+    FileSearchSkillExecutor(LlmClient llmClient) {
+        this.llmClient = llmClient;
+    }
+
+    String name() {
+        return "file.search";
+    }
+
+    String description() {
+        return "按路径和关键词整理候选文件，适合快速缩小排查范围。";
+    }
+
+    SkillDescriptor skillDescriptor() {
+        return new SkillDescriptor(name(), description(), List.of("找文件", "查文件", "搜索文件", "search file", "grep", "目录", "路径"));
+    }
+
+    SkillResult execute(SkillContext context) {
         SearchRequest request = resolveRequest(context);
         if (llmClient != null) {
             try {

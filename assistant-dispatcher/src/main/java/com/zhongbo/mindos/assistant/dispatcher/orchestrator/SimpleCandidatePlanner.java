@@ -3,7 +3,7 @@ package com.zhongbo.mindos.assistant.dispatcher.orchestrator;
 import com.zhongbo.mindos.assistant.common.SkillCostTelemetry;
 import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryFacade;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.step5.PlannerLearningStore;
-import com.zhongbo.mindos.assistant.skill.SkillEngineFacade;
+import com.zhongbo.mindos.assistant.skill.SkillCatalogFacade;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -16,7 +16,7 @@ public class SimpleCandidatePlanner extends AdaptiveCandidatePlanner {
         super();
     }
 
-    public SimpleCandidatePlanner(SkillEngineFacade skillEngine,
+    public SimpleCandidatePlanner(SkillCatalogFacade skillEngine,
                                   DispatcherMemoryFacade dispatcherMemoryFacade,
                                   int maxCandidates,
                                   double explicitWeight,
@@ -26,7 +26,7 @@ public class SimpleCandidatePlanner extends AdaptiveCandidatePlanner {
         super(skillEngine, dispatcherMemoryFacade, maxCandidates, explicitWeight, keywordWeight, memoryWeight, successWeight);
     }
 
-    public SimpleCandidatePlanner(SkillEngineFacade skillEngine,
+    public SimpleCandidatePlanner(SkillCatalogFacade skillEngine,
                                   DispatcherMemoryFacade dispatcherMemoryFacade,
                                   SkillCostTelemetry skillCostTelemetry,
                                   int maxCandidates,
@@ -37,7 +37,7 @@ public class SimpleCandidatePlanner extends AdaptiveCandidatePlanner {
         this(skillEngine, dispatcherMemoryFacade, skillCostTelemetry, null, maxCandidates, explicitWeight, keywordWeight, memoryWeight, successWeight);
     }
 
-    public SimpleCandidatePlanner(SkillEngineFacade skillEngine,
+    public SimpleCandidatePlanner(SkillCatalogFacade skillEngine,
                                   DispatcherMemoryFacade dispatcherMemoryFacade,
                                   SkillCostTelemetry skillCostTelemetry,
                                   PlannerLearningStore plannerLearningStore,
@@ -50,7 +50,7 @@ public class SimpleCandidatePlanner extends AdaptiveCandidatePlanner {
     }
 
     @Autowired
-    public SimpleCandidatePlanner(SkillEngineFacade skillEngine,
+    public SimpleCandidatePlanner(SkillCatalogFacade skillEngine,
                                   DispatcherMemoryFacade dispatcherMemoryFacade,
                                   ObjectProvider<SkillCostTelemetry> skillCostTelemetryProvider,
                                   ObjectProvider<PlannerLearningStore> plannerLearningStoreProvider,

@@ -1,19 +1,15 @@
 package com.zhongbo.mindos.assistant.dispatcher;
 
-import com.zhongbo.mindos.assistant.common.SkillDsl;
 import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalysisResult;
 
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.function.Predicate;
-import java.util.logging.Logger;
 
 final class SemanticSkillResolver {
-
-    private static final Logger LOGGER = Logger.getLogger(SemanticSkillResolver.class.getName());
 
     private final Predicate<String> knownSkillNameChecker;
     private final double semanticAnalysisRouteMinConfidence;
@@ -33,86 +29,59 @@ final class SemanticSkillResolver {
         this.semanticPayloadCompleter = semanticPayloadCompleter;
     }
 
-    Optional<SkillDsl> toSemanticSkillDsl(SemanticRoutingSupport.SemanticRoutingPlan semanticPlan) {
-        if (semanticPlan == null || !semanticPlan.routable() || semanticPlan.skillName().isBlank()) {
-            return Optional.empty();
+    List<Candidate> recommend(RecommendationInput input) {
+        SemanticAnalysisResult semanticAnalysis = input == null ? null : input.semanticAnalysis();
+        if (semanticAnalysis == null) {
+            return List.of();
         }
-        Map<String, Object> payload = new LinkedHashMap<>(
-                semanticPlan.effectivePayload() == null ? Map.of() : semanticPlan.effectivePayload()
-        );
-        return payload.isEmpty()
-                ? Optional.of(SkillDsl.of(semanticPlan.skillName()))
-                : Optional.of(new SkillDsl(semanticPlan.skillName(), payload));
-    }
-
-    SemanticRoutingSupport.SemanticRoutingPlan buildSemanticRoutingPlan(String userId,
-                                                                        SemanticAnalysisResult semanticAnalysis,
-                                                                        String originalInput) {
-        String skillName = resolveSemanticRoutingSkill(semanticAnalysis);
-        if (skillName.isBlank()) {
-            return SemanticRoutingSupport.SemanticRoutingPlan.empty();
-        }
-        Map<String, Object> effectivePayload = semanticPayloadCompleter.buildEffectiveSemanticPayload(
-                userId,
-                semanticAnalysis,
-                originalInput,
-                skillName
-        );
-        double confidence = resolveSemanticRouteConfidence(semanticAnalysis, skillName);
-        boolean routable = confidence >= semanticAnalysisRouteMinConfidence && isSemanticDirectSkillCandidate(skillName);
-
-        if (!routable && preferSuggestedSkillEnabled && semanticAnalysis != null) {
-            String suggested = normalizeOptional(semanticAnalysis.suggestedSkill());
-            if (!suggested.isBlank() && isKnownSkillName(suggested)) {
-                double suggestedConf = resolveSemanticRouteConfidence(semanticAnalysis, suggested);
-                if (suggestedConf >= preferSuggestedSkillMinConfidence) {
-                    skillName = suggested;
-                    effectivePayload = semanticPayloadCompleter.buildEffectiveSemanticPayload(
-                            userId,
-                            semanticAnalysis,
-                            originalInput,
-                            skillName
-                    );
-                    confidence = suggestedConf;
-                    routable = true;
-                    LOGGER.fine("Dispatcher: accepting suggestedSkill override=" + skillName + ", conf=" + confidence);
-                }
+        Map<String, Candidate> recommendations = new LinkedHashMap<>();
+        String suggestedSkill = normalizeOptional(semanticAnalysis.suggestedSkill());
+        if (!suggestedSkill.isBlank() && isSemanticDirectSkillCandidate(suggestedSkill)) {
+            double confidence = resolveSemanticRouteConfidence(semanticAnalysis, suggestedSkill);
+            if (!preferSuggestedSkillEnabled || confidence >= preferSuggestedSkillMinConfidence) {
+                recommendations.put(suggestedSkill, new Candidate(suggestedSkill, confidence, "heuristic"));
             }
         }
-
-        return new SemanticRoutingSupport.SemanticRoutingPlan(skillName, effectivePayload, confidence, routable);
+        semanticAnalysis.candidateIntents().stream()
+                .sorted((left, right) -> Double.compare(right.confidence(), left.confidence()))
+                .map(SemanticAnalysisResult.CandidateIntent::intent)
+                .map(this::normalizeOptional)
+                .filter(this::isSemanticDirectSkillCandidate)
+                .forEach(skill -> recommendations.putIfAbsent(
+                        skill,
+                        new Candidate(skill, resolveSemanticRouteConfidence(semanticAnalysis, skill), "heuristic")
+                ));
+        return recommendations.values().stream()
+                .sorted(Comparator.comparingDouble(Candidate::score).reversed()
+                        .thenComparing(candidate -> suggestedSkill.equals(candidate.target()) ? 0 : 1)
+                        .thenComparing(Candidate::target))
+                .toList();
     }
 
     double resolveSemanticAnalysisConfidence(SemanticAnalysisResult semanticAnalysis) {
         if (semanticAnalysis == null) {
             return 0.0;
         }
-        String bestSkill = resolveSemanticRoutingSkill(semanticAnalysis);
-        if (bestSkill.isBlank()) {
-            return semanticAnalysis.confidence();
-        }
-        return resolveSemanticRouteConfidence(semanticAnalysis, bestSkill);
+        return recommend(new RecommendationInput("", semanticAnalysis, "")).stream()
+                .mapToDouble(Candidate::score)
+                .max()
+                .orElse(semanticAnalysis.confidence());
     }
 
-    private String resolveSemanticRoutingSkill(SemanticAnalysisResult semanticAnalysis) {
-        if (semanticAnalysis == null) {
-            return "";
+    boolean isRoutable(Candidate candidate, RecommendationInput input) {
+        if (candidate == null || input == null || input.semanticAnalysis() == null) {
+            return false;
         }
-        java.util.List<String> candidates = new ArrayList<>();
-        String suggestedSkill = normalizeOptional(semanticAnalysis.suggestedSkill());
-        if (!suggestedSkill.isBlank()) {
-            candidates.add(suggestedSkill);
+        if (!isSemanticDirectSkillCandidate(candidate.target())) {
+            return false;
         }
-        semanticAnalysis.candidateIntents().stream()
-                .sorted((left, right) -> Double.compare(right.confidence(), left.confidence()))
-                .map(SemanticAnalysisResult.CandidateIntent::intent)
-                .map(this::normalizeOptional)
-                .filter(candidate -> !candidate.isBlank() && !candidates.contains(candidate))
-                .forEach(candidates::add);
-        return candidates.stream()
-                .filter(this::isSemanticDirectSkillCandidate)
-                .max(Comparator.comparingDouble(candidate -> resolveSemanticRouteConfidence(semanticAnalysis, candidate)))
-                .orElse("");
+        String suggestedSkill = normalizeOptional(input.semanticAnalysis().suggestedSkill());
+        if (preferSuggestedSkillEnabled
+                && suggestedSkill.equals(candidate.target())
+                && candidate.score() >= preferSuggestedSkillMinConfidence) {
+            return true;
+        }
+        return candidate.score() >= semanticAnalysisRouteMinConfidence;
     }
 
     private boolean isSemanticDirectSkillCandidate(String skillName) {
@@ -141,5 +110,10 @@ final class SemanticSkillResolver {
 
     private String normalizeOptional(String value) {
         return value == null ? "" : value.trim();
+    }
+
+    record RecommendationInput(String userId,
+                               SemanticAnalysisResult semanticAnalysis,
+                               String originalInput) {
     }
 }

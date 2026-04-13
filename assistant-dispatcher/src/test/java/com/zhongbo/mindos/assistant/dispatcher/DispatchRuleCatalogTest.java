@@ -2,24 +2,24 @@ package com.zhongbo.mindos.assistant.dispatcher;
 
 import com.zhongbo.mindos.assistant.dispatcher.decision.Decision;
 import com.zhongbo.mindos.assistant.skill.SkillCandidate;
+import com.zhongbo.mindos.assistant.skill.SkillCatalogFacade;
 import com.zhongbo.mindos.assistant.skill.SkillDescriptor;
-import com.zhongbo.mindos.assistant.skill.SkillEngineFacade;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
-import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class DispatchRuleCatalogTest {
 
     @Test
     void shouldOnlyAcceptPlannerRuleFallbackDecisions() {
-        DispatchRuleCatalog catalog = new DispatchRuleCatalog(new StubSkillEngineFacade());
+        DispatchRuleCatalog catalog = new DispatchRuleCatalog(new StubSkillCatalogFacade());
 
-        Optional<Decision> selected = catalog.selectLowConfidenceFallback(new Decision(
+        List<Candidate> selected = catalog.lowConfidenceFallbackCandidates(new Decision(
                 "echo",
                 "echo",
                 Map.of("_plannerRouteSource", "rule-fallback", "text", "hello"),
@@ -27,14 +27,16 @@ class DispatchRuleCatalogTest {
                 false
         ));
 
-        assertTrue(selected.isPresent());
+        assertEquals(1, selected.size());
+        assertEquals("echo", selected.get(0).target());
+        assertEquals("rule", selected.get(0).source());
     }
 
     @Test
     void shouldRejectNonFallbackPlannerDecision() {
-        DispatchRuleCatalog catalog = new DispatchRuleCatalog(new StubSkillEngineFacade());
+        DispatchRuleCatalog catalog = new DispatchRuleCatalog(new StubSkillCatalogFacade());
 
-        Optional<Decision> selected = catalog.selectLowConfidenceFallback(new Decision(
+        List<Candidate> selected = catalog.lowConfidenceFallbackCandidates(new Decision(
                 "echo",
                 "echo",
                 Map.of("text", "hello"),
@@ -42,10 +44,10 @@ class DispatchRuleCatalogTest {
                 false
         ));
 
-        assertFalse(selected.isPresent());
+        assertTrue(selected.isEmpty());
     }
 
-    private static final class StubSkillEngineFacade implements SkillEngineFacade {
+    private static final class StubSkillCatalogFacade implements SkillCatalogFacade {
         @Override
         public Optional<String> detectSkillName(String input) {
             return Optional.empty();

@@ -1,16 +1,19 @@
 package com.zhongbo.mindos.assistant.dispatcher.orchestrator;
 
 import com.zhongbo.mindos.assistant.common.SkillContext;
+import com.zhongbo.mindos.assistant.dispatcher.Candidate;
 import com.zhongbo.mindos.assistant.common.command.TeachingPlanCommandSupport;
 import com.zhongbo.mindos.assistant.dispatcher.decision.Decision;
-import com.zhongbo.mindos.assistant.skill.SkillEngineFacade;
+import com.zhongbo.mindos.assistant.skill.SkillCatalogFacade;
 import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalysisResult;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 
 @Component
 public class DefaultDecisionPlanner implements DecisionPlanner {
@@ -18,7 +21,7 @@ public class DefaultDecisionPlanner implements DecisionPlanner {
     private static final String PLANNER_ROUTE_SOURCE_KEY = "_plannerRouteSource";
     private static final String RULE_FALLBACK_SOURCE = "rule-fallback";
 
-    private final SkillEngineFacade skillEngine;
+    private final SkillCatalogFacade skillEngine;
     private final DecisionTargetResolver targetResolver;
 
     public DefaultDecisionPlanner() {
@@ -26,7 +29,7 @@ public class DefaultDecisionPlanner implements DecisionPlanner {
     }
 
     @Autowired
-    public DefaultDecisionPlanner(SkillEngineFacade skillEngine) {
+    public DefaultDecisionPlanner(SkillCatalogFacade skillEngine) {
         this.skillEngine = skillEngine;
         this.targetResolver = new DecisionTargetResolver();
     }
@@ -40,6 +43,31 @@ public class DefaultDecisionPlanner implements DecisionPlanner {
         double confidence = resolveConfidence(resolvedTarget, intent, plannedParams, context);
         String effectiveIntent = resolveIntent(intent, context, target);
         return new Decision(effectiveIntent == null ? "" : effectiveIntent, target, plannedParams, confidence, false);
+    }
+
+    @Override
+    public Optional<Candidate> selectCandidate(String userInput, SkillContext context, List<Candidate> candidates) {
+        if (candidates == null || candidates.isEmpty()) {
+            return Optional.empty();
+        }
+        String explicitTarget = targetResolver.canonicalize(stringValue(context == null || context.attributes() == null ? null : context.attributes().get("_target")));
+        String semanticTarget = targetResolver.canonicalize(stringValue(context == null || context.attributes() == null ? null : context.attributes().get(SemanticAnalysisResult.ATTR_SUGGESTED_SKILL)));
+        String semanticIntentTarget = targetResolver.canonicalize(stringValue(context == null || context.attributes() == null ? null : context.attributes().get(SemanticAnalysisResult.ATTR_INTENT)));
+        return candidates.stream()
+                .filter(candidate -> candidate != null && hasTarget(targetResolver.canonicalize(candidate.target())))
+                .max((left, right) -> {
+                    double leftScore = adjustedCandidateScore(left, explicitTarget, semanticTarget, semanticIntentTarget);
+                    double rightScore = adjustedCandidateScore(right, explicitTarget, semanticTarget, semanticIntentTarget);
+                    int byScore = Double.compare(leftScore, rightScore);
+                    if (byScore != 0) {
+                        return byScore;
+                    }
+                    int bySource = Integer.compare(sourcePriority(left.source()), sourcePriority(right.source()));
+                    if (bySource != 0) {
+                        return bySource;
+                    }
+                    return targetResolver.canonicalize(right.target()).compareTo(targetResolver.canonicalize(left.target()));
+                });
     }
 
     private Map<String, Object> mergeBaseParams(Map<String, Object> params, SkillContext context) {
@@ -174,6 +202,38 @@ public class DefaultDecisionPlanner implements DecisionPlanner {
             return semanticIntent;
         }
         return target;
+    }
+
+    private double adjustedCandidateScore(Candidate candidate,
+                                          String explicitTarget,
+                                          String semanticTarget,
+                                          String semanticIntentTarget) {
+        String canonicalTarget = targetResolver.canonicalize(candidate.target());
+        double score = candidate.score();
+        if (hasTarget(explicitTarget) && explicitTarget.equals(canonicalTarget)) {
+            score += 0.30;
+        }
+        if (hasTarget(semanticTarget) && semanticTarget.equals(canonicalTarget)) {
+            score += 0.15;
+        }
+        if (hasTarget(semanticIntentTarget) && semanticIntentTarget.equals(canonicalTarget)) {
+            score += 0.10;
+        }
+        score += switch (normalize(candidate.source())) {
+            case "rule" -> 0.03;
+            case "memory" -> 0.01;
+            default -> 0.02;
+        };
+        return score;
+    }
+
+    private int sourcePriority(String source) {
+        return switch (normalize(source)) {
+            case "rule" -> 3;
+            case "heuristic" -> 2;
+            case "memory" -> 1;
+            default -> 0;
+        };
     }
 
     private boolean hasTarget(String target) {

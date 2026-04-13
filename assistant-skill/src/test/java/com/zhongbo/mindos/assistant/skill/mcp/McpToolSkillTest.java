@@ -1,6 +1,8 @@
 package com.zhongbo.mindos.assistant.skill.mcp;
 
-import com.zhongbo.mindos.assistant.common.SkillContext;
+import com.zhongbo.mindos.assistant.skill.DefaultSkillCatalog;
+import com.zhongbo.mindos.assistant.skill.SkillRegistry;
+import com.zhongbo.mindos.assistant.skill.SkillRoutingProperties;
 import org.junit.jupiter.api.Test;
 
 import java.util.LinkedHashMap;
@@ -19,29 +21,29 @@ class McpToolSkillTest {
 
     @Test
     void shouldMatchChineseRealtimeNewsIntentForWebSearchTool() {
-        McpToolExecutor executor = new McpToolExecutor();
         McpToolDefinition tool = new McpToolDefinition("qwensearch", "http://unused.local/mcp", "webSearch", "Search latest web news");
+        DefaultSkillCatalog catalog = catalogWith(tool, new CapturingMcpClient());
 
-        assertTrue(executor.supports(tool, "今天新闻"));
-        assertTrue(executor.routingScore(tool, "今天新闻") > 0);
+        assertEquals(tool.skillName(), catalog.detectSkillName("今天新闻").orElse(null));
+        assertEquals(tool.skillName(), catalog.detectSkillCandidates("今天新闻", 1).get(0).skillName());
     }
 
     @Test
     void shouldPreferDocumentationSearchIntentForDocsTool() {
-        McpToolExecutor executor = new McpToolExecutor();
         McpToolDefinition tool = new McpToolDefinition("docs", "http://unused.local/mcp", "searchDocs", "Search product documentation and guides");
+        DefaultSkillCatalog catalog = catalogWith(tool, new CapturingMcpClient());
 
-        assertTrue(executor.supports(tool, "search docs for auth guide"));
-        assertTrue(executor.routingScore(tool, "search docs for auth guide") > executor.routingScore(tool, "今天新闻"));
+        assertEquals(tool.skillName(), catalog.detectSkillName("search docs for auth guide").orElse(null));
+        assertTrue(catalog.detectSkillName("今天新闻").isEmpty());
     }
 
     @Test
     void shouldFillQueryFromInputForSearchToolWhenMissing() {
         CapturingMcpClient client = new CapturingMcpClient();
-        McpToolExecutor executor = new McpToolExecutor();
         McpToolDefinition tool = new McpToolDefinition("qwensearch", "http://unused.local/mcp", "bailian_web_search", "Search latest web news");
+        McpToolExecutor executor = new McpToolExecutor(toolCatalogWith(tool, client));
 
-        executor.execute(tool, client, new SkillContext("u1", "", Map.of("input", "查看今天新闻 股市")));
+        executor.execute(tool.skillName(), Map.of("input", "查看今天新闻 股市"));
 
         assertEquals("股市", client.lastArguments.get("query"));
     }
@@ -49,10 +51,10 @@ class McpToolSkillTest {
     @Test
     void shouldNotOverrideExplicitQueryForSearchTool() {
         CapturingMcpClient client = new CapturingMcpClient();
-        McpToolExecutor executor = new McpToolExecutor();
         McpToolDefinition tool = new McpToolDefinition("qwensearch", "http://unused.local/mcp", "bailian_web_search", "Search latest web news");
+        McpToolExecutor executor = new McpToolExecutor(toolCatalogWith(tool, client));
 
-        executor.execute(tool, client, new SkillContext("u1", "查看今天新闻 股市", Map.of("query", "股市")));
+        executor.execute(tool.skillName(), Map.of("query", "股市", "input", "查看今天新闻 股市"));
 
         assertEquals("股市", client.lastArguments.get("query"));
     }
@@ -60,10 +62,10 @@ class McpToolSkillTest {
     @Test
     void shouldExtractTopicFromNaturalLanguageNewsRequest() {
         CapturingMcpClient client = new CapturingMcpClient();
-        McpToolExecutor executor = new McpToolExecutor();
         McpToolDefinition tool = new McpToolDefinition("qwensearch", "http://unused.local/mcp", "bailian_web_search", "Search latest web news");
+        McpToolExecutor executor = new McpToolExecutor(toolCatalogWith(tool, client));
 
-        executor.execute(tool, client, new SkillContext("u1", "", Map.of("input", "帮我看看科技新闻")));
+        executor.execute(tool.skillName(), Map.of("input", "帮我看看科技新闻"));
 
         assertEquals("科技", client.lastArguments.get("query"));
     }
@@ -71,10 +73,10 @@ class McpToolSkillTest {
     @Test
     void shouldReplyNaturallyWhenSearchThemeIsMissing() {
         CapturingMcpClient client = new CapturingMcpClient();
-        McpToolExecutor executor = new McpToolExecutor();
         McpToolDefinition tool = new McpToolDefinition("qwensearch", "http://unused.local/mcp", "bailian_web_search", "Search latest web news");
+        McpToolExecutor executor = new McpToolExecutor(toolCatalogWith(tool, client));
 
-        var result = executor.execute(tool, client, new SkillContext("u1", "", Map.of("input", "帮我查一下")));
+        var result = executor.execute(tool.skillName(), Map.of("input", "帮我查一下"));
 
         assertTrue(result.success());
         assertTrue(result.output().contains("抱歉"));
@@ -92,10 +94,10 @@ class McpToolSkillTest {
         logger.addHandler(handler);
         logger.setUseParentHandlers(false);
         try {
-            McpToolExecutor executor = new McpToolExecutor();
             McpToolDefinition tool = new McpToolDefinition("bravesearch", "http://unused.local/res/v1/web/search", "webSearch", "Search latest web news");
+            McpToolExecutor executor = new McpToolExecutor(toolCatalogWith(tool, new FailingMcpClient()));
 
-            var result = executor.execute(tool, new FailingMcpClient(), new SkillContext("u1", "国际实时新闻", Map.of("query", "国际实时新闻")));
+            var result = executor.execute(tool.skillName(), Map.of("query", "国际实时新闻", "input", "国际实时新闻"));
 
             assertTrue(!result.success());
             assertTrue(result.output().contains("网络不稳定"));
@@ -115,10 +117,10 @@ class McpToolSkillTest {
 
     @Test
     void shouldReturnFriendlyReplyWhenBraveSearchIsBlockedBy403Challenge() {
-        McpToolExecutor executor = new McpToolExecutor();
         McpToolDefinition tool = new McpToolDefinition("bravesearch", "http://unused.local/res/v1/web/search", "webSearch", "Search latest web news");
+        McpToolExecutor executor = new McpToolExecutor(toolCatalogWith(tool, new BraveChallengeMcpClient()));
 
-        var result = executor.execute(tool, new BraveChallengeMcpClient(), new SkillContext("u1", "国际实时新闻", Map.of("query", "国际实时新闻")));
+        var result = executor.execute(tool.skillName(), Map.of("query", "国际实时新闻", "input", "国际实时新闻"));
 
         assertTrue(!result.success());
         assertTrue(result.output().contains("HTTP 403"));
@@ -128,10 +130,10 @@ class McpToolSkillTest {
 
     @Test
     void shouldReturnFriendlyReplyWhenSearchConnectionIsReset() {
-        McpToolExecutor executor = new McpToolExecutor();
         McpToolDefinition tool = new McpToolDefinition("bravesearch", "http://unused.local/res/v1/web/search", "webSearch", "Search latest web news");
+        McpToolExecutor executor = new McpToolExecutor(toolCatalogWith(tool, new ConnectionResetMcpClient()));
 
-        var result = executor.execute(tool, new ConnectionResetMcpClient(), new SkillContext("u1", "国际实时新闻", Map.of("query", "国际实时新闻")));
+        var result = executor.execute(tool.skillName(), Map.of("query", "国际实时新闻", "input", "国际实时新闻"));
 
         assertTrue(!result.success());
         assertTrue(result.output().contains("网络不稳定"));
@@ -187,5 +189,15 @@ class McpToolSkillTest {
         @Override
         public void close() {
         }
+    }
+
+    private static DefaultSkillCatalog catalogWith(McpToolDefinition tool, McpJsonRpcClient client) {
+        return new DefaultSkillCatalog(new SkillRegistry(List.of()), toolCatalogWith(tool, client), new SkillRoutingProperties());
+    }
+
+    private static DefaultMcpToolCatalog toolCatalogWith(McpToolDefinition tool, McpJsonRpcClient client) {
+        DefaultMcpToolCatalog toolCatalog = new DefaultMcpToolCatalog();
+        toolCatalog.register(tool, client);
+        return toolCatalog;
     }
 }

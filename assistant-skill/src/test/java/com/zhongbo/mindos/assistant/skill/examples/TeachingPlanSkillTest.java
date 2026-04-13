@@ -3,6 +3,7 @@ package com.zhongbo.mindos.assistant.skill.examples;
 import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.common.command.TeachingPlanCommandSupport;
+import com.zhongbo.mindos.assistant.skill.DefaultSkillCatalog;
 import com.zhongbo.mindos.assistant.skill.SkillRegistry;
 import org.junit.jupiter.api.Test;
 
@@ -91,10 +92,11 @@ class TeachingPlanSkillTest {
     @Test
     void shouldDetectNaturalLanguageIntent() {
         SkillRegistry registry = new SkillRegistry(List.of(skill));
-        assertEquals("teaching.plan", registry.detect("请给我一个教学规划").map(found -> found.name()).orElse(""));
-        assertEquals("teaching.plan", registry.detect("need a study plan for java").map(found -> found.name()).orElse(""));
-        assertEquals("teaching.plan", registry.detect("帮我做一个英语冲刺计划").map(found -> found.name()).orElse(""));
-        assertEquals("teaching.plan", registry.detect("给我安排一个 Java 学习方案").map(found -> found.name()).orElse(""));
+        DefaultSkillCatalog catalog = new DefaultSkillCatalog(registry, null, new com.zhongbo.mindos.assistant.skill.SkillRoutingProperties());
+        assertEquals("teaching.plan", catalog.detectSkillName("请给我一个教学规划").orElse(""));
+        assertEquals("teaching.plan", catalog.detectSkillName("need a study plan for java").orElse(""));
+        assertEquals("teaching.plan", catalog.detectSkillName("帮我做一个英语冲刺计划").orElse(""));
+        assertEquals("teaching.plan", catalog.detectSkillName("给我安排一个 Java 学习方案").orElse(""));
     }
 
     @Test

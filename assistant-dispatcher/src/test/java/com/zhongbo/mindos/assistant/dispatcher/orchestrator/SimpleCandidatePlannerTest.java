@@ -16,8 +16,8 @@ import com.zhongbo.mindos.assistant.memory.model.SemanticMemoryEntry;
 import com.zhongbo.mindos.assistant.memory.model.SkillUsageStats;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.step5.InMemoryPlannerLearningStore;
 import com.zhongbo.mindos.assistant.skill.SkillCandidate;
+import com.zhongbo.mindos.assistant.skill.SkillCatalogFacade;
 import com.zhongbo.mindos.assistant.skill.SkillDescriptor;
-import com.zhongbo.mindos.assistant.skill.SkillEngineFacade;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
@@ -32,7 +32,7 @@ class SimpleCandidatePlannerTest {
 
     @Test
     void shouldRankCandidatesByKeywordMemoryAndSuccessRate() {
-        SkillEngineFacade skillEngine = skillEngine(Map.of(
+        SkillCatalogFacade skillEngine = skillEngine(Map.of(
                 "mcp.qwensearch.webSearch", 930,
                 "mcp.bravesearch.webSearch", 900,
                 "mcp.serper.webSearch", 880,
@@ -71,7 +71,7 @@ class SimpleCandidatePlannerTest {
 
     @Test
     void shouldPreferLowerCostCandidateWhenCapabilityTies() {
-        SkillEngineFacade skillEngine = skillEngine(Map.of(
+        SkillCatalogFacade skillEngine = skillEngine(Map.of(
                 "skill.fast", 900,
                 "skill.slow", 900
         ));
@@ -119,7 +119,7 @@ class SimpleCandidatePlannerTest {
 
     @Test
     void shouldRankHigherRewardCandidateFirst() {
-        SkillEngineFacade skillEngine = skillEngine(Map.of(
+        SkillCatalogFacade skillEngine = skillEngine(Map.of(
                 "skill.good", 900,
                 "skill.bad", 900
         ));
@@ -156,8 +156,8 @@ class SimpleCandidatePlannerTest {
         assertTrue(candidates.get(0).reasons().stream().anyMatch(reason -> reason.contains("rewardScore=")));
     }
 
-    private SkillEngineFacade skillEngine(Map<String, Integer> scores) {
-        return new SkillEngineFacade() {
+    private SkillCatalogFacade skillEngine(Map<String, Integer> scores) {
+        return new SkillCatalogFacade() {
             @Override
             public Optional<String> detectSkillName(String input) {
                 return detectSkillCandidates(input, 1).stream().findFirst().map(SkillCandidate::skillName);

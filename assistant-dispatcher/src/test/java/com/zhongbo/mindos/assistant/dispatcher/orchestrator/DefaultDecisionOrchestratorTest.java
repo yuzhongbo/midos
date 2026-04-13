@@ -12,12 +12,14 @@ import com.zhongbo.mindos.assistant.dispatcher.orchestrator.step5.RecoveryManage
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.step5.RecoveryManager.RecoveryReport;
 import com.zhongbo.mindos.assistant.memory.MemoryGateway;
 import com.zhongbo.mindos.assistant.memory.graph.GraphMemory;
+import com.zhongbo.mindos.assistant.skill.DefaultSkillCatalog;
 import com.zhongbo.mindos.assistant.skill.DefaultSkillExecutionGateway;
 import com.zhongbo.mindos.assistant.skill.Skill;
 import com.zhongbo.mindos.assistant.skill.SkillDslExecutor;
 import com.zhongbo.mindos.assistant.skill.SkillExecutionGateway;
 import com.zhongbo.mindos.assistant.skill.SkillEngine;
 import com.zhongbo.mindos.assistant.skill.SkillRegistry;
+import com.zhongbo.mindos.assistant.skill.SkillRoutingProperties;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -167,7 +169,7 @@ class DefaultDecisionOrchestratorTest {
         };
         SkillRegistry skillRegistry = new SkillRegistry(List.of(retryingSkill));
         SkillDslExecutor dslExecutor = new SkillDslExecutor(skillRegistry);
-        SkillEngine skillEngine = new SkillEngine(skillRegistry, dslExecutor);
+        DefaultSkillCatalog skillEngine = new DefaultSkillCatalog(skillRegistry, null, new SkillRoutingProperties());
         DefaultDecisionOrchestrator orchestrator = new DefaultDecisionOrchestrator(
                 new SimpleCandidatePlanner(skillEngine, dispatcherMemoryFacade(gatewayWithHistory(List.of())), 3, 0.40, 0.35, 0.15, 0.10),
                 validator,
@@ -231,7 +233,7 @@ class DefaultDecisionOrchestratorTest {
         };
         SkillRegistry registry = new SkillRegistry(List.of(fetchSkill, summarizeSkill));
         SkillDslExecutor dslExecutor = new SkillDslExecutor(registry);
-        SkillEngine skillEngine = new SkillEngine(registry, dslExecutor);
+        DefaultSkillCatalog skillEngine = new DefaultSkillCatalog(registry, null, new SkillRoutingProperties());
         DefaultDecisionOrchestrator orchestrator = new DefaultDecisionOrchestrator(
                 new SimpleCandidatePlanner(skillEngine, dispatcherMemoryFacade(noopGateway()), 3, 0.40, 0.35, 0.15, 0.10),
                 new SimpleParamValidator(new InMemoryParamSchemaRegistry(), noopGateway()),
@@ -299,7 +301,7 @@ class DefaultDecisionOrchestratorTest {
         };
         SkillRegistry registry = new SkillRegistry(List.of(fetchSkill, analyzeSkill));
         SkillDslExecutor dslExecutor = new SkillDslExecutor(registry);
-        SkillEngine skillEngine = new SkillEngine(registry, dslExecutor);
+        DefaultSkillCatalog skillEngine = new DefaultSkillCatalog(registry, null, new SkillRoutingProperties());
         DefaultDecisionOrchestrator orchestrator = new DefaultDecisionOrchestrator(
                 new SimpleCandidatePlanner(skillEngine, dispatcherMemoryFacade(noopGateway()), 3, 0.40, 0.35, 0.15, 0.10),
                 new SimpleParamValidator(new InMemoryParamSchemaRegistry(), noopGateway()),
@@ -383,7 +385,7 @@ class DefaultDecisionOrchestratorTest {
         };
         SkillRegistry registry = new SkillRegistry(List.of(fetchSkill, analyzeSkill, planSkill));
         SkillDslExecutor dslExecutor = new SkillDslExecutor(registry);
-        SkillEngine skillEngine = new SkillEngine(registry, dslExecutor);
+        DefaultSkillCatalog skillEngine = new DefaultSkillCatalog(registry, null, new SkillRoutingProperties());
         DefaultDecisionOrchestrator orchestrator = new DefaultDecisionOrchestrator(
                 new SimpleCandidatePlanner(skillEngine, dispatcherMemoryFacade(noopGateway()), 3, 0.40, 0.35, 0.15, 0.10),
                 new SimpleParamValidator(new InMemoryParamSchemaRegistry(), noopGateway()),
@@ -473,7 +475,7 @@ class DefaultDecisionOrchestratorTest {
         };
         SkillRegistry registry = new SkillRegistry(List.of(studentGet, studentAnalyze, teachingPlan));
         SkillDslExecutor dslExecutor = new SkillDslExecutor(registry);
-        SkillEngine skillEngine = new SkillEngine(registry, dslExecutor);
+        DefaultSkillCatalog skillEngine = new DefaultSkillCatalog(registry, null, new SkillRoutingProperties());
         DefaultDecisionOrchestrator orchestrator = new DefaultDecisionOrchestrator(
                 new CandidatePlanner() {
                     @Override
@@ -612,7 +614,7 @@ class DefaultDecisionOrchestratorTest {
         SkillRegistry registry = new SkillRegistry(List.of(flaky));
         SkillDslExecutor dslExecutor = new SkillDslExecutor(registry);
         DefaultDecisionOrchestrator orchestrator = new DefaultDecisionOrchestrator(
-                new SimpleCandidatePlanner(new SkillEngine(registry, dslExecutor), dispatcherMemoryFacade(noopGateway()), 3, 0.40, 0.35, 0.15, 0.10),
+                new SimpleCandidatePlanner(new DefaultSkillCatalog(registry, null, new SkillRoutingProperties()), dispatcherMemoryFacade(noopGateway()), 3, 0.40, 0.35, 0.15, 0.10),
                 new SimpleParamValidator(new InMemoryParamSchemaRegistry(), noopGateway()),
                 new SimpleConversationLoop(),
                 new SimpleFallbackPlan(),
@@ -709,7 +711,7 @@ class DefaultDecisionOrchestratorTest {
         SkillRegistry registry = new SkillRegistry(List.of(primary, backup));
         SkillDslExecutor dslExecutor = new SkillDslExecutor(registry);
         DefaultDecisionOrchestrator orchestrator = new DefaultDecisionOrchestrator(
-                new SimpleCandidatePlanner(new SkillEngine(registry, dslExecutor), dispatcherMemoryFacade(noopGateway()), 3, 0.40, 0.35, 0.15, 0.10),
+                new SimpleCandidatePlanner(new DefaultSkillCatalog(registry, null, new SkillRoutingProperties()), dispatcherMemoryFacade(noopGateway()), 3, 0.40, 0.35, 0.15, 0.10),
                 new SimpleParamValidator(new InMemoryParamSchemaRegistry(), noopGateway()),
                 new SimpleConversationLoop(),
                 new SimpleFallbackPlan(),
@@ -945,10 +947,11 @@ class DefaultDecisionOrchestratorTest {
                 }).toList();
         SkillRegistry registry = new SkillRegistry(skills);
         SkillDslExecutor executor = new SkillDslExecutor(registry);
-        return new SkillRuntime(new SkillEngine(registry, executor), new DefaultSkillExecutionGateway(registry, executor));
+        return new SkillRuntime(new DefaultSkillCatalog(registry, null, new SkillRoutingProperties()),
+                new DefaultSkillExecutionGateway(registry, executor));
     }
 
-    private record SkillRuntime(SkillEngine skillEngine, SkillExecutionGateway executionGateway) {
+    private record SkillRuntime(DefaultSkillCatalog skillEngine, SkillExecutionGateway executionGateway) {
     }
 
     private PostExecutionMemoryRecorder noopRecorder() {

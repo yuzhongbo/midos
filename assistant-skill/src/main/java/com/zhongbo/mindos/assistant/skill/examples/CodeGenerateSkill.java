@@ -17,23 +17,14 @@ import java.util.logging.Logger;
 
 @Component
 public class CodeGenerateSkill implements Skill, SkillDescriptorProvider {
-    private static final Logger LOGGER = Logger.getLogger(CodeGenerateSkill.class.getName());
-    private final LlmClient llmClient;
-    private final String defaultProvider;
-    private final String easyModel;
-    private final String mediumModel;
-    private final String hardModel;
+    private final CodeGenerateSkillExecutor executor;
 
     public CodeGenerateSkill(LlmClient llmClient,
                              @Value("${mindos.skill.code-generate.llm-provider:gpt}") String defaultProvider,
                              @Value("${mindos.skill.code-generate.model.easy:}") String easyModel,
                              @Value("${mindos.skill.code-generate.model.medium:}") String mediumModel,
                              @Value("${mindos.skill.code-generate.model.hard:}") String hardModel) {
-        this.llmClient = llmClient;
-        this.defaultProvider = normalizeOptional(defaultProvider);
-        this.easyModel = normalizeOptional(easyModel);
-        this.mediumModel = normalizeOptional(mediumModel);
-        this.hardModel = normalizeOptional(hardModel);
+        this.executor = new CodeGenerateSkillExecutor(llmClient, defaultProvider, easyModel, mediumModel, hardModel);
     }
 
     public CodeGenerateSkill(LlmClient llmClient) {
@@ -46,21 +37,58 @@ public class CodeGenerateSkill implements Skill, SkillDescriptorProvider {
 
     @Override
     public String name() {
-        return "code.generate";
+        return executor.name();
     }
 
     @Override
     public String description() {
-        return "根据任务描述生成代码草稿，可附带语言或风格偏好。";
+        return executor.description();
     }
 
     @Override
     public SkillDescriptor skillDescriptor() {
-        return new SkillDescriptor(name(), description(), List.of("generate code", "代码", "生成代码", "写代码", "接口", "api", "dto", "controller", "bug", "修复", "sql"));
+        return executor.skillDescriptor();
     }
 
     @Override
     public SkillResult run(SkillContext context) {
+        return executor.execute(context);
+    }
+}
+
+final class CodeGenerateSkillExecutor {
+    private static final Logger LOGGER = Logger.getLogger(CodeGenerateSkill.class.getName());
+    private final LlmClient llmClient;
+    private final String defaultProvider;
+    private final String easyModel;
+    private final String mediumModel;
+    private final String hardModel;
+
+    CodeGenerateSkillExecutor(LlmClient llmClient,
+                              String defaultProvider,
+                              String easyModel,
+                              String mediumModel,
+                              String hardModel) {
+        this.llmClient = llmClient;
+        this.defaultProvider = normalizeOptional(defaultProvider);
+        this.easyModel = normalizeOptional(easyModel);
+        this.mediumModel = normalizeOptional(mediumModel);
+        this.hardModel = normalizeOptional(hardModel);
+    }
+
+    String name() {
+        return "code.generate";
+    }
+
+    String description() {
+        return "根据任务描述生成代码草稿，可附带语言或风格偏好。";
+    }
+
+    SkillDescriptor skillDescriptor() {
+        return new SkillDescriptor(name(), description(), List.of("generate code", "代码", "生成代码", "写代码", "接口", "api", "dto", "controller", "bug", "修复", "sql"));
+    }
+
+    SkillResult execute(SkillContext context) {
         Map<String, Object> resolved = attributes(context);
         String taskDescription = text(resolved.get("task"));
         if (taskDescription == null || taskDescription.isBlank()) {

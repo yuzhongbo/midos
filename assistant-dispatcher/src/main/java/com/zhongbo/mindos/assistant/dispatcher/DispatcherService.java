@@ -20,7 +20,7 @@ import com.zhongbo.mindos.assistant.common.dto.SkillPreAnalyzeMetricsDto;
 import com.zhongbo.mindos.assistant.memory.model.ProceduralMemoryEntry;
 import com.zhongbo.mindos.assistant.memory.model.SemanticMemoryEntry;
 import com.zhongbo.mindos.assistant.memory.model.SkillUsageStats;
-import com.zhongbo.mindos.assistant.skill.SkillEngineFacade;
+import com.zhongbo.mindos.assistant.skill.SkillCatalogFacade;
 import com.zhongbo.mindos.assistant.dispatcher.decision.Decision;
 import com.zhongbo.mindos.assistant.dispatcher.decision.DecisionParser;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.CandidatePlanner;
@@ -73,7 +73,7 @@ public class DispatcherService implements ContextCompressionMetricsReader,
 
     private static final Logger LOGGER = Logger.getLogger(DispatcherService.class.getName());
 
-    private final SkillEngineFacade skillEngine;
+    private final SkillCatalogFacade skillEngine;
     private final SkillDslParser skillDslParser;
     private final IntentModelRoutingPolicy intentModelRoutingPolicy;
     private final MetaOrchestratorService metaOrchestratorService;
@@ -208,7 +208,7 @@ public class DispatcherService implements ContextCompressionMetricsReader,
     private MasterOrchestrator masterOrchestrator;
     private RoutingCoordinator routingCoordinator;
 
-    public DispatcherService(SkillEngineFacade skillEngine,
+    public DispatcherService(SkillCatalogFacade skillEngine,
                              SkillDslParser skillDslParser,
                              ParamValidator paramValidator,
                              DecisionOrchestrator decisionOrchestrator,
@@ -350,7 +350,7 @@ public class DispatcherService implements ContextCompressionMetricsReader,
     // the new preferSuggestedSkill configuration parameters. Delegates to the
     // primary constructor with safe defaults (disabled).
     @Autowired
-    public DispatcherService(SkillEngineFacade skillEngine,
+    public DispatcherService(SkillCatalogFacade skillEngine,
                            SkillDslParser skillDslParser,
                            ParamValidator paramValidator,
                            DecisionOrchestrator decisionOrchestrator,

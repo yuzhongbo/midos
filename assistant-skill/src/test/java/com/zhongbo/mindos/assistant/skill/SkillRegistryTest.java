@@ -16,10 +16,9 @@ class SkillRegistryTest {
         SkillRoutingProperties properties = new SkillRoutingProperties();
         properties.getKeywords().put("todo.create", "任务跟进路线,事项整理");
         SkillRegistry registry = new SkillRegistry(List.of(new FixedSkill("todo.create")), properties);
+        DefaultSkillCatalog catalog = new DefaultSkillCatalog(registry, null, properties);
 
-        String detected = registry.detect("帮我整理一个任务跟进路线")
-                .map(Skill::name)
-                .orElse("");
+        String detected = catalog.detectSkillName("帮我整理一个任务跟进路线").orElse("");
 
         assertEquals("todo.create", detected);
     }
@@ -29,8 +28,9 @@ class SkillRegistryTest {
         SkillRoutingProperties properties = new SkillRoutingProperties();
         properties.getKeywords().put("demo.skill", "自定义别名");
         SkillRegistry registry = new SkillRegistry(List.of(new KeywordSkill()), properties);
+        DefaultSkillCatalog catalog = new DefaultSkillCatalog(registry, null, properties);
 
-        List<String> keywords = registry.resolvedRoutingKeywords("demo.skill");
+        List<String> keywords = catalog.resolvedRoutingKeywords("demo.skill");
 
         assertTrue(keywords.contains("原始关键词"));
         assertTrue(keywords.contains("自定义别名"));
@@ -44,9 +44,10 @@ class SkillRegistryTest {
                 new DescriptorSkill("alpha.clean", "Clean alpha"),
                 new DescriptorSkill("todo.create", "Create todo")
         ), properties);
+        DefaultSkillCatalog catalog = new DefaultSkillCatalog(registry, null, properties);
 
-        SkillDescriptor descriptor = registry.describeSkill("todo.create").orElseThrow();
-        List<SkillDescriptor> descriptors = registry.listSkillDescriptors();
+        SkillDescriptor descriptor = catalog.describeSkill("todo.create").orElseThrow();
+        List<SkillDescriptor> descriptors = catalog.listSkillDescriptors();
 
         assertEquals("todo.create", descriptor.name());
         assertEquals("Create todo", descriptor.description());

@@ -4,7 +4,7 @@ import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.common.dto.PromptMemoryContextDto;
 import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryFacade;
 import com.zhongbo.mindos.assistant.dispatcher.routing.RoutingCoordinator;
-import com.zhongbo.mindos.assistant.skill.SkillEngineFacade;
+import com.zhongbo.mindos.assistant.skill.SkillCatalogFacade;
 import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalysisResult;
 import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalyzer;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.memory.MemoryWriteBatch;
@@ -19,7 +19,7 @@ final class DispatchPreparationSupport {
     private static final double SEMANTIC_CONTEXT_MIN_CONFIDENCE = 0.45;
 
     private final DispatcherMemoryFacade dispatcherMemoryFacade;
-    private final SkillEngineFacade skillEngine;
+    private final SkillCatalogFacade skillEngine;
     private final PersonaCoreService personaCoreService;
     private final SemanticAnalyzer semanticAnalyzer;
     private final SemanticRoutingSupport semanticRoutingSupport;
@@ -31,7 +31,7 @@ final class DispatchPreparationSupport {
     private final int realtimeIntentMemoryShrinkMaxChars;
 
     DispatchPreparationSupport(DispatcherMemoryFacade dispatcherMemoryFacade,
-                               SkillEngineFacade skillEngine,
+                               SkillCatalogFacade skillEngine,
                                PersonaCoreService personaCoreService,
                                SemanticAnalyzer semanticAnalyzer,
                                SemanticRoutingSupport semanticRoutingSupport,

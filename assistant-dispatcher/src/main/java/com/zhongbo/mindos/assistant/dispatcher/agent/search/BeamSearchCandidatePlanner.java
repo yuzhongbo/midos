@@ -5,7 +5,7 @@ import com.zhongbo.mindos.assistant.dispatcher.agent.procedure.ProcedureMemoryEn
 import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryFacade;
 import com.zhongbo.mindos.assistant.memory.graph.MemoryNode;
 import com.zhongbo.mindos.assistant.memory.model.SkillUsageStats;
-import com.zhongbo.mindos.assistant.skill.SkillEngineFacade;
+import com.zhongbo.mindos.assistant.skill.SkillCatalogFacade;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -22,11 +22,11 @@ public class BeamSearchCandidatePlanner implements SearchPlanner {
     private static final double MEMORY_WEIGHT = 0.20;
     private static final double PATH_COST_WEIGHT = 0.15;
 
-    private final SkillEngineFacade skillEngine;
+    private final SkillCatalogFacade skillEngine;
     private final DispatcherMemoryFacade dispatcherMemoryFacade;
     private final ProcedureMemoryEngine procedureMemoryEngine;
 
-    public BeamSearchCandidatePlanner(SkillEngineFacade skillEngine,
+    public BeamSearchCandidatePlanner(SkillCatalogFacade skillEngine,
                                       DispatcherMemoryFacade dispatcherMemoryFacade,
                                       ProcedureMemoryEngine procedureMemoryEngine) {
         this.skillEngine = skillEngine;

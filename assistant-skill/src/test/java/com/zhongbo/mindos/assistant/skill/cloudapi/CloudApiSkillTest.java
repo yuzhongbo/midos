@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
 import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.common.SkillResult;
+import com.zhongbo.mindos.assistant.skill.DefaultSkillCatalog;
 import com.zhongbo.mindos.assistant.skill.Skill;
 import com.zhongbo.mindos.assistant.skill.SkillRegistry;
 import org.junit.jupiter.api.AfterEach;
@@ -39,7 +40,7 @@ class CloudApiSkillTest {
         SkillRegistry registry = routingRegistry(skill);
         assertEquals("translate.text", detectSkillName(registry, "translate.text hello"));
         assertEquals("translate.text", detectSkillName(registry, "translate.text"));
-        assertTrue(registry.detect("echo hello").isEmpty());
+        assertTrue(catalog(registry).detectSkillName("echo hello").isEmpty());
     }
 
     @Test
@@ -49,15 +50,15 @@ class CloudApiSkillTest {
         assertEquals("translate.text", detectSkillName(registry, "帮我翻译这段话"));
         assertEquals("translate.text", detectSkillName(registry, "translate this sentence"));
         assertEquals("translate.text", detectSkillName(registry, "语言切换"));
-        assertTrue(registry.detect("查一下天气").isEmpty());
+        assertTrue(catalog(registry).detectSkillName("查一下天气").isEmpty());
     }
 
     @Test
     void returnsNoCandidateForBlankInput() {
         CloudApiSkill skill = buildSkill("my.skill", List.of("keyword"), null, null, null, null);
         SkillRegistry registry = routingRegistry(skill);
-        assertTrue(registry.detect(null).isEmpty());
-        assertTrue(registry.detect("   ").isEmpty());
+        assertTrue(catalog(registry).detectSkillName(null).isEmpty());
+        assertTrue(catalog(registry).detectSkillName("   ").isEmpty());
     }
 
     @Test
@@ -281,6 +282,10 @@ class CloudApiSkillTest {
     }
 
     private String detectSkillName(SkillRegistry registry, String input) {
-        return registry.detect(input).map(Skill::name).orElse("");
+        return catalog(registry).detectSkillName(input).orElse("");
+    }
+
+    private DefaultSkillCatalog catalog(SkillRegistry registry) {
+        return new DefaultSkillCatalog(registry, null, new com.zhongbo.mindos.assistant.skill.SkillRoutingProperties());
     }
 }

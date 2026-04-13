@@ -7,6 +7,7 @@ import com.zhongbo.mindos.assistant.memory.model.SkillUsageStats;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
@@ -56,29 +57,41 @@ final class HabitSkillSelector {
         this.habitRoutingRecentMaxAgeHours = habitRoutingRecentMaxAgeHours;
     }
 
-    Optional<SkillDsl> detectSkillWithMemoryHabits(String userId,
-                                                   String userInput,
-                                                   Map<String, Object> profileContext,
-                                                   Predicate<String> loopGuardBlocked) {
-        if (!habitRoutingEnabled || userInput == null || userInput.isBlank()) {
-            return Optional.empty();
+    List<Candidate> recommend(RecommendationInput input) {
+        if (input == null || !habitRoutingEnabled || input.userInput() == null || input.userInput().isBlank()) {
+            return List.of();
         }
-        if (!isContinuationIntent(normalize(userInput))) {
-            return Optional.empty();
+        if (!isContinuationIntent(normalize(input.userInput()))) {
+            return List.of();
         }
+        String userId = input.userId() == null ? "" : input.userId();
         List<ProceduralMemoryEntry> history = dispatcherMemoryFacade.getSkillUsageHistory(userId);
-        Optional<String> preferredSkill = preferredSkillFromHistory(history)
-                .or(() -> preferredSkillFromStats(userId));
-        if (preferredSkill.isEmpty()) {
+        List<Candidate> recommendations = new ArrayList<>();
+        preferredSkillFromHistory(history)
+                .filter(skill -> passesHabitConfidenceGate(userId, skill, history))
+                .filter(skill -> !isBlocked(skill, input.loopGuardBlocked()))
+                .ifPresent(skill -> recommendations.add(new Candidate(skill, 0.89, "memory")));
+        preferredSkillFromStats(userId)
+                .filter(skill -> recommendations.stream().noneMatch(candidate -> skill.equals(candidate.target())))
+                .filter(skill -> passesHabitConfidenceGate(userId, skill, history))
+                .filter(skill -> !isBlocked(skill, input.loopGuardBlocked()))
+                .ifPresent(skill -> recommendations.add(new Candidate(skill, 0.87, "memory")));
+        return recommendations.stream()
+                .sorted(Comparator.comparingDouble(Candidate::score).reversed()
+                        .thenComparing(Candidate::target))
+                .toList();
+    }
+
+    Optional<SkillDsl> buildSkillDsl(RecommendationInput input, Candidate candidate) {
+        if (input == null || candidate == null || candidate.target().isBlank()) {
             return Optional.empty();
         }
-        if (!passesHabitConfidenceGate(userId, preferredSkill.get(), history)) {
-            return Optional.empty();
-        }
-        if (loopGuardBlocked != null && loopGuardBlocked.test(preferredSkill.get())) {
-            return Optional.empty();
-        }
-        return toSkillDslByHabit(userId, preferredSkill.get(), userInput, profileContext == null ? Map.of() : profileContext);
+        return toSkillDslByHabit(
+                input.userId() == null ? "" : input.userId(),
+                candidate.target(),
+                input.userInput(),
+                input.profileContext() == null ? Map.of() : input.profileContext()
+        );
     }
 
     Optional<String> preferredSkillFromHistory(List<ProceduralMemoryEntry> history) {
@@ -216,5 +229,15 @@ final class HabitSkillSelector {
 
     private String normalize(String value) {
         return value == null ? "" : value.trim().toLowerCase().replaceAll("\\s+", " ");
+    }
+
+    private boolean isBlocked(String skillName, Predicate<String> loopGuardBlocked) {
+        return loopGuardBlocked != null && loopGuardBlocked.test(skillName);
+    }
+
+    record RecommendationInput(String userId,
+                               String userInput,
+                               Map<String, Object> profileContext,
+                               Predicate<String> loopGuardBlocked) {
     }
 }

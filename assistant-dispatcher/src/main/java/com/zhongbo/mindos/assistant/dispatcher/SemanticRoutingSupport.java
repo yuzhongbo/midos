@@ -55,7 +55,15 @@ final class SemanticRoutingSupport {
     }
 
     Optional<SkillDsl> toSemanticSkillDsl(SemanticRoutingPlan semanticPlan) {
-        return semanticSkillResolver.toSemanticSkillDsl(semanticPlan);
+        if (semanticPlan == null || !semanticPlan.routable() || semanticPlan.skillName().isBlank()) {
+            return Optional.empty();
+        }
+        Map<String, Object> payload = new java.util.LinkedHashMap<>(
+                semanticPlan.effectivePayload() == null ? Map.of() : semanticPlan.effectivePayload()
+        );
+        return payload.isEmpty()
+                ? Optional.of(SkillDsl.of(semanticPlan.skillName()))
+                : Optional.of(new SkillDsl(semanticPlan.skillName(), payload));
     }
 
     MemoryWriteBatch maybeStoreSemanticSummary(String userId,
@@ -96,10 +104,26 @@ final class SemanticRoutingSupport {
         return semanticClarifyPolicy.shouldAskSemanticClarification(semanticAnalysis, input, semanticPlan);
     }
 
-    SemanticRoutingPlan buildSemanticRoutingPlan(String userId,
-                                                 SemanticAnalysisResult semanticAnalysis,
-                                                 String originalInput) {
-        return semanticSkillResolver.buildSemanticRoutingPlan(userId, semanticAnalysis, originalInput);
+    List<SemanticRoutingPlan> recommendSemanticRoutingPlans(String userId,
+                                                            SemanticAnalysisResult semanticAnalysis,
+                                                            String originalInput) {
+        SemanticSkillResolver.RecommendationInput input = new SemanticSkillResolver.RecommendationInput(
+                userId,
+                semanticAnalysis,
+                originalInput
+        );
+        return semanticSkillResolver.recommend(input).stream()
+                .map(candidate -> new SemanticRoutingPlan(
+                        candidate,
+                        semanticPayloadCompleter.buildEffectiveSemanticPayload(
+                                userId,
+                                semanticAnalysis,
+                                originalInput,
+                                candidate.target()
+                        ),
+                        semanticSkillResolver.isRoutable(candidate, input)
+                ))
+                .toList();
     }
 
     String buildSemanticClarifyReply(SemanticAnalysisResult semanticAnalysis,
@@ -117,12 +141,19 @@ final class SemanticRoutingSupport {
         return value.substring(0, Math.max(0, maxChars - 14)) + "\n...[truncated]";
     }
 
-    record SemanticRoutingPlan(String skillName,
+    record SemanticRoutingPlan(Candidate candidate,
                                Map<String, Object> effectivePayload,
-                               double confidence,
                                boolean routable) {
         static SemanticRoutingPlan empty() {
-            return new SemanticRoutingPlan("", Map.of(), 0.0, false);
+            return new SemanticRoutingPlan(new Candidate("", 0.0, "heuristic"), Map.of(), false);
+        }
+
+        String skillName() {
+            return candidate == null ? "" : candidate.target();
+        }
+
+        double confidence() {
+            return candidate == null ? 0.0 : candidate.score();
         }
     }
 }

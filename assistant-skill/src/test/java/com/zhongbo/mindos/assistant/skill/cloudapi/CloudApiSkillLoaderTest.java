@@ -1,6 +1,7 @@
 package com.zhongbo.mindos.assistant.skill.cloudapi;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.zhongbo.mindos.assistant.skill.DefaultSkillCatalog;
 import com.zhongbo.mindos.assistant.skill.Skill;
 import com.zhongbo.mindos.assistant.skill.SkillRegistry;
 import org.junit.jupiter.api.Test;
@@ -144,11 +145,12 @@ class CloudApiSkillLoaderTest {
         SkillRegistry registry = new SkillRegistry(List.of());
         CloudApiSkillLoader loader = new CloudApiSkillLoader(registry, dir.toString());
         loader.reload();
+        DefaultSkillCatalog catalog = new DefaultSkillCatalog(registry, null, new com.zhongbo.mindos.assistant.skill.SkillRoutingProperties());
 
-        assertEquals("weather.query", registry.detect("查一下今天的天气").map(Skill::name).orElse(""));
-        assertEquals("weather.query", registry.detect("check the weather").map(Skill::name).orElse(""));
-        assertEquals("weather.query", registry.detect("当前温度是多少").map(Skill::name).orElse(""));
-        assertTrue(registry.detect("翻译这句话").isEmpty());
+        assertEquals("weather.query", catalog.detectSkillName("查一下今天的天气").orElse(""));
+        assertEquals("weather.query", catalog.detectSkillName("check the weather").orElse(""));
+        assertEquals("weather.query", catalog.detectSkillName("当前温度是多少").orElse(""));
+        assertTrue(catalog.detectSkillName("翻译这句话").isEmpty());
     }
 
     @Test

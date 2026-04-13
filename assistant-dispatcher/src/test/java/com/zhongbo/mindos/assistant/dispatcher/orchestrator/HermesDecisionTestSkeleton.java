@@ -5,12 +5,14 @@ import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.dispatcher.decision.Decision;
 import com.zhongbo.mindos.assistant.dispatcher.decision.DecisionParser;
 import com.zhongbo.mindos.assistant.memory.MemoryGateway;
+import com.zhongbo.mindos.assistant.skill.DefaultSkillCatalog;
 import com.zhongbo.mindos.assistant.skill.DefaultSkillExecutionGateway;
 import com.zhongbo.mindos.assistant.skill.Skill;
 import com.zhongbo.mindos.assistant.skill.SkillDslExecutor;
 import com.zhongbo.mindos.assistant.skill.SkillExecutionGateway;
 import com.zhongbo.mindos.assistant.skill.SkillEngine;
 import com.zhongbo.mindos.assistant.skill.SkillRegistry;
+import com.zhongbo.mindos.assistant.skill.SkillRoutingProperties;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
@@ -474,10 +476,11 @@ class HermesDecisionTestSkeleton {
                     .toList();
             SkillRegistry registry = new SkillRegistry(skills);
             SkillDslExecutor executor = new SkillDslExecutor(registry);
-            return new SkillRuntime(new SkillEngine(registry, executor), new DefaultSkillExecutionGateway(registry, executor));
+            return new SkillRuntime(new DefaultSkillCatalog(registry, null, new SkillRoutingProperties()),
+                    new DefaultSkillExecutionGateway(registry, executor));
         }
 
-        private record SkillRuntime(SkillEngine skillEngine, SkillExecutionGateway executionGateway) {
+        private record SkillRuntime(DefaultSkillCatalog skillEngine, SkillExecutionGateway executionGateway) {
         }
 
         private Map<String, Object> merge(Map<String, Object> modelParams,

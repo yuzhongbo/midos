@@ -54,11 +54,28 @@ final class BehaviorRoutingSupport {
         );
     }
 
-    Optional<SkillDsl> detectSkillWithMemoryHabits(String userId,
-                                                   String userInput,
-                                                   Map<String, Object> profileContext,
-                                                   Predicate<String> loopGuardBlocked) {
-        return habitSkillSelector.detectSkillWithMemoryHabits(userId, userInput, profileContext, loopGuardBlocked);
+    List<Candidate> recommendSkillsWithMemoryHabits(String userId,
+                                                    String userInput,
+                                                    Map<String, Object> profileContext,
+                                                    Predicate<String> loopGuardBlocked) {
+        return habitSkillSelector.recommend(new HabitSkillSelector.RecommendationInput(
+                userId,
+                userInput,
+                profileContext,
+                loopGuardBlocked
+        ));
+    }
+
+    Optional<SkillDsl> buildHabitSkillDsl(String userId,
+                                          String userInput,
+                                          Map<String, Object> profileContext,
+                                          Candidate candidate) {
+        return habitSkillSelector.buildSkillDsl(new HabitSkillSelector.RecommendationInput(
+                userId,
+                userInput,
+                profileContext,
+                null
+        ), candidate);
     }
 
     Optional<String> preferredSkillFromHistory(List<ProceduralMemoryEntry> history) {

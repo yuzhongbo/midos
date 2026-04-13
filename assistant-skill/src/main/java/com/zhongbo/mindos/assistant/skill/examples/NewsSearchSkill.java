@@ -53,6 +53,180 @@ import java.util.regex.Pattern;
 
 @Component
 public class NewsSearchSkill implements Skill, SkillDescriptorProvider {
+    private final NewsSearchSkillExecutor executor;
+
+    interface NewsFeedFetcher extends NewsSearchSkillExecutor.NewsFeedFetcher {
+    }
+
+    @Autowired
+    public NewsSearchSkill(LlmClient llmClient,
+                           @Value("${mindos.skill.news-search.enabled:true}") boolean enabled,
+                           @Value("${mindos.skill.news-search.kr-feed-url:https://36kr.com/feed}") String krFeedUrl,
+                           @Value("${mindos.skill.news-search.http-timeout-ms:5000}") int httpTimeoutMs,
+                           @Value("${mindos.skill.news-search.cache-ttl-seconds:300}") int cacheTtlSeconds,
+                           @Value("${mindos.skill.news-search.cache-max-entries:128}") int cacheMaxEntries,
+                           @Value("${mindos.skill.news-search.max-items:8}") int maxItems,
+                           @Value("${mindos.skill.news-search.summary-enabled:true}") boolean summaryEnabled,
+                           @Value("${mindos.skill.news-search.summary-provider:}") String summaryProvider,
+                           @Value("${mindos.skill.news-search.summary-preset:cost}") String summaryPreset,
+                           @Value("${mindos.skill.news-search.summary-model:gemma3:1b-it-q4_K_M}") String summaryModel,
+                           @Value("${mindos.skill.news-search.summary-max-tokens:220}") int summaryMaxTokens,
+                           @Value("${mindos.skills.search-sources:}") String searchSources,
+                           @Value("${mindos.skill.news-search.serper.enabled:false}") boolean serperEnabled,
+                           @Value("${mindos.skill.news-search.serper.news-url:https://google.serper.dev/news}") String serperNewsUrl,
+                           @Value("${mindos.skill.news-search.serper.search-url:https://google.serper.dev/search}") String serperSearchUrl,
+                           @Value("${mindos.skill.news-search.serper.api-key:}") String serperApiKey) {
+        this.executor = new NewsSearchSkillExecutor(
+                llmClient,
+                enabled,
+                krFeedUrl,
+                httpTimeoutMs,
+                cacheTtlSeconds,
+                cacheMaxEntries,
+                maxItems,
+                summaryEnabled,
+                summaryProvider,
+                summaryPreset,
+                summaryModel,
+                summaryMaxTokens,
+                searchSources,
+                serperEnabled,
+                serperNewsUrl,
+                serperSearchUrl,
+                serperApiKey
+        );
+    }
+
+    NewsSearchSkill(LlmClient llmClient,
+                    NewsFeedFetcher newsFeedFetcher,
+                    boolean enabled,
+                    String krFeedUrl,
+                    int httpTimeoutMs,
+                    int cacheTtlSeconds,
+                    int cacheMaxEntries,
+                    int maxItems,
+                    boolean summaryEnabled,
+                    String summaryProvider,
+                    String summaryPreset,
+                    String summaryModel,
+                    int summaryMaxTokens) {
+        this.executor = new NewsSearchSkillExecutor(
+                llmClient,
+                newsFeedFetcher,
+                enabled,
+                krFeedUrl,
+                httpTimeoutMs,
+                cacheTtlSeconds,
+                cacheMaxEntries,
+                maxItems,
+                summaryEnabled,
+                summaryProvider,
+                summaryPreset,
+                summaryModel,
+                summaryMaxTokens
+        );
+    }
+
+    NewsSearchSkill(LlmClient llmClient,
+                    NewsFeedFetcher newsFeedFetcher,
+                    boolean enabled,
+                    String krFeedUrl,
+                    int httpTimeoutMs,
+                    int cacheTtlSeconds,
+                    int cacheMaxEntries,
+                    int maxItems,
+                    boolean summaryEnabled,
+                    String summaryProvider,
+                    String summaryPreset,
+                    String summaryModel,
+                    int summaryMaxTokens,
+                    boolean serperEnabled,
+                    String serperNewsUrl,
+                    String serperSearchUrl,
+                    String serperApiKey) {
+        this.executor = new NewsSearchSkillExecutor(
+                llmClient,
+                newsFeedFetcher,
+                enabled,
+                krFeedUrl,
+                httpTimeoutMs,
+                cacheTtlSeconds,
+                cacheMaxEntries,
+                maxItems,
+                summaryEnabled,
+                summaryProvider,
+                summaryPreset,
+                summaryModel,
+                summaryMaxTokens,
+                serperEnabled,
+                serperNewsUrl,
+                serperSearchUrl,
+                serperApiKey
+        );
+    }
+
+    NewsSearchSkill(LlmClient llmClient,
+                    NewsFeedFetcher newsFeedFetcher,
+                    boolean enabled,
+                    String krFeedUrl,
+                    int httpTimeoutMs,
+                    int cacheTtlSeconds,
+                    int cacheMaxEntries,
+                    int maxItems,
+                    boolean summaryEnabled,
+                    String summaryProvider,
+                    String summaryPreset,
+                    String summaryModel,
+                    int summaryMaxTokens,
+                    String searchSources,
+                    boolean serperEnabled,
+                    String serperNewsUrl,
+                    String serperSearchUrl,
+                    String serperApiKey) {
+        this.executor = new NewsSearchSkillExecutor(
+                llmClient,
+                newsFeedFetcher,
+                enabled,
+                krFeedUrl,
+                httpTimeoutMs,
+                cacheTtlSeconds,
+                cacheMaxEntries,
+                maxItems,
+                summaryEnabled,
+                summaryProvider,
+                summaryPreset,
+                summaryModel,
+                summaryMaxTokens,
+                searchSources,
+                serperEnabled,
+                serperNewsUrl,
+                serperSearchUrl,
+                serperApiKey
+        );
+    }
+
+    @Override
+    public String name() {
+        return executor.name();
+    }
+
+    @Override
+    public String description() {
+        return executor.description();
+    }
+
+    @Override
+    public SkillDescriptor skillDescriptor() {
+        return executor.skillDescriptor();
+    }
+
+    @Override
+    public SkillResult run(SkillContext context) {
+        return executor.execute(context);
+    }
+}
+
+final class NewsSearchSkillExecutor {
 
     private static final Logger LOGGER = Logger.getLogger(NewsSearchSkill.class.getName());
     private static final DateTimeFormatter RFC1123 = DateTimeFormatter.RFC_1123_DATE_TIME;
@@ -83,24 +257,23 @@ public class NewsSearchSkill implements Skill, SkillDescriptorProvider {
     private final String serperApiKey;
     private final ConcurrentHashMap<String, CacheEntry> cache = new ConcurrentHashMap<>();
 
-    @Autowired
-    public NewsSearchSkill(LlmClient llmClient,
-                           @Value("${mindos.skill.news-search.enabled:true}") boolean enabled,
-                           @Value("${mindos.skill.news-search.kr-feed-url:https://36kr.com/feed}") String krFeedUrl,
-                           @Value("${mindos.skill.news-search.http-timeout-ms:5000}") int httpTimeoutMs,
-                           @Value("${mindos.skill.news-search.cache-ttl-seconds:300}") int cacheTtlSeconds,
-                           @Value("${mindos.skill.news-search.cache-max-entries:128}") int cacheMaxEntries,
-                           @Value("${mindos.skill.news-search.max-items:8}") int maxItems,
-                            @Value("${mindos.skill.news-search.summary-enabled:true}") boolean summaryEnabled,
-                            @Value("${mindos.skill.news-search.summary-provider:}") String summaryProvider,
-                           @Value("${mindos.skill.news-search.summary-preset:cost}") String summaryPreset,
-                           @Value("${mindos.skill.news-search.summary-model:gemma3:1b-it-q4_K_M}") String summaryModel,
-                            @Value("${mindos.skill.news-search.summary-max-tokens:220}") int summaryMaxTokens,
-                             @Value("${mindos.skills.search-sources:}") String searchSources,
-                             @Value("${mindos.skill.news-search.serper.enabled:false}") boolean serperEnabled,
-                            @Value("${mindos.skill.news-search.serper.news-url:https://google.serper.dev/news}") String serperNewsUrl,
-                            @Value("${mindos.skill.news-search.serper.search-url:https://google.serper.dev/search}") String serperSearchUrl,
-                            @Value("${mindos.skill.news-search.serper.api-key:}") String serperApiKey) {
+    NewsSearchSkillExecutor(LlmClient llmClient,
+                            boolean enabled,
+                            String krFeedUrl,
+                            int httpTimeoutMs,
+                            int cacheTtlSeconds,
+                            int cacheMaxEntries,
+                            int maxItems,
+                            boolean summaryEnabled,
+                            String summaryProvider,
+                            String summaryPreset,
+                            String summaryModel,
+                            int summaryMaxTokens,
+                            String searchSources,
+                            boolean serperEnabled,
+                            String serperNewsUrl,
+                            String serperSearchUrl,
+                            String serperApiKey) {
         this(llmClient,
                 new DefaultNewsFeedFetcher(),
                 enabled,
@@ -121,19 +294,19 @@ public class NewsSearchSkill implements Skill, SkillDescriptorProvider {
                 serperApiKey);
     }
 
-    NewsSearchSkill(LlmClient llmClient,
-                    NewsFeedFetcher newsFeedFetcher,
-                    boolean enabled,
-                    String krFeedUrl,
-                    int httpTimeoutMs,
-                    int cacheTtlSeconds,
-                    int cacheMaxEntries,
-                    int maxItems,
-                    boolean summaryEnabled,
-                    String summaryProvider,
-                    String summaryPreset,
-                    String summaryModel,
-                    int summaryMaxTokens) {
+    NewsSearchSkillExecutor(LlmClient llmClient,
+                            NewsFeedFetcher newsFeedFetcher,
+                            boolean enabled,
+                            String krFeedUrl,
+                            int httpTimeoutMs,
+                            int cacheTtlSeconds,
+                            int cacheMaxEntries,
+                            int maxItems,
+                            boolean summaryEnabled,
+                            String summaryProvider,
+                            String summaryPreset,
+                            String summaryModel,
+                            int summaryMaxTokens) {
         this(llmClient,
                 newsFeedFetcher,
                 enabled,
@@ -154,23 +327,23 @@ public class NewsSearchSkill implements Skill, SkillDescriptorProvider {
                 "");
     }
 
-    NewsSearchSkill(LlmClient llmClient,
-                    NewsFeedFetcher newsFeedFetcher,
-                    boolean enabled,
-                    String krFeedUrl,
-                    int httpTimeoutMs,
-                    int cacheTtlSeconds,
-                    int cacheMaxEntries,
-                    int maxItems,
-                    boolean summaryEnabled,
-                    String summaryProvider,
-                    String summaryPreset,
-                    String summaryModel,
-                    int summaryMaxTokens,
-                    boolean serperEnabled,
-                    String serperNewsUrl,
-                    String serperSearchUrl,
-                    String serperApiKey) {
+    NewsSearchSkillExecutor(LlmClient llmClient,
+                            NewsFeedFetcher newsFeedFetcher,
+                            boolean enabled,
+                            String krFeedUrl,
+                            int httpTimeoutMs,
+                            int cacheTtlSeconds,
+                            int cacheMaxEntries,
+                            int maxItems,
+                            boolean summaryEnabled,
+                            String summaryProvider,
+                            String summaryPreset,
+                            String summaryModel,
+                            int summaryMaxTokens,
+                            boolean serperEnabled,
+                            String serperNewsUrl,
+                            String serperSearchUrl,
+                            String serperApiKey) {
         this(llmClient,
                 newsFeedFetcher,
                 enabled,
@@ -191,24 +364,24 @@ public class NewsSearchSkill implements Skill, SkillDescriptorProvider {
                 serperApiKey);
     }
 
-    NewsSearchSkill(LlmClient llmClient,
-                    NewsFeedFetcher newsFeedFetcher,
-                    boolean enabled,
-                    String krFeedUrl,
-                    int httpTimeoutMs,
-                    int cacheTtlSeconds,
-                    int cacheMaxEntries,
-                    int maxItems,
-                    boolean summaryEnabled,
-                    String summaryProvider,
-                    String summaryPreset,
-                    String summaryModel,
-                    int summaryMaxTokens,
-                    String searchSources,
-                    boolean serperEnabled,
-                    String serperNewsUrl,
-                    String serperSearchUrl,
-                    String serperApiKey) {
+    NewsSearchSkillExecutor(LlmClient llmClient,
+                            NewsFeedFetcher newsFeedFetcher,
+                            boolean enabled,
+                            String krFeedUrl,
+                            int httpTimeoutMs,
+                            int cacheTtlSeconds,
+                            int cacheMaxEntries,
+                            int maxItems,
+                            boolean summaryEnabled,
+                            String summaryProvider,
+                            String summaryPreset,
+                            String summaryModel,
+                            int summaryMaxTokens,
+                            String searchSources,
+                            boolean serperEnabled,
+                            String serperNewsUrl,
+                            String serperSearchUrl,
+                            String serperApiKey) {
         this.llmClient = llmClient;
         this.newsFeedFetcher = newsFeedFetcher;
         this.enabled = enabled;
@@ -231,18 +404,15 @@ public class NewsSearchSkill implements Skill, SkillDescriptorProvider {
         this.serperApiKey = serperApiKey == null ? "" : serperApiKey.trim();
     }
 
-    @Override
-    public String name() {
+    String name() {
         return "news_search";
     }
 
-    @Override
-    public String description() {
+    String description() {
         return "聚合 36kr 新闻，并在失败时回退到 Serper / SerpApi 搜索后生成简要摘要。";
     }
 
-    @Override
-    public SkillDescriptor skillDescriptor() {
+    SkillDescriptor skillDescriptor() {
         return new SkillDescriptor(
                 name(),
                 description(),
@@ -250,8 +420,7 @@ public class NewsSearchSkill implements Skill, SkillDescriptorProvider {
         );
     }
 
-    @Override
-    public SkillResult run(SkillContext context) {
+    SkillResult execute(SkillContext context) {
         if (!enabled) {
             return SkillResult.failure(name(), "news_search 已禁用，请联系管理员开启。");
         }

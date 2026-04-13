@@ -3,78 +3,69 @@ package com.zhongbo.mindos.assistant.skill;
 import com.zhongbo.mindos.assistant.skill.mcp.DefaultMcpToolCatalog;
 import com.zhongbo.mindos.assistant.skill.mcp.McpToolCatalog;
 import com.zhongbo.mindos.assistant.skill.mcp.McpToolExecutor;
+import com.zhongbo.mindos.assistant.common.SkillContext;
+import com.zhongbo.mindos.assistant.common.SkillDsl;
+import com.zhongbo.mindos.assistant.common.SkillResult;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
-import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.List;
-import java.util.Optional;
-import java.util.stream.Collectors;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 @Service
 public class SkillEngine implements SkillEngineFacade {
 
     private final SkillRegistry skillRegistry;
+    private final SkillDslExecutor dslExecutor;
     private final McpToolCatalog mcpToolCatalog;
+    private final McpToolExecutor mcpToolExecutor;
 
     public SkillEngine(SkillRegistry skillRegistry,
                        SkillDslExecutor dslExecutor) {
-        this(skillRegistry, dslExecutor, new DefaultMcpToolCatalog(new McpToolExecutor()));
+        this(skillRegistry, dslExecutor, new DefaultMcpToolCatalog(), new McpToolExecutor());
     }
 
     @Autowired
     public SkillEngine(SkillRegistry skillRegistry,
                        SkillDslExecutor dslExecutor,
-                       McpToolCatalog mcpToolCatalog) {
+                       McpToolCatalog mcpToolCatalog,
+                       McpToolExecutor mcpToolExecutor) {
         this.skillRegistry = skillRegistry;
+        this.dslExecutor = dslExecutor;
         this.mcpToolCatalog = mcpToolCatalog;
-    }
-
-    public Optional<String> detectSkillName(String input) {
-        return detectSkillCandidates(input, 1).stream().findFirst().map(SkillCandidate::skillName);
+        this.mcpToolExecutor = mcpToolExecutor;
     }
 
     @Override
-    public List<SkillCandidate> detectSkillCandidates(String input, int limit) {
-        if (input == null || input.isBlank() || limit <= 0) {
-            return List.of();
+    public SkillResult execute(String target, Map<String, Object> params) {
+        String normalizedTarget = target == null ? "" : target.trim();
+        Map<String, Object> attributes = params == null ? Map.of() : new LinkedHashMap<>(params);
+        String input = firstNonBlank(stringValue(attributes.get("input")), stringValue(attributes.get("originalInput")));
+        SkillContext context = new SkillContext(stringValue(attributes.get("userId")), input, Map.copyOf(attributes));
+        if (skillRegistry.get(normalizedTarget).isPresent()) {
+            SkillDsl dsl = attributes.isEmpty() ? SkillDsl.of(normalizedTarget) : new SkillDsl(normalizedTarget, Map.copyOf(attributes));
+            return dslExecutor.execute(dsl, context);
         }
-        List<SkillCandidate> candidates = new ArrayList<>();
-        skillRegistry.detectCandidates(input, limit).forEach(candidate ->
-                candidates.add(new SkillCandidate(candidate.skill().name(), candidate.score()))
-        );
-        mcpToolCatalog.detectCandidates(input, limit).forEach(candidate ->
-                candidates.add(new SkillCandidate(candidate.skillName(), candidate.score()))
-        );
-        candidates.sort(Comparator
-                .comparingInt(SkillCandidate::score).reversed()
-                .thenComparing(SkillCandidate::skillName));
-        int safeLimit = Math.min(limit, candidates.size());
-        return safeLimit <= 0 ? List.of() : List.copyOf(candidates.subList(0, safeLimit));
+        if (mcpToolCatalog != null && mcpToolCatalog.hasTool(normalizedTarget)) {
+            return mcpToolExecutor.execute(normalizedTarget, attributes);
+        }
+        return SkillResult.failure(normalizedTarget.isBlank() ? "skill" : normalizedTarget,
+                "Unknown skill target: " + normalizedTarget);
     }
 
-    @Override
-    public Optional<SkillDescriptor> describeSkill(String skillName) {
-        return skillRegistry.describeSkill(skillName);
+    private String stringValue(Object value) {
+        return value == null ? "" : String.valueOf(value).trim();
     }
 
-    @Override
-    public List<SkillDescriptor> listSkillDescriptors() {
-        return skillRegistry.listSkillDescriptors();
-    }
-
-    public String describeAvailableSkills() {
-        return listAvailableSkillSummaries().stream().collect(Collectors.joining(", "));
-    }
-
-    public List<String> listAvailableSkillSummaries() {
-        List<String> summaries = new ArrayList<>(skillRegistry.getAllSkills().stream()
-                .sorted(Comparator.comparing(Skill::name))
-                .map(skill -> skill.name() + " - " + (skill.description() == null ? "" : skill.description()))
-                .toList());
-        summaries.addAll(mcpToolCatalog.listToolSummaries());
-        summaries.sort(String::compareTo);
-        return List.copyOf(summaries);
+    private String firstNonBlank(String... values) {
+        if (values == null) {
+            return "";
+        }
+        for (String value : values) {
+            if (value != null && !value.isBlank()) {
+                return value;
+            }
+        }
+        return "";
     }
 }

@@ -29,22 +29,25 @@ public class DefaultSkillExecutionGateway implements SkillExecutionGateway {
     private final SkillRegistry skillRegistry;
     private final SkillDslExecutor dslExecutor;
     private final McpToolCatalog mcpToolCatalog;
+    private final McpToolExecutor mcpToolExecutor;
     private final SkillCostTelemetry skillCostTelemetry;
     private final ExecutorService skillExecutor = Executors.newFixedThreadPool(4);
 
     public DefaultSkillExecutionGateway(SkillRegistry skillRegistry,
                                         SkillDslExecutor dslExecutor) {
-        this(skillRegistry, dslExecutor, new DefaultMcpToolCatalog(new McpToolExecutor()), null);
+        this(skillRegistry, dslExecutor, new DefaultMcpToolCatalog(), new McpToolExecutor(), null);
     }
 
     @Autowired
     public DefaultSkillExecutionGateway(SkillRegistry skillRegistry,
                                         SkillDslExecutor dslExecutor,
                                         McpToolCatalog mcpToolCatalog,
+                                        McpToolExecutor mcpToolExecutor,
                                         SkillCostTelemetry skillCostTelemetry) {
         this.skillRegistry = skillRegistry;
         this.dslExecutor = dslExecutor;
         this.mcpToolCatalog = mcpToolCatalog;
+        this.mcpToolExecutor = mcpToolExecutor;
         this.skillCostTelemetry = skillCostTelemetry;
     }
 
@@ -53,12 +56,12 @@ public class DefaultSkillExecutionGateway implements SkillExecutionGateway {
         Map<String, Object> dslAttributes = new LinkedHashMap<>(context.attributes());
         dslAttributes.putAll(dsl.input());
         SkillContext dslContext = new SkillContext(context.userId(), context.input(), dslAttributes);
-        Optional<Skill> skill = skillRegistry.getSkill(dsl.skill());
+        Optional<Skill> skill = skillRegistry.get(dsl.skill());
         if (skill.isPresent()) {
             return CompletableFuture.supplyAsync(
                     () -> runWithTiming(dsl.skill(), context.userId(), context.input(), dslAttributes, () -> dslExecutor.execute(dsl, dslContext)),
                     skillExecutor
-            );
+                );
         }
         if (mcpToolCatalog.hasTool(dsl.skill())) {
             return CompletableFuture.supplyAsync(
@@ -66,8 +69,7 @@ public class DefaultSkillExecutionGateway implements SkillExecutionGateway {
                             context.userId(),
                             context.input(),
                             dslAttributes,
-                            () -> mcpToolCatalog.executeTool(dsl.skill(), dslContext)
-                                    .orElseGet(() -> SkillResult.failure(dsl.skill(), "Skill not found: " + dsl.skill()))),
+                            () -> mcpToolExecutor.execute(dsl.skill(), dslAttributes)),
                     skillExecutor
             );
         }

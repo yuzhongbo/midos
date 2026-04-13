@@ -2,6 +2,7 @@ package com.zhongbo.mindos.assistant.dispatcher.orchestrator;
 
 import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.common.dto.ExecutionTraceDto;
+import com.zhongbo.mindos.assistant.dispatcher.agent.procedure.ProceduralMemory;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.memory.MemoryWriteBatch;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.memory.OrchestratorMemoryWriter;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -33,7 +34,7 @@ public class DefaultExecutionMemoryFacade implements ExecutionMemoryFacade {
                         result.recordableResult(),
                         result.trace(),
                         result.reflection()
-                )
+                ).merge(result.memoryWrites())
         );
     }
 
@@ -45,5 +46,9 @@ public class DefaultExecutionMemoryFacade implements ExecutionMemoryFacade {
     @Override
     public void commit(String userId, MemoryWriteBatch batch) {
         memoryWriter.commit(userId, batch);
+    }
+
+    void setProceduralMemory(ProceduralMemory proceduralMemory) {
+        memoryWriter.setProceduralMemory(proceduralMemory);
     }
 }

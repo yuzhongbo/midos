@@ -3,7 +3,7 @@ package com.zhongbo.mindos.assistant.dispatcher;
 import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryFacade;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.DecisionPlanner;
-import com.zhongbo.mindos.assistant.skill.SkillEngineFacade;
+import com.zhongbo.mindos.assistant.skill.SkillCatalogFacade;
 
 import java.util.Comparator;
 import java.util.LinkedHashSet;
@@ -18,14 +18,14 @@ final class SkillRoutingSupport {
 
     private static final Pattern ROUTING_TOKEN_SPLIT_PATTERN = Pattern.compile("[^\\p{L}\\p{N}.#_-]+");
 
-    private final SkillEngineFacade skillEngine;
+    private final SkillCatalogFacade skillEngine;
     private final DecisionPlanner decisionPlanner;
     private final DispatcherMemoryFacade dispatcherMemoryFacade;
     private final BehaviorRoutingSupport behaviorRoutingSupport;
     private final int shortlistMaxSkills;
     private final Function<String, String> memoryBucketResolver;
 
-    SkillRoutingSupport(SkillEngineFacade skillEngine,
+    SkillRoutingSupport(SkillCatalogFacade skillEngine,
                         DecisionPlanner decisionPlanner,
                         DispatcherMemoryFacade dispatcherMemoryFacade,
                         BehaviorRoutingSupport behaviorRoutingSupport,
@@ -39,21 +39,30 @@ final class SkillRoutingSupport {
         this.memoryBucketResolver = memoryBucketResolver;
     }
 
+    List<Candidate> recommend(RecommendationInput input) {
+        return rankSkillRoutingCandidates(
+                input == null ? "" : input.userId(),
+                input == null ? "" : input.userInput()
+        ).stream()
+                .map(SkillRoutingRecommendation::candidate)
+                .toList();
+    }
+
     String describeSkillRoutingCandidates(String userId, String userInput) {
-        List<SkillRoutingCandidate> rankedCandidates = rankSkillRoutingCandidates(userId, userInput);
+        List<SkillRoutingRecommendation> rankedCandidates = rankSkillRoutingCandidates(userId, userInput);
         if (rankedCandidates.isEmpty()) {
             return "";
         }
 
         List<String> shortlisted = rankedCandidates.stream()
-                .filter(candidate -> candidate.score() > 0)
+                .filter(candidate -> candidate.candidate().score() > 0)
                 .limit(shortlistMaxSkills)
-                .map(SkillRoutingCandidate::summary)
+                .map(SkillRoutingRecommendation::summary)
                 .toList();
         if (shortlisted.isEmpty()) {
             shortlisted = rankedCandidates.stream()
                     .limit(shortlistMaxSkills)
-                    .map(SkillRoutingCandidate::summary)
+                    .map(SkillRoutingRecommendation::summary)
                     .toList();
         }
 
@@ -63,13 +72,13 @@ final class SkillRoutingSupport {
     }
 
     int bestSkillRoutingScore(String userId, String userInput) {
-        return rankSkillRoutingCandidates(userId, userInput).stream()
-                .mapToInt(SkillRoutingCandidate::score)
+        return recommend(new RecommendationInput(userId, userInput)).stream()
+                .mapToInt(candidate -> (int) Math.round(candidate.score()))
                 .max()
                 .orElse(0);
     }
 
-    private List<SkillRoutingCandidate> rankSkillRoutingCandidates(String userId, String userInput) {
+    private List<SkillRoutingRecommendation> rankSkillRoutingCandidates(String userId, String userInput) {
         List<String> summaries = skillEngine.listAvailableSkillSummaries();
         if (summaries.isEmpty()) {
             return List.of();
@@ -83,15 +92,19 @@ final class SkillRoutingSupport {
         String normalizedInput = normalize(userInput);
 
         return summaries.stream()
-                .map(summary -> new SkillRoutingCandidate(summary, skillRoutingScore(
+                .map(summary -> new SkillRoutingRecommendation(
                         summary,
-                        normalizedInput,
-                        inputTokens,
-                        plannedTarget,
-                        preferredFromStats,
-                        preferredFromHistory)))
-                .sorted(Comparator.comparingInt(SkillRoutingCandidate::score).reversed()
-                        .thenComparing(SkillRoutingCandidate::summary))
+                        toCandidate(summary, skillRoutingScore(
+                                summary,
+                                normalizedInput,
+                                inputTokens,
+                                plannedTarget,
+                                preferredFromStats,
+                                preferredFromHistory
+                        ))
+                ))
+                .sorted(Comparator.comparingDouble((SkillRoutingRecommendation recommendation) -> recommendation.candidate().score()).reversed()
+                        .thenComparing(SkillRoutingRecommendation::summary))
                 .toList();
     }
 
@@ -178,6 +191,18 @@ final class SkillRoutingSupport {
         return value == null ? "" : value.trim().toLowerCase().replaceAll("\\s+", " ");
     }
 
-    private record SkillRoutingCandidate(String summary, int score) {
+    private Candidate toCandidate(String summary, int score) {
+        String skillName = summary;
+        int separator = summary.indexOf(" - ");
+        if (separator >= 0) {
+            skillName = summary.substring(0, separator).trim();
+        }
+        return new Candidate(skillName, score, "heuristic");
+    }
+
+    record RecommendationInput(String userId, String userInput) {
+    }
+
+    private record SkillRoutingRecommendation(String summary, Candidate candidate) {
     }
 }

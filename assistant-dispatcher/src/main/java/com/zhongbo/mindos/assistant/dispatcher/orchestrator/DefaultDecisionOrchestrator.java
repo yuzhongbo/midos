@@ -148,7 +148,9 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
         Decision validatedDecision = paramValidator.validate(
                 DecisionInputMetadata.enrich(decision, UserInput.from(request))
         ).applyTo(DecisionInputMetadata.enrich(decision, UserInput.from(request)));
-        return executor.execute(planner.buildGraph(validatedDecision)).outcome();
+        OrchestrationExecutionResult result = executor.execute(planner.buildGraph(validatedDecision));
+        memoryFacade.commit(result.userId(), result.memoryWrites());
+        return result.outcome();
     }
 
     @Override
@@ -168,6 +170,7 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
     void setProceduralMemory(ProceduralMemory proceduralMemory) {
         configure(defaultPlanner(), planner -> planner.setProceduralMemory(proceduralMemory));
         configure(defaultExecutor(), graphExecutor -> graphExecutor.setProceduralMemory(proceduralMemory));
+        configure(defaultMemoryFacade(), facade -> facade.setProceduralMemory(proceduralMemory));
     }
 
     void setPlannerLearningStore(PlannerLearningStore plannerLearningStore) {
@@ -192,6 +195,10 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
 
     private DefaultGraphExecutor defaultExecutor() {
         return executor instanceof DefaultGraphExecutor graphExecutor ? graphExecutor : null;
+    }
+
+    private DefaultExecutionMemoryFacade defaultMemoryFacade() {
+        return memoryFacade instanceof DefaultExecutionMemoryFacade executionMemoryFacade ? executionMemoryFacade : null;
     }
 
     private DefaultOrchestrationPlanner defaultPlanner() {
@@ -256,9 +263,6 @@ final class DefaultDecisionExecutor implements DecisionExecutor {
 
     private final ConversationLoop conversationLoop;
     private final TaskGraphCoordinator taskGraphCoordinator;
-    private final DispatcherMemoryFacade dispatcherMemoryFacade;
-    private ProceduralMemory proceduralMemory;
-    private DispatcherMemoryFacade proceduralMemoryFacade;
     private PlannerLearningStore plannerLearningStore;
     private PolicyUpdater policyUpdater;
     private AgentRouter agentRouter;
@@ -284,7 +288,6 @@ final class DefaultDecisionExecutor implements DecisionExecutor {
                 ? "我先给你一个简短结论：当前请求较复杂，我正在整理更完整建议，稍后继续发你。"
                 : eqCoachImTimeoutReply;
         this.taskGraphCoordinator = new TaskGraphCoordinator(
-                this::activeProcedureMemoryFacade,
                 () -> this.recoveryManager,
                 () -> this.agentRouter,
                 () -> this.plannerLearningStore,
@@ -302,15 +305,10 @@ final class DefaultDecisionExecutor implements DecisionExecutor {
                 effectiveEqCoachImTimeoutMs,
                 effectiveEqCoachImTimeoutReply
         );
-        this.dispatcherMemoryFacade = dispatcherMemoryFacade;
     }
 
     @Autowired(required = false)
     void setProceduralMemory(ProceduralMemory proceduralMemory) {
-        this.proceduralMemory = proceduralMemory;
-        this.proceduralMemoryFacade = proceduralMemory == null
-                ? null
-                : new DispatcherMemoryFacade((com.zhongbo.mindos.assistant.memory.MemoryGateway) null, null, proceduralMemory);
     }
 
     @Autowired(required = false)
@@ -339,32 +337,37 @@ final class DefaultDecisionExecutor implements DecisionExecutor {
     }
 
     @Override
-    public OrchestrationOutcome execute(TaskGraphPlan plan, OrchestrationRequest request) {
+    public OrchestrationExecutionResult execute(TaskGraphPlan plan, OrchestrationRequest request) {
         Decision decision = plan == null ? null : plan.decision();
         String traceId = startTrace(decision, request);
-        OrchestrationOutcome outcome = null;
+        OrchestrationExecutionResult result = null;
         try {
             if (plan == null) {
-                outcome = clarificationOutcome("", "missing task graph plan");
+                result = executionResult(plan, request, clarificationOutcome("", "missing task graph plan"), MemoryWriteBatch.empty());
             } else if (plan.requiresClarification()) {
-                outcome = clarificationOutcome(plan.clarificationTarget(), plan.clarificationMessage());
+                result = executionResult(plan, request, clarificationOutcome(plan.clarificationTarget(), plan.clarificationMessage()), MemoryWriteBatch.empty());
             } else if (!plan.hasTaskGraph()) {
-                outcome = clarificationOutcome(
-                        plan.decision() == null ? "" : plan.decision().target(),
-                        "missing task graph"
+                result = executionResult(
+                        plan,
+                        request,
+                        clarificationOutcome(
+                                plan.decision() == null ? "" : plan.decision().target(),
+                                "missing task graph"
+                        ),
+                        MemoryWriteBatch.empty()
                 );
             } else {
                 traceEvent(traceId, "planner", "task-graph", Map.of(
                         "strategy", plan.strategy(),
                         "nodeCount", plan.taskGraph().nodes().size()
                 ));
-                outcome = executePlannedGraph(plan, request, traceId);
-                if (shouldEscalateToFallback(plan, outcome)) {
+                result = executePlannedGraph(plan, request, traceId);
+                if (shouldEscalateToFallback(plan, result == null ? null : result.outcome())) {
                     traceEvent(traceId, "planner", "fallback-task-graph", Map.of(
                             "strategy", plan.fallbackStrategy(),
                             "nodeCount", plan.fallbackTaskGraph().nodes().size()
                     ));
-                    outcome = taskGraphCoordinator.orchestrateTaskGraph(
+                    TaskGraphCoordinator.TaskGraphOrchestrationResult fallback = taskGraphCoordinator.orchestrateTaskGraph(
                             decision,
                             plan.fallbackTaskGraph(),
                             plan.fallbackEffectiveParams(),
@@ -374,21 +377,24 @@ final class DefaultDecisionExecutor implements DecisionExecutor {
                             plan.intent(),
                             plan.trigger()
                     );
+                    result = executionResult(plan, request, fallback.outcome(), fallback.memoryWrites());
                 }
             }
         } finally {
-            finishTrace(traceId, decision, request, outcome);
+            finishTrace(traceId, decision, request, result == null ? null : result.outcome());
         }
-        return outcome;
+        return result == null
+                ? executionResult(plan, request, clarificationOutcome("", "missing execution result"), MemoryWriteBatch.empty())
+                : result;
     }
 
-    private OrchestrationOutcome executePlannedGraph(TaskGraphPlan plan,
-                                                     OrchestrationRequest request,
-                                                     String traceId) {
+    private OrchestrationExecutionResult executePlannedGraph(TaskGraphPlan plan,
+                                                             OrchestrationRequest request,
+                                                             String traceId) {
         if (plan == null) {
-            return clarificationOutcome("", "missing task graph plan");
+            return executionResult(null, request, clarificationOutcome("", "missing task graph plan"), MemoryWriteBatch.empty());
         }
-        return taskGraphCoordinator.orchestrateTaskGraph(
+        TaskGraphCoordinator.TaskGraphOrchestrationResult taskResult = taskGraphCoordinator.orchestrateTaskGraph(
                 plan.decision(),
                 plan.taskGraph(),
                 plan.effectiveParams(),
@@ -397,6 +403,21 @@ final class DefaultDecisionExecutor implements DecisionExecutor {
                 plan.strategy(),
                 plan.intent(),
                 plan.trigger()
+        );
+        return executionResult(plan, request, taskResult.outcome(), taskResult.memoryWrites());
+    }
+
+    private OrchestrationExecutionResult executionResult(TaskGraphPlan plan,
+                                                         OrchestrationRequest request,
+                                                         OrchestrationOutcome outcome,
+                                                         MemoryWriteBatch memoryWrites) {
+        return new OrchestrationExecutionResult(
+                plan,
+                request,
+                plan == null || !plan.hasTaskGraph() ? null : plan.taskGraph(),
+                outcome,
+                null,
+                memoryWrites
         );
     }
 
@@ -429,10 +450,6 @@ final class DefaultDecisionExecutor implements DecisionExecutor {
                 && outcome.hasResult()
                 && outcome.result() != null
                 && !outcome.result().success();
-    }
-
-    private DispatcherMemoryFacade activeProcedureMemoryFacade() {
-        return proceduralMemoryFacade == null ? dispatcherMemoryFacade : proceduralMemoryFacade;
     }
 
     private Map<String, Object> applyContextPatch(Map<String, Object> baseContext, Map<String, Object> patch) {

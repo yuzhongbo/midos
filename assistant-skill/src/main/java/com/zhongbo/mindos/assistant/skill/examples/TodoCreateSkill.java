@@ -17,15 +17,14 @@ import java.util.logging.Logger;
 
 @Component
 public class TodoCreateSkill implements Skill, SkillDescriptorProvider {
-    private static final Logger LOGGER = Logger.getLogger(TodoCreateSkill.class.getName());
-    private final LlmClient llmClient;
+    private final TodoCreateSkillExecutor executor;
 
     public TodoCreateSkill(LlmClient llmClient) {
         this(llmClient, Clock.systemDefaultZone());
     }
 
     TodoCreateSkill(LlmClient llmClient, Clock clock) {
-        this.llmClient = llmClient;
+        this.executor = new TodoCreateSkillExecutor(llmClient, clock);
     }
 
     public TodoCreateSkill() {
@@ -34,21 +33,46 @@ public class TodoCreateSkill implements Skill, SkillDescriptorProvider {
 
     @Override
     public String name() {
-        return "todo.create";
+        return executor.name();
     }
 
     @Override
     public String description() {
-        return "根据任务描述和截止时间生成待办事项，适合快速记任务。";
+        return executor.description();
     }
 
     @Override
     public SkillDescriptor skillDescriptor() {
-        return new SkillDescriptor(name(), description(), List.of("待办", "todo", "提醒", "安排任务", "创建任务", "截止", "deadline"));
+        return executor.skillDescriptor();
     }
 
     @Override
     public SkillResult run(SkillContext context) {
+        return executor.execute(context);
+    }
+}
+
+final class TodoCreateSkillExecutor {
+    private static final Logger LOGGER = Logger.getLogger(TodoCreateSkill.class.getName());
+    private final LlmClient llmClient;
+
+    TodoCreateSkillExecutor(LlmClient llmClient, Clock clock) {
+        this.llmClient = llmClient;
+    }
+
+    String name() {
+        return "todo.create";
+    }
+
+    String description() {
+        return "根据任务描述和截止时间生成待办事项，适合快速记任务。";
+    }
+
+    SkillDescriptor skillDescriptor() {
+        return new SkillDescriptor(name(), description(), List.of("待办", "todo", "提醒", "安排任务", "创建任务", "截止", "deadline"));
+    }
+
+    SkillResult execute(SkillContext context) {
         TodoDraft draft = resolveDraft(context);
         if (draft.task().isBlank()) {
             return SkillResult.failure(name(), "请告诉我要记录的具体待办事项。");

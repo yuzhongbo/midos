@@ -32,6 +32,7 @@ import com.zhongbo.mindos.assistant.dispatcher.orchestrator.TaskExecutor;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.InMemoryParamSchemaRegistry;
 import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryFacade;
 import com.zhongbo.mindos.assistant.common.dto.LocalEscalationMetricsDto;
+import com.zhongbo.mindos.assistant.skill.DefaultSkillCatalog;
 import com.zhongbo.mindos.assistant.skill.DefaultSkillExecutionGateway;
 import com.zhongbo.mindos.assistant.skill.Skill;
 import com.zhongbo.mindos.assistant.skill.SkillDescriptor;
@@ -39,6 +40,7 @@ import com.zhongbo.mindos.assistant.skill.SkillDescriptorProvider;
 import com.zhongbo.mindos.assistant.skill.SkillDslExecutor;
 import com.zhongbo.mindos.assistant.skill.SkillEngine;
 import com.zhongbo.mindos.assistant.skill.SkillRegistry;
+import com.zhongbo.mindos.assistant.skill.SkillRoutingProperties;
 import com.zhongbo.mindos.assistant.skill.mcp.McpToolDefinition;
 import com.zhongbo.mindos.assistant.skill.mcp.McpToolExecutor;
 import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalysisResult;
@@ -48,6 +50,7 @@ import org.junit.jupiter.api.Test;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -763,7 +766,7 @@ class DispatcherServiceTest {
         SkillRegistry registry = new SkillRegistry(List.of(
                 new FixedSkill("todo.create", "Creates todo items from natural language", "待办已创建")
         ));
-        SemanticAnalysisService semanticAnalysisService = new SemanticAnalysisService(llmClient, registry, true, false, true, "", "local", "cost", 120) {
+        SemanticAnalysisService semanticAnalysisService = new SemanticAnalysisService(llmClient, registry, new DefaultSkillCatalog(registry, null, new SkillRoutingProperties()), true, false, true, "", "local", "cost", 120) {
             @Override
             public SemanticAnalysisResult analyze(String userId,
                                                   String userInput,
@@ -799,7 +802,7 @@ class DispatcherServiceTest {
         SkillRegistry registry = new SkillRegistry(List.of(
                 new FixedSkill("todo.create", "Creates todo items from natural language", "待办已创建")
         ));
-        SemanticAnalysisService semanticAnalysisService = new SemanticAnalysisService(llmClient, registry, true, false, true, "", "local", "cost", 120) {
+        SemanticAnalysisService semanticAnalysisService = new SemanticAnalysisService(llmClient, registry, new DefaultSkillCatalog(registry, null, new SkillRoutingProperties()), true, false, true, "", "local", "cost", 120) {
             @Override
             public SemanticAnalysisResult analyze(String userId,
                                                   String userInput,
@@ -838,7 +841,7 @@ class DispatcherServiceTest {
         SkillRegistry registry = new SkillRegistry(List.of(
                 new FixedSkill("todo.create", "Creates todo items from natural language", "待办已创建")
         ));
-        SemanticAnalysisService semanticAnalysisService = new SemanticAnalysisService(llmClient, registry, true, false, true, "", "local", "cost", 120) {
+        SemanticAnalysisService semanticAnalysisService = new SemanticAnalysisService(llmClient, registry, new DefaultSkillCatalog(registry, null, new SkillRoutingProperties()), true, false, true, "", "local", "cost", 120) {
             @Override
             public SemanticAnalysisResult analyze(String userId,
                                                   String userInput,
@@ -887,7 +890,7 @@ class DispatcherServiceTest {
                     }
                 }
         ));
-        SemanticAnalysisService semanticAnalysisService = new SemanticAnalysisService(llmClient, registry, true, false, true, "", "local", "cost", 120) {
+        SemanticAnalysisService semanticAnalysisService = new SemanticAnalysisService(llmClient, registry, new DefaultSkillCatalog(registry, null, new SkillRoutingProperties()), true, false, true, "", "local", "cost", 120) {
             @Override
             public SemanticAnalysisResult analyze(String userId,
                                                   String userInput,
@@ -927,7 +930,7 @@ class DispatcherServiceTest {
                         context -> SkillResult.success("mcp.bravesearch.webSearch", "成都天气：今天多云，明天小雨")
                 )
         ));
-        SemanticAnalysisService semanticAnalysisService = new SemanticAnalysisService(llmClient, registry, true, false, true, "", "local", "cost", 120) {
+        SemanticAnalysisService semanticAnalysisService = new SemanticAnalysisService(llmClient, registry, new DefaultSkillCatalog(registry, null, new SkillRoutingProperties()), true, false, true, "", "local", "cost", 120) {
             @Override
             public SemanticAnalysisResult analyze(String userId,
                                                   String userInput,
@@ -995,7 +998,7 @@ class DispatcherServiceTest {
         SkillRegistry registry = new SkillRegistry(List.of(
                 newMcpSkill("mcp.bravesearch.webSearch", "Brave latest web news search", "brave result")
         ));
-        SemanticAnalysisService semanticAnalysisService = new SemanticAnalysisService(llmClient, registry, true, false, true, "", "local", "cost", 120) {
+        SemanticAnalysisService semanticAnalysisService = new SemanticAnalysisService(llmClient, registry, new DefaultSkillCatalog(registry, null, new SkillRoutingProperties()), true, false, true, "", "local", "cost", 120) {
             @Override
             public SemanticAnalysisResult analyze(String userId,
                                                   String userInput,
@@ -1224,7 +1227,7 @@ class DispatcherServiceTest {
         SkillRegistry registry = new SkillRegistry(List.of(
                 new FixedSkill("todo.create", "Creates todo items from natural language", "待办已创建")
         ));
-        SemanticAnalysisService semanticAnalysisService = new SemanticAnalysisService(llmClient, registry, true, false, true, "", "local", "cost", 120) {
+        SemanticAnalysisService semanticAnalysisService = new SemanticAnalysisService(llmClient, registry, new DefaultSkillCatalog(registry, null, new SkillRoutingProperties()), true, false, true, "", "local", "cost", 120) {
             @Override
             public SemanticAnalysisResult analyze(String userId,
                                                   String userInput,
@@ -1273,7 +1276,7 @@ class DispatcherServiceTest {
                     }
                 }
         ));
-        SemanticAnalysisService semanticAnalysisService = new SemanticAnalysisService(llmClient, registry, true, false, true, "", "local", "cost", 120) {
+        SemanticAnalysisService semanticAnalysisService = new SemanticAnalysisService(llmClient, registry, new DefaultSkillCatalog(registry, null, new SkillRoutingProperties()), true, false, true, "", "local", "cost", 120) {
             @Override
             public SemanticAnalysisResult analyze(String userId,
                                                   String userInput,
@@ -1331,7 +1334,7 @@ class DispatcherServiceTest {
                     }
                 }
         ));
-        SemanticAnalysisService semanticAnalysisService = new SemanticAnalysisService(llmClient, registry, true, false, true, "", "local", "cost", 120) {
+        SemanticAnalysisService semanticAnalysisService = new SemanticAnalysisService(llmClient, registry, new DefaultSkillCatalog(registry, null, new SkillRoutingProperties()), true, false, true, "", "local", "cost", 120) {
             @Override
             public SemanticAnalysisResult analyze(String userId,
                                                   String userInput,
@@ -1752,10 +1755,11 @@ class DispatcherServiceTest {
                                                                           List<Skill> skills) {
         SkillRegistry registry = new SkillRegistry(skills);
         SkillDslExecutor dslExecutor = new SkillDslExecutor(registry);
-        SkillEngine skillEngine = new SkillEngine(registry, dslExecutor);
+        DefaultSkillCatalog skillEngine = new DefaultSkillCatalog(registry, null, new SkillRoutingProperties());
         SemanticAnalysisService semanticAnalysisService = new SemanticAnalysisService(
                 llmClient,
                 registry,
+                skillEngine,
                 true,
                 false,
                 true,
@@ -1896,7 +1900,7 @@ class DispatcherServiceTest {
                                                                   SemanticAnalysisService semanticAnalysisService,
                                                                   int llmShortlistMaxSkills) {
         SkillDslExecutor dslExecutor = new SkillDslExecutor(registry);
-        SkillEngine skillEngine = new SkillEngine(registry, dslExecutor);
+        DefaultSkillCatalog skillEngine = new DefaultSkillCatalog(registry, null, new SkillRoutingProperties());
         SkillDslParser parser = new SkillDslParser(new SkillDslValidator());
         IntentModelRoutingPolicy intentModelRoutingPolicy = new IntentModelRoutingPolicy(
                 false,
@@ -2350,10 +2354,11 @@ class DispatcherServiceTest {
                                                int skillFinalizeMaxTokens) {
         SkillRegistry registry = new SkillRegistry(skills);
         SkillDslExecutor dslExecutor = new SkillDslExecutor(registry);
-        SkillEngine skillEngine = new SkillEngine(registry, dslExecutor);
+        DefaultSkillCatalog skillEngine = new DefaultSkillCatalog(registry, null, new SkillRoutingProperties());
         SemanticAnalysisService semanticAnalysisService = new SemanticAnalysisService(
                 llmClient,
                 registry,
+                skillEngine,
                 semanticAnalysisEnabled,
                 false,
                 true,
@@ -2509,10 +2514,11 @@ class DispatcherServiceTest {
                                                          DispatcherLlmTuningProperties tuningProperties) {
         SkillRegistry registry = new SkillRegistry(skills);
         SkillDslExecutor dslExecutor = new SkillDslExecutor(registry);
-        SkillEngine skillEngine = new SkillEngine(registry, dslExecutor);
+        DefaultSkillCatalog skillEngine = new DefaultSkillCatalog(registry, null, new SkillRoutingProperties());
         SemanticAnalysisService semanticAnalysisService = new SemanticAnalysisService(
                 llmClient,
                 registry,
+                skillEngine,
                 true,
                 false,
                 true,
@@ -2708,7 +2714,7 @@ class DispatcherServiceTest {
 
     private DecisionOrchestrator decisionOrchestratorProxy(MemoryGateway memoryGateway) {
         return new DefaultDecisionOrchestrator(
-                new SimpleCandidatePlanner(new SkillEngine(new SkillRegistry(List.of()), new SkillDslExecutor(new SkillRegistry(List.of()))), dispatcherMemoryFacade(memoryGateway), 3, 0.40, 0.35, 0.15, 0.10),
+                new SimpleCandidatePlanner(new DefaultSkillCatalog(new SkillRegistry(List.of()), null, new SkillRoutingProperties()), dispatcherMemoryFacade(memoryGateway), 3, 0.40, 0.35, 0.15, 0.10),
                 new SimpleParamValidator(new InMemoryParamSchemaRegistry(), memoryGateway),
                 new SimpleConversationLoop(),
                 new SimpleFallbackPlan(),
@@ -2790,7 +2796,6 @@ class DispatcherServiceTest {
 
     private static final class TestMcpLikeSkill implements Skill, SkillDescriptorProvider {
         private final McpToolDefinition toolDefinition;
-        private final McpToolExecutor executor = new McpToolExecutor();
         private final String output;
 
         private TestMcpLikeSkill(McpToolDefinition toolDefinition, String output) {
@@ -2810,7 +2815,28 @@ class DispatcherServiceTest {
 
         @Override
         public SkillDescriptor skillDescriptor() {
-            return new SkillDescriptor(name(), description(), executor.routingKeywords(toolDefinition));
+            List<String> keywords = new ArrayList<>();
+            keywords.add(name());
+            keywords.add(description());
+            keywords.add(toolDefinition.name());
+            keywords.add(toolDefinition.serverAlias());
+            String normalized = (toolDefinition.name() + " " + description()).toLowerCase(Locale.ROOT);
+            if (normalized.contains("search")) {
+                keywords.addAll(List.of("search", "web search", "搜", "搜索", "查询", "查一下"));
+            }
+            if (normalized.contains("websearch") || normalized.contains("web search")) {
+                keywords.addAll(List.of("news", "latest", "realtime", "weather", "新闻", "最新", "实时", "天气"));
+            }
+            if (normalized.contains("news") || normalized.contains("latest") || normalized.contains("headline")) {
+                keywords.addAll(List.of("news", "latest", "realtime", "新闻", "最新", "实时", "头条", "热点"));
+            }
+            if (normalized.contains("weather")) {
+                keywords.addAll(List.of("weather", "天气"));
+            }
+            if (normalized.contains("docs") || normalized.contains("documentation") || normalized.contains("guide")) {
+                keywords.addAll(List.of("docs", "documentation", "guide", "文档", "手册", "指南"));
+            }
+            return new SkillDescriptor(name(), description(), keywords.stream().distinct().toList());
         }
 
         @Override

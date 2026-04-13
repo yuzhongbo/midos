@@ -6,6 +6,7 @@ import com.zhongbo.mindos.assistant.common.dto.PlanStepDto;
 import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.ReflectionResult;
 import com.zhongbo.mindos.assistant.dispatcher.agent.taskgraph.TaskGraph;
 import com.zhongbo.mindos.assistant.dispatcher.decision.Decision;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.memory.MemoryWriteBatch;
 
 import java.time.Instant;
 import java.util.List;
@@ -15,7 +16,8 @@ public record OrchestrationExecutionResult(TaskGraphPlan plan,
                                            DecisionOrchestrator.OrchestrationRequest request,
                                            TaskGraph graph,
                                            DecisionOrchestrator.OrchestrationOutcome outcome,
-                                           ReflectionResult reflection) {
+                                           ReflectionResult reflection,
+                                           MemoryWriteBatch memoryWrites) {
 
     private static final FailureNormalizer FAILURE_NORMALIZER = new FailureNormalizer();
 
@@ -27,10 +29,11 @@ public record OrchestrationExecutionResult(TaskGraphPlan plan,
         reflection = reflection == null
                 ? new ReflectionResult(true, "", "", "none", Map.of(), List.of(), false, false, Instant.now(), com.zhongbo.mindos.assistant.dispatcher.orchestrator.memory.MemoryWriteBatch.empty())
                 : reflection;
+        memoryWrites = memoryWrites == null ? MemoryWriteBatch.empty() : memoryWrites;
     }
 
     public OrchestrationExecutionResult withReflection(ReflectionResult reflection) {
-        return new OrchestrationExecutionResult(plan, request, graph, outcome, reflection);
+        return new OrchestrationExecutionResult(plan, request, graph, outcome, reflection, memoryWrites);
     }
 
     public Decision decision() {
@@ -88,7 +91,7 @@ public record OrchestrationExecutionResult(TaskGraphPlan plan,
                 outcome.selectedSkill(),
                 outcome.usedFallback()
         );
-        return new OrchestrationExecutionResult(plan, request, graph, normalizedOutcome, reflection);
+        return new OrchestrationExecutionResult(plan, request, graph, normalizedOutcome, reflection, memoryWrites);
     }
 
     private List<String> attemptedCandidates() {

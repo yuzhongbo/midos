@@ -2,6 +2,7 @@ package com.zhongbo.mindos.assistant.dispatcher.orchestrator;
 
 import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.dispatcher.agent.taskgraph.TaskGraph;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.memory.MemoryWriteBatch;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
@@ -25,17 +26,23 @@ public class DefaultGraphExecutor implements GraphExecutor {
         DecisionOrchestrator.OrchestrationRequest request = stored == null
                 ? new DecisionOrchestrator.OrchestrationRequest("", "", null, java.util.Map.of())
                 : stored.request();
-        DecisionOrchestrator.OrchestrationOutcome rawOutcome = plan == null
-                ? new DecisionOrchestrator.OrchestrationOutcome(
-                        SkillResult.failure("decision.orchestrator", "missing task graph plan"),
+        return plan == null
+                ? new OrchestrationExecutionResult(
                         null,
+                        request,
+                        graph,
+                        new DecisionOrchestrator.OrchestrationOutcome(
+                                SkillResult.failure("decision.orchestrator", "missing task graph plan"),
+                                null,
+                                null,
+                                null,
+                                "",
+                                false
+                        ),
                         null,
-                        null,
-                        "",
-                        false
+                        MemoryWriteBatch.empty()
                 )
                 : decisionExecutor.execute(plan, request);
-        return new OrchestrationExecutionResult(plan, request, graph, rawOutcome, null);
     }
 
     void setProceduralMemory(com.zhongbo.mindos.assistant.dispatcher.agent.procedure.ProceduralMemory proceduralMemory) {

@@ -3,8 +3,8 @@ package com.zhongbo.mindos.assistant.dispatcher.orchestrator;
 import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.dispatcher.decision.Decision;
 import com.zhongbo.mindos.assistant.skill.SkillCandidate;
+import com.zhongbo.mindos.assistant.skill.SkillCatalogFacade;
 import com.zhongbo.mindos.assistant.skill.SkillDescriptor;
-import com.zhongbo.mindos.assistant.skill.SkillEngineFacade;
 import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalysisResult;
 import org.junit.jupiter.api.Test;
 
@@ -19,7 +19,7 @@ class DefaultDecisionPlannerTest {
 
     @Test
     void shouldMapLegacyIntentToCanonicalTarget() {
-        DefaultDecisionPlanner planner = new DefaultDecisionPlanner(new StubSkillEngineFacade());
+        DefaultDecisionPlanner planner = new DefaultDecisionPlanner(new StubSkillCatalogFacade());
 
         Decision decision = planner.plan("帮我安排今天的任务", "task", Map.of(), new SkillContext("u1", "帮我安排今天的任务", Map.of()));
 
@@ -29,7 +29,7 @@ class DefaultDecisionPlannerTest {
 
     @Test
     void shouldPreserveDirectSkillIntentAsTarget() {
-        DefaultDecisionPlanner planner = new DefaultDecisionPlanner(new StubSkillEngineFacade());
+        DefaultDecisionPlanner planner = new DefaultDecisionPlanner(new StubSkillCatalogFacade());
 
         Decision decision = planner.plan("建个待办", "todo.create", Map.of(), new SkillContext("u1", "建个待办", Map.of()));
 
@@ -39,7 +39,7 @@ class DefaultDecisionPlannerTest {
 
     @Test
     void shouldMapSemanticIntentWhenSuggestedSkillMissing() {
-        DefaultDecisionPlanner planner = new DefaultDecisionPlanner(new StubSkillEngineFacade());
+        DefaultDecisionPlanner planner = new DefaultDecisionPlanner(new StubSkillCatalogFacade());
         SkillContext context = new SkillContext("u1", "做个学习计划", Map.of(
                 SemanticAnalysisResult.ATTR_INTENT, "learning",
                 SemanticAnalysisResult.ATTR_CONFIDENCE, 0.82
@@ -54,7 +54,7 @@ class DefaultDecisionPlannerTest {
 
     @Test
     void shouldMoveEchoRuleFallbackIntoPlanner() {
-        DefaultDecisionPlanner planner = new DefaultDecisionPlanner(new StubSkillEngineFacade());
+        DefaultDecisionPlanner planner = new DefaultDecisionPlanner(new StubSkillCatalogFacade());
 
         Decision decision = planner.plan("echo hello planner", "", Map.of(), new SkillContext("u1", "echo hello planner", Map.of()));
 
@@ -66,7 +66,7 @@ class DefaultDecisionPlannerTest {
 
     @Test
     void shouldMoveTeachingPlanRuleFallbackIntoPlanner() {
-        DefaultDecisionPlanner planner = new DefaultDecisionPlanner(new StubSkillEngineFacade());
+        DefaultDecisionPlanner planner = new DefaultDecisionPlanner(new StubSkillCatalogFacade());
 
         Decision decision = planner.plan("帮我做一个六周数学学习计划", "", Map.of(), new SkillContext("u1", "帮我做一个六周数学学习计划", Map.of()));
 
@@ -75,7 +75,7 @@ class DefaultDecisionPlannerTest {
         assertTrue(decision.params().containsKey("topic"));
     }
 
-    private static final class StubSkillEngineFacade implements SkillEngineFacade {
+    private static final class StubSkillCatalogFacade implements SkillCatalogFacade {
         @Override
         public Optional<String> detectSkillName(String input) {
             return Optional.empty();

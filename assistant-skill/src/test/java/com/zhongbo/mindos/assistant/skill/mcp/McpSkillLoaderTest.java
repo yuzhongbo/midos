@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
 import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.common.SkillResult;
+import com.zhongbo.mindos.assistant.skill.DefaultSkillCatalog;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -74,18 +75,17 @@ class McpSkillLoaderTest {
         server.start();
 
         String url = "http://127.0.0.1:" + server.getAddress().getPort() + "/mcp";
-        DefaultMcpToolCatalog catalog = new DefaultMcpToolCatalog(new McpToolExecutor());
+        DefaultMcpToolCatalog catalog = new DefaultMcpToolCatalog();
         McpSkillLoader loader = new McpSkillLoader(catalog, new McpJsonRpcClient(), "docs:" + url, "");
+        McpToolExecutor executor = new McpToolExecutor(catalog);
+        DefaultSkillCatalog skillCatalog = new DefaultSkillCatalog(new com.zhongbo.mindos.assistant.skill.SkillRegistry(List.of()), catalog, new com.zhongbo.mindos.assistant.skill.SkillRoutingProperties());
 
         int loaded = loader.loadServer("docs", url, Map.of("Authorization", "Bearer loader-token"));
-        SkillResult result = catalog.executeTool("mcp.docs.searchDocs",
-                        new SkillContext("u1", "find auth guide", Map.of("query", "auth")))
-                .orElseThrow()
-                ;
+        SkillResult result = executor.execute("mcp.docs.searchDocs", Map.of("query", "auth", "input", "find auth guide", "userId", "u1"));
 
         assertEquals(1, loaded);
         assertTrue(catalog.hasTool("mcp.docs.searchDocs"));
-        assertEquals("mcp.docs.searchDocs", catalog.detectToolName("search docs for auth guide").orElseThrow());
+        assertEquals("mcp.docs.searchDocs", skillCatalog.detectSkillName("search docs for auth guide").orElseThrow());
         assertTrue(result.success());
         assertTrue(result.output().contains("query=auth"));
         assertTrue(authHeaderSeen.get());
@@ -121,7 +121,7 @@ class McpSkillLoaderTest {
         server.start();
 
         String url = "http://127.0.0.1:" + server.getAddress().getPort() + "/mcp";
-        DefaultMcpToolCatalog catalog = new DefaultMcpToolCatalog(new McpToolExecutor());
+        DefaultMcpToolCatalog catalog = new DefaultMcpToolCatalog();
         McpSkillLoader loader = new McpSkillLoader(
                 catalog,
                 new McpJsonRpcClient(),
@@ -166,7 +166,7 @@ class McpSkillLoaderTest {
         server.start();
 
         String url = "http://127.0.0.1:" + server.getAddress().getPort() + "/mcp";
-        DefaultMcpToolCatalog catalog = new DefaultMcpToolCatalog(new McpToolExecutor());
+        DefaultMcpToolCatalog catalog = new DefaultMcpToolCatalog();
         McpSkillLoader loader = new McpSkillLoader(
                 catalog,
                 new McpJsonRpcClient(),
@@ -188,7 +188,7 @@ class McpSkillLoaderTest {
 
     @Test
     void shouldIgnoreShortcutSearchConfigsWhenUnifiedSearchSourcesAreConfigured() {
-        DefaultMcpToolCatalog catalog = new DefaultMcpToolCatalog(new McpToolExecutor());
+        DefaultMcpToolCatalog catalog = new DefaultMcpToolCatalog();
         McpSkillLoader loader = new McpSkillLoader(
                 catalog,
                 new McpJsonRpcClient(),
@@ -248,19 +248,18 @@ class McpSkillLoaderTest {
         server.start();
 
         String url = "http://127.0.0.1:" + server.getAddress().getPort() + "/res/v1/web/search";
-        DefaultMcpToolCatalog catalog = new DefaultMcpToolCatalog(new McpToolExecutor());
+        DefaultMcpToolCatalog catalog = new DefaultMcpToolCatalog();
         McpSkillLoader loader = new McpSkillLoader(
                 catalog,
                 new McpJsonRpcClient(),
                 "bravesearch:" + url,
                 "bravesearch:X-Subscription-Token=brave-rest-token"
         );
+        McpToolExecutor executor = new McpToolExecutor(catalog);
 
         int loaded = loader.loadConfiguredServers();
-        SkillResult result = catalog.executeTool("mcp.bravesearch.webSearch",
-                        new SkillContext("u1", "查看新闻 artificial intelligence", Map.of("query", "artificial intelligence")))
-                .orElseThrow()
-                ;
+        SkillResult result = executor.execute("mcp.bravesearch.webSearch",
+                Map.of("query", "artificial intelligence", "input", "查看新闻 artificial intelligence", "userId", "u1"));
 
         assertEquals(1, loaded);
         assertTrue(catalog.hasTool("mcp.bravesearch.webSearch"));
@@ -272,7 +271,7 @@ class McpSkillLoaderTest {
 
     @Test
     void shouldIgnorePlaceholderServerUrlEntries() {
-        DefaultMcpToolCatalog catalog = new DefaultMcpToolCatalog(new McpToolExecutor());
+        DefaultMcpToolCatalog catalog = new DefaultMcpToolCatalog();
         McpSkillLoader loader = new McpSkillLoader(
                 catalog,
                 new McpJsonRpcClient(),
@@ -289,7 +288,7 @@ class McpSkillLoaderTest {
 
     @Test
     void shouldIgnorePlaceholderHeaderValues() {
-        DefaultMcpToolCatalog catalog = new DefaultMcpToolCatalog(new McpToolExecutor());
+        DefaultMcpToolCatalog catalog = new DefaultMcpToolCatalog();
         McpSkillLoader loader = new McpSkillLoader(
                 catalog,
                 new McpJsonRpcClient(),
@@ -332,7 +331,7 @@ class McpSkillLoaderTest {
         server.start();
 
         String url = "http://127.0.0.1:" + server.getAddress().getPort() + "/search";
-        DefaultMcpToolCatalog catalog = new DefaultMcpToolCatalog(new McpToolExecutor());
+        DefaultMcpToolCatalog catalog = new DefaultMcpToolCatalog();
         McpSkillLoader loader = new McpSkillLoader(
                 catalog,
                 new McpJsonRpcClient(),
@@ -351,10 +350,9 @@ class McpSkillLoaderTest {
         );
 
         int loaded = loader.loadConfiguredServers();
-        SkillResult result = catalog.executeTool("mcp.serper.webSearch",
-                        new SkillContext("u1", "搜索 artificial intelligence", Map.of("query", "artificial intelligence")))
-                .orElseThrow()
-                ;
+        McpToolExecutor executor = new McpToolExecutor(catalog);
+        SkillResult result = executor.execute("mcp.serper.webSearch",
+                Map.of("query", "artificial intelligence", "input", "搜索 artificial intelligence", "userId", "u1"));
 
         assertEquals(1, loaded);
         assertTrue(catalog.hasTool("mcp.serper.webSearch"));
@@ -395,7 +393,7 @@ class McpSkillLoaderTest {
         server.start();
 
         String url = "http://127.0.0.1:" + server.getAddress().getPort() + "/search.json?engine=google";
-        DefaultMcpToolCatalog catalog = new DefaultMcpToolCatalog(new McpToolExecutor());
+        DefaultMcpToolCatalog catalog = new DefaultMcpToolCatalog();
         McpSkillLoader loader = new McpSkillLoader(
                 catalog,
                 new McpJsonRpcClient(),
@@ -415,10 +413,9 @@ class McpSkillLoaderTest {
         );
 
         int loaded = loader.loadConfiguredServers();
-        SkillResult result = catalog.executeTool("mcp.serpapi.webSearch",
-                        new SkillContext("u1", "搜索 artificial intelligence", Map.of("query", "artificial intelligence")))
-                .orElseThrow()
-                ;
+        McpToolExecutor executor = new McpToolExecutor(catalog);
+        SkillResult result = executor.execute("mcp.serpapi.webSearch",
+                Map.of("query", "artificial intelligence", "input", "搜索 artificial intelligence", "userId", "u1"));
 
         assertEquals(1, loaded);
         assertTrue(catalog.hasTool("mcp.serpapi.webSearch"));

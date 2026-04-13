@@ -1,10 +1,9 @@
 package com.zhongbo.mindos.assistant.skill.mcp;
 
-import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.common.SkillResult;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
-import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -37,97 +36,36 @@ public class McpToolExecutor {
             "^(?:今天|今日|最新|实时|当前|新闻|资讯|消息|头条|热点|热搜|看看|查看|查一下|搜索|搜一下|搜|查|看|想看|我想看|我想了解|了解一下|关于|有关|的|\\s)+$",
             Pattern.CASE_INSENSITIVE);
 
-    public List<String> routingKeywords(McpToolDefinition toolDefinition) {
-        List<String> keywords = new ArrayList<>();
-        keywords.add(toolDefinition.serverAlias());
-        keywords.add(splitCamelCase(toolDefinition.name()));
-        keywords.add((toolDefinition.serverAlias() + " " + splitCamelCase(toolDefinition.name())).trim());
-        if (toolDefinition.description() != null && !toolDefinition.description().isBlank()) {
-            keywords.add(toolDefinition.description());
-        }
-        String capabilityText = normalizePhrase(String.join(" ", keywords));
-        if (containsAny(capabilityText, SEARCH_INTENT_CUES)) {
-            keywords.addAll(SEARCH_INTENT_CUES);
-        }
-        if (containsAny(capabilityText, DOC_INTENT_CUES)) {
-            keywords.addAll(DOC_INTENT_CUES);
-        }
-        if (containsAny(capabilityText, REALTIME_INTENT_CUES)
-                || containsAny(capabilityText, List.of("websearch", "web search", "searchweb", "internet", "网页", "联网"))) {
-            keywords.addAll(REALTIME_INTENT_CUES);
-            keywords.addAll(List.of("web search", "websearch", "internet", "联网", "网页"));
-        }
-        return List.copyOf(keywords);
+    private final McpToolCatalog toolCatalog;
+
+    public McpToolExecutor() {
+        this(null);
     }
 
-    public boolean supports(McpToolDefinition toolDefinition, String input) {
-        return routingScore(toolDefinition, input) > 0;
+    @Autowired
+    public McpToolExecutor(McpToolCatalog toolCatalog) {
+        this.toolCatalog = toolCatalog;
     }
 
-    public int routingScore(McpToolDefinition toolDefinition, String input) {
-        if (input == null || input.isBlank()) {
-            return Integer.MIN_VALUE;
+    public SkillResult execute(String target, Map<String, Object> params) {
+        if (toolCatalog == null || target == null || target.isBlank()) {
+            return SkillResult.failure(target == null ? "mcp" : target, "Unknown MCP tool: " + target);
         }
-
-        String normalizedInput = normalizePhrase(input);
-        String normalizedSkillName = normalizePhrase(toolDefinition.skillName());
-        String normalizedToolName = normalizePhrase(toolDefinition.name());
-        if (normalizedInput.equals(normalizedSkillName)
-                || normalizedInput.startsWith(normalizedSkillName + " ")) {
-            return 1000;
+        McpToolCatalog.RegisteredTool tool = toolCatalog.getTool(target).orElse(null);
+        if (tool == null) {
+            return SkillResult.failure(target, "Unknown MCP tool: " + target);
         }
-        if (!normalizedToolName.isBlank() && (normalizedInput.equals(normalizedToolName)
-                || normalizedInput.startsWith(normalizedToolName + " "))) {
-            return 950;
-        }
-
-        List<String> phrases = new ArrayList<>(routingKeywords(toolDefinition));
-        phrases.add(0, toolDefinition.skillName());
-
-        int bestScore = Integer.MIN_VALUE;
-        for (String phrase : phrases) {
-            String normalizedPhrase = normalizePhrase(phrase);
-            if (normalizedPhrase.isBlank()) {
-                continue;
-            }
-            if (normalizedInput.contains(normalizedPhrase)) {
-                bestScore = Math.max(bestScore, 700 + normalizedPhrase.length());
-                continue;
-            }
-            int overlap = countMatchedSignificantWords(normalizedInput, normalizedPhrase);
-            if (overlap > 0) {
-                bestScore = Math.max(bestScore, 300 + overlap * 40);
-            }
-        }
-
-        String capabilityText = normalizePhrase(String.join(" ", phrases));
-        boolean docsTool = containsAny(capabilityText, DOC_INTENT_CUES)
-                && containsAny(capabilityText, SEARCH_INTENT_CUES);
-        boolean realtimeSearchTool = containsAny(capabilityText, REALTIME_INTENT_CUES)
-                || containsAny(capabilityText, List.of("websearch", "web search", "searchweb", "internet", "网页", "联网"));
-        boolean generalSearchTool = realtimeSearchTool || containsAny(capabilityText, SEARCH_INTENT_CUES);
-
-        if (docsTool && containsAny(normalizedInput, DOC_INTENT_CUES)) {
-            bestScore = Math.max(bestScore, 520 + countCueMatches(normalizedInput, DOC_INTENT_CUES) * 20);
-        }
-        if (generalSearchTool && containsAny(normalizedInput, SEARCH_INTENT_CUES)) {
-            bestScore = Math.max(bestScore, 420 + countCueMatches(normalizedInput, SEARCH_INTENT_CUES) * 20);
-        }
-        if (realtimeSearchTool && containsAny(normalizedInput, REALTIME_INTENT_CUES)) {
-            bestScore = Math.max(bestScore, 560 + countCueMatches(normalizedInput, REALTIME_INTENT_CUES) * 20);
-        }
-
-        return bestScore > 0 ? bestScore : Integer.MIN_VALUE;
+        return execute(tool.definition(), tool.client(), params == null ? Map.of() : params);
     }
 
-    public SkillResult execute(McpToolDefinition toolDefinition,
-                               McpJsonRpcClient mcpClient,
-                               SkillContext context) {
+    private SkillResult execute(McpToolDefinition toolDefinition,
+                                McpJsonRpcClient mcpClient,
+                                Map<String, Object> params) {
         try {
-            Map<String, Object> arguments = new LinkedHashMap<>(context.attributes());
-            ensureSearchQuery(toolDefinition, arguments, context);
+            Map<String, Object> arguments = new LinkedHashMap<>(params);
+            ensureSearchQuery(toolDefinition, arguments);
             if (isSearchLikeTool(toolDefinition) && stringValue(arguments.get("query")).isBlank()) {
-                return SkillResult.success(toolDefinition.skillName(), buildMissingQueryReply(context));
+                return SkillResult.success(toolDefinition.skillName(), buildMissingQueryReply(params));
             }
             String output = mcpClient.callTool(
                     toolDefinition.serverUrl(),
@@ -138,7 +76,7 @@ public class McpToolExecutor {
             return SkillResult.success(toolDefinition.skillName(), output);
         } catch (RuntimeException ex) {
             if (isMissingQueryError(ex)) {
-                return SkillResult.success(toolDefinition.skillName(), buildMissingQueryReply(context));
+                return SkillResult.success(toolDefinition.skillName(), buildMissingQueryReply(params));
             }
             String failureMessage = rootCauseMessage(ex);
             LOGGER.warning(() -> "{\"event\":\"mcp.tool.failure\",\"skill\":\""
@@ -154,38 +92,12 @@ public class McpToolExecutor {
         }
     }
 
-    private String splitCamelCase(String value) {
-        return value == null ? "" : value.replaceAll("([a-z])([A-Z])", "$1 $2");
-    }
-
     private String normalizePhrase(String value) {
         return value == null ? "" : value
                 .toLowerCase(Locale.ROOT)
                 .replaceAll("[^\\p{L}\\p{N}]+", " ")
                 .trim()
                 .replaceAll("\\s+", " ");
-    }
-
-    private int countMatchedSignificantWords(String input, String phrase) {
-        String[] words = phrase.split(" ");
-        int matchedWords = 0;
-        for (String word : words) {
-            if (!isSignificantWord(word)) {
-                continue;
-            }
-            if (input.contains(word)) {
-                matchedWords++;
-            }
-        }
-        return matchedWords;
-    }
-
-    private boolean isSignificantWord(String word) {
-        if (word == null || word.isBlank()) {
-            return false;
-        }
-        long alnumCount = word.codePoints().filter(Character::isLetterOrDigit).count();
-        return alnumCount >= 2;
     }
 
     private boolean containsAny(String text, List<String> cues) {
@@ -201,20 +113,8 @@ public class McpToolExecutor {
         return false;
     }
 
-    private int countCueMatches(String text, List<String> cues) {
-        int matches = 0;
-        for (String cue : cues) {
-            String normalizedCue = normalizePhrase(cue);
-            if (!normalizedCue.isBlank() && text.contains(normalizedCue)) {
-                matches++;
-            }
-        }
-        return matches;
-    }
-
     private void ensureSearchQuery(McpToolDefinition toolDefinition,
-                                   Map<String, Object> arguments,
-                                   SkillContext context) {
+                                   Map<String, Object> arguments) {
         if (!isSearchLikeTool(toolDefinition)) {
             return;
         }
@@ -266,13 +166,10 @@ public class McpToolExecutor {
                 && (message.contains("query") || message.contains("keyword") || message.contains("input"));
     }
 
-    private String buildMissingQueryReply(SkillContext context) {
-        String input = context == null || context.attributes() == null
+    private String buildMissingQueryReply(Map<String, Object> params) {
+        String input = params == null
                 ? ""
-                : firstNonBlank(
-                stringValue(context.attributes().get("input")),
-                stringValue(context.attributes().get("originalInput"))
-        );
+                : firstNonBlank(stringValue(params.get("input")), stringValue(params.get("originalInput")));
         if (input.isBlank()) {
             return "抱歉，我还不知道你想查什么。你可以直接说例如：科技新闻、AI 头条、成都天气、美元汇率。";
         }

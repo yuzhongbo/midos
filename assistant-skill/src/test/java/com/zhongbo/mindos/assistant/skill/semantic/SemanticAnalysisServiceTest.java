@@ -3,6 +3,7 @@ package com.zhongbo.mindos.assistant.skill.semantic;
 import com.zhongbo.mindos.assistant.common.LlmClient;
 import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.common.SkillResult;
+import com.zhongbo.mindos.assistant.skill.DefaultSkillCatalog;
 import com.zhongbo.mindos.assistant.skill.Skill;
 import com.zhongbo.mindos.assistant.skill.SkillRegistry;
 import com.zhongbo.mindos.assistant.skill.SkillRoutingProperties;
@@ -270,7 +271,18 @@ class SemanticAnalysisServiceTest {
         SkillRoutingProperties properties = new SkillRoutingProperties();
         properties.getKeywords().put("teaching.plan", "冲刺路线,路线规划");
         SkillRegistry registry = new SkillRegistry(List.of(new FixedSkill("teaching.plan")), properties);
-        SemanticAnalysisService service = new SemanticAnalysisService((prompt, context) -> "stub", registry, true, false, true, "", "local", "cost", 120);
+        SemanticAnalysisService service = new SemanticAnalysisService(
+                (prompt, context) -> "stub",
+                registry,
+                new DefaultSkillCatalog(registry, null, properties),
+                true,
+                false,
+                true,
+                "",
+                "local",
+                "cost",
+                120
+        );
 
         SemanticAnalysisResult result = service.analyze(
                 "u1",

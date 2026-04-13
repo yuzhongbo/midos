@@ -6,7 +6,7 @@ import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryFacade;
 import com.zhongbo.mindos.assistant.dispatcher.agent.procedure.ProceduralMemory;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.step5.PlannerLearningStore;
 import com.zhongbo.mindos.assistant.memory.model.SkillUsageStats;
-import com.zhongbo.mindos.assistant.skill.SkillEngineFacade;
+import com.zhongbo.mindos.assistant.skill.SkillCatalogFacade;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -25,7 +25,7 @@ public class AdaptiveCandidatePlanner implements CandidatePlanner {
     private static final double DEFAULT_LEARNING_RATE = 0.18;
     private static final double DEFAULT_MEMORY_SATURATION = 8.0;
 
-    protected final SkillEngineFacade skillEngine;
+    protected final SkillCatalogFacade skillEngine;
     protected final DispatcherMemoryFacade dispatcherMemoryFacade;
     protected final SkillCostTelemetry skillCostTelemetry;
     protected final PlannerLearningStore plannerLearningStore;
@@ -55,7 +55,7 @@ public class AdaptiveCandidatePlanner implements CandidatePlanner {
         );
     }
 
-    public AdaptiveCandidatePlanner(SkillEngineFacade skillEngine,
+    public AdaptiveCandidatePlanner(SkillCatalogFacade skillEngine,
                                     DispatcherMemoryFacade dispatcherMemoryFacade,
                                     int maxCandidates,
                                     double explicitWeight,
@@ -78,7 +78,7 @@ public class AdaptiveCandidatePlanner implements CandidatePlanner {
         );
     }
 
-    public AdaptiveCandidatePlanner(SkillEngineFacade skillEngine,
+    public AdaptiveCandidatePlanner(SkillCatalogFacade skillEngine,
                                     DispatcherMemoryFacade dispatcherMemoryFacade,
                                     SkillCostTelemetry skillCostTelemetry,
                                     int maxCandidates,
@@ -102,7 +102,7 @@ public class AdaptiveCandidatePlanner implements CandidatePlanner {
         );
     }
 
-    protected AdaptiveCandidatePlanner(SkillEngineFacade skillEngine,
+    protected AdaptiveCandidatePlanner(SkillCatalogFacade skillEngine,
                                        DispatcherMemoryFacade dispatcherMemoryFacade,
                                        SkillCostTelemetry skillCostTelemetry,
                                        PlannerLearningStore plannerLearningStore,
@@ -131,7 +131,7 @@ public class AdaptiveCandidatePlanner implements CandidatePlanner {
     }
 
     @Autowired
-    public AdaptiveCandidatePlanner(SkillEngineFacade skillEngine,
+    public AdaptiveCandidatePlanner(SkillCatalogFacade skillEngine,
                                     DispatcherMemoryFacade dispatcherMemoryFacade,
                                     ObjectProvider<SkillCostTelemetry> skillCostTelemetryProvider,
                                     ObjectProvider<PlannerLearningStore> plannerLearningStoreProvider,

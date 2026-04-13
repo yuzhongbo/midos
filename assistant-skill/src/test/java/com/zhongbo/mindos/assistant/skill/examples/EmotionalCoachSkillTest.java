@@ -3,6 +3,7 @@ package com.zhongbo.mindos.assistant.skill.examples;
 import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.common.command.EqCoachCommandSupport;
+import com.zhongbo.mindos.assistant.skill.DefaultSkillCatalog;
 import com.zhongbo.mindos.assistant.skill.SkillRegistry;
 import org.junit.jupiter.api.Test;
 
@@ -19,14 +20,15 @@ class EmotionalCoachSkillTest {
 
     private final EmotionalCoachSkill skill = new EmotionalCoachSkill();
     private final SkillRegistry registry = new SkillRegistry(java.util.List.of(skill));
+    private final DefaultSkillCatalog catalog = new DefaultSkillCatalog(registry, null, new com.zhongbo.mindos.assistant.skill.SkillRoutingProperties());
 
     @Test
     void shouldDetectEmotionalCoachingIntent() {
-        assertTrue(registry.detect("我想要一些高情商沟通建议").isPresent());
-        assertTrue(registry.detect("我该怎么说比较好").isPresent());
-        assertTrue(registry.detect("和同事有冲突，帮我理一下").isPresent());
-        assertTrue(registry.detect("请帮我做心理分析").isPresent());
-        assertTrue(registry.detect("echo hello").isEmpty());
+        assertTrue(catalog.detectSkillName("我想要一些高情商沟通建议").isPresent());
+        assertTrue(catalog.detectSkillName("我该怎么说比较好").isPresent());
+        assertTrue(catalog.detectSkillName("和同事有冲突，帮我理一下").isPresent());
+        assertTrue(catalog.detectSkillName("请帮我做心理分析").isPresent());
+        assertTrue(catalog.detectSkillName("echo hello").isEmpty());
     }
 
     @Test
