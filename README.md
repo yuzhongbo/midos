@@ -2,31 +2,103 @@
 
 [简体中文](README.zh-CN.md)
 
-MindOS is a lightweight, single-user personal AI assistant backend built with Java 17 and Spring Boot 3.2.x. It stays intentionally small: keep `assistant-api` bootable and the reactor test suite green, prefer in-memory defaults, and layer persistence only when needed.
+MindOS is a lightweight personal AI assistant backend built with **Java 17** and **Spring Boot 3.3.10**. The current core runtime is **Human-AI Co-Runtime**: AI can execute autonomously, but decisions stay explainable, interruptible, and human-correctable through a shared runtime instead of a one-way prompt/response flow.
 
-## Modules
-- `assistant-api`: Spring Boot REST API entrypoint (`/chat`, `/api/chat`)
-- `assistant-dispatcher`: intent routing, skill execution, and LLM fallback
-- `assistant-memory`: episodic/semantic/procedural memory with optional file/JDBC persistence
-- `assistant-skill`: skill interfaces, registry, DSL, built-in skills, MCP/tool adapters
-- `assistant-llm`: API-key-based LLM client (stubbed when no key is present)
-- `assistant-common`: shared DTOs/contracts (`SkillDsl`, `SkillContext`, `SkillResult`, `LlmClient`)
-- `assistant-sdk`: Java client SDK for server calls
-- `mindos-cli`: Picocli CLI on top of `assistant-sdk`; defaults to interactive chat with slash commands
+## Core capabilities
 
-Dependency flow: `assistant-api -> assistant-dispatcher -> (assistant-skill, assistant-memory, assistant-llm) -> assistant-common`; `mindos-cli -> assistant-sdk -> assistant-common`.
+- REST chat API (`/chat`, `/api/chat`) and CLI for daily assistant use
+- Local-first dispatcher with multi-provider LLM routing and MCP/tool loading
+- Memory system with persona / semantic / episodic / procedural layers
+- Explicit goal execution through the autonomous runtime
+- **Human-AI Co-Runtime** on top of the AGI runtime kernel:
+  - shared decision gating
+  - approval / wait states
+  - human intervention and rollback
+  - preference learning
+  - trust-based autonomy adjustment
 
-## Quick Start
-```bash
-# Fast correctness check
-./mvnw -q test
+## Architecture at a glance
 
-# Run API locally (UTF-8 ensured)
-./mvnw -pl assistant-api -am spring-boot:run -Dspring-boot.run.jvmArguments=-Dfile.encoding=UTF-8
+```text
+Client (REST / CLI / IM / embedded goal call)
+    -> DispatcherFacade / AgentLoop
+    -> Human-AI Co-Runtime
+       -> SharedDecisionEngine
+       -> AGIRuntimeKernel
+          -> RuntimeScheduler
+          -> Cognitive plugins
+             (planning / prediction / memory / reasoning / tool-use)
+          -> ExecutionEngine
+          -> AGIMemory
+       -> InterventionManager
+       -> HumanPreferenceModel
+       -> TrustModel
 ```
 
-## Solo Profile (single-user friendly)
-The `solo` Spring profile optimizes for day-to-day personal use: warmer replies, slightly longer context, short-TTL LLM cache, and relaxed metrics auth.
+There are two main execution paths:
+
+1. **Public chat path**: `/chat` or CLI -> dispatcher -> skill or LLM response
+2. **Explicit goal path**: `AgentLoop.runGoal(...)` / `AutonomousLoopEngine.run(...)` -> Human-AI Co-Runtime -> AGI kernel -> iterative execution
+
+The public chat API is stable and user-facing. The explicit goal path is the place where advanced co-runtime attributes such as approvals, feedback queues, trust shaping, and runtime migration are currently wired.
+
+## Modules
+
+| Module | Responsibility |
+| --- | --- |
+| `assistant-api` | Spring Boot entrypoint, REST controllers, IM/webhook adapters |
+| `assistant-dispatcher` | Dispatcher, memory-aware routing, autonomous runtime, Human-AI Co-Runtime |
+| `assistant-memory` | Central memory, preference profiles, retrieval, sync |
+| `assistant-skill` | Skill interfaces, registry, DSL, MCP/cloud API adapters |
+| `assistant-llm` | LLM provider abstraction, multi-provider HTTP clients |
+| `assistant-common` | Shared DTOs and contracts |
+| `assistant-sdk` | Java SDK for calling the server |
+| `mindos-cli` | Picocli interactive terminal client |
+
+Dependency flow:
+
+```text
+assistant-api -> assistant-dispatcher -> (assistant-skill, assistant-memory, assistant-llm) -> assistant-common
+mindos-cli -> assistant-sdk -> assistant-common
+```
+
+## Quick start
+
+### Prerequisites
+
+- JDK 17
+- `./mvnw`
+- Optional: Ollama for local-first semantic analysis
+- Optional: provider keys (`OpenRouter`, `Qwen`, `OpenAI`, `Gemini`, etc.)
+
+### Fast local setup
+
+```bash
+# 1) Regression check
+./mvnw -q test
+
+# 2) Create local override file
+cp mindos-secrets.local.properties.example mindos-secrets.local.properties
+
+# 3) Validate effective local config
+chmod +x ./scripts/unix/local/run-local.sh ./scripts/unix/local/run-release.sh ./scripts/check-secrets.sh
+./scripts/check-secrets.sh --mode=local
+./scripts/unix/local/run-local.sh --dry-run
+
+# 4) Start the API
+./scripts/unix/local/run-local.sh
+```
+
+Alternative direct startup:
+
+```bash
+./mvnw -pl assistant-api -am spring-boot:run \
+  -Dspring-boot.run.jvmArguments=-Dfile.encoding=UTF-8
+```
+
+### Solo profile
+
+The `solo` profile is recommended for single-user daily use:
 
 ```bash
 ./mvnw -pl assistant-api -am spring-boot:run \
@@ -34,73 +106,269 @@ The `solo` Spring profile optimizes for day-to-day personal use: warmer replies,
   -Dspring-boot.run.jvmArguments=-Dfile.encoding=UTF-8
 ```
 
-Helpers:
+Helpful scripts:
+
 ```bash
-chmod +x ./scripts/unix/local/*.sh ./scripts/check-secrets.sh
-./scripts/unix/local/run-mindos-solo.sh          # one-click local server
-./scripts/unix/local/run-local.sh                # load dist secrets + optional local overrides, then start solo
-./scripts/unix/local/run-local.sh --dry-run      # preflight only: print effective summary and exit
-./scripts/unix/local/run-local.sh --strict       # fail if placeholders are still active
-./scripts/unix/local/run-release.sh              # release startup with strict placeholder checks
-./scripts/unix/local/run-release.sh --dry-run    # release preflight only (strict)
-./scripts/check-secrets.sh --mode=local
-./scripts/check-secrets.sh --mode=release
-./scripts/unix/local/solo-cli.sh                 # CLI with defaults
-./scripts/unix/local/solo-smoke.sh               # lightweight /chat and /api/metrics/llm check
-./scripts/unix/local/solo-stop.sh                # stop by port or process pattern
+./scripts/unix/local/run-mindos-solo.sh
+./scripts/unix/local/solo-cli.sh
+./scripts/unix/local/solo-smoke.sh
+./scripts/unix/local/solo-stop.sh
 ```
 
-Local key management for debugging (recommended):
-```bash
-cp mindos-secrets.local.properties.example mindos-secrets.local.properties
-chmod +x ./scripts/unix/local/run-local.sh
-./scripts/unix/local/run-local.sh
+## How to use MindOS
+
+### 1. Public chat API
+
+`POST /chat` and `POST /api/chat` accept:
+
+```json
+{
+  "userId": "local-user",
+  "message": "help me summarize today's work",
+  "profile": {
+    "assistantName": "MindOS",
+    "role": "coding-partner",
+    "style": "concise",
+    "language": "en-US",
+    "timezone": "Asia/Shanghai",
+    "llmProvider": "qwen",
+    "llmPreset": "quality"
+  }
+}
 ```
-- `scripts/unix/local/run-local.sh` loads `dist/mindos-windows-server/mindos-secrets.properties` first, then optional `mindos-secrets.local.properties` overrides.
-- `scripts/unix/local/run-release.sh` loads `dist/.../mindos-secrets.properties` plus optional `mindos-secrets.release.properties`, and fails fast on placeholder secrets.
-- Keep real keys only in `mindos-secrets.local.properties` / `mindos-secrets.release.properties` (both ignored by git).
 
-### Secrets file layout and multi-provider routing
+Public `profile` currently maps to:
 
-`dist/mindos-windows-server/mindos-secrets.properties` uses a three-part layout:
-- `1) 建议默认`: safe defaults that usually stay enabled in packaged dist, e.g. `MINDOS_LLM_PROFILE=OPENROUTER_INTENT` and an OpenRouter-first cloud default.
-- `2) 可选填`: the dist now uses one main search entry `MINDOS_SKILLS_SEARCH_SOURCES`; `MINDOS_SKILLS_MCP_SERVERS` / `MINDOS_SKILLS_MCP_SERVER_HEADERS` remain available for generic non-search MCP tools; DingTalk stream/outbound credentials stay optional.
-- `3) 必须填`: release placeholders that strict prechecks will reject until replaced, currently centered on `MINDOS_OPENROUTER_KEY`, `MINDOS_QWEN_KEY`, and `MINDOS_LLM_PROVIDER_KEYS`.
+- `assistantName`
+- `role`
+- `style`
+- `language`
+- `timezone`
+- `llmProvider`
+- `llmPreset`
 
-For multi-provider setups, these variables are comma-separated provider maps:
-- `MINDOS_LLM_PROVIDER_ENDPOINTS`: `provider:baseUrl,provider2:baseUrl2`
-- `MINDOS_LLM_PROVIDER_KEYS`: `provider:key,provider2:key2`
-- `MINDOS_LLM_PROVIDER_MODELS`: `provider:modelId,provider2:modelId2`
+Example:
 
-Examples:
-- Local-first token-saving setup: `local:http://localhost:11434/api/chat,qwen:https://dashscope.aliyuncs.com/...`
-- OpenRouter-first release setup: `MINDOS_LLM_PROFILE=OPENROUTER_INTENT`, `MINDOS_LLM_PROVIDER=gpt`, `MINDOS_LLM_PROVIDER_KEYS=gpt:${MINDOS_OPENROUTER_KEY},grok:${MINDOS_OPENROUTER_KEY},gemini:${MINDOS_OPENROUTER_KEY},qwen:${MINDOS_QWEN_KEY}`
-- Stage-based cloud routing: `MINDOS_LLM_ROUTING_STAGE_MAP=llm-dsl:openrouter,llm-fallback:qwen`
+```bash
+curl -X POST http://localhost:8080/chat \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "userId":"local-user",
+    "message":"what skills do you have?",
+    "profile":{
+      "style":"concise",
+      "language":"en-US",
+      "llmProvider":"qwen",
+      "llmPreset":"balanced"
+    }
+  }'
+```
 
-Recommended routing patterns from `mindos-server.env.template.sh`:
-- `CUSTOM_LOCAL_FIRST`: local Ollama endpoint handles semantic analysis / low-cost requests first, cloud provider stays available for stronger fallback.
-- Multi-cloud stage routing: use `MINDOS_LLM_ROUTING_STAGE_MAP` and `MINDOS_LLM_ROUTING_PRESET_MAP` to pin providers by dispatcher stage or preset.
-- `OPENROUTER_INTENT`: simplest packaged cloud-routing mode when you want OpenRouter to handle user-facing summaries and keep qwen as a fallback model.
+History:
 
-Validation rules:
-- Do not put spaces inside provider maps; entries are comma-separated and each entry is split at the first `:`.
-- `scripts/unix/lib/mindos-env.sh` validates map syntax via `mindos_validate_kv_map_format` during startup/export flows.
-- Keep real secrets in `mindos-secrets.local.properties` or `mindos-secrets.release.properties`; keep dist templates placeholder-only to reduce config drift and accidental secret leakage.
+```bash
+curl http://localhost:8080/api/chat/local-user/history
+```
 
-Search / MCP config simplification:
-- In most cases, fill only `MINDOS_SKILLS_SEARCH_SOURCES`.
-- Keep `MINDOS_SKILLS_MCP_SERVERS` / `MINDOS_SKILLS_MCP_SERVER_HEADERS` for non-search MCP tools such as docs, GitHub, or custom JSON-RPC MCP services.
-- `news_search` and search-style MCP skills both read the same source map; the old `MINDOS_SKILL_NEWS_SEARCH_SEARCH_SOURCES` / `MINDOS_SKILL_NEWS_SEARCH_SERPER_*` envs are compatibility-only fallbacks.
-- When `MINDOS_SKILLS_SEARCH_SOURCES` is present, deprecated Serper/Brave shortcut configs are ignored to avoid ambiguous source registration.
-- Precision-search alternative: `SerpApi` is also supported as an optional fallback for very exact keywords and structured result pages.
-- If both `MINDOS_SKILLS_MCP_SERVERS` and `MINDOS_SKILLS_SEARCH_SOURCES` define the same alias, explicit MCP server entries win.
+### 2. CLI
 
-### Minimal local Ollama + Qwen example
+```bash
+./mvnw -q -pl mindos-cli -am package
+./mvnw -q -pl mindos-cli -am exec:java \
+  -Dexec.mainClass=com.zhongbo.mindos.assistant.cli.MindosCliApplication
+```
 
-If you want low-cost local semantic analysis first, then Qwen for stronger cloud replies when needed, this is the smallest practical env-style setup:
+Common commands:
+
+- natural language: `show my skills`
+- natural language: `pull my recent memory`
+- slash: `/profile show`
+- slash: `/memory pull --since 0 --limit 50`
+- slash: `/skills`
+
+Parameterized startup:
+
+```bash
+./mvnw -q -pl mindos-cli -am exec:java \
+  -Dexec.mainClass=com.zhongbo.mindos.assistant.cli.MindosCliApplication \
+  -Dexec.args="--server http://localhost:8080 --user local-user --theme cyber"
+```
+
+### 3. Explicit goal execution / Human-AI Co-Runtime
+
+Advanced co-runtime features are currently exposed through the embedded goal runtime, not through the public REST DTO.
+
+Example:
+
+```java
+@Autowired
+private AgentLoop agentLoop;
+
+AutonomousGoalRunResult result = agentLoop.runGoal(
+    "local-user",
+    "fix the build, prepare release notes, and ask for approval before risky changes",
+    Map.of(
+        "executionPolicy", "autonomous",
+        "runtimeTargetNode", "node:local",
+        "human.preference.autonomy", 0.70,
+        "human.preference.riskTolerance", 0.35,
+        "human.preference.costSensitivity", 0.55,
+        "human.preference.style", "concise",
+        "human.approval.queue", List.of(
+            Map.of("status", "approved", "reason", "safe to proceed")
+        ),
+        "human.feedback.queue", List.of(
+            Map.of(
+                "approved", false,
+                "rollback", true,
+                "notes", "use the safer plan",
+                "corrections", Map.of("coruntime.allowedAgentIds", List.of("conservative-planner"))
+            )
+        )
+    )
+);
+```
+
+Returned `AutonomousGoalRunResult` now contains:
+
+- `runtimeState`
+- `runtimeHistory`
+- `sharedDecisions`
+- `interventionEvents`
+- `humanPreference`
+- `trustScore`
+- `latestExplanation()`
+
+## Configuration guide
+
+### Configuration layers
+
+Recommended order of configuration sources:
+
+1. `assistant-api/src/main/resources/application.properties` – repository defaults
+2. `application-solo.properties` or active Spring profiles – profile-specific defaults
+3. `dist/mindos-windows-server/mindos-secrets.properties` – packaged distribution defaults
+4. `mindos-secrets.local.properties` – local machine overrides
+5. `mindos-secrets.release.properties` – release overrides
+6. environment variables – final override layer
+
+`./scripts/unix/local/run-local.sh` loads:
+
+1. `dist/mindos-windows-server/mindos-secrets.properties`
+2. `mindos-secrets.local.properties` (if present)
+
+`./scripts/unix/local/run-release.sh` loads the dist file plus `mindos-secrets.release.properties` and fails fast on placeholders.
+
+### Spring property vs environment variable naming
+
+Spring Boot relaxed binding is supported, for example:
+
+| Spring property | Environment variable |
+| --- | --- |
+| `mindos.llm.provider-endpoints` | `MINDOS_LLM_PROVIDER_ENDPOINTS` |
+| `mindos.dispatcher.semantic-analysis.force-local` | `MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_FORCE_LOCAL` |
+| `mindos.coruntime.approval-risk-threshold` | `MINDOS_CORUNTIME_APPROVAL_RISK_THRESHOLD` |
+
+### Core configuration groups
+
+| Concern | Spring property prefix | Typical env prefix | What it controls |
+| --- | --- | --- | --- |
+| LLM transport and routing | `mindos.llm.*` | `MINDOS_LLM_*` | HTTP enablement, provider maps, routing, retry, cache |
+| Dispatcher behavior | `mindos.dispatcher.*` | `MINDOS_DISPATCHER_*` | semantic analysis, skill routing, local escalation, prompt shaping |
+| Memory | `mindos.memory.*` | `MINDOS_MEMORY_*` | file repo, state persistence, embedding, filtering |
+| Human-AI Co-Runtime | `mindos.coruntime.*` | `MINDOS_CORUNTIME_*` | approval/autonomy thresholds |
+| Skills and MCP | `mindos.skills.*`, `mindos.skill.*` | `MINDOS_SKILLS_*`, `MINDOS_SKILL_*` | MCP servers, search sources, skill config |
+| IM gateways | `mindos.im.*` | `MINDOS_IM_*` | DingTalk / Feishu / WeChat integration |
+| Security | `mindos.security.*` | `MINDOS_SECURITY_*` | admin token and risky-op protection |
+
+### LLM and local-first routing
+
+Important keys:
+
+| Key | Default | Purpose |
+| --- | --- | --- |
+| `mindos.llm.http.enabled` | `false` | Real HTTP calls; when `false`, stub mode is used |
+| `mindos.llm.provider` | `stub` | Default provider alias |
+| `mindos.llm.provider-endpoints` | empty | `provider:url` map |
+| `mindos.llm.provider-models` | empty | `provider:model` map |
+| `mindos.llm.provider-keys` | empty | `provider:key` map |
+| `mindos.llm.routing.mode` | `fixed` | `fixed` or `auto` |
+| `mindos.llm.routing.stage-map` | `llm-dsl:openai,llm-fallback:openai` | stage -> provider |
+| `mindos.llm.routing.preset-map` | `cost:openai,balanced:openai,quality:openai` | preset -> provider |
+| `mindos.dispatcher.semantic-analysis.enabled` | `true` | semantic analysis gate |
+| `mindos.dispatcher.semantic-analysis.llm-enabled` | `false` | allow extra LLM semantic analysis |
+| `mindos.dispatcher.semantic-analysis.force-local` | `true` | prefer local model for semantic stage |
+| `mindos.dispatcher.semantic-analysis.llm-provider` | `local` | provider used for semantic analysis |
+| `mindos.dispatcher.semantic-analysis.clarify-min-confidence` | `0.70` | low-confidence clarify gate |
+
+### Human-AI Co-Runtime thresholds
+
+These are the global knobs for shared control:
+
+| Spring property | Default | Meaning |
+| --- | --- | --- |
+| `mindos.coruntime.approval-risk-threshold` | `0.68` | above this predicted risk, require human review |
+| `mindos.coruntime.high-cost-threshold` | `0.75` | above this predicted cost, require review |
+| `mindos.coruntime.approval-confidence-floor` | `0.55` | below this confidence, require review |
+| `mindos.coruntime.autonomy-confidence-threshold` | `0.62` | minimum confidence for autonomous execution |
+| `mindos.coruntime.min-trust-to-autonomy` | `0.45` | minimum learned trust score for autonomy |
+
+These keys are read directly by `ControlProtocol`. They are not yet pre-populated in the env templates, but standard Spring env names work:
+
+```properties
+MINDOS_CORUNTIME_APPROVAL_RISK_THRESHOLD=0.70
+MINDOS_CORUNTIME_HIGH_COST_THRESHOLD=0.80
+MINDOS_CORUNTIME_AUTONOMY_CONFIDENCE_THRESHOLD=0.65
+MINDOS_CORUNTIME_MIN_TRUST_TO_AUTONOMY=0.50
+```
+
+### Per-goal runtime attributes (embedded goal execution)
+
+These are **runtime attributes**, not global Spring properties. They are passed in the `profileContext` map of `AgentLoop.runGoal(...)` / `AutonomousLoopEngine.run(...)`.
+
+| Key | Type | Meaning |
+| --- | --- | --- |
+| `executionPolicy` | string | `realtime`, `batch`, `speculative`, `long-running`, `autonomous` |
+| `runtimeTargetNode` | string | migrate initial execution to a specific node label/id |
+| `human.preference.autonomy` | number `0..1` | user preference for autonomy |
+| `human.preference.riskTolerance` | number `0..1` | tolerated risk |
+| `human.preference.costSensitivity` | number `0..1` | cost sensitivity |
+| `human.preference.style` | string | preferred decision / response style |
+| `human.approval.default` | string | default approval mode, e.g. `approved`, `rejected` |
+| `human.approval.queue` | list | queued approval decisions |
+| `human.feedback.queue` | list | queued post-execution feedback |
+| `coruntime.allowedAgentIds` | list/string | restrict planner agents for replanning |
+| `coruntime.forceHumanReview` | boolean | always stop for review |
+| `coruntime.forceHumanOverride` | boolean | force override path |
+| `coruntime.overrideGraph` | `TaskGraph` object | internal Java-only direct plan replacement |
+
+`coruntime.overrideGraph` is intended for embedded/in-process use only. It is **not** serializable through the current public `/chat` request DTO.
+
+### Search and MCP configuration
+
+For most cases:
+
+- use `MINDOS_SKILLS_SEARCH_SOURCES` for search-style sources
+- use `MINDOS_SKILLS_MCP_SERVERS` for generic MCP tools
+- use `MINDOS_SKILLS_MCP_SERVER_HEADERS` for per-alias auth headers
+
+Important keys:
+
+| Key | Purpose |
+| --- | --- |
+| `mindos.skills.search-sources` / `MINDOS_SKILLS_SEARCH_SOURCES` | unified search source map |
+| `mindos.skills.mcp-servers` / `MINDOS_SKILLS_MCP_SERVERS` | `alias:url` map for MCP servers |
+| `mindos.skills.mcp-server-headers` / `MINDOS_SKILLS_MCP_SERVER_HEADERS` | `alias:Header=value;Header2=value2` |
+| `mindos.skills.custom-dir` | custom JSON skills directory |
+| `mindos.skills.external-jars` | external skill JAR URLs |
+
+### Minimal local config example
+
+`mindos-secrets.local.properties`:
 
 ```properties
 MINDOS_LLM_PROFILE=CUSTOM_LOCAL_FIRST
+MINDOS_LLM_MODE=LOCAL_FIRST
 MINDOS_LLM_PROVIDER=qwen
 MINDOS_LLM_PROVIDER_ENDPOINTS=local:http://localhost:11434/api/chat,qwen:https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions
 MINDOS_LLM_PROVIDER_MODELS=local:gemma3:1b-it-q4_K_M,qwen:qwen3.6-plus
@@ -109,196 +377,49 @@ MINDOS_LLM_PROVIDER_KEYS=qwen:REPLACE_WITH_QWEN_KEY
 
 MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_LLM_ENABLED=true
 MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_FORCE_LOCAL=true
-MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_LOCAL_ESCALATION_ENABLED=true
 MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_LLM_PROVIDER=local
 MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_CLARIFY_MIN_CONFIDENCE=0.70
-MINDOS_DISPATCHER_LLM_FALLBACK_PROVIDER=qwen
+
+MINDOS_CORUNTIME_APPROVAL_RISK_THRESHOLD=0.68
+MINDOS_CORUNTIME_MIN_TRUST_TO_AUTONOMY=0.45
+
+MINDOS_SKILLS_SEARCH_SOURCES=
 ```
 
-What this setup is for:
-- `local:http://localhost:11434/api/chat` is used as the cheap local endpoint for semantic analysis and short, low-cost reasoning.
-- `qwen` stays available as the cloud provider for stronger fallback/final reply quality.
-- `MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_CLARIFY_MIN_CONFIDENCE` controls when dispatcher returns `semantic.clarify`; low confidence or still-missing required params trigger clarification.
-- Clarification validates required params against the effective payload after memory/default completion (not only raw semantic payload); continuation inputs still bypass semantic-clarify routing.
-- Keep the real Qwen secret in `mindos-secrets.local.properties` or `mindos-secrets.release.properties`, not in the dist template.
-
-Quick local check before starting MindOS:
+Quick local Ollama check:
 
 ```bash
 curl http://localhost:11434/api/chat \
   -d '{"model":"gemma3:1b-it-q4_K_M","messages":[{"role":"user","content":"Hello!"}]}'
 ```
 
-If this call does not return successfully, fix Ollama first; otherwise MindOS may log routing to `local` but still fail before real semantic-analysis output is produced.
+If this fails, fix Ollama first; otherwise MindOS may appear routed to `local` while semantic analysis still cannot complete.
 
-### Local Dispatch Model & Memory Design
+## Validation and deployment helpers
 
-If local hardware is limited, keep the dispatcher small and deterministic:
-
-- **Local dispatch model**: `gemma3:1b-it-q4_K_M` for intent parsing, slot filling, clarification, and skill selection.
-- **Cloud summary model**: `qwen3.6-plus` for final user-facing summarization and reply polishing.
-- **Rule of thumb**: local models should decide *what to do*; cloud models should decide *how to say it*.
-
-Ollama commands:
-```bash
-ollama pull gemma3:1b-it-q4_K_M
-ollama serve
-
-curl http://localhost:11434/api/chat \
-  -d '{"model":"gemma3:1b-it-q4_K_M","messages":[{"role":"user","content":"帮我判断这句话要不要调度技能：给学生 stu-1 做数学学习计划，六周，每周八小时"}]}'
-```
-
-Prompt template for dispatch safety:
-```text
-You are MindOS Dispatch Analyzer. Only parse intent and route skills.
-
-Return strict JSON only:
-{
-  "intent": "...",
-  "suggestedSkill": "...",
-  "confidence": 0.0,
-  "clarify": true,
-  "missingFields": ["..."],
-  "payload": {},
-  "summary": "..."
-}
-
-Rules:
-- never generate the final user reply;
-- never invent missing parameters;
-- if confidence is low, set clarify=true;
-- only pick skills from the allowlist;
-- keep output short, structured, and deterministic.
-```
-
-Memory structure suggestion:
-- **Persona**: stable preferences and style, e.g. language, tone, time zone.
-- **Semantic**: confirmed facts and long-term user preferences.
-- **Episodic**: recent turns, task progress, and short conversation summaries.
-- **Procedural**: routing heuristics, common missing fields, and successful skill patterns.
-
-Recommended read order before routing: `Persona -> Semantic -> Procedural -> Recent Episodic -> Current Input`.
-
-### i5 + 8GB local tuning presets (`gemma3:1b-it-q4_K_M`)
-
-Use these as copy/paste starting points when your local model is `gemma3:1b-it-q4_K_M`.
-
-`Stable-first` (lower latency + lower memory pressure):
-
-```properties
-MINDOS_LLM_PROVIDER_MODELS=local:gemma3:1b-it-q4_K_M
-MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_MAX_TOKENS=80
-MINDOS_DISPATCHER_LLM_DSL_MAX_TOKENS=120
-MINDOS_DISPATCHER_LLM_FALLBACK_MAX_TOKENS=220
-MINDOS_DISPATCHER_SKILL_FINALIZE_WITH_LLM_MAX_TOKENS=120
-MINDOS_DISPATCHER_LOCAL_ESCALATION_ENABLED=true
-MINDOS_DISPATCHER_LOCAL_ESCALATION_CLOUD_PROVIDER=qwen
-MINDOS_DISPATCHER_LOCAL_ESCALATION_CLOUD_PRESET=quality
-```
-
-`Quality-first` (better local answer depth, still cloud-fallback capable):
-
-```properties
-MINDOS_LLM_PROVIDER_MODELS=local:gemma3:1b-it-q4_K_M
-MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_MAX_TOKENS=120
-MINDOS_DISPATCHER_LLM_DSL_MAX_TOKENS=180
-MINDOS_DISPATCHER_LLM_FALLBACK_MAX_TOKENS=380
-MINDOS_DISPATCHER_SKILL_FINALIZE_WITH_LLM_MAX_TOKENS=220
-MINDOS_DISPATCHER_LOCAL_ESCALATION_ENABLED=true
-MINDOS_DISPATCHER_LOCAL_ESCALATION_CLOUD_PROVIDER=qwen
-MINDOS_DISPATCHER_LOCAL_ESCALATION_CLOUD_PRESET=quality
-```
-
-Tips:
-- If your local endpoint is unstable, start with `Stable-first` and lower `MINDOS_DISPATCHER_LLM_FALLBACK_MAX_TOKENS` first.
-- If your local endpoint is healthy and response quality is not enough, switch to `Quality-first` before changing provider routing.
-
-### Pre-release Checklist (3 Commands)
+Recommended checks:
 
 ```bash
+./scripts/check-secrets.sh --mode=local
 ./scripts/check-secrets.sh --mode=release
+./scripts/unix/local/run-local.sh --dry-run
 ./scripts/unix/local/run-release.sh --dry-run
 ./mvnw -q test
 ```
 
-Script layout (organized by OS first, then role):
-- `scripts/unix/local/*`: local dev/runtime launchers (`run-local`, `run-release`, `run-mindos-solo`, `solo-*`)
-- `scripts/unix/cloud/*`: cloud bootstrap/deploy/rollback helpers (`init-authorized-keys`, `cloud-init`, `deploy-cloud`, `cloud-check`, `rollback-cloud`)
-- `scripts/unix/install/*`: Unix install/uninstall helpers (`install-mindos-*`, `uninstall-mindos-*`)
-- `scripts/unix/export/*`: packaging/export helpers (`export-mindos-windows-dist`)
-- `scripts/unix/tools/*`: preflight/check helpers (`check-secrets`)
-- `scripts/unix/lib/*`: shared shell utilities (`mindos-env.sh`)
-- `scripts/windows/*`: Windows launch/install/smoke helpers (`*.bat`)
-- root Unix wrapper scripts are removed; use the `scripts/unix/*` paths directly.
+Cloud helpers:
 
-Windows scripts are centralized in `scripts/windows/*`.
-
-## CLI Quick Start
-Three-minute path (natural language first):
-```bash
-./mvnw -q -pl mindos-cli -am test
-./mvnw -q -pl mindos-cli -am package
-./mvnw -q -pl mindos-cli -am exec:java -Dexec.mainClass=com.zhongbo.mindos.assistant.cli.MindosCliApplication
-```
-
-Try in-session phrases (no flags required):
-- `我有哪些技能`
-- `帮我拉取最近 30 条记忆`
-- `给学生 stu-1 做数学学习计划，六周，每周八小时`
-- `打开排障模式` / `关闭排障模式`
-
-Need parameters? Examples:
-```bash
-./mvnw -q -pl mindos-cli -am exec:java \
-  -Dexec.mainClass=com.zhongbo.mindos.assistant.cli.MindosCliApplication \
-  -Dexec.args="--server http://localhost:8080 --user local-user"
-
-./mvnw -q -pl mindos-cli -am exec:java \
-  -Dexec.mainClass=com.zhongbo.mindos.assistant.cli.MindosCliApplication \
-  -Dexec.args="profile set --llm-provider openai --style concise"
-```
-
-Common natural-language mappings:
-- `查看我的记忆风格` -> `/memory style show`
-- `按我的风格压缩这段记忆：明天先拆任务再推进联调` -> `/memory compress --source ...`
-- `请做情感沟通指导，职场版，优先级 p1` -> `/eq coach --query ... --style workplace --priority-focus p1`
-
-## Sample API Requests
-```bash
-# Chat
-curl -X POST http://localhost:8080/chat \
-  -H 'Content-Type: application/json' \
-  -d '{"userId":"local-user","message":"echo hello"}'
-
-# Memory sync
-curl -X POST http://localhost:8080/api/memory/local-user/sync \
-  -H 'Content-Type: application/json' \
-  -d '{"episodic":[{"role":"user","content":"hello from terminal A"}]}'
-
-# Skill listing
-curl http://localhost:8080/api/skills
-```
-
-## Cloud Deploy (single host)
-Passwordless flow (recommended):
 ```bash
 chmod +x ./scripts/unix/cloud/*.sh
 CLOUD_HOST=1.2.3.4 CLOUD_USER=root ./scripts/unix/cloud/init-authorized-keys.sh
 CLOUD_HOST=1.2.3.4 CLOUD_USER=root ./scripts/unix/cloud/cloud-init.sh
 CLOUD_HOST=1.2.3.4 CLOUD_USER=root ./scripts/unix/cloud/deploy-cloud.sh
 CLOUD_HOST=1.2.3.4 CLOUD_USER=root ./scripts/unix/cloud/cloud-check.sh
-CLOUD_HOST=1.2.3.4 CLOUD_USER=root ./scripts/unix/cloud/rollback-cloud.sh
-CLOUD_HOST=1.2.3.4 CLOUD_USER=root ./scripts/unix/cloud/cloud-check.sh
 ```
 
-## Validation Shortcuts
-- Full suite: `./mvnw -q test`
-- Fast SDK/CLI: `./mvnw -q -pl assistant-sdk,mindos-cli -am test`
-- Targeted API: `./mvnw -q -pl assistant-api -am test -Dtest=MemorySyncControllerTest`
-
 ## Notes
-- Real LLM calls stay disabled until you set provider endpoints/keys (`mindos.llm.http.enabled=true` + key map). Stub mode is the default.
-- In-memory first: central memory falls back to file storage when enabled and no `DataSource` is present; preference profiles/long tasks/style profiles persist to `data/memory-state` by default.
-- MCP/Cloud API/custom skills can be hot-loaded; see `assistant-skill` loaders and `/api/skills/*` endpoints.
 
-For the full Chinese guide (including IM integration, routing, and configuration matrices), read [README.zh-CN.md](README.zh-CN.md).
+- Real provider calls stay disabled until `mindos.llm.http.enabled=true` and valid provider maps/keys are set.
+- File-backed memory and lightweight state persistence are enabled by default for restart continuity when no JDBC `DataSource` is present.
+- `assistant-api/data/*` can change during tests because memory-state and H2 files are written there.
+- The public REST DTO is intentionally conservative. Advanced Human-AI Co-Runtime controls are currently documented for embedded/internal goal execution rather than external `/chat` clients.

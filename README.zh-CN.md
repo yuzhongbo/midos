@@ -2,136 +2,379 @@
 
 English version: [README.md](README.md)
 
-MindOS 是一款基于 Java 17 和 Spring Boot 3.2.x 的轻量级单用户 AI 助手后端，默认以内存模式工作，可按需叠加持久化。
+MindOS 是一个基于 **Java 17** 和 **Spring Boot 3.3.10** 的轻量级个人 AI 助手后端。当前核心运行形态已经升级为 **Human-AI Co-Runtime（人机共运行系统）**：AI 可以自主执行，但所有关键决策都保持可解释、可中断、可回滚，并且可以在运行时被人类纠正。
+
+## 核心能力
+
+- REST Chat API（`/chat`、`/api/chat`）和 CLI 日常使用入口
+- local-first 调度器，支持多 provider LLM 路由与 MCP / Tool 加载
+- Persona / Semantic / Episodic / Procedural 四层记忆
+- 显式 Goal 执行与自治循环
+- **Human-AI Co-Runtime**：
+  - 共享决策门控
+  - 人工审批 / 等待态
+  - 人类干预、修改、回滚
+  - 偏好学习
+  - 基于 trust 的自动化强度调节
+
+## 架构概览
+
+```text
+客户端（REST / CLI / IM / 内嵌 Goal 调用）
+    -> DispatcherFacade / AgentLoop
+    -> Human-AI Co-Runtime
+       -> SharedDecisionEngine
+       -> AGIRuntimeKernel
+          -> RuntimeScheduler
+          -> Cognitive plugins
+             （planning / prediction / memory / reasoning / tool-use）
+          -> ExecutionEngine
+          -> AGIMemory
+       -> InterventionManager
+       -> HumanPreferenceModel
+       -> TrustModel
+```
+
+当前有两条主要执行路径：
+
+1. **公开聊天路径**：`/chat` 或 CLI -> dispatcher -> skill 或 LLM 回复
+2. **显式目标执行路径**：`AgentLoop.runGoal(...)` / `AutonomousLoopEngine.run(...)` -> Human-AI Co-Runtime -> AGI Runtime Kernel -> 多轮执行
+
+其中：
+
+- **公开 chat API** 是面向外部客户端的稳定入口
+- **显式 goal runtime** 是当前承载 co-runtime 高级能力（审批、反馈队列、信任调节、迁移执行等）的主入口
 
 ## 模块
-- `assistant-api`：Spring Boot REST API（`/chat` 与 `/api/chat` 兼容）
-- `assistant-dispatcher`：意图路由、技能执行、LLM 降级
-- `assistant-memory`：情景/语义/流程记忆，支持文件/JDBC 持久化
-- `assistant-skill`：技能接口、注册表、DSL、示例技能、MCP/扩展加载器
-- `assistant-llm`：基于 API Key 的 LLM 适配（无 Key 时走桩实现）
-- `assistant-common`：共享 DTO/契约（`SkillDsl`、`SkillContext`、`SkillResult`、`LlmClient`）
-- `assistant-sdk`：调用 MindOS 服务器的 Java SDK
-- `mindos-cli`：基于 Picocli 的 CLI，默认进入交互聊天模式并提供 slash 命令
 
-## 依赖关系
-`assistant-api -> assistant-dispatcher -> (assistant-skill, assistant-memory, assistant-llm) -> assistant-common`
+| 模块 | 作用 |
+| --- | --- |
+| `assistant-api` | Spring Boot 入口、REST Controller、IM/Webhook 集成 |
+| `assistant-dispatcher` | 调度器、记忆感知路由、自治运行时、Human-AI Co-Runtime |
+| `assistant-memory` | 中央记忆、偏好画像、检索、同步 |
+| `assistant-skill` | Skill 接口、注册表、DSL、MCP / Cloud API 适配 |
+| `assistant-llm` | LLM provider 抽象与多 provider HTTP 客户端 |
+| `assistant-common` | 共享 DTO 与契约 |
+| `assistant-sdk` | Java SDK |
+| `mindos-cli` | Picocli 命令行客户端 |
 
-`mindos-cli -> assistant-sdk -> assistant-common`
+依赖关系：
 
-## 快速体验
+```text
+assistant-api -> assistant-dispatcher -> (assistant-skill, assistant-memory, assistant-llm) -> assistant-common
+mindos-cli -> assistant-sdk -> assistant-common
+```
+
+## 快速开始
+
+### 前置要求
+
+- JDK 17
+- `./mvnw`
+- 可选：Ollama（做本地语义分析）
+- 可选：LLM provider key（OpenRouter / Qwen / OpenAI / Gemini 等）
+
+### 本地最小启动
+
 ```bash
+# 1）先做回归
 ./mvnw -q test
-./mvnw -pl assistant-api -am spring-boot:run -Dspring-boot.run.jvmArguments=-Dfile.encoding=UTF-8
-```
 
-## Minimal runtime env (Windows)
-
-To avoid re-editing property files for every deployment, copy `mindos-server.env.template.bat` to your runtime `env.bat`, fill only the runtime secrets, then launch the server through that script (it forwards any extra args like `--spring.profiles.active=solo`).
-
-- LLM: `MINDOS_LLM_PROVIDER`, `MINDOS_LLM_API_KEY`, optionally `MINDOS_LLM_ENDPOINT` / `MINDOS_LLM_PROVIDER_KEYS` if you route multiple providers.
-- DingTalk webhook: set `MINDOS_IM_ENABLED=true`, `MINDOS_IM_DINGTALK_ENABLED=true`, and provide `MINDOS_IM_DINGTALK_SECRET`.
-- Optional IM: uncomment Feishu/WeChat lines if you need those platforms.
-- All other functional toggles stay in `assistant-api/src/main/resources/application.properties` (and `application-solo.properties` for solo profile).
-
-## Solo experience mode
-
-Use the built-in `solo` Spring profile when you are the only user and want better day-to-day experience without changing CLI command behavior.
-
-```bash
-./mvnw -pl assistant-api -am spring-boot:run -Dspring-boot.run.profiles=solo -Dspring-boot.run.jvmArguments=-Dfile.encoding=UTF-8
-```
-
-Or use the one-click launcher:
-
-```bash
-chmod +x ./scripts/unix/local/run-mindos-solo.sh
-./scripts/unix/local/run-mindos-solo.sh
-```
-
-推荐新增本地调试启动器（自动加载分发配置 + 本地私有覆盖）：
-
-```bash
+# 2）创建本地覆盖文件
 cp mindos-secrets.local.properties.example mindos-secrets.local.properties
+
+# 3）检查本地配置是否有效
 chmod +x ./scripts/unix/local/run-local.sh ./scripts/unix/local/run-release.sh ./scripts/check-secrets.sh
-./scripts/unix/local/run-local.sh --dry-run
-./scripts/unix/local/run-local.sh
-./scripts/unix/local/run-release.sh --dry-run
 ./scripts/check-secrets.sh --mode=local
-./scripts/check-secrets.sh --mode=release
+./scripts/unix/local/run-local.sh --dry-run
+
+# 4）启动服务
+./scripts/unix/local/run-local.sh
 ```
 
-- `scripts/unix/local/run-local.sh --dry-run` 只做预检并打印生效摘要（profile/provider/stage-map 等），不启动进程。
-- `scripts/unix/local/run-release.sh --dry-run` 使用严格模式做发布前预检（占位符会直接失败）。
-
-### 发布前检查清单（3 条命令）
+也可以直接启动：
 
 ```bash
-./scripts/check-secrets.sh --mode=release
-./scripts/unix/local/run-release.sh --dry-run
-./mvnw -q test
+./mvnw -pl assistant-api -am spring-boot:run \
+  -Dspring-boot.run.jvmArguments=-Dfile.encoding=UTF-8
 ```
 
-- 第 1 条用于检查 release 覆盖文件中的占位符与映射格式。
-- 第 2 条用于验证最终生效配置是否可启动（不真正启动进程）。
-- 第 3 条用于做仓库级回归，避免发布前功能回退。
+### Solo 模式
 
-脚本分层（先按系统，再按职责）：
-- `scripts/unix/local/*`：本地运行与调试入口（`run-local`、`run-release`、`run-mindos-solo`、`solo-*`）
-- `scripts/unix/cloud/*`：云端初始化/部署/巡检/回滚（`init-authorized-keys`、`cloud-init`、`deploy-cloud`、`cloud-check`、`rollback-cloud`）
-- `scripts/unix/install/*`：Unix 安装与卸载入口（`install-mindos-*`、`uninstall-mindos-*`）
-- `scripts/unix/export/*`：打包导出入口（`export-mindos-windows-dist`）
-- `scripts/unix/tools/*`：预检与工具脚本（`check-secrets`）
-- `scripts/unix/lib/*`：共享 shell 函数（`mindos-env.sh`）
-- `scripts/windows/*`：Windows 运行/安装/验活脚本（`*.bat`）
-- 根目录 Unix wrapper 已清理，统一使用 `scripts/unix/*` 入口。
+单用户日常使用推荐 `solo` profile：
 
-- `scripts/unix/local/run-local.sh` 会先加载 `dist/mindos-windows-server/mindos-secrets.properties`，再加载可选的 `mindos-secrets.local.properties`。
-- 建议把真实 key 只放在 `mindos-secrets.local.properties`（该文件已在 `.gitignore` 中忽略）。
-- 启动时会对占位值（如 `REPLACE_WITH_*`）给出告警，避免云端/MCP 调试时误以为 key 已生效。
+```bash
+./mvnw -pl assistant-api -am spring-boot:run \
+  -Dspring-boot.run.profiles=solo \
+  -Dspring-boot.run.jvmArguments=-Dfile.encoding=UTF-8
+```
 
-### secrets 文件布局与多 provider 路由
+常用脚本：
 
-`dist/mindos-windows-server/mindos-secrets.properties` 采用三段式布局：
-- `1) 建议默认`：适合分发包直接保留的安全默认值，例如 `MINDOS_LLM_PROFILE=OPENROUTER_INTENT`、`MINDOS_LLM_PROVIDER=gpt` 与 OpenRouter-first 的默认配置。
-- `2) 可选填`：分发包里优先暴露一个主入口 `MINDOS_SKILLS_SEARCH_SOURCES`，同时默认启用 Serper shortcut；`MINDOS_SKILL_NEWS_SEARCH_SEARCH_SOURCES` 仅在 `news_search` 需要单独覆盖时使用；`MINDOS_SKILLS_MCP_SERVERS` / `MINDOS_SKILLS_MCP_SERVER_HEADERS` 保留给通用 MCP 工具；钉钉 stream / outbound 凭据按需填写。
-- `3) 必须填`：发布前严格预检会拦截的占位项，当前主要是 `MINDOS_OPENROUTER_KEY`、`MINDOS_QWEN_KEY` 与 `MINDOS_LLM_PROVIDER_KEYS`。
+```bash
+./scripts/unix/local/run-mindos-solo.sh
+./scripts/unix/local/solo-cli.sh
+./scripts/unix/local/solo-smoke.sh
+./scripts/unix/local/solo-stop.sh
+```
 
-多 provider 场景下，这几个变量都使用逗号分隔的 `provider:value` 映射：
-- `MINDOS_LLM_PROVIDER_ENDPOINTS`
-- `MINDOS_LLM_PROVIDER_KEYS`
-- `MINDOS_LLM_PROVIDER_MODELS`
+## 使用方法
 
-MCP / 搜索源建议：
-- `MINDOS_SKILLS_MCP_SERVERS` / `MINDOS_SKILLS_MCP_SERVER_HEADERS` 仍需保留，用于通用 MCP 工具（不限于搜索）。
-- `MINDOS_SKILLS_SEARCH_SOURCES` / `MINDOS_SKILL_NEWS_SEARCH_SEARCH_SOURCES` 用于统一管理搜索类源；只做搜索时可优先使用它们并保持 MCP servers 为空。
-- 简化建议：大多数场景只需要填写 `MINDOS_SKILLS_SEARCH_SOURCES` 一行；只有当 `news_search` 想用不同源时，再额外填写 `MINDOS_SKILL_NEWS_SEARCH_SEARCH_SOURCES`。
-- `news_search` 优先级：`MINDOS_SKILL_NEWS_SEARCH_SEARCH_SOURCES` > `MINDOS_SKILLS_SEARCH_SOURCES` > 旧的 `MINDOS_SKILL_NEWS_SEARCH_SERPER_*`。
-- 搜索候选优先级建议：`mcp.serper.webSearch` 放在 `mcp.bravesearch.webSearch` / `mcp.brave.webSearch` 之前，避免 Brave 不稳定时影响检索结果；分发包默认已启用 Serper shortcut，便于直接切换。
-- 精准搜索替代方案：`SerpApi` 也已支持，适合特别精准关键词和结构化结果页的场景；可通过 `serpapi:` 配置到 `MINDOS_SKILLS_SEARCH_SOURCES` 或 `MINDOS_SKILL_NEWS_SEARCH_SEARCH_SOURCES`。
-- 如果 `MINDOS_SKILLS_MCP_SERVERS` 与 `MINDOS_SKILLS_SEARCH_SOURCES` 使用了相同 alias，则显式 MCP server 配置优先。
+### 1）公开 Chat API
 
-典型写法：
-- 本地优先省 token：`local:http://localhost:11434/api/chat,qwen:https://dashscope.aliyuncs.com/...`
-- OpenRouter-first 发布：`MINDOS_LLM_PROFILE=OPENROUTER_INTENT`、`MINDOS_LLM_PROVIDER=gpt`、`MINDOS_LLM_PROVIDER_KEYS=gpt:${MINDOS_OPENROUTER_KEY},grok:${MINDOS_OPENROUTER_KEY},gemini:${MINDOS_OPENROUTER_KEY},qwen:${MINDOS_QWEN_KEY}`
-- 按阶段选 provider：`MINDOS_LLM_ROUTING_STAGE_MAP=llm-dsl:openrouter,llm-fallback:qwen`
+`POST /chat` 和 `POST /api/chat` 接收：
 
-推荐路由模式与定位：
-- `CUSTOM_LOCAL_FIRST`：本地 Ollama 端点优先承担语义分析和低成本请求，云端 provider 作为增强或回退能力。
-- 多云按阶段/预设路由：使用 `MINDOS_LLM_ROUTING_STAGE_MAP` 与 `MINDOS_LLM_ROUTING_PRESET_MAP` 按 dispatcher 阶段或 `cost/quality` 预设选择 provider。
-- `OPENROUTER_INTENT`：最适合默认分发包的云路由模式，OpenRouter 负责面向用户的总结输出，qwen 可作为回退模型。
+```json
+{
+  "userId": "local-user",
+  "message": "帮我总结今天的工作",
+  "profile": {
+    "assistantName": "MindOS",
+    "role": "coding-partner",
+    "style": "concise",
+    "language": "zh-CN",
+    "timezone": "Asia/Shanghai",
+    "llmProvider": "qwen",
+    "llmPreset": "quality"
+  }
+}
+```
 
-校验规则：
-- provider 映射中不要包含空格；条目之间用逗号分隔，每个条目以内第一个 `:` 分隔 provider 与值。
-- `scripts/unix/lib/mindos-env.sh` 会通过 `mindos_validate_kv_map_format` 校验映射语法。
-- 真实 secrets 建议只放在 `mindos-secrets.local.properties` 或 `mindos-secrets.release.properties`，分发模板保持占位状态，避免配置漂移和误提交。
+当前公开 `profile` 支持的字段只有：
 
-### 本地 Ollama + Qwen 最小可运行示例
+- `assistantName`
+- `role`
+- `style`
+- `language`
+- `timezone`
+- `llmProvider`
+- `llmPreset`
 
-如果你希望先用本地模型做低成本语义分析，再在需要时交给 Qwen 做更强的云端回复，可以从下面这组最小配置开始：
+示例：
+
+```bash
+curl -X POST http://localhost:8080/chat \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "userId":"local-user",
+    "message":"你有哪些技能？",
+    "profile":{
+      "style":"concise",
+      "language":"zh-CN",
+      "llmProvider":"qwen",
+      "llmPreset":"balanced"
+    }
+  }'
+```
+
+查看历史：
+
+```bash
+curl http://localhost:8080/api/chat/local-user/history
+```
+
+### 2）CLI
+
+```bash
+./mvnw -q -pl mindos-cli -am package
+./mvnw -q -pl mindos-cli -am exec:java \
+  -Dexec.mainClass=com.zhongbo.mindos.assistant.cli.MindosCliApplication
+```
+
+常见用法：
+
+- 自然语言：`我有哪些技能`
+- 自然语言：`帮我拉取最近的记忆`
+- slash：`/profile show`
+- slash：`/memory pull --since 0 --limit 50`
+- slash：`/skills`
+
+参数化启动：
+
+```bash
+./mvnw -q -pl mindos-cli -am exec:java \
+  -Dexec.mainClass=com.zhongbo.mindos.assistant.cli.MindosCliApplication \
+  -Dexec.args="--server http://localhost:8080 --user local-user --theme cyber"
+```
+
+### 3）显式 Goal 执行 / Human-AI Co-Runtime
+
+高级 co-runtime 功能目前主要通过内嵌 Goal Runtime 暴露，而不是公开 `/chat` DTO。
+
+示例：
+
+```java
+@Autowired
+private AgentLoop agentLoop;
+
+AutonomousGoalRunResult result = agentLoop.runGoal(
+    "local-user",
+    "修复构建、整理发布说明，并在高风险动作前等待我审批",
+    Map.of(
+        "executionPolicy", "autonomous",
+        "runtimeTargetNode", "node:local",
+        "human.preference.autonomy", 0.70,
+        "human.preference.riskTolerance", 0.35,
+        "human.preference.costSensitivity", 0.55,
+        "human.preference.style", "concise",
+        "human.approval.queue", List.of(
+            Map.of("status", "approved", "reason", "可以继续")
+        ),
+        "human.feedback.queue", List.of(
+            Map.of(
+                "approved", false,
+                "rollback", true,
+                "notes", "换成更稳的方案",
+                "corrections", Map.of("coruntime.allowedAgentIds", List.of("conservative-planner"))
+            )
+        )
+    )
+);
+```
+
+返回的 `AutonomousGoalRunResult` 现在会带上：
+
+- `runtimeState`
+- `runtimeHistory`
+- `sharedDecisions`
+- `interventionEvents`
+- `humanPreference`
+- `trustScore`
+- `latestExplanation()`
+
+## 配置文档
+
+### 配置层次
+
+推荐按以下顺序理解配置来源：
+
+1. `assistant-api/src/main/resources/application.properties`：仓库默认值
+2. `application-solo.properties` 或其他 profile：profile 级默认值
+3. `dist/mindos-windows-server/mindos-secrets.properties`：分发包默认值
+4. `mindos-secrets.local.properties`：本地覆盖
+5. `mindos-secrets.release.properties`：发布覆盖
+6. 环境变量：最终覆盖层
+
+`./scripts/unix/local/run-local.sh` 的加载顺序是：
+
+1. `dist/mindos-windows-server/mindos-secrets.properties`
+2. `mindos-secrets.local.properties`（若存在）
+
+`./scripts/unix/local/run-release.sh` 会加载 dist 文件和 `mindos-secrets.release.properties`，并对占位值做严格失败。
+
+### Spring 配置名与环境变量的对应关系
+
+Spring Boot relaxed binding 生效，例如：
+
+| Spring 属性 | 环境变量 |
+| --- | --- |
+| `mindos.llm.provider-endpoints` | `MINDOS_LLM_PROVIDER_ENDPOINTS` |
+| `mindos.dispatcher.semantic-analysis.force-local` | `MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_FORCE_LOCAL` |
+| `mindos.coruntime.approval-risk-threshold` | `MINDOS_CORUNTIME_APPROVAL_RISK_THRESHOLD` |
+
+### 主要配置分组
+
+| 关注点 | Spring 前缀 | 常用环境变量前缀 | 作用 |
+| --- | --- | --- | --- |
+| LLM 传输与路由 | `mindos.llm.*` | `MINDOS_LLM_*` | HTTP 开关、provider map、路由、重试、缓存 |
+| Dispatcher 行为 | `mindos.dispatcher.*` | `MINDOS_DISPATCHER_*` | 语义分析、skill 路由、本地升级、提示词收缩 |
+| Memory | `mindos.memory.*` | `MINDOS_MEMORY_*` | 文件持久化、状态存储、向量/检索 |
+| Human-AI Co-Runtime | `mindos.coruntime.*` | `MINDOS_CORUNTIME_*` | 审批/autonomy 阈值 |
+| Skills / MCP | `mindos.skills.*`、`mindos.skill.*` | `MINDOS_SKILLS_*`、`MINDOS_SKILL_*` | MCP server、搜索源、skill 配置 |
+| IM 网关 | `mindos.im.*` | `MINDOS_IM_*` | 钉钉 / 飞书 / 企业微信 |
+| 安全 | `mindos.security.*` | `MINDOS_SECURITY_*` | 管理 token、危险操作保护 |
+
+### LLM 与 local-first 路由
+
+重点配置：
+
+| 配置项 | 默认值 | 作用 |
+| --- | --- | --- |
+| `mindos.llm.http.enabled` | `false` | 是否真的发出 HTTP LLM 请求；关闭时走 stub |
+| `mindos.llm.provider` | `stub` | 默认 provider alias |
+| `mindos.llm.provider-endpoints` | 空 | `provider:url` 映射 |
+| `mindos.llm.provider-models` | 空 | `provider:model` 映射 |
+| `mindos.llm.provider-keys` | 空 | `provider:key` 映射 |
+| `mindos.llm.routing.mode` | `fixed` | `fixed` 或 `auto` |
+| `mindos.llm.routing.stage-map` | `llm-dsl:openai,llm-fallback:openai` | stage -> provider |
+| `mindos.llm.routing.preset-map` | `cost:openai,balanced:openai,quality:openai` | preset -> provider |
+| `mindos.dispatcher.semantic-analysis.enabled` | `true` | 是否启用语义分析 |
+| `mindos.dispatcher.semantic-analysis.llm-enabled` | `false` | 是否允许额外 LLM 参与语义分析 |
+| `mindos.dispatcher.semantic-analysis.force-local` | `true` | 语义阶段优先本地模型 |
+| `mindos.dispatcher.semantic-analysis.llm-provider` | `local` | 语义分析使用的 provider |
+| `mindos.dispatcher.semantic-analysis.clarify-min-confidence` | `0.70` | 低置信度澄清阈值 |
+
+### Human-AI Co-Runtime 全局阈值
+
+这些配置是共享控制的核心阈值：
+
+| Spring 配置项 | 默认值 | 含义 |
+| --- | --- | --- |
+| `mindos.coruntime.approval-risk-threshold` | `0.68` | 预测风险超过该值时要求人工审批 |
+| `mindos.coruntime.high-cost-threshold` | `0.75` | 预测成本超过该值时要求审批 |
+| `mindos.coruntime.approval-confidence-floor` | `0.55` | 置信度低于该值时要求审批 |
+| `mindos.coruntime.autonomy-confidence-threshold` | `0.62` | AI 自动执行所需的最小置信度 |
+| `mindos.coruntime.min-trust-to-autonomy` | `0.45` | AI 自动执行所需的最小 trust 分数 |
+
+这些值直接由 `ControlProtocol` 读取。它们目前还没有全部出现在 env 模板里，但标准 Spring 环境变量写法已经可用：
+
+```properties
+MINDOS_CORUNTIME_APPROVAL_RISK_THRESHOLD=0.70
+MINDOS_CORUNTIME_HIGH_COST_THRESHOLD=0.80
+MINDOS_CORUNTIME_AUTONOMY_CONFIDENCE_THRESHOLD=0.65
+MINDOS_CORUNTIME_MIN_TRUST_TO_AUTONOMY=0.50
+```
+
+### 单次 Goal 执行的 runtime attributes
+
+这部分不是全局 Spring 属性，而是 `AgentLoop.runGoal(...)` / `AutonomousLoopEngine.run(...)` 的 `profileContext` 运行时参数。
+
+| Key | 类型 | 含义 |
+| --- | --- | --- |
+| `executionPolicy` | string | `realtime` / `batch` / `speculative` / `long-running` / `autonomous` |
+| `runtimeTargetNode` | string | 初始迁移到指定节点 |
+| `human.preference.autonomy` | number `0..1` | 用户偏好的自动化程度 |
+| `human.preference.riskTolerance` | number `0..1` | 风险容忍度 |
+| `human.preference.costSensitivity` | number `0..1` | 成本敏感度 |
+| `human.preference.style` | string | 偏好的决策 / 回复风格 |
+| `human.approval.default` | string | 默认审批模式，如 `approved`、`rejected` |
+| `human.approval.queue` | list | 预置审批结果队列 |
+| `human.feedback.queue` | list | 预置执行后反馈队列 |
+| `coruntime.allowedAgentIds` | list/string | 限制 planner agent 选择范围 |
+| `coruntime.forceHumanReview` | boolean | 强制进入人工审查 |
+| `coruntime.forceHumanOverride` | boolean | 强制走人工覆盖路径 |
+| `coruntime.overrideGraph` | `TaskGraph` 对象 | 直接替换计划图，仅限内嵌 Java 使用 |
+
+注意：
+
+- `coruntime.overrideGraph` 只适合内嵌 / 进程内 Java 调用
+- 当前公开 `/chat` DTO **不支持**直接传入这些高级 runtime attributes
+
+### 搜索与 MCP 配置
+
+大多数场景建议：
+
+- 搜索类源优先用 `MINDOS_SKILLS_SEARCH_SOURCES`
+- 通用 MCP 工具用 `MINDOS_SKILLS_MCP_SERVERS`
+- 每个 alias 的鉴权头用 `MINDOS_SKILLS_MCP_SERVER_HEADERS`
+
+重要配置：
+
+| 配置项 | 作用 |
+| --- | --- |
+| `mindos.skills.search-sources` / `MINDOS_SKILLS_SEARCH_SOURCES` | 统一搜索源映射 |
+| `mindos.skills.mcp-servers` / `MINDOS_SKILLS_MCP_SERVERS` | `alias:url` MCP server 映射 |
+| `mindos.skills.mcp-server-headers` / `MINDOS_SKILLS_MCP_SERVER_HEADERS` | `alias:Header=value;Header2=value2` |
+| `mindos.skills.custom-dir` | 自定义 JSON skills 目录 |
+| `mindos.skills.external-jars` | 外部 skill JAR URL |
+
+### 本地最小配置示例
+
+`mindos-secrets.local.properties`：
 
 ```properties
 MINDOS_LLM_PROFILE=CUSTOM_LOCAL_FIRST
+MINDOS_LLM_MODE=LOCAL_FIRST
 MINDOS_LLM_PROVIDER=qwen
 MINDOS_LLM_PROVIDER_ENDPOINTS=local:http://localhost:11434/api/chat,qwen:https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions
 MINDOS_LLM_PROVIDER_MODELS=local:gemma3:1b-it-q4_K_M,qwen:qwen3.6-plus
@@ -140,235 +383,37 @@ MINDOS_LLM_PROVIDER_KEYS=qwen:REPLACE_WITH_QWEN_KEY
 
 MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_LLM_ENABLED=true
 MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_FORCE_LOCAL=true
-MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_LOCAL_ESCALATION_ENABLED=true
 MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_LLM_PROVIDER=local
 MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_CLARIFY_MIN_CONFIDENCE=0.70
-MINDOS_DISPATCHER_LLM_FALLBACK_PROVIDER=qwen
+
+MINDOS_CORUNTIME_APPROVAL_RISK_THRESHOLD=0.68
+MINDOS_CORUNTIME_MIN_TRUST_TO_AUTONOMY=0.45
+
+MINDOS_SKILLS_SEARCH_SOURCES=
 ```
 
-这组配置的定位是：
-- `local:http://localhost:11434/api/chat` 负责本地语义分析和低成本短推理。
-- `qwen` 保留为云端增强 / 回退 provider，用于更强的最终回复能力。
-- `MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_CLARIFY_MIN_CONFIDENCE` 控制何时返回 `semantic.clarify`；低置信度或补全后仍缺必填参数会触发澄清。
-- 澄清会基于 memory/default completion 后的有效 payload 校验必填参数（而非仅原始语义 payload）；续写类输入仍会跳过 `semantic.clarify` 路由。
-- 真实的 Qwen key 仍建议只放在 `mindos-secrets.local.properties` 或 `mindos-secrets.release.properties` 中。
-
-### 本地调度模型与 Memory 结构设计
-
-如果本地硬件受限，建议把调度器保持得尽量小、稳、快：
-
-- **本地调度模型**：`gemma3:1b-it-q4_K_M`，负责意图识别、参数抽取、澄清判断和 skill 选择。
-- **云端总结模型**：`qwen3.6-plus`，负责最终面向用户的总结和润色。
-- **核心原则**：本地模型只决定“做什么”，云端模型只决定“怎么说”。
-
-Ollama 命令：
-```bash
-ollama pull gemma3:1b-it-q4_K_M
-ollama serve
-
-curl http://localhost:11434/api/chat \
-  -d '{"model":"gemma3:1b-it-q4_K_M","messages":[{"role":"user","content":"帮我判断这句话要不要调度技能：给学生 stu-1 做数学学习计划，六周，每周八小时"}]}'
-```
-
-避免乱调度的 Prompt 模板：
-```text
-你是 MindOS 的调度分析器，只负责理解用户输入，不负责直接回答问题。
-
-只返回严格 JSON：
-{
-  "intent": "...",
-  "suggestedSkill": "...",
-  "confidence": 0.0,
-  "clarify": true,
-  "missingFields": ["..."],
-  "payload": {},
-  "summary": "..."
-}
-
-规则：
-- 不能生成最终用户回复；
-- 不能编造缺失参数；
-- 置信度低就必须 clarify=true；
-- 只能从白名单 skill 中选择；
-- 输出要短、结构化、稳定。
-```
-
-Memory 结构建议：
-- **Persona**：长期稳定偏好和风格，例如语言、语气、时区。
-- **Semantic**：已确认事实和长期偏好。
-- **Episodic**：最近对话、任务进度、短摘要。
-- **Procedural**：路由经验、常缺字段、成功的 skill 模式。
-
-建议路由前的读取顺序：`Persona -> Semantic -> Procedural -> Recent Episodic -> Current Input`。
-
-启动 MindOS 前，建议先单独确认本地 Ollama 接口可用：
+本地 Ollama 快速检查：
 
 ```bash
 curl http://localhost:11434/api/chat \
   -d '{"model":"gemma3:1b-it-q4_K_M","messages":[{"role":"user","content":"Hello!"}]}'
 ```
 
-如果这条命令本身不通，MindOS 虽然可能会打印路由到了 `local`，但语义分析阶段依然无法真正拿到本地模型结果。
+如果这里就失败，先修 Ollama；否则 MindOS 可能看起来已经“路由到 local”，但语义分析阶段仍然无法真正产出。
 
-### i5 + 8GB 本地参数两档（`gemma3:1b-it-q4_K_M`）
+## 验证与部署辅助
 
-当本地模型使用 `gemma3:1b-it-q4_K_M` 时，可直接从这两档参数起步。
-
-`偏稳态`（更稳、更省资源）：
-
-```properties
-MINDOS_LLM_PROVIDER_MODELS=local:gemma3:1b-it-q4_K_M
-MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_MAX_TOKENS=80
-MINDOS_DISPATCHER_LLM_DSL_MAX_TOKENS=120
-MINDOS_DISPATCHER_LLM_FALLBACK_MAX_TOKENS=220
-MINDOS_DISPATCHER_SKILL_FINALIZE_WITH_LLM_MAX_TOKENS=120
-MINDOS_DISPATCHER_LOCAL_ESCALATION_ENABLED=true
-MINDOS_DISPATCHER_LOCAL_ESCALATION_CLOUD_PROVIDER=qwen
-MINDOS_DISPATCHER_LOCAL_ESCALATION_CLOUD_PRESET=quality
-```
-
-`偏质量`（本地回答更完整，仍保留云端兜底）：
-
-```properties
-MINDOS_LLM_PROVIDER_MODELS=local:gemma3:1b-it-q4_K_M
-MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_MAX_TOKENS=120
-MINDOS_DISPATCHER_LLM_DSL_MAX_TOKENS=180
-MINDOS_DISPATCHER_LLM_FALLBACK_MAX_TOKENS=380
-MINDOS_DISPATCHER_SKILL_FINALIZE_WITH_LLM_MAX_TOKENS=220
-MINDOS_DISPATCHER_LOCAL_ESCALATION_ENABLED=true
-MINDOS_DISPATCHER_LOCAL_ESCALATION_CLOUD_PROVIDER=qwen
-MINDOS_DISPATCHER_LOCAL_ESCALATION_CLOUD_PRESET=quality
-```
-
-建议：
-- 本地端点偶发超时时，优先用 `偏稳态`，并先下调 `MINDOS_DISPATCHER_LLM_FALLBACK_MAX_TOKENS`。
-- 本地端点稳定但回答深度不够时，先切到 `偏质量`，再考虑调整 provider 路由。
-
-Reusable solo helper scripts:
+推荐验证命令：
 
 ```bash
-chmod +x ./scripts/unix/local/solo-cli.sh ./scripts/unix/local/solo-smoke.sh ./scripts/unix/local/solo-stop.sh
-./scripts/unix/local/solo-cli.sh --help
-./scripts/unix/local/solo-smoke.sh --help
-./scripts/unix/local/solo-stop.sh --help
+./scripts/check-secrets.sh --mode=local
+./scripts/check-secrets.sh --mode=release
+./scripts/unix/local/run-local.sh --dry-run
+./scripts/unix/local/run-release.sh --dry-run
+./mvnw -q test
 ```
 
-- `scripts/unix/local/solo-cli.sh`: starts `mindos-cli` with default `--server`/`--user` only (no command semantics change)
-- `scripts/unix/local/solo-smoke.sh`: lightweight local checks for `/chat` echo route and `/api/metrics/llm`
-- `scripts/unix/local/solo-stop.sh`: stops local service by port and/or process-name pattern
-
-Windows self-hosted equivalents:
-
-```bat
-scripts\\windows\\run-mindos-solo.bat
-scripts\\windows\\solo-smoke.bat
-scripts\\windows\\install-mindos-server.bat
-```
-
-- `scripts\\windows\\run-mindos-solo.bat`: runs `assistant-api` from source with `solo` profile via `mvnw.cmd`
-- `scripts\\windows\\solo-smoke.bat`: checks `/chat` echo route and `/api/metrics/llm` using PowerShell
-- `scripts\\windows\\install-mindos-server.bat`: builds `assistant-api`, installs `%USERPROFILE%\.mindos-server`, generates `mindos-server.bat` / `mindos-server-smoke.bat`, and seeds `mindos-secrets.properties` with the current DingTalk stream variables
-
-`solo` profile highlights:
-- enables short-TTL LLM cache for repeated prompts
-- defaults to `qwen` as the main provider (`qwen3.6-plus` when no explicit model is supplied)
-- keeps richer prompt context and slightly longer replies
-- delays conversation rollup so recent dialogue stays hot longer
-- disables admin token requirement for `GET /api/metrics/llm` on local single-user setups
-
-CLI command mode remains unchanged. You can keep using the current interaction style and slash commands.
-
-### Solo daily commands (CLI mode unchanged)
-
-```bash
-./scripts/unix/local/solo-cli.sh
-```
-
-Optional overrides:
-
-```bash
-MINDOS_SERVER=http://localhost:8080 MINDOS_USER=local-user ./scripts/unix/local/solo-cli.sh --show-routing-details
-MINDOS_SERVER=http://localhost:8080 ./scripts/unix/local/solo-smoke.sh
-./scripts/unix/local/solo-stop.sh --port 8080
-```
-
-### Windows quick start (package + run)
-
-Requirements: Java 17 in `PATH`.
-
-```bat
-scripts\\windows\\install-mindos-server.bat
-notepad %USERPROFILE%\.mindos-server\mindos-secrets.properties
-%USERPROFILE%\.mindos-server\mindos-server.bat
-%USERPROFILE%\.mindos-server\mindos-server-smoke.bat
-```
-
-`MINDOS_IM_DINGTALK_REPLY_TIMEOUT_MS` 是同步 webhook 等待预算，建议保持较小值；stream 字段填写与控制台命名说明见下方 `Notes`（避免与后文重复）。
-
-Source-run option (without packaging):
-
-```bat
-scripts\\windows\\run-mindos-solo.bat
-scripts\\windows\\solo-smoke.bat
-```
-
-### Export a portable Windows server bundle from the dev machine
-
-Build a copy-ready bundle containing the executable JAR plus `mindos-server.bat`, `mindos-server-smoke.bat`, and `mindos-server-stop.bat`:
-
-```bash
-chmod +x ./scripts/unix/export/export-mindos-windows-dist.sh
-./scripts/unix/export/export-mindos-windows-dist.sh ./dist/mindos-windows-server
-```
-
-The command above writes the bundle to the project root at `dist/mindos-windows-server`.
-
-Copy the whole output directory to the Windows host, then run:
-
-```bat
-notepad mindos-secrets.properties
-mindos-server.bat
-mindos-server-smoke.bat
-mindos-server-stop.bat
-```
-
-`mindos-secrets.properties` is the main place to edit secrets, while `mindos-server.env.bat` keeps defaults and compatibility logic:
-- keep each line in the form `KEY=value` and edit only the text to the right of the first `=`
-- for DingTalk stream mode, fill `MINDOS_IM_DINGTALK_STREAM_CLIENT_ID`, `MINDOS_IM_DINGTALK_STREAM_CLIENT_SECRET`, and `MINDOS_IM_DINGTALK_OUTBOUND_ROBOT_CODE`
-- `MINDOS_IM_DINGTALK_OUTBOUND_APP_KEY` / `_APP_SECRET` are optional; when blank, the bundle reuses the stream clientId/clientSecret
-- legacy `MINDOS_IM_DINGTALK_APP_KEY` / `_APP_SECRET` names are still accepted by the exported bundle
-- edit `mindos-server.env.bat` only when you need to override non-secret defaults such as provider mode or ports
-- if startup logs show `{"event":"dingtalk.stream.lifecycle.skipped","reason":"stream_mode_disabled"}`, the DingTalk stream credentials or enable flags were not populated
-
-Common `mindos-server.env.bat` overrides:
-- choose provider profile in `mindos-secrets.properties`:
-  - `MINDOS_LLM_PROFILE=QWEN_STABLE` (single-vendor qwen, model from `MINDOS_QWEN_MODEL`)
-  - `MINDOS_LLM_PROFILE=DOUBAO_STABLE` (single-vendor doubao, model from `MINDOS_DOUBAO_ENDPOINT_ID`)
-  - `MINDOS_LLM_PROFILE=CN_DUAL` (llm-dsl uses qwen, llm-fallback prefers doubao)
-  - `MINDOS_LLM_PROFILE=OPENAI_NATIVE` (single-vendor openai, model from `MINDOS_OPENAI_MODEL`)
-  - `MINDOS_LLM_PROFILE=GEMINI_NATIVE` (single-vendor gemini native endpoint, model from `MINDOS_GEMINI_MODEL`)
-  - `MINDOS_LLM_PROFILE=GROK_NATIVE` (single-vendor grok, model from `MINDOS_GROK_MODEL`)
-  - `MINDOS_LLM_PROFILE=OPENROUTER_INTENT` (gpt/grok/gemini over OpenRouter)
-- each profile auto-sets `MINDOS_LLM_MODE`, `MINDOS_LLM_PROVIDER`, stage-map, endpoint map, key map, and model map
-- if you switch to Doubao Ark, set a real `MINDOS_DOUBAO_ENDPOINT_ID` because Ark Chat requires a valid Model/Endpoint ID plus `Authorization: Bearer <ARK_API_KEY>`
-- if you switch to OpenRouter intent routing, fill `MINDOS_OPENROUTER_KEY`
-- add other providers only when you actually need cross-provider switching
-- keep `MINDOS_IM_DINGTALK_*` / `MINDOS_IM_WECHAT_*` disabled until you have real bot credentials
-- `MINDOS_SERVER_PORT` for local service port
-
-The exported Windows bundle also includes `mindos-server.full.env.bat` as a commented multi-provider reference. It is not auto-loaded; copy only the lines you want from it back into `mindos-server.env.bat` when needed. In provider maps, commas split entries and the first colon splits provider name from value, so edit those lines carefully.
-
-LLM provider configuration notes:
-- `mindos.llm.provider-endpoints` controls provider -> chat endpoint mapping.
-- `mindos.llm.provider-models` controls provider -> model mapping.
-- `mindos.llm.profile` (or env `MINDOS_LLM_PROFILE`) can pin stable provider defaults: `QWEN_STABLE` -> `qwen`, `DOUBAO_STABLE` -> `doubao`.
-- startup logs include `llm.routing.profile.effective`, and first-hit samples include `llm.call.routing.sample` (`routeStage` -> `provider/model`) for quick routing verification.
-- `qwen` keeps the built-in default model `qwen3.6-plus` when no model is supplied.
-- `doubao` must be configured with a real Ark `Model ID` or `Endpoint ID`, for example `mindos.llm.provider-models=doubao:ep-202603290001`, before enabling live HTTP calls.
-
-## Cloud deploy (single-user)
-
-Recommended flow: initialize SSH key once, then deploy without password.
+云端辅助脚本：
 
 ```bash
 chmod +x ./scripts/unix/cloud/*.sh
@@ -376,620 +421,11 @@ CLOUD_HOST=1.2.3.4 CLOUD_USER=root ./scripts/unix/cloud/init-authorized-keys.sh
 CLOUD_HOST=1.2.3.4 CLOUD_USER=root ./scripts/unix/cloud/cloud-init.sh
 CLOUD_HOST=1.2.3.4 CLOUD_USER=root ./scripts/unix/cloud/deploy-cloud.sh
 CLOUD_HOST=1.2.3.4 CLOUD_USER=root ./scripts/unix/cloud/cloud-check.sh
-CLOUD_HOST=1.2.3.4 CLOUD_USER=root ./scripts/unix/cloud/rollback-cloud.sh
-CLOUD_HOST=1.2.3.4 CLOUD_USER=root ./scripts/unix/cloud/cloud-check.sh
 ```
 
-Temporary fallback (not recommended for long-term use):
+## 说明
 
-```bash
-CLOUD_HOST=1.2.3.4 CLOUD_USER=root CLOUD_PASS='***' ./scripts/unix/cloud/deploy-cloud.sh
-```
-
-Notes:
-- Deploy keeps `releases/<timestamp>` and updates `current` / `previous` symlinks for quick rollback.
-- `rollback-cloud.sh` switches `current` to `previous` and restarts `assistant-api`.
-- `cloud-init.sh` initializes remote directories/permissions and runs baseline checks.
-- `cloud-check.sh` prints `[PASS]/[WARN]/[FAIL]` with `SUMMARY`; exits `1` when FAIL exists.
-- Remote logs are written to `$REMOTE_BASE_DIR/logs/assistant-api.out`.
-
-## CLI quick try
-
-### 新手快速上手（3 分钟，自然语言，推荐）
-
-如果你不熟悉命令行，先做下面 3 步：
-
-```bash
-./mvnw -q -pl mindos-cli -am test
-./mvnw -q -pl mindos-cli -am package
-./mvnw -q -pl mindos-cli -am exec:java -Dexec.mainClass=com.zhongbo.mindos.assistant.cli.MindosCliApplication
-```
-
-进入会话后，直接用自然语言输入即可（不需要记参数）：
-- `我有哪些技能`
-- `帮我拉取最近 30 条记忆`
-- `给学生 stu-1 做数学学习计划，六周，每周八小时`
-- `打开排障模式` / `关闭排障模式`
-
-看不懂技术命令也没关系：默认使用自然语言即可；只有排障时才需要 `/help full`。
-
-### 高级参数化启动（可选）
-
-基础启动与显示：
-
-```bash
-./mvnw -q -pl mindos-cli -am exec:java -Dexec.mainClass=com.zhongbo.mindos.assistant.cli.MindosCliApplication -Dexec.args="--help"
-./mvnw -q -pl mindos-cli -am exec:java -Dexec.mainClass=com.zhongbo.mindos.assistant.cli.MindosCliApplication -Dexec.args="--server http://localhost:8080 --user local-user"
-./mvnw -q -pl mindos-cli -am exec:java -Dexec.mainClass=com.zhongbo.mindos.assistant.cli.MindosCliApplication -Dexec.args="--theme cyber"
-./mvnw -q -pl mindos-cli -am exec:java -Dexec.mainClass=com.zhongbo.mindos.assistant.cli.MindosCliApplication -Dexec.args="--show-routing-details --theme cyber"
-```
-
-Profile 管理：
-
-```bash
-./mvnw -q -pl mindos-cli -am exec:java -Dexec.mainClass=com.zhongbo.mindos.assistant.cli.MindosCliApplication -Dexec.args="init --name BoAssistant --role coding-partner --style concise --language zh-CN --timezone Asia/Shanghai"
-./mvnw -q -pl mindos-cli -am exec:java -Dexec.mainClass=com.zhongbo.mindos.assistant.cli.MindosCliApplication -Dexec.args="profile show"
-./mvnw -q -pl mindos-cli -am exec:java -Dexec.mainClass=com.zhongbo.mindos.assistant.cli.MindosCliApplication -Dexec.args="profile set --style detailed --timezone UTC"
-./mvnw -q -pl mindos-cli -am exec:java -Dexec.mainClass=com.zhongbo.mindos.assistant.cli.MindosCliApplication -Dexec.args="profile set --llm-provider openai"
-./mvnw -q -pl mindos-cli -am exec:java -Dexec.mainClass=com.zhongbo.mindos.assistant.cli.MindosCliApplication -Dexec.args="profile reset"
-```
-
-Chat 与记忆操作：
-
-```bash
-./mvnw -q -pl mindos-cli -am exec:java -Dexec.mainClass=com.zhongbo.mindos.assistant.cli.MindosCliApplication -Dexec.args="chat --user local-user --message 'echo hello' --server http://localhost:8080"
-./mvnw -q -pl mindos-cli -am exec:java -Dexec.mainClass=com.zhongbo.mindos.assistant.cli.MindosCliApplication -Dexec.args="chat --interactive --server http://localhost:8080"
-./mvnw -q -pl mindos-cli -am exec:java -Dexec.mainClass=com.zhongbo.mindos.assistant.cli.MindosCliApplication -Dexec.args="memory pull --user local-user --since 0 --limit 100 --server http://localhost:8080"
-./mvnw -q -pl mindos-cli -am exec:java -Dexec.mainClass=com.zhongbo.mindos.assistant.cli.MindosCliApplication -Dexec.args="memory push --user local-user --file /tmp/memory-sync.json --limit 100 --server http://localhost:8080"
-```
-
-### 更多自然语言示例（可选）
-
-上面的“新手快速上手”已经覆盖高频用法，这里仅保留最常用映射（其余命令请参考后面的“高级/排障命令速查”）：
-
-- `查看我的记忆风格` -> `/memory style show`
-- `按我的风格压缩这段记忆：明天先整理目标，再拆任务` -> `/memory compress --source ...`
-- `把用户改为 dev-user` -> `/user dev-user`
-- `把服务端地址改成 localhost:19090` -> `/server http://localhost:19090`（自动补全协议，需确认）
-- `请接入mcp https://docs.example.com/mcp，简称 docs-cn` -> `/skill load-mcp --alias docs-cn --url ...`（需确认）
-
-### 语义分析 skill 与前置意图整理
-
-- 内置 `semantic.analyze` skill，可显式查看系统如何理解你的请求，例如：
-  - `semantic 帮我修复 Spring 接口 bug`
-  - `请先做语义分析：帮我创建一个待办，截止周五前提交周报`
-- Dispatcher 默认会先做一层轻量语义整理，再决定：
-  - 直接路由到本地 skill
-  - 交给 LLM 做自然回复
-  - 把语义整理结果附加到后续提示词中，提升意图理解准确率
-- 可选配置：
-  - `mindos.dispatcher.semantic-analysis.enabled=true`：启用语义整理
-  - `mindos.dispatcher.semantic-analysis.llm-enabled=true`：允许额外调用 LLM 做语义分析
-    - `solo` / Windows 分发默认可通过 `MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_LLM_ENABLED=true` 开启，适合低置信度自然语言请求（如新闻、搜索、模糊意图）的二次理解
-  - `mindos.dispatcher.semantic-analysis.force-local=true`：语义分析阶段强制使用本地模型（默认开启）；如需临时放开可设为 `false`
-    - `solo` / Windows 分发可通过 `MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_FORCE_LOCAL=false` 覆盖
-  - `mindos.dispatcher.semantic-analysis.delegate-skill=mcp.<alias>.<tool>`：把语义分析委托给已接入的 MCP skill
-  - `mindos.dispatcher.semantic-analysis.route-min-confidence=0.72`：语义分析直接路由到本地 skill 的最小置信度
-  - `mindos.dispatcher.semantic-analysis.clarify-min-confidence=0.70`：触发 `semantic.clarify` 的最小置信度阈值
-  - 说明：澄清会基于 memory/default completion 后的有效 payload 校验必填参数（而非仅原始语义 payload）；续写类输入（如“继续”“按之前”）会跳过 `semantic.clarify` 路由
-
-### 高级/排障命令速查（可选）
-
-仅在排障或高级场景使用；平时建议直接自然语言输入。
-
-```text
-/help
-/help full
-/session
-/user <userId>
-/server <url>
-/provider <name|default>
-/history --limit 10
-/retry
-/clear
-/skills
-/skill list
-/skill reload
-/skill reload-mcp
-/skill load-mcp --alias docs --url http://localhost:8081/mcp
-/skill load-jar --url https://example.com/skill-weather.jar
-/profile show
-/profile set
-/profile set --name BoAssistant --role coding-partner --style detailed --language zh-CN --timezone UTC --llm-provider openai
-/profile reset
-/memory pull --since 0 --limit 50
-/memory push
-/memory push --limit 50
-/memory push --file /tmp/memory-sync.json --limit 50
-/memory style show
-/memory style set --style-name action --tone warm --output-format bullet
-/memory compress --source 这周先整理目标，再拆任务
-/eq coach --query 我最近和同事沟通卡住了 --style workplace --mode both --priority-focus p1
-/exit
-```
-
-CLI 默认是自然聊天视图：只看对话结果，不展示 skill/channel/路由等技术细节；需要排障时，直接说“打开排障模式/关闭排障模式”即可切换（`--show-routing-details` 与 `--pure-nl` 仍保留兼容）。
-
-`/help` 默认给自然语言操作提示，`/help full` 提供完整技术命令。交互模式中高风险操作（重置 profile、加载外部 JAR/MCP、切换 server）会二次确认；`/memory pull` 与 `/memory push` 后台异步执行，不阻塞聊天。`/memory push` 支持在窗口内逐步录入 `semantic / episodic / procedural`（或 `语义 / 对话 / 流程`），并在提交前预览，服务端会做规范化、去重与检索优化。
-
-`memory push` payload example (`/tmp/memory-sync.json`):
-```json
-{
-  "eventId": "evt-terminal-a-1",
-  "episodic": [
-    {"role": "user", "content": "hello from terminal A", "createdAt": "2026-03-13T00:00:00Z"}
-  ],
-  "semantic": [],
-  "procedural": []
-}
-```
-
-## Sample requests
-
-Chat requests:
-```bash
-curl -X POST http://localhost:8080/chat \
-  -H 'Content-Type: application/json' \
-  -d '{"userId":"local-user","message":"echo hello"}'
-
-curl -X POST http://localhost:8080/api/chat \
-  -H 'Content-Type: application/json' \
-  -d '{"userId":"local-user","message":"skill:time"}'
-
-curl -X POST http://localhost:8080/chat \
-  -H 'Content-Type: application/json' \
-  -d '{"userId":"local-user","message":"你有哪些技能？"}'
-
-curl -X POST http://localhost:8080/chat \
-  -H 'Content-Type: application/json' \
-  -d '{"userId":"local-user","message":"你还可以学习哪些技能？"}'
-
-curl http://localhost:8080/api/chat/local-user/history
-```
-
-Memory sync requests:
-```bash
-curl -X POST http://localhost:8080/api/memory/local-user/sync \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "episodic": [{"role": "user", "content": "hello from terminal A"}],
-    "semantic": [{"text": "order api design", "embedding": [1.0, 0.2]}],
-    "procedural": [{"skillName": "code.generate", "input": "create order api", "success": true}]
-  }'
-
-curl "http://localhost:8080/api/memory/local-user/sync?since=0&limit=100"
-```
-
-Skill management requests:
-```bash
-curl http://localhost:8080/api/skills
-
-curl -X POST http://localhost:8080/api/skills/reload
-
-curl -X POST http://localhost:8080/api/skills/load-jar \
-  -H 'Content-Type: application/json' \
-  -d '{"url":"https://example.com/skill-weather.jar"}'
-
-curl -X POST http://localhost:8080/api/skills/reload-mcp
-
-curl -X POST http://localhost:8080/api/skills/load-mcp \
-  -H 'Content-Type: application/json' \
-  -d '{"alias":"docs","url":"http://localhost:8081/mcp"}'
-
-curl -X POST http://localhost:8080/api/skills/load-mcp \
-  -H 'Content-Type: application/json' \
-  -d '{"alias":"github","url":"https://example.com/mcp","headers":{"Authorization":"Bearer <token>"}}'
-```
-
-## Example response
-```json
-{
-  "reply": "hello",
-  "channel": "echo"
-}
-```
-
-## Notes
-- Base profile keeps LLM calls in skeleton mode unless `mindos.llm.http.enabled=true` is enabled together with a valid key/endpoint map.
-- `solo` profile enables real OpenAI-compatible HTTP calls by default; other profiles can opt in with `mindos.llm.http.enabled=true`.
-- `gemini` supports both OpenAI-compatible proxy endpoints (for example `/v1/chat/completions`) and Google's native `.../v1beta/models/<model>:generateContent` endpoint.
-- `qwen` uses DashScope's OpenAI-compatible endpoint: `https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions`.
-- When no explicit `model` is supplied, `qwen` defaults to `qwen3.6-plus`.
-- For native Gemini, prefer configuring the base endpoint in `mindos.llm.provider-endpoints` and keep the secret in `mindos.llm.provider-keys`; the client will append `?key=...` automatically and mask it in metrics.
-- DingTalk webhook replies are synchronous; `mindos.im.dingtalk.reply-timeout-ms` (default `2500`) caps the wait budget so slow LLM replies degrade to a timeout-friendly message instead of vanishing from the chat window.
-- DingTalk reply length guard `mindos.im.dingtalk.reply-max-chars` (default `1200`) trims oversized webhook replies; in stream mode, MindOS sends long final answers in ordered segments (`<= reply-max-chars` each) to reduce information loss.
-- DingTalk stream mode is optional and intended for slow replies: enable `mindos.im.dingtalk.stream.enabled=true`, provide `mindos.im.dingtalk.stream.client-id`, `mindos.im.dingtalk.stream.client-secret`, and outbound settings (`mindos.im.dingtalk.outbound.enabled=true`, `mindos.im.dingtalk.outbound.robot-code`). When a reply is slow, MindOS sends a waiting status after `mindos.im.dingtalk.stream.waiting-delay-ms` (default `800`) and then pushes the final answer when it is ready.
-- For single-host restart continuity, central memory uses file storage by default (`mindos.memory.file-repo.enabled=true`, `mindos.memory.file-repo.base-dir=data/memory-sync`) when no JDBC `DataSource` is configured.
-- Lightweight user-state persistence is also enabled by default (`mindos.memory.state.enabled=true`, `mindos.memory.state.base-dir=data/memory-state`) for learned preference profiles, long-task records, and memory style profiles.
-- Restart persistence coverage is intentionally layered:
-  - persisted: episodic / semantic / procedural central memory, preference profiles, long tasks, memory style profiles
-  - rebuilt on demand from persisted data: semantic in-memory search structures during normal hydration
-  - transient only: buffer / working / fact caches and other runtime-only state
-- Optional multi-provider routing:
-  - default provider: `mindos.llm.provider=stub`
-  - routing mode: `mindos.llm.routing.mode=fixed|auto` (default `fixed`)
-  - real HTTP switch: `mindos.llm.http.enabled=true|false` (default `false` in base profile)
-  - auto stage mapping: `mindos.llm.routing.stage-map=llm-dsl:openai,llm-fallback:openai`
-  - preset mapping: `mindos.llm.routing.preset-map=cost:openai,balanced:openai,quality:openai`
-  - provider endpoint map: `mindos.llm.provider-endpoints=openai:https://api.openai.com/v1/chat/completions,local:http://localhost:11434/v1/chat/completions,gemini:https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent,qwen:https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions`
-  - provider key map: `mindos.llm.provider-keys=openai:sk-xxx,local:dummy-key,qwen:sk-qwen`
-  - retry controls: `mindos.llm.retry.max-attempts` (default `3`), `mindos.llm.retry.delay-ms` (default `300`)
-  - Ark web search tool controls for `/responses` endpoints:
-    - `mindos.llm.ark.web-search.enabled` (default `true`)
-    - `mindos.llm.ark.web-search.stages` (comma-separated route stages such as `llm-fallback,skill-postprocess`; empty means no stage restriction)
-    - `mindos.llm.ark.web-search.platforms` (comma-separated channel/platform names such as `im,dingtalk`; empty means no platform restriction)
-  - short TTL response cache (optional):
-    - `mindos.llm.cache.enabled` (default `false`)
-    - `mindos.llm.cache.ttl-seconds` (default `60`)
-    - `mindos.llm.cache.max-entries` (default `256`)
-  - mainland model key map example: `mindos.llm.provider-keys=deepseek:sk-xxx,qwen:sk-yyy,kimi:sk-zzz,doubao:ark-aaa`
-  - mainland aliases are supported (`dashscope/tongyi -> qwen`, `moonshot -> kimi`, `volcengine -> doubao`, `zhipu -> glm`, `baidu -> ernie`).
-  - when endpoint map is empty, built-in mainland defaults are used for `deepseek/qwen/kimi/doubao/hunyuan/ernie/glm`.
-  - per-request override: send `profile.llmProvider` (CLI: `profile set --llm-provider openai`; use `auto` to force automatic stage-based routing)
-  - per-request/server-profile preset: send `profile.llmPreset` (CLI: `profile set --llm-preset quality`) to pick a named cost/quality preset before stage auto-routing.
-
-### Production-ready multi-provider example
-
-```properties
-mindos.llm.http.enabled=true
-mindos.llm.provider=qwen
-mindos.llm.routing.mode=fixed
-mindos.llm.routing.stage-map=llm-dsl:qwen,llm-fallback:qwen
-mindos.llm.routing.preset-map=cost:qwen,balanced:qwen,quality:qwen
-mindos.llm.provider-endpoints=openai:https://ai.2756online.com/openai/v1/chat/completions,gemini:https://ai.2756online.com/gemini/v1beta/models/gemini-2.0-flash:generateContent,qwen:https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions,grok:https://ai.2756online.com/grok/v1/chat/completions
-mindos.llm.provider-keys=deepseek:sk-xxx,openai:sk-yyy,gemini:AIzaSy-zzz,qwen:sk-qwen,grok:sk-aaa
-```
-
-If you prefer cleaner secret handling for Gemini, use the same endpoint without `?key=` and keep the Gemini secret only in `mindos.llm.provider-keys`.
-
-### OpenRouter intent routing + Qwen/Doubao kept for free testing
-
-Use OpenRouter for intent-based model selection while keeping Qwen/Doubao keys handy for cheap or free trials:
-
-```properties
-# Enable HTTP calls and intent-based routing
-mindos.llm.http.enabled=true
-mindos.llm.routing.mode=auto
-
-# Intent providers (all through OpenRouter), Qwen/Doubao stay available for overrides
-mindos.dispatcher.intent-routing.default-provider=gpt
-mindos.dispatcher.intent-routing.code-provider=gpt
-mindos.dispatcher.intent-routing.realtime-provider=grok
-mindos.dispatcher.intent-routing.emotional-provider=gemini
-
-# Intent + difficulty model picks (edit to your OpenRouter allowlist)
-mindos.dispatcher.intent-routing.model.general.easy=gpt-4o-mini
-mindos.dispatcher.intent-routing.model.general.hard=gpt-4o
-mindos.dispatcher.intent-routing.model.code.medium=gpt-4o
-mindos.dispatcher.intent-routing.model.realtime.medium=grok-beta
-mindos.dispatcher.intent-routing.model.emotional.medium=gemini-2.0-flash
-
-# Provider endpoints: OpenRouter for gpt/grok/gemini, native for qwen/doubao
-mindos.llm.provider-endpoints=gpt:https://openrouter.ai/api/v1/chat/completions,grok:https://openrouter.ai/api/v1/chat/completions,gemini:https://openrouter.ai/api/v1/chat/completions,qwen:https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions,doubao:https://ark.cn-beijing.volces.com/api/v3/chat/completions
-
-# Provider models (Doubao needs a real Model ID or Endpoint ID)
-mindos.llm.provider-models=qwen:qwen-plus,doubao:ep-xxxxxxxxxxxx
-
-# Keys: one OpenRouter key feeds gpt/grok/gemini; keep Qwen/Doubao keys for low-cost testing
-mindos.llm.provider-keys=gpt:${MINDOS_OPENROUTER_KEY},grok:${MINDOS_OPENROUTER_KEY},gemini:${MINDOS_OPENROUTER_KEY},qwen:${MINDOS_QWEN_KEY},doubao:${MINDOS_DOUBAO_ARK_KEY}
-```
-
-Tips:
-- If you prefer a single OpenRouter key mapping for all three providers, keep the `provider-keys` map as shown; otherwise split by provider names OpenRouter exposes.
-- Override `mindos.dispatcher.llm-fallback.provider` or `profile.llmProvider` to force Qwen/Doubao on-demand (e.g., for cost-sensitive sessions) without changing the intent-routing defaults.
-- LLM call metrics (token estimate + multi-provider stats):
-  - endpoint: `GET /api/metrics/llm?windowMinutes=60&provider=openai&includeRecent=true&recentLimit=20`
-  - routing replay endpoint: `GET /api/metrics/llm/routing-replay?limit=200` (offline compare of `rule / preAnalyze / finalChannel` from recent real inputs)
-  - toggles: `mindos.llm.metrics.enabled` (default `true`), `mindos.llm.metrics.max-recent-calls` (default `500`)
-  - optional auth: `mindos.security.metrics.require-admin-token` (default `true`, validates `mindos.security.risky-ops.admin-token-header` / `mindos.security.risky-ops.admin-token`)
-  - summary includes success/fallback rate, average latency, estimated token totals, provider aggregates, optional recent calls, and `securityAudit` writer metrics (`queueDepth`, `enqueuedCount`, `writtenCount`, `callerRunsFallbackCount`, `flushTimeoutCount`, `flushErrorCount`).
-  - summary also includes:
-    - `llmCache`: short TTL response cache status and effectiveness (`enabled`, `hitCount`, `missCount`, `hitRate`, `entryCount`, `ttlSeconds`, `maxEntries`)
-    - `memoryWriteGate`: secondary semantic-duplicate write gate effectiveness (`secondaryDuplicateGateEnabled`, `secondaryDuplicateChecks`, `secondaryDuplicateIntercepted`, `secondaryDuplicateInterceptRate`)
-    - `contextCompression`: dispatcher prompt-context compression effectiveness (`requests`, `compressedRequests`, `totalInputChars`, `totalOutputChars`, `avgCompressionRatio`, `summarizedTurns`)
-    - `skillPreAnalyze`: dispatcher pre-analyze/guard stats (`mode`, `confidenceThreshold`, `requests`, `executed`, `accepted`, `skippedByGate`, `skippedBySkill`, `detectedSkillLoopSkipBlocked`, `skillTimeoutTriggered`)
-    - `memoryHits`: prompt-memory retrieval hit stats (`requests`, `semanticHits`, `proceduralHits`, `rollupHits`, `approximateHitRate`)
-    - `memoryContribution`: per-turn memory segment tags used for final reply construction (`requests`, `recentTagged`, `semanticTagged`, `proceduralTagged`, `personaTagged`, `rollupTagged`)
-    - `llmCacheWindowHitRate`: cache hit rate within current `windowMinutes` only (better for release-over-release online effectiveness tracking)
-    - `llmCacheWindowHits` / `llmCacheWindowMisses`: sample size of cache decisions inside current window, used together with `llmCacheWindowHitRate` to avoid small-sample misread.
-    - `llmCacheWindowLowSample`: true when window sample size (`hits + misses`) is below threshold.
-  - low-sample threshold config: `mindos.llm.metrics.cache.window-low-sample-threshold` (default `20`)
-- Long-task orchestration API (multi-day / multi-worker):
-  - create: `POST /api/tasks/{userId}` with `{title, objective, steps[], dueAt?, nextCheckAt?}`
-  - list/query: `GET /api/tasks/{userId}?status=PENDING|RUNNING|BLOCKED|COMPLETED|CANCELLED`, `GET /api/tasks/{userId}/{taskId}`
-  - claim ready work (supports parallel workers): `POST /api/tasks/{userId}/claim?workerId=worker-a&limit=2&leaseSeconds=300`
-  - progress update: `POST /api/tasks/{userId}/{taskId}/progress` with `{workerId, completedStep?, note?, blockedReason?, nextCheckAt?, markCompleted}`
-  - status override: `POST /api/tasks/{userId}/{taskId}/status` with `{status, note?, nextCheckAt?}`
-  - manual auto-advance trigger: `POST /api/tasks/{userId}/auto-run` (advances one ready step per claimed task)
-  - each claim uses a lease (`leaseOwner`, `leaseUntil`) so multiple worker threads/processes can collaborate safely without double-processing.
-  - optional background auto-runner (disabled by default):
-    - `mindos.tasks.auto-run.enabled`
-    - `mindos.tasks.auto-run.fixed-delay-ms`
-    - `mindos.tasks.auto-run.worker-id`
-    - `mindos.tasks.auto-run.claim-limit`
-    - `mindos.tasks.auto-run.lease-seconds`
-    - `mindos.tasks.auto-run.next-check-delay-seconds`
-- Scheduled news fetch + DingTalk push (disabled by default):
-  - enable via `mindos.news.enabled=true`, configure RSS/JSON feeds with `mindos.news.sources` (comma-separated), cap items with `mindos.news.max-items`
-  - example `mindos.news.sources` (可混合 CSV)：`https://feeds.bbci.co.uk/news/world/rss.xml,https://feeds.reuters.com/reuters/worldNews,https://rss.nytimes.com/services/xml/rss/nyt/World.xml,https://hnrss.org/frontpage`（RSS）；`https://api.spaceflightnewsapi.net/v4/articles/?limit=10&ordering=-published_at`（JSON）
-  - schedule with `mindos.news.push.cron` and `mindos.news.push.timezone`; manual trigger `POST /api/news/push`
-  - configure DingTalk destination: `mindos.news.push.dingtalk.session-webhook` (preferred for robot webhook) or `mindos.news.push.dingtalk.open-conversation-id` + `mindos.news.push.dingtalk.sender-id` (uses OpenAPI client)
-  - summaries: after抓取最新源内容，服务会用 LLM 生成中文要点（3-6 条）并附上精选链接，LLM 不可用时自动降级为标题列表，长度受 `mindos.news.message.max-chars` 限制
-  - HTTP/超时：`mindos.news.http.connect-timeout-ms`、`mindos.news.http.request-timeout-ms` 可调，异常会跳过该源继续抓取
-  - admin token guard toggle: `mindos.news.require-admin-token` (default `true`, uses `X-MindOS-Admin-Token`)
-  - observe/update runtime config: `GET /api/news/status`, `POST /api/news/config`
-- Semantic memory can be stored explicitly with `remember ...`, `remember task: ...`, `记住：...`, or `记住任务：...`; explicit bucket prefixes such as `task/learning/eq/coding` override automatic bucket inference.
-- Dispatcher habit-routing confidence controls (optional, app/JVM properties):
-  - `mindos.dispatcher.habit-routing.enabled` (default `true`)
-  - `mindos.dispatcher.habit-routing.min-total-count` (default `2`)
-  - `mindos.dispatcher.habit-routing.min-success-rate` (default `0.6`)
-  - `mindos.dispatcher.habit-routing.recent-window-size` (default `6`)
-  - `mindos.dispatcher.habit-routing.recent-min-success-count` (default `2`)
-  - `mindos.dispatcher.habit-routing.recent-success-max-age-hours` (default `72`)
-  - continuation auto-routing now requires leading continuation cues (like `继续/按之前`) and stable recent success history.
-- Dispatcher LLM skill-routing optimization controls:
-  - `mindos.dispatcher.skill-routing.llm-shortlist-max-skills` (default `8`): only the top candidate skills are exposed to the LLM router prompt, reducing false positives and token cost when the skill catalog grows.
-  - `mindos.dispatcher.skill-routing.conversational-bypass.enabled` (default `true`): short small-talk inputs such as `谢谢/好的/hello` skip the LLM skill-selection pass and go straight to normal chat fallback.
-  - `mindos.dispatcher.realtime-intent.bypass.enabled` (default `true`): weather/news/market-like realtime intents skip skill pre-analyze and go directly to `llm-fallback`, which can then cooperate with Ark `/responses` web search.
-  - `mindos.dispatcher.realtime-intent.terms` (comma-separated, default includes `天气/新闻/热点/汇率/股价/路况/航班/比赛/实时/最新`): configurable realtime intent cues for the fast path.
-  - `mindos.dispatcher.realtime-intent.memory-shrink.enabled` (default `true`): when realtime intents land on `llm-fallback`, suppresses regular memory sections to avoid stale topic contamination.
-  - `mindos.dispatcher.realtime-intent.memory-shrink.max-chars` (default `280`): cap for the shrunken realtime fallback prompt context budget.
-  - `mindos.dispatcher.realtime-intent.memory-shrink.include-persona` (default `true`): keeps only persona snapshot in the shrunken realtime fallback context (other memory segments stay suppressed).
-  - `mindos.dispatcher.skill.pre-analyze.mode=auto|always|never` (default `auto`): controls whether low-certainty requests go through LLM skill pre-analysis.
-  - `mindos.dispatcher.skill.pre-analyze.confidence-threshold` (default `0`): in `auto` mode, skip pre-analysis when best candidate confidence is below this threshold.
-  - `mindos.dispatcher.skill.pre-analyze.skip-skills` (default `time`): skill names that should not be selected by LLM pre-analysis.
-  - intent + difficulty model routing for `llm-fallback` (optional, especially useful for OpenRouter multi-model setups):
-    - `mindos.dispatcher.intent-routing.enabled` (default `true`)
-    - `mindos.dispatcher.intent-routing.default-provider` / `code-provider` / `realtime-provider` / `emotional-provider`
-    - model tiers by intent and difficulty:
-      - `mindos.dispatcher.intent-routing.model.general.easy|medium|hard`
-      - `mindos.dispatcher.intent-routing.model.code.easy|medium|hard`
-      - `mindos.dispatcher.intent-routing.model.realtime.easy|medium|hard`
-      - `mindos.dispatcher.intent-routing.model.emotional.easy|medium|hard`
-    - emotional intent cue terms: `mindos.dispatcher.intent-routing.emotional-terms`
-    - hard-input threshold: `mindos.dispatcher.intent-routing.hard-input-length-threshold` (default `180`)
-  - `mindos.dispatcher.llm-dsl.provider` / `mindos.dispatcher.llm-dsl.preset` (default empty): stage-specific provider/preset defaults for `llm-dsl` routing calls when profile override is absent.
-  - `mindos.dispatcher.llm-fallback.provider` / `mindos.dispatcher.llm-fallback.preset` (default empty): stage-specific provider/preset defaults for normal chat fallback when profile override is absent.
-  - `mindos.dispatcher.skill.finalize-with-llm.enabled` (default `false` in base profile, `true` in `solo`): runs an LLM postprocess stage to convert structured skill output into a concise user-facing conclusion.
-  - `mindos.dispatcher.skill.finalize-with-llm.skills` (default `teaching.plan,todo.create,eq.coach,code.generate,file.search,mcp.*`): comma-separated skill allowlist for postprocess finalization; supports wildcard prefixes such as `mcp.*`.
-  - `mindos.dispatcher.skill.finalize-with-llm.max-output-chars` (default `900`): hard cap for the final postprocessed skill reply.
-  - `mindos.dispatcher.skill.finalize-with-llm.provider` (default empty): optional dedicated provider override for `skill-postprocess` stage.
-  - `mindos.dispatcher.skill.finalize-with-llm.preset` (default empty in base profile, `cost` in `solo`): optional dedicated preset override for `skill-postprocess` stage.
-    - If your local hardware is limited, keep `mindos.dispatcher.semantic-analysis.force-local=true` and the local routing/memory defaults for interpretation/scheduling, but point `mindos.dispatcher.skill.finalize-with-llm.provider` / `preset` and `mindos.skill.news-search.summary-provider` / `summary-model` to `qwen` so user-facing summaries stay cloud-generated and responsive.
-  - `mindos.dispatcher.routing-replay.max-samples` (default `200`): retained sample size for routing replay offline analysis.
-- Optional post-skill summary writeback controls:
-  - `mindos.memory.post-skill-summary.enabled` (default `false`): when enabled, successful skill outputs are summarized and written to semantic memory.
-  - `mindos.memory.post-skill-summary.skills` (default `teaching.plan,todo.create,eq.coach,code.generate,file.search`): comma-separated skill allowlist for summary writeback.
-  - `mindos.memory.post-skill-summary.max-reply-chars` (default `280`): summary-safe cap for skill output included in memory writeback.
-  - chat `executionTrace.routing` now includes `route`, `selectedSkill`, `confidence`, `reasons`, and `rejectedReasons` for diagnosing why a skill was chosen or why the request fell back to plain LLM chat.
-- Dispatcher token/loop guards:
-  - `mindos.dispatcher.prompt.max-chars` (default `2800`)
-  - `mindos.dispatcher.memory-context.max-chars` (default `1800`)
-  - `mindos.dispatcher.memory-context.keep-recent-turns` (default `2`): keep the last N raw turns verbatim in prompt context.
-  - `mindos.dispatcher.memory-context.history-summary-min-turns` (default `4`): once recent conversation reaches this threshold, older turns are compressed into a short review summary before entering the prompt.
-  - dispatcher also sends a provider-agnostic `chatHistory` snapshot (last few turns with timestamps) along with the prompt, so switching `llmProvider` keeps the same shared conversation context.
-  - `llm.orchestrate` skill共享上述 `memoryContext` + `chatHistory` 做多 provider 编排与降级；可调参数：`mindos.llm.orchestrate.providers`（默认 `openai,deepseek,qwen`），`mindos.llm.orchestrate.max-hops`（默认 `2`），`mindos.llm.orchestrate.prompt.max-chars`（默认 `1600`），`mindos.llm.orchestrate.history.max-items`（默认 `6`）。
-  - `mindos.dispatcher.llm-reply.max-chars` (default `1200`)
-  - `mindos.dispatcher.skill.guard.max-consecutive` (default `2`), blocks repeated same-skill loop routing and falls back to broader reasoning.
-  - `mindos.dispatcher.skill.guard.recent-window-size` (default `6`), recent procedural entries scanned for loop fingerprints.
-  - `mindos.dispatcher.skill.guard.repeat-input-threshold` (default `2`), repeated same-skill + same-input fingerprints allowed within cooldown before blocking.
-  - `mindos.dispatcher.skill.guard.cooldown-seconds` (default `180`), cooldown window for repeated same-input loop detection.
-  - `mindos.dispatcher.skill.guard.pre-execute-heavy.enabled` (default `true`), run loop guard before execution for configured heavy skills on explicit/rule/habit/llm-dsl routes.
-  - `mindos.dispatcher.skill.guard.pre-execute-heavy.skills` (default `eq.coach,teaching.plan,todo.create,code.generate,file.search,mcp.*`), heavy skill exact names/prefixes covered by pre-execute loop guard.
-  - `mindos.dispatcher.skill.timeout.eq-coach-im-ms` (default `12000`), IM-only timeout guard for `eq.coach` execution to avoid very long silent waits.
-  - `mindos.dispatcher.skill.timeout.eq-coach-im-reply` (default short Chinese fallback), timeout reply text returned when the IM `eq.coach` guard triggers.
-- Prompt-injection safety guard (default enabled):
-  - `mindos.dispatcher.prompt-injection.guard.enabled` (default `true`)
-  - `mindos.dispatcher.prompt-injection.guard.risk-terms` (comma-separated risky phrases)
-  - `mindos.dispatcher.prompt-injection.guard.safe-reply` (safe response when risky prompt is detected)
-  - when matched, dispatcher returns channel `security.guard` and refuses sensitive execution.
-- High-risk operation approval policy (optional, server-side enforced):
-  - `mindos.security.risky-ops.require-approval` (default `false`)
-  - `mindos.security.risky-ops.use-challenge-token` (default `true`), enable one-time challenge token approval to prevent header replay
-  - `mindos.security.risky-ops.approval-header` / `mindos.security.risky-ops.approval-value`
-  - `mindos.security.risky-ops.challenge-header` / `mindos.security.risky-ops.challenge.max-ttl-seconds`
-  - `mindos.security.risky-ops.admin-token-header` / `mindos.security.risky-ops.admin-token` (optional extra secret)
-  - challenge endpoint: `POST /api/security/challenge` with `{operation, resource, actor, ttlSeconds?}` (requires admin token when configured)
-  - challenge validation is strict: token must match `operation + resource + actor + request IP`, and token is consumed once.
-  - `mindos.security.skill.load-jar.allowed-hosts` / `mindos.security.skill.load-mcp.allowed-hosts`
-  - when enabled, `POST /api/skills/load-jar`, `POST /api/skills/load-mcp`, and `POST /api/tasks/{userId}/auto-run` require approval headers and skill URLs are host allowlisted.
-- Skill capability whitelist policy (fine-grained):
-  - `mindos.security.skill.capability.guard.enabled` (default `true`)
-  - `mindos.security.skill.allowed-capabilities` (default `fs.read,fs.write,exec,net`)
-  - `mindos.security.skill.capability-map` (example: `echo:exec,file.search:fs.read,mcp.docs.searchDocs:net`)
-  - blocked skill execution returns channel `security.guard` with missing capability details.
-- Structured security audit logging:
-  - `mindos.security.audit.enabled` (default `true`)
-  - `mindos.security.audit.file` (default `logs/security-audit.log`)
-  - `mindos.security.audit.trace-id-header` (default `X-Trace-Id`)
-  - audit query endpoints:
-    - `GET /api/security/audit?limit=50` (simple recent list, requires admin token when configured)
-    - `GET /api/security/audit/write-metrics` (writer queue + fallback/flush counters for observability)
-    - `GET /api/security/audit/query?limit=50&cursor=<signed_cursor>&actor=&operation=&result=&traceId=&from=&to=` (filtered cursor paging)
-      - `cursor` is short JWT-style (`header.payload.signature`), HMAC-signed (tamper-proof), and bound to current filters.
-      - JWT header includes `kid` for signing key version so key rotation can verify old cursors while new cursors use the active key.
-      - `from` / `to` use ISO-8601 UTC timestamps (example: `2026-03-23T10:00:00Z`).
-      - `nextCursor` and `nextCursorExpiresAt` are returned when more items exist.
-      - `cursorKeyVersion` returns the key version parsed from the current request cursor (`kid` for JWT cursors, legacy markers for old cursor formats).
-      - `cursorType` returns the current request cursor format: `none|jwt|legacy-numeric|legacy-signature`.
-    - writer metrics fields include `queueDepth`, `queueRemainingCapacity`, `enqueuedCount`, `writtenCount`, `callerRunsFallbackCount`, `flushTimeoutCount`, and `flushErrorCount`.
-  - cursor key rotation config:
-    - `mindos.security.audit.cursor-active-key-version` (example: `v2`)
-    - `mindos.security.audit.cursor-signing-keys` (example: `v1:old-secret,v2:new-secret`)
-    - if keyring is empty, fallback key `mindos.security.audit.cursor-signing-key` is used for active version.
-  - storage partition toggle: `mindos.security.audit.daily-partition-enabled` (default `true`, writes to daily files like `security-audit-2026-03-25.log` and enables window-based file pruning during queries).
-  - query optimization toggle: `mindos.security.audit.query.assume-chronological-order` (default `true`, allows early stop when `to` is set and log timestamps have passed upper bound).
-  - query guardrail: `mindos.security.audit.query.max-scanned-files` (default `400`, caps partition files scanned per request to avoid unbounded historical scans).
-  - audit write pipeline tuning:
-    - `mindos.security.audit.write-queue-capacity` (default `2048`)
-    - `mindos.security.audit.write-flush-timeout-ms` (default `2000`)
-    - `mindos.security.audit.write-flush-warning-interval-ms` (default `60000`, throttles repeated flush warning logs)
-  - audit fields include actor, operation, resource, timestamp, traceId, result, reason, remote address, and user-agent.
-- Persona learning safety controls (optional, app/JVM properties):
-  - `mindos.dispatcher.persona-core.enabled` (default `true`)
-  - `mindos.dispatcher.persona-core.preferred-channel.min-consecutive-success` (default `2`)
-  - `mindos.dispatcher.persona-core.ignored-profile-terms` (default `unknown,null,n/a,na,tbd,todo,随便,不知道,待定`)
-  - `mindos.memory.preference.overwrite-confirm-turns` (default `2`): conflicting long-term profile values need repeated confirmation turns before replacement.
-  - Default persona fallback (used when no profile has been learned yet):
-    - `mindos.memory.preference.default.assistant-name` (default `MindOS`)
-    - `mindos.memory.preference.default.role` (default `personal-assistant`)
-    - `mindos.memory.preference.default.style` (default `warm`)
-    - `mindos.memory.preference.default.language` (default `zh-CN`)
-    - `mindos.memory.preference.default.timezone` (default `Asia/Shanghai`)
-    - `mindos.memory.preference.default.preferred-channel` (default empty)
-- Memory sync API supports incremental pull via cursor (`since`) for multi-terminal synchronization.
-- Learned persona profile can be inspected via `GET /api/memory/{userId}/persona` (CLI: `mindos profile persona show`).
-- Persona debug explain view is available at `GET /api/memory/{userId}/persona/explain` to inspect pending conflict overrides before confirmation.
-- Preference profile state now survives restart together with pending overwrite confirmations through the file-backed memory state store.
-- Memory compression planning supports gradual stages (`RAW -> CONDENSED -> BRIEF -> STYLED`) with per-user style profile via `POST /api/memory/{userId}/style`, `GET /api/memory/{userId}/style`, and `POST /api/memory/{userId}/compress-plan`.
-- Compression plan supports optional `focus` (`learning`/`task`/`review`) and style update supports optional auto-tune (`POST /api/memory/{userId}/style?autoTune=true&sampleText=...`).
-- Long-task state created through `/api/tasks/{userId}` and per-user memory style profiles now survive restart through the same file-backed state store.
-- Memory key-signal detection is configurable via JVM properties (comma-separated):
-  - `mindos.memory.key-signal.constraint-terms`
-  - `mindos.memory.key-signal.deadline-terms`
-  - `mindos.memory.key-signal.contact-terms`
-  - examples: `-Dmindos.memory.key-signal.constraint-terms=必须,禁止,不要,不可`.
-- Semantic memory anti-pollution controls (optional, JVM properties):
-  - write gate toggle: `mindos.memory.write-gate.enabled` (default `false`)
-  - write gate min length: `mindos.memory.write-gate.min-length` (default `10`)
-  - bucket min length override: `mindos.memory.write-gate.min-length.<bucket>` (optional, falls back to global min length)
-  - secondary semantic-duplicate gate toggle: `mindos.memory.write-gate.semantic-duplicate.enabled` (default `false`)
-  - secondary semantic-duplicate token threshold: `mindos.memory.write-gate.semantic-duplicate.threshold` (default `0.82`, range `0..1`)
-  - search recency decay half-life hours: `mindos.memory.search.decay-half-life-hours` (default `72`)
-  - two-stage retrieval coarse candidate floor: `mindos.memory.search.coarse.min-candidates` (default `128`)
-  - two-stage retrieval coarse candidate multiplier: `mindos.memory.search.coarse.multiplier` (default `8`, final coarse cap = `max(min-candidates, limit*multiplier)`)
-  - explicit preferred-bucket search cross-bucket fallback cap: `mindos.memory.search.cross-bucket.max` (default `2`)
-  - explicit preferred-bucket search cross-bucket fallback ratio: `mindos.memory.search.cross-bucket.ratio` (default `0.5`, range `0..1`)
-  - optional hybrid sparse+dense retrieval: `mindos.memory.search.hybrid.enabled` (default `false`), `mindos.memory.search.hybrid.lexical-weight` (default `0.55`), `mindos.memory.search.hybrid.k1` (default `1.2`), `mindos.memory.search.hybrid.b` (default `0.75`)
-  - optional fasttext/关键词过滤：`mindos.memory.filter.enabled` (default `false`)，`mindos.memory.filter.block-terms`，`mindos.memory.filter.allow-terms`
-  - optional local embedding generation for memory writes/query vectors: `mindos.memory.embedding.local.enabled` (default `false`), `mindos.memory.embedding.local.dimensions` (default `16`)
-  - optional embedding pre-processing to trim token budget before local/LLM calls: `mindos.memory.embedding.preprocess.enabled` (default `true`), `mindos.memory.embedding.preprocess.max-chars` (default `1200`), `mindos.memory.embedding.preprocess.max-sentences` (default `8`)
-  - optional ONNX embedding runtime: `mindos.memory.embedding.onnx.enabled`, `mindos.memory.embedding.onnx.preset` (`custom|bge-micro`, default `custom`; `bge-micro` will auto-fill classpath preset paths `classpath:models/bge-micro/model_quantized.onnx` and `classpath:models/bge-micro/tokenizer.json` plus dimensions if unset), `mindos.memory.embedding.onnx.model-path`, `mindos.memory.embedding.onnx.tokenizer-path`, `mindos.memory.embedding.onnx.output-name`, `mindos.memory.embedding.onnx.dimensions`, `mindos.memory.embedding.onnx.batch-size`, `mindos.memory.embedding.onnx.max-length`, `mindos.memory.embedding.onnx.intra-op-threads`, `mindos.memory.embedding.onnx.inter-op-threads`, `mindos.memory.embedding.onnx.cache.*`
-  - optional rerank (MiniLM 风格，本地向量相似度合并得分): `mindos.memory.rerank.enabled` (default `false`), `mindos.memory.rerank.max-candidates` (default `10`), `mindos.memory.rerank.score-weight` (default `0.5`)
-  - optional layered semantic ranking: `mindos.memory.layers.enabled` (default `false`), `mindos.memory.layers.buffer-hours` (default `6`), `mindos.memory.layers.working-hours` (default `72`), `mindos.memory.layers.fact-max-chars` (default `160`)
-  - multi-layer buffer retention: `mindos.memory.multilayer.buffer.max-messages` (default `20`)
-  - conversation rollup: `mindos.memory.conversation-rollup.enabled` (default `true`), `mindos.memory.conversation-rollup.threshold-turns` (default `24`), `mindos.memory.conversation-rollup.keep-recent-turns` (default `8`), `mindos.memory.conversation-rollup.min-turns` (default `6`)
-  - precedence for `mindos.memory.*`: system properties (`-D`) > `application.properties` > built-in defaults.
-  - when enabled, low-signal short semantic entries are skipped; retrieval prefers same inferred topic bucket and keeps bounded cross-bucket fallback when preferred bucket is explicit.
-  - conversation rollup stores a semantic summary under bucket `conversation-rollup` once hot episodic turns exceed the threshold; older turns are then kept in the sync log while recent turns remain hot in local episodic memory for prompt construction.
-- Memory sync performance regression test knobs (test-only JVM properties):
-  - `mindos.memory.sync.perf-baseline-ms` (default `4000`)
-  - `mindos.memory.sync.perf-retries` (default `1`, CI can raise to `2` on noisy runners)
-  - example: `./mvnw -q -pl assistant-memory -am test -Dtest=MemorySyncServiceTest#shouldMeetBasicSyncPerformanceBaseline -Dsurefire.failIfNoSpecifiedTests=false -Dmindos.memory.sync.perf-baseline-ms=5000 -Dmindos.memory.sync.perf-retries=2`
-- Memory NLU synonyms for style/compress intents are configurable via JVM system properties (`-Dmindos.memory.nlu.*`); values are comma-separated terms and normalize to canonical values used by API/CLI (`focus`: `task|learning|review`, `style`: `action|coach|story|concise`, `tone`: `warm|direct|neutral`, `format`: `bullet|plain`).
-- `eq.coach` supports optional output controls: `style` (`gentle|direct|workplace|intimate`), `mode` (`analysis|reply|both`), `priorityFocus` (`p1|p2|p3`).
-- `news_search` 默认支持 `36kr` 与统一配置的搜索源；当配置了 `mindos.skills.search-sources` 且用户未显式指定 `source` 时，会优先使用配置搜索源，`source=36kr` 时仍强制走 36kr。
-  - 入口示例：`news_search AI 芯片`
-  - 参数示例：`news_search AI source=serper sort=relevance limit=5`（`source=<已配置 alias>|36kr|all`，`sort=latest|relevance`）
-  - 也支持自然语言条数：如 `news_search AI 前五条`
-  - 输出默认包含：`主题`、`热点关键词`、`摘要`、`上下文总结`
-  - 新闻列表缓存与摘要结果缓存共用 `mindos.skill.news-search.cache-*` TTL
-  - 主要配置：
-    - `mindos.skill.news-search.kr-feed-url`
-    - `mindos.skills.search-sources`（唯一推荐入口，news_search 与搜索型 MCP 共用）
-    - `mindos.skill.news-search.serper.*`（仅兼容旧配置）
-    - `mindos.skill.news-search.cache-ttl-seconds`
-    - `mindos.skill.news-search.summary-provider` / `mindos.skill.news-search.summary-model`（默认 `qwen` + `qwen3.6-plus`）
-- Serper 搜索能力已经内置为可配置项：
-  - MCP 快捷搜索可通过 `mindos.skills.mcp.serper.*` 配置地址与 `X-API-KEY`，自动注册为 `mcp.<alias>.webSearch`
-  - 推荐优先使用 `mindos.skills.search-sources` 统一维护多查询源；旧的 `mindos.skill.news-search.search-sources` / `mindos.skill.news-search.serper.*` 仅保留兼容回退
-  - 当前暂不添加 `scholar` 路径；如果后续需要，再按同样模式补一组可配置 URL 即可
-- `eq.coach` risk terms are configurable via JVM properties (comma-separated):
-  - `mindos.eq.coach.risk.high-terms`
-  - `mindos.eq.coach.risk.medium-terms`
-  - example: `-Dmindos.eq.coach.risk.high-terms=离婚,分手,崩溃,绝望,失眠 -Dmindos.eq.coach.risk.medium-terms=冲突,冷战,争执,焦虑,拖延`
-- MCP servers support both internal services and third-party services (for example, GitHub MCP) through `/api/skills/load-mcp`; optional `headers` can be provided for per-server authentication.
-  - focus keys:
-    - `mindos.memory.nlu.focus.task-terms`
-    - `mindos.memory.nlu.focus.learning-terms`
-    - `mindos.memory.nlu.focus.review-terms`
-  - style keys:
-    - `mindos.memory.nlu.style.action-terms`
-    - `mindos.memory.nlu.style.coach-terms`
-    - `mindos.memory.nlu.style.story-terms`
-    - `mindos.memory.nlu.style.concise-terms`
-  - tone keys:
-    - `mindos.memory.nlu.tone.warm-terms`
-    - `mindos.memory.nlu.tone.direct-terms`
-    - `mindos.memory.nlu.tone.neutral-terms`
-  - format keys:
-    - `mindos.memory.nlu.format.bullet-terms`
-    - `mindos.memory.nlu.format.plain-terms`
-  - dev example:
-    ```bash
-    ./mvnw -pl assistant-api -am spring-boot:run \
-      -Dspring-boot.run.jvmArguments="-Dfile.encoding=UTF-8 -Dmindos.memory.nlu.focus.review-terms=复盘,总结,retrospective -Dmindos.memory.nlu.style.action-terms=action,行动,行动派 -Dmindos.memory.nlu.tone.warm-terms=warm,温和,gentle -Dmindos.memory.nlu.format.bullet-terms=bullet,列表,markdown list"
-    ```
-  - prod example:
-    ```bash
-    java \
-      -Dfile.encoding=UTF-8 \
-      -Dmindos.memory.nlu.focus.review-terms="复盘,总结,retrospective" \
-      -Dmindos.memory.nlu.style.action-terms="action,行动,行动派" \
-      -Dmindos.memory.nlu.tone.warm-terms="warm,温和,gentle" \
-      -Dmindos.memory.nlu.format.bullet-terms="bullet,列表,markdown list" \
-      -jar assistant-api/target/assistant-api-0.1.0-SNAPSHOT.jar
-    ```
-  - quick verify phrases:
-    - `按我的风格压缩这段记忆：记录今日复盘，聚焦到retrospective` -> focus `review`
-    - `把记忆风格改成 行动派，语气 gentle，格式 markdown list` -> `action/warm/bullet`
-- IM webhook integration (disabled by default) supports Feishu/DingTalk/WeChat text chat via `/api/im/feishu/events`, `/api/im/dingtalk/events`, `/api/im/wechat/events`; all platforms can enable signature verification independently in `application.properties`.
-- DingTalk now supports an async reply path when the event payload includes `sessionWebhook`: webhook first returns a processing receipt with task ID, then the server finishes dispatch in background and pushes the final text result back to the same DingTalk session. Related properties: `mindos.im.dingtalk.async-reply.*`; `allow-insecure-localhost-http` is intended only for local tests/debugging.
-- When a DingTalk async callback cannot be delivered (for example `sessionWebhook` expired or callback failed), the server can optionally try DingTalk OpenAPI proactive delivery first (`mindos.im.dingtalk.openapi-fallback.*`, requires the robot/app to have the corresponding DingTalk send-message permission plus `appKey/appSecret/robotCode`). In this repo the DingTalk integration is conversation-oriented (webhook payloads revolve around `conversationId` / `openConversationId` + chat replies), so the default fallback preference is `conversation-first`; if a tenant instead behaves more like direct user notification, `mindos.im.dingtalk.openapi-fallback.preferred-send-mode=user-first` can switch the primary attempt to batch user send. If OpenAPI fallback is unavailable or still fails, the final result is retained in the long-task record and can be recovered in chat with natural-language commands like `查进度` / `查看结果`, and the next ordinary DingTalk message will also carry a compensation notice with the missed result.
-- DingTalk can also run in robot stream mode. In that setup, DingTalk pushes messages over the long-lived stream connection instead of the `/api/im/dingtalk/events` webhook, and MindOS proactively sends a short “请稍等”状态 before the final reply when processing is slow。
-- IM 文本可直接触发 memory 能力：`查看记忆风格`、`按任务聚焦压缩这段记忆：...`、`根据这段话微调记忆风格：...`。
-- 若压缩结果提示“关键约束可能被弱化”，可直接回复“要/好的/ok”继续获取原文关键点清单并逐条复核（IM 与 CLI 交互窗口均支持）；复核后回复“生成待办”可一键转成按 `today / this week / later` 分组的执行清单。
-- 生成待办时会同步显示“当前待办策略”预览（阈值与建议时段），方便在对话里确认当前生效配置。
-- 待办优先级策略可通过 JVM 系统属性覆盖（默认不配即可）。示例（`application.properties` 风格）：
-  ```properties
-  # Priority thresholds
-  mindos.todo.priority.p1-threshold=45
-  mindos.todo.priority.p2-threshold=25
-
-  # Suggested completion windows
-  mindos.todo.window.p1=建议24小时内完成
-  mindos.todo.window.p2=建议3天内完成
-  mindos.todo.window.p3=建议本周内完成
-
-  # Legend shown in IM/CLI todo checklist
-  mindos.todo.legend=优先级说明：P1=今天必须完成，P2=3天内推进，P3=本周内安排。
-  ```
-  自定义示例：
-  ```properties
-  mindos.todo.priority.p1-threshold=60
-  mindos.todo.priority.p2-threshold=30
-  mindos.todo.window.p2=建议两天内完成
-  mindos.todo.legend=优先级说明：按团队自定义策略执行。
-  ```
-- CLI 支持会话内临时策略覆盖（不修改全局配置）：
-  - `/todo policy show`
-  - `/todo policy set --p1-threshold 70 --p2-threshold 20 --window-p2 建议两天内推进 --legend 优先级说明：会话策略`
-  - `/todo policy reset`
-- IM/CLI 的 memory compress 回复会附带轻量可观测信息（如压缩率与关键约束保留提示），便于在自然语言对话里确认压缩效果。
-- `POST /api/memory/{userId}/sync` response now includes apply counters: `deduplicatedCount`, `keySignalInputCount`, and `keySignalStoredCount` for monitoring compression/dedup effectiveness.
-- **Custom skills (JSON)**: drop `.json` files into `mindos.skills.custom-dir`; reload without restart via `POST /api/skills/reload`.
-  ```json
-  { "name": "greet", "description": "Warm greeting", "triggers": ["greet","hello"], "response": "Hello {{user}}! You said: {{input}}" }
-  ```
-  Set `"response": "llm"` to route the input to the configured LLM instead.
-- **External skill JARs**: set `mindos.skills.external-jars=https://host/skill.jar` (comma-separated). JARs must implement `Skill` and declare it in `META-INF/services/com.zhongbo.mindos.assistant.skill.Skill`. Load a JAR at runtime via `POST /api/skills/load-jar {"url":"..."}`.
-- **MCP skills**: set `mindos.skills.mcp-servers=docs:http://localhost:8081/mcp,search:https://example.com/mcp`. Each remote MCP tool is exposed as a namespaced skill like `mcp.docs.searchDocs`. Dispatcher auto-detection can route natural requests such as `search docs for auth guide` to matching MCP tools, and explicit DSL can target the full skill name. Reload all configured MCP servers via `POST /api/skills/reload-mcp`, or attach one server at runtime via `POST /api/skills/load-mcp {"alias":"docs","url":"http://localhost:8081/mcp"}`.
-  - 为无联网能力的模型补“上网”能力：准备带搜索工具的 MCP 服务器（如 `search` 别名），配置 `mindos.skills.mcp-servers=search:https://your-mcp-server/mcp` 后会自动注册 `mcp.search.<tool>`，即可在对话中调用搜索类技能。
-  - Brave Search 可用专用配置快速启用（会自动并入 `mcp-servers`）：`mindos.skills.mcp.brave.enabled=true`、`mindos.skills.mcp.brave.url=...`、`mindos.skills.mcp.brave.api-key=...`，默认请求头为 `X-Subscription-Token`（可通过 `mindos.skills.mcp.brave.api-key-header` 覆盖），默认别名为 `brave`（可通过 `mindos.skills.mcp.brave.alias` 覆盖）。当 URL 指向 Brave 官方 REST 搜索接口（如 `/res/v1/web/search`）时，会自动注册为 `mcp.<alias>.webSearch` 并复用现有自然语言路由/LLM 总结链路。
-  - MCP 服务器鉴权/私有 API：用 `mindos.skills.mcp-server-headers` 配置每个别名的请求头（逗号分隔多个别名，分号分隔头；示例：`docs:Authorization=Bearer%20token;X-API-KEY=abc123,search:Authorization=Bearer%20another`）。对应别名的所有 MCP 调用都会附带这些头，适合传递 API key。
-  - 对话/自然语言添加 MCP（含 API key）：可以在聊天里说“添加一个 search MCP，地址 https://your-mcp-server/mcp，Authorization=Bearer xxx”，由上层映射为 `POST /api/skills/load-mcp`：
-    ```json
-    {
-      "alias": "search",
-      "url": "https://your-mcp-server/mcp",
-      "headers": {
-        "Authorization": "Bearer xxx",
-        "X-API-KEY": "abc123"
-      }
-    }
-    ```
-- `code.generate` can be pinned to a provider and difficulty-tier models via:
-  - `mindos.skill.code-generate.llm-provider`
-  - `mindos.skill.code-generate.model.easy|medium|hard`
-- Skill management API: `GET /api/skills` lists all registered skills.
-- Chat-style skill discovery is supported for everyday phrasing such as `你有哪些技能？`, `你能做什么？`, and `你还可以学习哪些技能？`.
+- 只有在 `mindos.llm.http.enabled=true` 且 provider map / key 配好之后，才会真的发出 LLM HTTP 请求。
+- 未配置 JDBC `DataSource` 时，MindOS 默认使用文件存储维持重启后的记忆连续性。
+- 运行测试时，`assistant-api/data/*` 目录下的 memory-state 和 H2 文件可能会变化。
+- 当前公开 REST DTO 仍然偏保守；高级 Human-AI Co-Runtime 控制参数主要面向内嵌 / 内部 goal runtime，而不是外部 `/chat` 客户端。
