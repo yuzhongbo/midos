@@ -1,6 +1,9 @@
 package com.zhongbo.mindos.assistant.dispatcher.agent.autonomous;
 
 import com.zhongbo.mindos.assistant.common.SkillResult;
+import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.worldmodel.MultiAgentCoordinator;
+import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.worldmodel.StrategyEvolutionEngine;
+import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.worldmodel.WorldMemory;
 import com.zhongbo.mindos.assistant.dispatcher.agent.taskgraph.TaskGraph;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.ExecutionMemoryFacade;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -16,24 +19,30 @@ import java.util.Map;
 @Component
 public class AutonomousLoopEngine {
 
-    private final AutonomousPlanner planner;
+    private final MultiAgentCoordinator coordinator;
     private final AutonomousGraphExecutor executor;
     private final Evaluator evaluator;
     private final GoalMemory goalMemory;
+    private final WorldMemory worldMemory;
+    private final StrategyEvolutionEngine strategyEvolutionEngine;
     private final ExecutionMemoryFacade executionMemoryFacade;
     private final int maxIterations;
 
     @Autowired
-    public AutonomousLoopEngine(AutonomousPlanner planner,
+    public AutonomousLoopEngine(MultiAgentCoordinator coordinator,
                                 AutonomousGraphExecutor executor,
                                 Evaluator evaluator,
                                 GoalMemory goalMemory,
+                                WorldMemory worldMemory,
+                                StrategyEvolutionEngine strategyEvolutionEngine,
                                 ExecutionMemoryFacade executionMemoryFacade,
                                 @Value("${mindos.autonomous.loop.max-iterations:5}") int maxIterations) {
-        this.planner = planner;
+        this.coordinator = coordinator;
         this.executor = executor;
         this.evaluator = evaluator;
         this.goalMemory = goalMemory;
+        this.worldMemory = worldMemory;
+        this.strategyEvolutionEngine = strategyEvolutionEngine;
         this.executionMemoryFacade = executionMemoryFacade;
         this.maxIterations = Math.max(1, maxIterations);
     }
@@ -54,6 +63,7 @@ public class AutonomousLoopEngine {
         Goal currentGoal = (goal == null ? Goal.of("", 0.0) : goal).markInProgress();
         Instant startedAt = Instant.now();
         List<GoalMemory.GoalTrace> traces = new ArrayList<>();
+        List<WorldMemory.ExecutionTrace> worldTraces = new ArrayList<>();
         EvaluationResult lastEvaluation = EvaluationResult.initial(currentGoal);
         GoalExecutionResult lastResult = null;
         AutonomousPlanningContext planningContext = new AutonomousPlanningContext(
@@ -68,9 +78,10 @@ public class AutonomousLoopEngine {
         );
         String stopReason = "";
         for (int iteration = 1; iteration <= maxIterations && !currentGoal.isTerminal(); iteration++) {
-            TaskGraph graph = iteration == 1
-                    ? planner.plan(currentGoal, planningContext)
-                    : planner.replan(currentGoal, lastResult, lastEvaluation, planningContext);
+            MultiAgentCoordinator.PlanSelection selection = coordinator == null
+                    ? MultiAgentCoordinator.PlanSelection.empty()
+                    : coordinator.selectBestPlan(currentGoal, planningContext);
+            TaskGraph graph = selection.graph();
             if (graph == null || graph.isEmpty()) {
                 GoalExecutionResult planFailure = syntheticFailure(currentGoal, planningContext, "planner produced empty task graph");
                 EvaluationResult evaluation = new EvaluationResult(
@@ -120,6 +131,15 @@ public class AutonomousLoopEngine {
                     planningContext.iteration(),
                     Instant.now()
             )));
+            if (worldMemory != null) {
+                WorldMemory.ExecutionTrace worldTrace = worldMemory.record(currentGoal, selection, executionResult, evaluation);
+                if (worldTrace != null) {
+                    worldTraces.add(worldTrace);
+                    if (strategyEvolutionEngine != null) {
+                        strategyEvolutionEngine.update(worldMemory.traces());
+                    }
+                }
+            }
             if (evaluation.isSuccess()) {
                 currentGoal = nextGoal.markCompleted();
                 stopReason = "completed";
@@ -145,7 +165,7 @@ public class AutonomousLoopEngine {
             }
             stopReason = currentGoal.isCompleted() ? "completed" : "max-iterations";
         }
-        return new AutonomousGoalRunResult(currentGoal, traces, stopReason, startedAt, Instant.now());
+        return new AutonomousGoalRunResult(currentGoal, traces, worldTraces, stopReason, startedAt, Instant.now());
     }
 
     private GoalExecutionResult syntheticFailure(Goal goal,

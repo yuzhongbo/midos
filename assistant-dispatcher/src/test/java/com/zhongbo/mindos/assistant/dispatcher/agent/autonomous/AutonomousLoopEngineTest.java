@@ -2,7 +2,13 @@ package com.zhongbo.mindos.assistant.dispatcher.agent.autonomous;
 
 import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.common.dto.ExecutionTraceDto;
-import com.zhongbo.mindos.assistant.dispatcher.FinalPlanner;
+import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.worldmodel.MultiAgentCoordinator;
+import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.worldmodel.PlanEvaluator;
+import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.worldmodel.PlanScore;
+import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.worldmodel.PredictionResult;
+import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.worldmodel.StrategyEvolutionEngine;
+import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.worldmodel.WorldMemory;
+import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.worldmodel.WorldModel;
 import com.zhongbo.mindos.assistant.dispatcher.agent.taskgraph.TaskGraph;
 import com.zhongbo.mindos.assistant.dispatcher.agent.taskgraph.TaskGraphExecutionResult;
 import com.zhongbo.mindos.assistant.dispatcher.agent.taskgraph.TaskNode;
@@ -25,23 +31,27 @@ class AutonomousLoopEngineTest {
     @Test
     void shouldReplanUntilGoalCompletes() {
         Goal goal = Goal.of("修复构建并完成交付", 1.0);
-        AtomicInteger planCalls = new AtomicInteger();
+        AtomicInteger selectionCalls = new AtomicInteger();
         GoalMemory goalMemory = new GoalMemory();
+        WorldMemory worldMemory = new WorldMemory();
+        StrategyEvolutionEngine evolutionEngine = new StrategyEvolutionEngine();
         RecordingExecutionMemoryFacade memoryFacade = new RecordingExecutionMemoryFacade();
-        AutonomousPlanner planner = new AutonomousPlanner((FinalPlanner) null) {
+        MultiAgentCoordinator coordinator = new MultiAgentCoordinator(List.of(), new WorldModel(null, worldMemory), new PlanEvaluator(), evolutionEngine) {
             @Override
-            public TaskGraph plan(Goal goal, AutonomousPlanningContext context) {
-                planCalls.incrementAndGet();
-                return failingGraph();
-            }
-
-            @Override
-            public TaskGraph replan(Goal goal,
-                                    GoalExecutionResult result,
-                                    EvaluationResult evaluation,
-                                    AutonomousPlanningContext context) {
-                planCalls.incrementAndGet();
-                return successfulGraph();
+            public PlanSelection selectBestPlan(Goal goal, AutonomousPlanningContext context) {
+                int call = selectionCalls.incrementAndGet();
+                TaskGraph graph = call == 1 ? failingGraph() : successfulGraph();
+                String agentId = call == 1 ? "aggressive-planner" : "conservative-planner";
+                String strategyType = call == 1 ? "aggressive" : "conservative";
+                return new PlanSelection(
+                        agentId,
+                        strategyType,
+                        graph,
+                        call == 1 ? new PredictionResult(0.72, 0.20, 0.20, 0.35) : new PredictionResult(0.84, 0.55, 0.55, 0.12),
+                        call == 1 ? new PlanScore(0.71, 0.82) : new PlanScore(0.78, 0.45),
+                        List.of(),
+                        "selected"
+                );
             }
         };
         AutonomousGraphExecutor executor = new AutonomousGraphExecutor(null, 2500) {
@@ -79,10 +89,12 @@ class AutonomousLoopEngineTest {
         };
 
         AutonomousLoopEngine engine = new AutonomousLoopEngine(
-                planner,
+                coordinator,
                 executor,
                 new DefaultEvaluator(),
                 goalMemory,
+                worldMemory,
+                evolutionEngine,
                 memoryFacade,
                 3
         );
@@ -92,10 +104,12 @@ class AutonomousLoopEngineTest {
         assertTrue(runResult.success());
         assertEquals(GoalStatus.COMPLETED, runResult.goal().status());
         assertEquals(2, runResult.cycleCount());
-        assertEquals(2, planCalls.get());
+        assertEquals(2, selectionCalls.get());
         assertEquals(2, goalMemory.iterationCount(goal.goalId()));
         assertEquals(2, memoryFacade.recordedResults.size());
         assertTrue(goalMemory.failedTargets(goal.goalId()).contains("file.search"));
+        assertEquals(2, runResult.worldTraces().size());
+        assertTrue(evolutionEngine.weightOf("conservative-planner") > evolutionEngine.weightOf("aggressive-planner"));
     }
 
     private TaskGraph failingGraph() {
