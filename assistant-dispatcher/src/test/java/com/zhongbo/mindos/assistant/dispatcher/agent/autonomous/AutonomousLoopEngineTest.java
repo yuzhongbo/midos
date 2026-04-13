@@ -2,23 +2,19 @@ package com.zhongbo.mindos.assistant.dispatcher.agent.autonomous;
 
 import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.common.dto.ExecutionTraceDto;
-import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.civilization.AIOrganizationMarket;
-import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.civilization.CivilizationFactory;
-import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.civilization.CivilizationMemory;
-import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.civilization.CivilizationScheduler;
-import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.civilization.DigitalCivilizationRuntime;
-import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.civilization.EconomicSystem;
-import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.civilization.ReputationSystem;
-import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.civilization.ResourceSystem;
-import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.civilization.RuleSystem;
-import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.civilization.CivilizationEvolutionEngine;
-import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.organization.EvaluationDepartmentService;
-import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.organization.ExecutionDepartmentService;
-import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.organization.KpiSystem;
-import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.organization.OrgDecisionEngine;
-import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.organization.OrgRestructuringEngine;
-import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.organization.PlanningDepartmentService;
-import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.organization.StrategyDepartmentService;
+import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.kernel.AGIMemory;
+import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.kernel.AGIRuntimeKernel;
+import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.kernel.CognitivePluginRegistry;
+import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.kernel.ExecutionEngine;
+import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.kernel.MemoryCognitivePlugin;
+import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.kernel.PlanningCognitivePlugin;
+import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.kernel.PredictionCognitivePlugin;
+import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.kernel.ReasoningCognitivePlugin;
+import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.kernel.RuntimeOptimizer;
+import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.kernel.RuntimeScheduler;
+import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.kernel.RuntimeStateStore;
+import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.kernel.TaskState;
+import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.kernel.ToolUseCognitivePlugin;
 import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.worldmodel.MultiAgentCoordinator;
 import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.worldmodel.PlanEvaluator;
 import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.worldmodel.PlanScore;
@@ -41,12 +37,13 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class AutonomousLoopEngineTest {
 
     @Test
-    void shouldReplanUntilGoalCompletes() {
+    void shouldReplanUntilGoalCompletesThroughKernel() {
         Goal goal = Goal.of("修复构建并完成交付", 1.0);
         AtomicInteger selectionCalls = new AtomicInteger();
         GoalMemory goalMemory = new GoalMemory();
@@ -104,34 +101,9 @@ class AutonomousLoopEngineTest {
                 );
             }
         };
-        RuleSystem ruleSystem = new RuleSystem();
-        ResourceSystem resourceSystem = new ResourceSystem();
-        EconomicSystem economicSystem = new EconomicSystem(resourceSystem, ruleSystem);
-        CivilizationFactory civilizationFactory = new CivilizationFactory();
-        DigitalCivilizationRuntime civilizationRuntime = new DigitalCivilizationRuntime(
-                new StrategyDepartmentService(),
-                new PlanningDepartmentService(coordinator),
-                new ExecutionDepartmentService(executor),
-                new EvaluationDepartmentService(new DefaultEvaluator(), new KpiSystem(), worldMemory, evolutionEngine),
-                new OrgDecisionEngine(),
-                new OrgRestructuringEngine(),
-                new CivilizationScheduler(new AIOrganizationMarket(), economicSystem, ruleSystem, new ReputationSystem()),
-                new CivilizationEvolutionEngine(civilizationFactory),
-                new CivilizationMemory(),
-                new ReputationSystem(),
-                civilizationFactory,
-                economicSystem,
-                ruleSystem,
-                resourceSystem,
-                List.of()
-        );
 
-        AutonomousLoopEngine engine = new AutonomousLoopEngine(
-                civilizationRuntime,
-                goalMemory,
-                memoryFacade,
-                3
-        );
+        AGIRuntimeKernel kernel = buildKernel(coordinator, executor, worldMemory, evolutionEngine);
+        AutonomousLoopEngine engine = new AutonomousLoopEngine(kernel, goalMemory, memoryFacade, 3);
 
         AutonomousGoalRunResult runResult = engine.run(goal, "u1", Map.of("mode", "test"));
 
@@ -142,12 +114,31 @@ class AutonomousLoopEngineTest {
         assertEquals(2, goalMemory.iterationCount(goal.goalId()));
         assertEquals(2, memoryFacade.recordedResults.size());
         assertTrue(goalMemory.failedTargets(goal.goalId()).contains("file.search"));
-        assertEquals(2, runResult.worldTraces().size());
-        assertEquals(2, runResult.orgTraces().size());
-        assertEquals(2, runResult.civilizationTraces().size());
-        assertTrue(runResult.organization() != null && runResult.organization().revision() >= 2);
-        assertTrue(runResult.civilization() != null && runResult.civilization().organizations().size() >= 3);
-        assertTrue(evolutionEngine.weightOf("conservative-planner") > evolutionEngine.weightOf("aggressive-planner"));
+        assertNotNull(runResult.runtimeState());
+        assertNotNull(runResult.runtimeHistory());
+        assertEquals(TaskState.COMPLETED, runResult.runtimeState().state());
+        assertTrue(runResult.runtimeHistory().cycleCount() >= 4);
+        assertTrue(runResult.organization() == null);
+        assertTrue(runResult.civilization() == null);
+    }
+
+    private AGIRuntimeKernel buildKernel(MultiAgentCoordinator coordinator,
+                                         AutonomousGraphExecutor executor,
+                                         WorldMemory worldMemory,
+                                         StrategyEvolutionEngine evolutionEngine) {
+        CognitivePluginRegistry registry = new CognitivePluginRegistry(List.of(
+                new PlanningCognitivePlugin(coordinator),
+                new PredictionCognitivePlugin(new WorldModel(null, worldMemory)),
+                new MemoryCognitivePlugin(),
+                new ReasoningCognitivePlugin(),
+                new ToolUseCognitivePlugin(executor)
+        ));
+        RuntimeOptimizer optimizer = new RuntimeOptimizer();
+        AGIMemory memory = new AGIMemory();
+        RuntimeStateStore stateStore = new RuntimeStateStore();
+        RuntimeScheduler scheduler = new RuntimeScheduler(registry, memory, optimizer);
+        ExecutionEngine executionEngine = new ExecutionEngine(executor, new DefaultEvaluator());
+        return new AGIRuntimeKernel(scheduler, executionEngine, stateStore, memory, optimizer);
     }
 
     private TaskGraph failingGraph() {

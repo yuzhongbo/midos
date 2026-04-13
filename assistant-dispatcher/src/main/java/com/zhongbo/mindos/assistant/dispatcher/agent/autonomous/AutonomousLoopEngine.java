@@ -1,14 +1,15 @@
 package com.zhongbo.mindos.assistant.dispatcher.agent.autonomous;
 
 import com.zhongbo.mindos.assistant.common.SkillResult;
-import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.civilization.CivilizationCycleResult;
-import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.civilization.CivilizationMemory;
-import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.civilization.DigitalCivilization;
-import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.civilization.DigitalCivilizationRuntime;
-import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.organization.AIOrganization;
-import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.organization.OrgMemory;
-import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.organization.OrganizationAssessment;
-import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.organization.PlanningOutcome;
+import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.kernel.AGIRuntimeKernel;
+import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.kernel.ExecutionHistory;
+import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.kernel.ExecutionPolicy;
+import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.kernel.ExecutionState;
+import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.kernel.Node;
+import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.kernel.RuntimeState;
+import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.kernel.Task;
+import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.kernel.TaskHandle;
+import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.kernel.TaskState;
 import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.worldmodel.WorldMemory;
 import com.zhongbo.mindos.assistant.dispatcher.agent.taskgraph.TaskGraph;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.ExecutionMemoryFacade;
@@ -25,17 +26,17 @@ import java.util.Map;
 @Component
 public class AutonomousLoopEngine {
 
-    private final DigitalCivilizationRuntime civilizationRuntime;
+    private final AGIRuntimeKernel runtimeKernel;
     private final GoalMemory goalMemory;
     private final ExecutionMemoryFacade executionMemoryFacade;
     private final int maxIterations;
 
     @Autowired
-    public AutonomousLoopEngine(DigitalCivilizationRuntime civilizationRuntime,
+    public AutonomousLoopEngine(AGIRuntimeKernel runtimeKernel,
                                 GoalMemory goalMemory,
                                 ExecutionMemoryFacade executionMemoryFacade,
                                 @Value("${mindos.autonomous.loop.max-iterations:5}") int maxIterations) {
-        this.civilizationRuntime = civilizationRuntime;
+        this.runtimeKernel = runtimeKernel;
         this.goalMemory = goalMemory;
         this.executionMemoryFacade = executionMemoryFacade;
         this.maxIterations = Math.max(1, maxIterations);
@@ -58,56 +59,35 @@ public class AutonomousLoopEngine {
         Goal currentGoal = (goal == null ? Goal.of("", 0.0) : goal).markInProgress();
         Instant startedAt = Instant.now();
         List<GoalMemory.GoalTrace> traces = new ArrayList<>();
-        List<WorldMemory.ExecutionTrace> worldTraces = new ArrayList<>();
-        List<OrgMemory.OrgExecutionTrace> orgTraces = new ArrayList<>();
-        List<CivilizationMemory.CivilizationTrace> civilizationTraces = new ArrayList<>();
-        AIOrganization currentOrganization = null;
-        DigitalCivilization currentCivilization = civilizationRuntime == null ? null : civilizationRuntime.currentCivilization();
+        List<WorldMemory.ExecutionTrace> worldTraces = List.of();
+        List<com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.organization.OrgMemory.OrgExecutionTrace> orgTraces = List.of();
+        List<com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.civilization.CivilizationMemory.CivilizationTrace> civilizationTraces = List.of();
+        RuntimeState currentRuntimeState = null;
+        ExecutionHistory runtimeHistory = null;
         EvaluationResult lastEvaluation = EvaluationResult.initial(currentGoal);
-        AutonomousPlanningContext planningContext = new AutonomousPlanningContext(
-                userId,
-                currentGoal.description(),
-                profileContext,
-                safeGoalMemory,
-                1,
-                null,
-                lastEvaluation,
-                List.of()
-        );
+        TaskHandle handle = submitTask(currentGoal, userId, profileContext);
         String stopReason = "";
         for (int iteration = 1; iteration <= maxIterations && !currentGoal.isTerminal(); iteration++) {
-            CivilizationCycleResult cycle = civilizationRuntime == null
-                    ? null
-                    : civilizationRuntime.runCycle(currentGoal, planningContext);
-            if (cycle != null) {
-                currentOrganization = cycle.selectedOrganization();
-                currentCivilization = cycle.civilizationAfter();
-                if (cycle.worldTrace() != null) {
-                    worldTraces.add(cycle.worldTrace());
-                }
-                if (cycle.orgTrace() != null) {
-                    orgTraces.add(cycle.orgTrace());
-                }
-                if (cycle.trace() != null) {
-                    civilizationTraces.add(cycle.trace());
-                }
-            }
-            PlanningOutcome planningOutcome = cycle == null || cycle.organizationCycle() == null ? null : cycle.organizationCycle().planningOutcome();
-            TaskGraph graph = planningOutcome == null ? null : planningOutcome.graph();
+            ExecutionState executionState = runtimeKernel == null ? null : runtimeKernel.resume(handle);
+            currentRuntimeState = executionState == null ? null : executionState.runtimeState();
+            runtimeHistory = executionState == null ? null : executionState.history();
+            GoalExecutionResult executionResult = executionState == null ? null : executionState.result();
+            EvaluationResult evaluation = executionState == null ? null : executionState.evaluation();
+            TaskGraph graph = executionResult == null ? (currentRuntimeState == null || currentRuntimeState.plan() == null ? null : currentRuntimeState.plan().graph()) : executionResult.graph();
             if (graph == null || graph.isEmpty()) {
-                GoalExecutionResult planFailure = syntheticFailure(currentGoal, planningContext, "planner produced empty task graph");
-                EvaluationResult evaluation = cycle != null && cycle.organizationCycle() != null && cycle.organizationCycle().assessment() != null
-                        ? cycle.organizationCycle().assessment().evaluation()
+                GoalExecutionResult planFailure = syntheticFailure(currentGoal, iterationContext(userId, currentGoal, profileContext, safeGoalMemory, iteration, null, lastEvaluation), "runtime produced empty task graph");
+                EvaluationResult emptyEvaluation = evaluation != null
+                        ? evaluation
                         : new EvaluationResult(
                         currentGoal.goalId(),
                         GoalStatus.FAILED,
                         false,
                         false,
                         false,
-                        "planner produced empty task graph",
+                        "runtime produced empty task graph",
                         List.of(),
                         List.of(),
-                        planningContext.excludedTargets(),
+                        currentRuntimeState == null || currentRuntimeState.pointer() == null ? List.of() : currentRuntimeState.pointer().failedTargets(),
                         0.0,
                         Instant.now()
                 );
@@ -116,19 +96,22 @@ public class AutonomousLoopEngine {
                         failedGoal,
                         new TaskGraph(List.of(), List.of()),
                         planFailure,
-                        evaluation,
-                        planningContext.iteration(),
+                        emptyEvaluation,
+                        iteration,
                         Instant.now()
                 )));
                 currentGoal = failedGoal;
-                stopReason = "planner-empty";
+                stopReason = "runtime-empty";
                 break;
             }
-            GoalExecutionResult executionResult = cycle == null
-                    ? syntheticFailure(currentGoal, planningContext, graph, "civilization runtime unavailable")
-                    : cycle.organizationCycle() == null || cycle.organizationCycle().executionResult() == null
-                    ? syntheticFailure(currentGoal, planningContext, graph, "execution department produced no result")
-                    : cycle.organizationCycle().executionResult();
+            if (executionResult == null) {
+                executionResult = syntheticFailure(
+                        currentGoal,
+                        iterationContext(userId, currentGoal, profileContext, safeGoalMemory, iteration, null, lastEvaluation),
+                        graph,
+                        runtimeKernel == null ? "runtime kernel unavailable" : "execution engine produced no result"
+                );
+            }
             if (executionMemoryFacade != null) {
                 executionMemoryFacade.record(
                         executionResult.userId(),
@@ -137,11 +120,8 @@ public class AutonomousLoopEngine {
                         executionResult.executionTrace()
                 );
             }
-            OrganizationAssessment assessment = cycle == null || cycle.organizationCycle() == null ? null : cycle.organizationCycle().assessment();
-            EvaluationResult evaluation = assessment == null || assessment.evaluation() == null
-                    ? EvaluationResult.initial(currentGoal)
-                    : assessment.evaluation();
-            Goal nextGoal = switch (evaluation.goalStatus()) {
+            EvaluationResult effectiveEvaluation = evaluation == null ? EvaluationResult.initial(currentGoal) : evaluation;
+            Goal nextGoal = switch (effectiveEvaluation.goalStatus()) {
                 case COMPLETED -> currentGoal.markCompleted();
                 case FAILED -> currentGoal.markFailed();
                 case ACTIVE, IN_PROGRESS -> currentGoal.markInProgress();
@@ -150,46 +130,111 @@ public class AutonomousLoopEngine {
                     nextGoal,
                     graph,
                     executionResult,
-                    evaluation,
-                    planningContext.iteration(),
+                    effectiveEvaluation,
+                    iteration,
                     Instant.now()
             )));
-            if (evaluation.isSuccess()) {
+            if (effectiveEvaluation.isSuccess()) {
                 currentGoal = nextGoal.markCompleted();
                 stopReason = "completed";
                 break;
             }
-            if (!evaluation.needsReplan()) {
+            if (currentRuntimeState != null && currentRuntimeState.state() == TaskState.SUSPENDED) {
+                currentGoal = nextGoal;
+                stopReason = "suspended";
+                break;
+            }
+            if (!effectiveEvaluation.needsReplan()) {
                 currentGoal = nextGoal.markFailed();
                 stopReason = "evaluation-stop";
                 break;
             }
             currentGoal = nextGoal;
-            lastEvaluation = evaluation;
-            planningContext = planningContext.nextIteration(
-                    executionResult,
-                    evaluation,
-                    mergeExcludedTargets(planningContext.excludedTargets(), evaluation.failedTargets())
-            );
+            lastEvaluation = effectiveEvaluation;
         }
         if (stopReason.isBlank()) {
-            if (!currentGoal.isCompleted()) {
-                currentGoal = currentGoal.markFailed();
+            if (currentRuntimeState != null && !currentRuntimeState.state().isTerminal()) {
+                if (runtimeKernel != null) {
+                    runtimeKernel.suspend(handle);
+                    currentRuntimeState = runtimeKernel.state(handle);
+                    runtimeHistory = runtimeKernel.history(handle);
+                }
+                stopReason = "suspended";
+            } else {
+                if (!currentGoal.isCompleted()) {
+                    currentGoal = currentGoal.markFailed();
+                }
+                stopReason = currentGoal.isCompleted() ? "completed" : "max-iterations";
             }
-            stopReason = currentGoal.isCompleted() ? "completed" : "max-iterations";
         }
         return new AutonomousGoalRunResult(
                 currentGoal,
                 traces,
                 worldTraces,
-                currentOrganization,
+                null,
                 orgTraces,
-                currentCivilization,
+                null,
                 civilizationTraces,
+                currentRuntimeState,
+                runtimeHistory,
                 stopReason,
                 startedAt,
                 Instant.now()
         );
+    }
+
+    private TaskHandle submitTask(Goal goal,
+                                  String userId,
+                                  Map<String, Object> profileContext) {
+        if (runtimeKernel == null) {
+            return new TaskHandle("");
+        }
+        Map<String, Object> metadata = new java.util.LinkedHashMap<>(profileContext == null ? Map.of() : profileContext);
+        metadata.put("userId", userId == null ? "" : userId);
+        metadata.put("input", goal == null ? "" : goal.description());
+        metadata.put("goal.priority", goal == null ? 0.0 : goal.priority());
+        Task task = Task.fromGoal(goal, resolvePolicy(profileContext), metadata);
+        TaskHandle handle = runtimeKernel.submit(task);
+        String migrationTarget = profileContext == null ? null : stringValue(profileContext.get("runtimeTargetNode"));
+        if (migrationTarget != null && !migrationTarget.isBlank()) {
+            runtimeKernel.migrate(handle, new Node(migrationTarget, migrationTarget, Map.of("source", "profileContext")));
+        }
+        return handle;
+    }
+
+    private AutonomousPlanningContext iterationContext(String userId,
+                                                       Goal goal,
+                                                       Map<String, Object> profileContext,
+                                                       GoalMemory goalMemory,
+                                                       int iteration,
+                                                       GoalExecutionResult lastResult,
+                                                       EvaluationResult lastEvaluation) {
+        return new AutonomousPlanningContext(
+                userId == null ? "" : userId,
+                goal == null ? "" : goal.description(),
+                profileContext == null ? Map.of() : profileContext,
+                goalMemory,
+                iteration,
+                lastResult,
+                lastEvaluation,
+                lastEvaluation == null ? List.of() : lastEvaluation.failedTargets()
+        );
+    }
+
+    private ExecutionPolicy resolvePolicy(Map<String, Object> profileContext) {
+        String rawPolicy = profileContext == null ? "" : stringValue(profileContext.get("executionPolicy"));
+        if (rawPolicy == null || rawPolicy.isBlank()) {
+            return ExecutionPolicy.AUTONOMOUS;
+        }
+        try {
+            return ExecutionPolicy.valueOf(rawPolicy.trim().toUpperCase(java.util.Locale.ROOT).replace('-', '_'));
+        } catch (IllegalArgumentException ignore) {
+            return ExecutionPolicy.AUTONOMOUS;
+        }
+    }
+
+    private String stringValue(Object value) {
+        return value == null ? "" : String.valueOf(value).trim();
     }
 
     private GoalExecutionResult syntheticFailure(Goal goal,
