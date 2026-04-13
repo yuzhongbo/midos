@@ -90,8 +90,6 @@ public class DefaultTaskGraphPlanner implements TaskGraphPlanner {
         if (singleNodeGraph.isEmpty()) {
             return TaskGraphPlan.clarification(decision, decision.target(), "缺少可执行候选");
         }
-        String selectedSkill = singleNodeGraph.nodes().get(0).target();
-        TaskGraphPlan fallbackPlan = slowPathPlan(decision, effectiveParams, request, selectedSkill, "slow-path", false);
         return new TaskGraphPlan(
                 decision,
                 singleNodeGraph,
@@ -99,9 +97,9 @@ public class DefaultTaskGraphPlanner implements TaskGraphPlanner {
                 "single-task-graph",
                 resolveIntent(decision),
                 request == null ? "" : request.userInput(),
-                fallbackPlan.taskGraph(),
-                fallbackPlan.effectiveParams(),
-                fallbackPlan.strategy(),
+                new TaskGraph(List.of(), List.of()),
+                Map.of(),
+                "",
                 "",
                 ""
         );
@@ -154,7 +152,7 @@ public class DefaultTaskGraphPlanner implements TaskGraphPlanner {
     private TaskGraph buildSingleNodeGraph(Decision decision,
                                            Map<String, Object> effectiveParams,
                                            DecisionOrchestrator.OrchestrationRequest request) {
-        String target = selectTarget(decision == null ? null : decision.target(), request);
+        String target = decision == null || decision.target() == null ? "" : decision.target().trim();
         if (target.isBlank()) {
             return new TaskGraph(List.of(), List.of());
         }
@@ -167,17 +165,6 @@ public class DefaultTaskGraphPlanner implements TaskGraphPlanner {
                 false
         );
         return new TaskGraph(List.of(node), List.of());
-    }
-
-    private String selectTarget(String suggestedTarget, DecisionOrchestrator.OrchestrationRequest request) {
-        List<ScoredCandidate> candidates = candidateChainBuilder.build(suggestedTarget, request);
-        if (!candidates.isEmpty()) {
-            ScoredCandidate candidate = candidates.get(0);
-            if (candidate != null && candidate.skillName() != null && !candidate.skillName().isBlank()) {
-                return candidate.skillName();
-            }
-        }
-        return suggestedTarget == null ? "" : suggestedTarget.trim();
     }
 
     private java.util.Optional<ProceduralMemory.ReusableProcedure> matchReusableProcedure(Decision decision,

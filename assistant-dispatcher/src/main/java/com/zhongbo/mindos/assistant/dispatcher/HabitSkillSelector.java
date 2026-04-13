@@ -57,7 +57,7 @@ final class HabitSkillSelector {
         this.habitRoutingRecentMaxAgeHours = habitRoutingRecentMaxAgeHours;
     }
 
-    List<Candidate> recommend(RecommendationInput input) {
+    List<DecisionSignal> recommend(RecommendationInput input) {
         if (input == null || !habitRoutingEnabled || input.userInput() == null || input.userInput().isBlank()) {
             return List.of();
         }
@@ -66,23 +66,23 @@ final class HabitSkillSelector {
         }
         String userId = input.userId() == null ? "" : input.userId();
         List<ProceduralMemoryEntry> history = dispatcherMemoryFacade.getSkillUsageHistory(userId);
-        List<Candidate> recommendations = new ArrayList<>();
+        List<DecisionSignal> recommendations = new ArrayList<>();
         preferredSkillFromHistory(history)
                 .filter(skill -> passesHabitConfidenceGate(userId, skill, history))
                 .filter(skill -> !isBlocked(skill, input.loopGuardBlocked()))
-                .ifPresent(skill -> recommendations.add(new Candidate(skill, 0.89, "memory")));
+                .ifPresent(skill -> recommendations.add(new DecisionSignal(skill, 0.89, "memory")));
         preferredSkillFromStats(userId)
                 .filter(skill -> recommendations.stream().noneMatch(candidate -> skill.equals(candidate.target())))
                 .filter(skill -> passesHabitConfidenceGate(userId, skill, history))
                 .filter(skill -> !isBlocked(skill, input.loopGuardBlocked()))
-                .ifPresent(skill -> recommendations.add(new Candidate(skill, 0.87, "memory")));
+                .ifPresent(skill -> recommendations.add(new DecisionSignal(skill, 0.87, "memory")));
         return recommendations.stream()
-                .sorted(Comparator.comparingDouble(Candidate::score).reversed()
-                        .thenComparing(Candidate::target))
+                .sorted(Comparator.comparingDouble(DecisionSignal::score).reversed()
+                        .thenComparing(DecisionSignal::target))
                 .toList();
     }
 
-    Optional<SkillDsl> buildSkillDsl(RecommendationInput input, Candidate candidate) {
+    Optional<SkillDsl> buildSkillDsl(RecommendationInput input, DecisionSignal candidate) {
         if (input == null || candidate == null || candidate.target().isBlank()) {
             return Optional.empty();
         }

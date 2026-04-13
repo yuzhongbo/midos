@@ -1,6 +1,7 @@
 package com.zhongbo.mindos.assistant.dispatcher.orchestrator;
 
 import com.zhongbo.mindos.assistant.common.SkillContext;
+import com.zhongbo.mindos.assistant.dispatcher.DecisionSignal;
 import com.zhongbo.mindos.assistant.dispatcher.decision.Decision;
 import com.zhongbo.mindos.assistant.skill.SkillCandidate;
 import com.zhongbo.mindos.assistant.skill.SkillCatalogFacade;
@@ -21,7 +22,10 @@ class DefaultDecisionPlannerTest {
     void shouldMapLegacyIntentToCanonicalTarget() {
         DefaultDecisionPlanner planner = new DefaultDecisionPlanner(new StubSkillCatalogFacade());
 
-        Decision decision = planner.plan("帮我安排今天的任务", "task", Map.of(), new SkillContext("u1", "帮我安排今天的任务", Map.of()));
+        Decision decision = planner.plan(
+                new DecisionOrchestrator.UserInput("u1", "帮我安排今天的任务", new SkillContext("u1", "帮我安排今天的任务", Map.of()), Map.of()),
+                List.of(new DecisionSignal("task", 0.96, "intent"))
+        );
 
         assertEquals("task", decision.intent());
         assertEquals("todo.create", decision.target());
@@ -31,7 +35,10 @@ class DefaultDecisionPlannerTest {
     void shouldPreserveDirectSkillIntentAsTarget() {
         DefaultDecisionPlanner planner = new DefaultDecisionPlanner(new StubSkillCatalogFacade());
 
-        Decision decision = planner.plan("建个待办", "todo.create", Map.of(), new SkillContext("u1", "建个待办", Map.of()));
+        Decision decision = planner.plan(
+                new DecisionOrchestrator.UserInput("u1", "建个待办", new SkillContext("u1", "建个待办", Map.of()), Map.of()),
+                List.of(new DecisionSignal("todo.create", 1.0, "explicit"))
+        );
 
         assertEquals("todo.create", decision.intent());
         assertEquals("todo.create", decision.target());
@@ -45,7 +52,10 @@ class DefaultDecisionPlannerTest {
                 SemanticAnalysisResult.ATTR_CONFIDENCE, 0.82
         ));
 
-        Decision decision = planner.plan("做个学习计划", "", Map.of(), context);
+        Decision decision = planner.plan(
+                new DecisionOrchestrator.UserInput("u1", "做个学习计划", context, Map.of()),
+                List.of(new DecisionSignal("learning", 0.82, "semantic"))
+        );
 
         assertEquals("learning", decision.intent());
         assertEquals("teaching.plan", decision.target());
@@ -56,7 +66,10 @@ class DefaultDecisionPlannerTest {
     void shouldMoveEchoRuleFallbackIntoPlanner() {
         DefaultDecisionPlanner planner = new DefaultDecisionPlanner(new StubSkillCatalogFacade());
 
-        Decision decision = planner.plan("echo hello planner", "", Map.of(), new SkillContext("u1", "echo hello planner", Map.of()));
+        Decision decision = planner.plan(
+                new DecisionOrchestrator.UserInput("u1", "echo hello planner", new SkillContext("u1", "echo hello planner", Map.of()), Map.of()),
+                List.of()
+        );
 
         assertEquals("echo", decision.target());
         assertEquals("hello planner", decision.params().get("text"));
@@ -68,7 +81,10 @@ class DefaultDecisionPlannerTest {
     void shouldMoveTeachingPlanRuleFallbackIntoPlanner() {
         DefaultDecisionPlanner planner = new DefaultDecisionPlanner(new StubSkillCatalogFacade());
 
-        Decision decision = planner.plan("帮我做一个六周数学学习计划", "", Map.of(), new SkillContext("u1", "帮我做一个六周数学学习计划", Map.of()));
+        Decision decision = planner.plan(
+                new DecisionOrchestrator.UserInput("u1", "帮我做一个六周数学学习计划", new SkillContext("u1", "帮我做一个六周数学学习计划", Map.of()), Map.of()),
+                List.of()
+        );
 
         assertEquals("teaching.plan", decision.target());
         assertEquals("rule-fallback", decision.params().get("_plannerRouteSource"));

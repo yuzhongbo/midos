@@ -29,17 +29,17 @@ final class SemanticSkillResolver {
         this.semanticPayloadCompleter = semanticPayloadCompleter;
     }
 
-    List<Candidate> recommend(RecommendationInput input) {
+    List<DecisionSignal> recommend(RecommendationInput input) {
         SemanticAnalysisResult semanticAnalysis = input == null ? null : input.semanticAnalysis();
         if (semanticAnalysis == null) {
             return List.of();
         }
-        Map<String, Candidate> recommendations = new LinkedHashMap<>();
+        Map<String, DecisionSignal> recommendations = new LinkedHashMap<>();
         String suggestedSkill = normalizeOptional(semanticAnalysis.suggestedSkill());
         if (!suggestedSkill.isBlank() && isSemanticDirectSkillCandidate(suggestedSkill)) {
             double confidence = resolveSemanticRouteConfidence(semanticAnalysis, suggestedSkill);
             if (!preferSuggestedSkillEnabled || confidence >= preferSuggestedSkillMinConfidence) {
-                recommendations.put(suggestedSkill, new Candidate(suggestedSkill, confidence, "heuristic"));
+                recommendations.put(suggestedSkill, new DecisionSignal(suggestedSkill, confidence, "semantic"));
             }
         }
         semanticAnalysis.candidateIntents().stream()
@@ -49,12 +49,12 @@ final class SemanticSkillResolver {
                 .filter(this::isSemanticDirectSkillCandidate)
                 .forEach(skill -> recommendations.putIfAbsent(
                         skill,
-                        new Candidate(skill, resolveSemanticRouteConfidence(semanticAnalysis, skill), "heuristic")
+                        new DecisionSignal(skill, resolveSemanticRouteConfidence(semanticAnalysis, skill), "semantic")
                 ));
         return recommendations.values().stream()
-                .sorted(Comparator.comparingDouble(Candidate::score).reversed()
+                .sorted(Comparator.comparingDouble(DecisionSignal::score).reversed()
                         .thenComparing(candidate -> suggestedSkill.equals(candidate.target()) ? 0 : 1)
-                        .thenComparing(Candidate::target))
+                        .thenComparing(DecisionSignal::target))
                 .toList();
     }
 
@@ -63,12 +63,12 @@ final class SemanticSkillResolver {
             return 0.0;
         }
         return recommend(new RecommendationInput("", semanticAnalysis, "")).stream()
-                .mapToDouble(Candidate::score)
+                .mapToDouble(DecisionSignal::score)
                 .max()
                 .orElse(semanticAnalysis.confidence());
     }
 
-    boolean isRoutable(Candidate candidate, RecommendationInput input) {
+    boolean isRoutable(DecisionSignal candidate, RecommendationInput input) {
         if (candidate == null || input == null || input.semanticAnalysis() == null) {
             return false;
         }

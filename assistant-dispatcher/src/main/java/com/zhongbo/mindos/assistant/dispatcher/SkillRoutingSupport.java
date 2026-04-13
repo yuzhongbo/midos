@@ -2,6 +2,7 @@ package com.zhongbo.mindos.assistant.dispatcher;
 
 import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryFacade;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.DecisionTargetResolver;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.DecisionPlanner;
 import com.zhongbo.mindos.assistant.skill.SkillCatalogFacade;
 
@@ -19,7 +20,7 @@ final class SkillRoutingSupport {
     private static final Pattern ROUTING_TOKEN_SPLIT_PATTERN = Pattern.compile("[^\\p{L}\\p{N}.#_-]+");
 
     private final SkillCatalogFacade skillEngine;
-    private final DecisionPlanner decisionPlanner;
+    private final DecisionTargetResolver targetResolver;
     private final DispatcherMemoryFacade dispatcherMemoryFacade;
     private final BehaviorRoutingSupport behaviorRoutingSupport;
     private final int shortlistMaxSkills;
@@ -32,19 +33,19 @@ final class SkillRoutingSupport {
                         int shortlistMaxSkills,
                         Function<String, String> memoryBucketResolver) {
         this.skillEngine = skillEngine;
-        this.decisionPlanner = decisionPlanner;
+        this.targetResolver = new DecisionTargetResolver();
         this.dispatcherMemoryFacade = dispatcherMemoryFacade;
         this.behaviorRoutingSupport = behaviorRoutingSupport;
         this.shortlistMaxSkills = Math.max(1, shortlistMaxSkills);
         this.memoryBucketResolver = memoryBucketResolver;
     }
 
-    List<Candidate> recommend(RecommendationInput input) {
+    List<DecisionSignal> recommend(RecommendationInput input) {
         return rankSkillRoutingCandidates(
                 input == null ? "" : input.userId(),
                 input == null ? "" : input.userInput()
         ).stream()
-                .map(SkillRoutingRecommendation::candidate)
+                .map(SkillRoutingRecommendation::signal)
                 .toList();
     }
 
@@ -55,7 +56,7 @@ final class SkillRoutingSupport {
         }
 
         List<String> shortlisted = rankedCandidates.stream()
-                .filter(candidate -> candidate.candidate().score() > 0)
+                .filter(candidate -> candidate.signal().score() > 0)
                 .limit(shortlistMaxSkills)
                 .map(SkillRoutingRecommendation::summary)
                 .toList();
@@ -73,7 +74,7 @@ final class SkillRoutingSupport {
 
     int bestSkillRoutingScore(String userId, String userInput) {
         return recommend(new RecommendationInput(userId, userInput)).stream()
-                .mapToInt(candidate -> (int) Math.round(candidate.score()))
+                .mapToInt(signal -> (int) Math.round(signal.score()))
                 .max()
                 .orElse(0);
     }
@@ -94,7 +95,7 @@ final class SkillRoutingSupport {
         return summaries.stream()
                 .map(summary -> new SkillRoutingRecommendation(
                         summary,
-                        toCandidate(summary, skillRoutingScore(
+                        toSignal(summary, skillRoutingScore(
                                 summary,
                                 normalizedInput,
                                 inputTokens,
@@ -103,7 +104,7 @@ final class SkillRoutingSupport {
                                 preferredFromHistory
                         ))
                 ))
-                .sorted(Comparator.comparingDouble((SkillRoutingRecommendation recommendation) -> recommendation.candidate().score()).reversed()
+                .sorted(Comparator.comparingDouble((SkillRoutingRecommendation recommendation) -> recommendation.signal().score()).reversed()
                         .thenComparing(SkillRoutingRecommendation::summary))
                 .toList();
     }
@@ -171,38 +172,30 @@ final class SkillRoutingSupport {
     }
 
     private String resolvePlannedTarget(String userId, String userInput) {
-        if (decisionPlanner == null) {
-            return "";
-        }
         String routingIntent = "";
         if (memoryBucketResolver != null) {
             String resolved = memoryBucketResolver.apply(userInput);
             routingIntent = resolved == null ? "" : resolved.trim();
         }
-        return normalize(decisionPlanner.plan(
-                userInput,
-                routingIntent,
-                Map.of(),
-                new SkillContext(userId == null ? "" : userId, userInput == null ? "" : userInput, Map.of())
-        ).target());
+        return normalize(targetResolver.canonicalize(routingIntent));
     }
 
     private String normalize(String value) {
         return value == null ? "" : value.trim().toLowerCase().replaceAll("\\s+", " ");
     }
 
-    private Candidate toCandidate(String summary, int score) {
+    private DecisionSignal toSignal(String summary, int score) {
         String skillName = summary;
         int separator = summary.indexOf(" - ");
         if (separator >= 0) {
             skillName = summary.substring(0, separator).trim();
         }
-        return new Candidate(skillName, score, "heuristic");
+        return new DecisionSignal(skillName, score, "heuristic");
     }
 
     record RecommendationInput(String userId, String userInput) {
     }
 
-    private record SkillRoutingRecommendation(String summary, Candidate candidate) {
+    private record SkillRoutingRecommendation(String summary, DecisionSignal signal) {
     }
 }

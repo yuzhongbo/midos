@@ -447,7 +447,15 @@ final class DispatchApplicationCoordinator {
         if (decisionPlanner == null) {
             return false;
         }
-        Decision plannedDecision = decisionPlanner.plan(userInput, "", attributes, context);
+        Decision plannedDecision = decisionPlanner.plan(
+                new DecisionOrchestrator.UserInput(
+                        context == null ? "" : context.userId(),
+                        userInput,
+                        context,
+                        Map.of()
+                ),
+                List.of()
+        );
         if (plannedDecision == null || plannedDecision.params() == null) {
             return false;
         }

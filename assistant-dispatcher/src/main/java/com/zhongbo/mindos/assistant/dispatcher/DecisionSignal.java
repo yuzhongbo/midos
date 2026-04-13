@@ -1,12 +1,12 @@
 package com.zhongbo.mindos.assistant.dispatcher;
 
-public final class Candidate {
+public final class DecisionSignal {
 
     private final String target;
     private final double score;
     private final String source;
 
-    public Candidate(String target, double score, String source) {
+    public DecisionSignal(String target, double score, String source) {
         this.target = normalize(target);
         this.score = Math.max(0.0, score);
         this.source = normalize(source);
@@ -24,7 +24,7 @@ public final class Candidate {
         return source;
     }
 
-    public boolean matches(Candidate other) {
+    public boolean matches(DecisionSignal other) {
         if (other == null) {
             return false;
         }

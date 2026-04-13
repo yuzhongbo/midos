@@ -1,23 +1,29 @@
 package com.zhongbo.mindos.assistant.dispatcher.routing;
 
 import com.zhongbo.mindos.assistant.common.SkillContext;
+import com.zhongbo.mindos.assistant.dispatcher.DecisionSignal;
 import com.zhongbo.mindos.assistant.dispatcher.decision.Decision;
-import com.zhongbo.mindos.assistant.skill.SkillDescriptor;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.DecisionOrchestrator;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.DecisionPlanner;
 import com.zhongbo.mindos.assistant.skill.SkillCatalogFacade;
+import com.zhongbo.mindos.assistant.skill.SkillDescriptor;
 import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalysisResult;
 import org.springframework.stereotype.Component;
 
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 
 @Component
 public class RoutingCoordinator {
 
     private final SkillCatalogFacade skillEngine;
+    private final DecisionPlanner decisionPlanner;
 
-    public RoutingCoordinator(SkillCatalogFacade skillEngine) {
+    public RoutingCoordinator(SkillCatalogFacade skillEngine,
+                              DecisionPlanner decisionPlanner) {
         this.skillEngine = skillEngine;
+        this.decisionPlanner = decisionPlanner;
     }
 
     public List<String> skillSummaries() {
@@ -41,10 +47,10 @@ public class RoutingCoordinator {
     public Decision buildMultiAgentDecision(String userInput,
                                             SemanticAnalysisResult semanticAnalysis,
                                             SkillContext context) {
-        if (context == null) {
+        if (context == null || decisionPlanner == null) {
             return null;
         }
-        Map<String, Object> params = new java.util.LinkedHashMap<>(context.attributes() == null ? Map.of() : context.attributes());
+        Map<String, Object> params = new LinkedHashMap<>(context.attributes() == null ? Map.of() : context.attributes());
         if (semanticAnalysis != null) {
             params.putAll(semanticAnalysis.asAttributes());
             if (semanticAnalysis.payload() != null && !semanticAnalysis.payload().isEmpty()) {
@@ -57,18 +63,41 @@ public class RoutingCoordinator {
         params.putIfAbsent("input", context.input());
         params.putIfAbsent("multiAgent", true);
         params.putIfAbsent("orchestrationMode", "multi-agent");
-        String intent = firstNonBlank(
-                semanticAnalysis == null ? null : semanticAnalysis.intent(),
-                semanticAnalysis == null ? null : semanticAnalysis.suggestedSkill(),
-                context.input()
+        SkillContext planningContext = new SkillContext(
+                context.userId(),
+                firstNonBlank(userInput, context.input()),
+                Map.copyOf(params)
         );
-        String target = firstNonBlank(
-                semanticAnalysis == null ? null : semanticAnalysis.suggestedSkill(),
-                semanticAnalysis == null ? null : semanticAnalysis.intent(),
-                "llm.orchestrate"
+        List<DecisionSignal> signals = List.of(
+                new DecisionSignal(
+                        firstNonBlank(
+                                semanticAnalysis == null ? null : semanticAnalysis.suggestedSkill(),
+                                semanticAnalysis == null ? null : semanticAnalysis.intent(),
+                                "llm.orchestrate"
+                        ),
+                        semanticAnalysis == null ? 0.75 : Math.max(semanticAnalysis.effectiveConfidence(), 0.75),
+                        "semantic"
+                ),
+                new DecisionSignal("llm.orchestrate", 0.40, "multi-agent")
         );
-        double confidence = semanticAnalysis == null ? 0.75 : Math.max(semanticAnalysis.effectiveConfidence(), 0.75);
-        return new Decision(intent, target, params, confidence, false);
+        Decision planned = decisionPlanner.plan(new DecisionOrchestrator.UserInput(
+                context.userId(),
+                firstNonBlank(userInput, context.input()),
+                planningContext,
+                Map.of("multiAgent", true, "orchestrationMode", "multi-agent")
+        ), signals);
+        if (planned == null) {
+            return null;
+        }
+        Map<String, Object> mergedParams = new LinkedHashMap<>(planned.params() == null ? Map.of() : planned.params());
+        params.forEach(mergedParams::putIfAbsent);
+        return new Decision(
+                planned.intent(),
+                planned.target(),
+                Map.copyOf(mergedParams),
+                planned.confidence(),
+                planned.requireClarify()
+        );
     }
 
     public DispatchPlan preparePlan(String userInput,

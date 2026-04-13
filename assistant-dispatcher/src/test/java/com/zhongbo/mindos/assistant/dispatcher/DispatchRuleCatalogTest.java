@@ -1,6 +1,4 @@
 package com.zhongbo.mindos.assistant.dispatcher;
-
-import com.zhongbo.mindos.assistant.dispatcher.decision.Decision;
 import com.zhongbo.mindos.assistant.skill.SkillCandidate;
 import com.zhongbo.mindos.assistant.skill.SkillCatalogFacade;
 import com.zhongbo.mindos.assistant.skill.SkillDescriptor;
@@ -19,30 +17,18 @@ class DispatchRuleCatalogTest {
     void shouldOnlyAcceptPlannerRuleFallbackDecisions() {
         DispatchRuleCatalog catalog = new DispatchRuleCatalog(new StubSkillCatalogFacade());
 
-        List<Candidate> selected = catalog.lowConfidenceFallbackCandidates(new Decision(
-                "echo",
-                "echo",
-                Map.of("_plannerRouteSource", "rule-fallback", "text", "hello"),
-                0.75,
-                false
-        ));
+        List<DecisionSignal> selected = catalog.recommendFallbackSignals("echo hello");
 
         assertEquals(1, selected.size());
         assertEquals("echo", selected.get(0).target());
-        assertEquals("rule", selected.get(0).source());
+        assertEquals(FinalPlanner.RULE_FALLBACK_SOURCE, selected.get(0).source());
     }
 
     @Test
     void shouldRejectNonFallbackPlannerDecision() {
         DispatchRuleCatalog catalog = new DispatchRuleCatalog(new StubSkillCatalogFacade());
 
-        List<Candidate> selected = catalog.lowConfidenceFallbackCandidates(new Decision(
-                "echo",
-                "echo",
-                Map.of("text", "hello"),
-                1.0,
-                false
-        ));
+        List<DecisionSignal> selected = catalog.recommendFallbackSignals("hello");
 
         assertTrue(selected.isEmpty());
     }

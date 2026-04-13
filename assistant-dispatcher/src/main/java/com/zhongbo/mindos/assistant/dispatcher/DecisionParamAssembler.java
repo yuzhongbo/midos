@@ -5,6 +5,7 @@ import com.zhongbo.mindos.assistant.common.SkillDsl;
 import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.dispatcher.decision.Decision;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.DecisionOrchestrator;
+import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalysisResult;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -22,25 +23,51 @@ final class DecisionParamAssembler {
         this.skillCommandAssembler = skillCommandAssembler;
     }
 
-    Decision toDecision(SkillDsl dsl, SkillContext context, double confidence) {
-        if (dsl == null) {
-            return null;
-        }
-        Map<String, Object> params = dsl.input() == null ? new LinkedHashMap<>() : new LinkedHashMap<>(dsl.input());
-        if (usesCanonicalCommands(dsl.skill()) && skillCommandAssembler != null) {
-            params = skillCommandAssembler.buildDetectedSkillDsl(dsl.skill(), context == null ? "" : context.input(), params)
-                    .map(SkillDsl::input)
-                    .map(input -> (Map<String, Object>) new LinkedHashMap<>(input))
-                    .orElse(params);
-        }
-        return new Decision(null, dsl.skill(), params, confidence, false);
-    }
-
-    Decision toDecision(String skillName, SkillContext context, double confidence) {
+    Map<String, Object> assembleParams(String skillName,
+                                       String signalSource,
+                                       String userInput,
+                                       SkillContext context) {
+        Map<String, Object> params = decisionParamsFromInput(
+                skillName,
+                effectiveInput(userInput, context),
+                context == null || context.attributes() == null ? Map.of() : context.attributes()
+        );
         if (skillName == null || skillName.isBlank()) {
-            return null;
+            return params;
         }
-        return new Decision(null, skillName, decisionParamsFromContext(skillName, context), confidence, false);
+        Map<String, Object> enriched = new LinkedHashMap<>(params);
+        String effectiveInput = effectiveInput(userInput, context);
+        if ("explicit".equals(signalSource)) {
+            enriched.putAll(explicitSkillParams(effectiveInput));
+        }
+        if ("echo".equals(skillName) && !enriched.containsKey("text")) {
+            String echoText = extractEchoText(effectiveInput);
+            if (echoText != null && !echoText.isBlank()) {
+                enriched.put("text", echoText);
+            }
+        }
+        if ("todo.create".equals(skillName) && !enriched.containsKey("task") && effectiveInput != null && !effectiveInput.isBlank()) {
+            enriched.put("task", effectiveInput);
+        }
+        if ("eq.coach".equals(skillName) && !enriched.containsKey("query") && effectiveInput != null && !effectiveInput.isBlank()) {
+            enriched.put("query", effectiveInput);
+        }
+        if ("code.generate".equals(skillName) && !enriched.containsKey("task") && effectiveInput != null && !effectiveInput.isBlank()) {
+            enriched.put("task", effectiveInput);
+        }
+        if ("news_search".equals(skillName) && !enriched.containsKey("query") && effectiveInput != null && !effectiveInput.isBlank()) {
+            enriched.put("query", effectiveInput);
+        }
+        if ("file.search".equals(skillName)) {
+            enriched.putIfAbsent("path", "./");
+            if (!enriched.containsKey("keyword") && effectiveInput != null && !effectiveInput.isBlank()) {
+                enriched.put("keyword", effectiveInput);
+            }
+        }
+        if (FinalPlanner.RULE_FALLBACK_SOURCE.equals(signalSource)) {
+            enriched.put(FinalPlanner.PLANNER_ROUTE_SOURCE_KEY, FinalPlanner.RULE_FALLBACK_SOURCE);
+        }
+        return enriched.isEmpty() ? Map.of() : Map.copyOf(enriched);
     }
 
     Map<String, Object> decisionParamsFromContext(SkillContext context) {
@@ -51,19 +78,31 @@ final class DecisionParamAssembler {
         if (context == null) {
             return Map.of();
         }
-        Map<String, Object> params = new LinkedHashMap<>(context.attributes() == null ? Map.of() : context.attributes());
+        return decisionParamsFromInput(skillName, context.input(), context.attributes());
+    }
+
+    Map<String, Object> decisionParamsFromInput(String skillName,
+                                                String userInput,
+                                                Map<String, Object> attributes) {
+        Map<String, Object> params = new LinkedHashMap<>(attributes == null ? Map.of() : attributes);
+        if (hasSemanticPayload(params)) {
+            Object semanticPayload = params.get(SemanticAnalysisResult.ATTR_PAYLOAD);
+            if (semanticPayload instanceof Map<?, ?> payload) {
+                payload.forEach((key, value) -> params.putIfAbsent(String.valueOf(key), value));
+            }
+        }
         if (usesCanonicalCommands(skillName)) {
             params.remove("input");
             if (skillCommandAssembler != null) {
-                return skillCommandAssembler.buildDetectedSkillDsl(skillName, context.input(), params)
+                return skillCommandAssembler.buildDetectedSkillDsl(skillName, userInput, params)
                         .map(SkillDsl::input)
                         .map(input -> (Map<String, Object>) new LinkedHashMap<>(input))
                         .orElse(params);
             }
             return params;
         }
-        if (context.input() != null && !context.input().isBlank()) {
-            params.putIfAbsent("input", context.input());
+        if (userInput != null && !userInput.isBlank()) {
+            params.putIfAbsent("input", userInput);
         }
         return params;
     }
@@ -95,5 +134,56 @@ final class DecisionParamAssembler {
             case "teaching.plan", "todo.create", "eq.coach", "file.search", "news_search", "code.generate", "semantic.analyze", "echo", "time" -> true;
             default -> false;
         };
+    }
+
+    private boolean hasSemanticPayload(Map<String, Object> attributes) {
+        return attributes != null && attributes.containsKey(SemanticAnalysisResult.ATTR_PAYLOAD);
+    }
+
+    private String effectiveInput(String userInput, SkillContext context) {
+        Map<String, Object> attributes = context == null || context.attributes() == null ? Map.of() : context.attributes();
+        Object rewritten = attributes.get(SemanticAnalysisResult.ATTR_REWRITTEN_INPUT);
+        String rewrittenInput = rewritten == null ? "" : String.valueOf(rewritten).trim();
+        if (!rewrittenInput.isBlank()) {
+            return rewrittenInput;
+        }
+        if (context != null && context.input() != null && !context.input().isBlank()) {
+            return context.input();
+        }
+        return userInput == null ? "" : userInput;
+    }
+
+    private String extractEchoText(String userInput) {
+        if (userInput == null) {
+            return "";
+        }
+        String trimmed = userInput.trim();
+        if (!trimmed.regionMatches(true, 0, "echo ", 0, "echo ".length())) {
+            return "";
+        }
+        return trimmed.length() <= "echo ".length() ? "" : trimmed.substring("echo ".length()).trim();
+    }
+
+    private Map<String, Object> explicitSkillParams(String userInput) {
+        if (userInput == null) {
+            return Map.of();
+        }
+        String trimmed = userInput.trim();
+        if (!trimmed.startsWith("skill:")) {
+            return Map.of();
+        }
+        String[] tokens = trimmed.split("\\s+");
+        if (tokens.length <= 1) {
+            return Map.of();
+        }
+        Map<String, Object> params = new LinkedHashMap<>();
+        for (int index = 1; index < tokens.length; index++) {
+            String token = tokens[index];
+            int splitIndex = token.indexOf('=');
+            if (splitIndex > 0 && splitIndex < token.length() - 1) {
+                params.put(token.substring(0, splitIndex), token.substring(splitIndex + 1));
+            }
+        }
+        return params.isEmpty() ? Map.of() : Map.copyOf(params);
     }
 }

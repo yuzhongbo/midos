@@ -2,6 +2,7 @@ package com.zhongbo.mindos.assistant.dispatcher.routing;
 
 import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.dispatcher.decision.Decision;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.DefaultDecisionPlanner;
 import com.zhongbo.mindos.assistant.skill.Skill;
 import com.zhongbo.mindos.assistant.skill.SkillCatalogFacade;
 import com.zhongbo.mindos.assistant.skill.SkillDescriptor;
@@ -57,7 +58,7 @@ class RoutingCoordinatorTest {
             }
         };
 
-        RoutingCoordinator coordinator = new RoutingCoordinator(skillEngine);
+        RoutingCoordinator coordinator = new RoutingCoordinator(skillEngine, new DefaultDecisionPlanner());
         SemanticAnalysisResult semantic = new SemanticAnalysisResult(
                 "semantic",
                 "organize",

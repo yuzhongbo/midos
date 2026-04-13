@@ -1,7 +1,6 @@
 package com.zhongbo.mindos.assistant.dispatcher;
 
 import com.zhongbo.mindos.assistant.common.SkillResult;
-import com.zhongbo.mindos.assistant.dispatcher.decision.Decision;
 import com.zhongbo.mindos.assistant.skill.SkillCatalogFacade;
 
 import java.util.List;
@@ -13,40 +12,30 @@ import java.util.Set;
 final class DispatchRuleCatalog {
 
     private static final String SKILL_HELP_CHANNEL = "skills.help";
-    private static final String PLANNER_ROUTE_SOURCE_KEY = "_plannerRouteSource";
-    private static final String RULE_FALLBACK_SOURCE = "rule-fallback";
-    private static final Set<String> LOW_CONFIDENCE_FALLBACK_TARGETS = Set.of(
-            "echo",
-            "time",
-            "code.generate",
-            "teaching.plan"
-    );
-
     private final SkillCatalogFacade skillEngine;
 
     DispatchRuleCatalog(SkillCatalogFacade skillEngine) {
         this.skillEngine = skillEngine;
     }
 
-    List<Candidate> lowConfidenceFallbackCandidates(Decision plannedDecision) {
-        if (plannedDecision == null) {
+    List<DecisionSignal> recommendFallbackSignals(String userInput) {
+        String normalized = normalize(userInput);
+        if (normalized.isBlank()) {
             return List.of();
         }
-        if (plannedDecision.target() == null || plannedDecision.target().isBlank()) {
-            return List.of();
+        if (normalized.startsWith("echo ")) {
+            return List.of(new DecisionSignal("echo", 0.75, FinalPlanner.RULE_FALLBACK_SOURCE));
         }
-        if (!LOW_CONFIDENCE_FALLBACK_TARGETS.contains(normalize(plannedDecision.target()))) {
-            return List.of();
+        if (containsAny(normalized, "time", "clock", "几点", "时间", "what time")) {
+            return List.of(new DecisionSignal("time", 0.75, FinalPlanner.RULE_FALLBACK_SOURCE));
         }
-        Map<String, Object> params = plannedDecision.params() == null ? Map.of() : plannedDecision.params();
-        String routeSource = normalize(String.valueOf(params.getOrDefault(PLANNER_ROUTE_SOURCE_KEY, "")));
-        if (!RULE_FALLBACK_SOURCE.equals(routeSource)) {
-            return List.of();
+        if ((normalized.startsWith("code ") || normalized.contains("generate code")) && isCodeGenerationIntent(userInput)) {
+            return List.of(new DecisionSignal("code.generate", 0.75, FinalPlanner.RULE_FALLBACK_SOURCE));
         }
-        if (plannedDecision.confidence() >= 1.0) {
-            return List.of();
+        if (isTeachingPlanIntent(normalized)) {
+            return List.of(new DecisionSignal("teaching.plan", 0.75, FinalPlanner.RULE_FALLBACK_SOURCE));
         }
-        return List.of(new Candidate(plannedDecision.target(), plannedDecision.confidence(), "rule"));
+        return List.of();
     }
 
     boolean isCodeGenerationIntent(String input) {
@@ -168,6 +157,18 @@ final class DispatchRuleCatalog {
             }
         }
         return false;
+    }
+
+    private boolean isTeachingPlanIntent(String normalized) {
+        return containsAny(normalized,
+                "教学规划",
+                "学习计划",
+                "复习计划",
+                "课程规划",
+                "学习路线",
+                "study plan",
+                "teaching plan",
+                "冲刺路线");
     }
 
     private String buildAvailableSkillsReply() {

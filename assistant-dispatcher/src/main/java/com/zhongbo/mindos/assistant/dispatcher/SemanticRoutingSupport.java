@@ -113,15 +113,15 @@ final class SemanticRoutingSupport {
                 originalInput
         );
         return semanticSkillResolver.recommend(input).stream()
-                .map(candidate -> new SemanticRoutingPlan(
-                        candidate,
+                .map(signal -> new SemanticRoutingPlan(
+                        signal,
                         semanticPayloadCompleter.buildEffectiveSemanticPayload(
                                 userId,
                                 semanticAnalysis,
                                 originalInput,
-                                candidate.target()
+                                signal.target()
                         ),
-                        semanticSkillResolver.isRoutable(candidate, input)
+                        semanticSkillResolver.isRoutable(signal, input)
                 ))
                 .toList();
     }
@@ -141,19 +141,19 @@ final class SemanticRoutingSupport {
         return value.substring(0, Math.max(0, maxChars - 14)) + "\n...[truncated]";
     }
 
-    record SemanticRoutingPlan(Candidate candidate,
+    record SemanticRoutingPlan(DecisionSignal signal,
                                Map<String, Object> effectivePayload,
                                boolean routable) {
         static SemanticRoutingPlan empty() {
-            return new SemanticRoutingPlan(new Candidate("", 0.0, "heuristic"), Map.of(), false);
+            return new SemanticRoutingPlan(new DecisionSignal("", 0.0, "semantic"), Map.of(), false);
         }
 
         String skillName() {
-            return candidate == null ? "" : candidate.target();
+            return signal == null ? "" : signal.target();
         }
 
         double confidence() {
-            return candidate == null ? 0.0 : candidate.score();
+            return signal == null ? 0.0 : signal.score();
         }
     }
 }

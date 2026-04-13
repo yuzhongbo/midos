@@ -54,10 +54,10 @@ final class BehaviorRoutingSupport {
         );
     }
 
-    List<Candidate> recommendSkillsWithMemoryHabits(String userId,
-                                                    String userInput,
-                                                    Map<String, Object> profileContext,
-                                                    Predicate<String> loopGuardBlocked) {
+    List<DecisionSignal> recommendSkillsWithMemoryHabits(String userId,
+                                                         String userInput,
+                                                         Map<String, Object> profileContext,
+                                                         Predicate<String> loopGuardBlocked) {
         return habitSkillSelector.recommend(new HabitSkillSelector.RecommendationInput(
                 userId,
                 userInput,
@@ -69,7 +69,7 @@ final class BehaviorRoutingSupport {
     Optional<SkillDsl> buildHabitSkillDsl(String userId,
                                           String userInput,
                                           Map<String, Object> profileContext,
-                                          Candidate candidate) {
+                                          DecisionSignal candidate) {
         return habitSkillSelector.buildSkillDsl(new HabitSkillSelector.RecommendationInput(
                 userId,
                 userInput,

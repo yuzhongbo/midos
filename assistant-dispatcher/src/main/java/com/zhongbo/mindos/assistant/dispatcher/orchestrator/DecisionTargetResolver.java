@@ -16,6 +16,7 @@ public final class DecisionTargetResolver {
     private static final Set<String> SIMPLE_TARGETS = Set.of("echo", "time");
 
     public String canonicalize(String rawValue) {
+        String trimmed = rawValue == null ? "" : rawValue.trim();
         String normalized = normalize(rawValue);
         if (normalized.isBlank()) {
             return "";
@@ -25,7 +26,7 @@ public final class DecisionTargetResolver {
             return mapped;
         }
         if (isSkillLikeTarget(normalized)) {
-            return normalized;
+            return trimmed;
         }
         return "";
     }

@@ -517,7 +517,7 @@ class DefaultDecisionOrchestratorTest {
     }
 
     @Test
-    void shouldFallbackFromFastPathToSlowPathWhenFastPathFails() {
+    void shouldNotEscalateToFallbackGraphWhenPrimaryExecutionFails() {
         Skill primary = new Skill() {
             @Override
             public String name() {
@@ -582,10 +582,10 @@ class DefaultDecisionOrchestratorTest {
         );
 
         assertTrue(outcome.hasResult());
-        assertTrue(outcome.result().success());
-        assertEquals("slow-path", outcome.trace().strategy());
-        assertEquals("todo.create.backup", outcome.result().skillName());
-        assertEquals("backup created:demo", outcome.result().output());
+        assertFalse(outcome.result().success());
+        assertEquals("single-task-graph", outcome.trace().strategy());
+        assertEquals("todo.create", outcome.result().skillName());
+        assertEquals("primary failed", outcome.result().output());
     }
 
     @Test

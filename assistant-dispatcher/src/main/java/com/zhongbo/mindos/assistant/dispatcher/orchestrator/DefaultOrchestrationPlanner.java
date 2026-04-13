@@ -1,13 +1,16 @@
 package com.zhongbo.mindos.assistant.dispatcher.orchestrator;
 
+import com.zhongbo.mindos.assistant.dispatcher.DecisionSignal;
 import com.zhongbo.mindos.assistant.dispatcher.agent.procedure.ProceduralMemory;
 import com.zhongbo.mindos.assistant.dispatcher.agent.search.SearchPlanner;
 import com.zhongbo.mindos.assistant.dispatcher.agent.taskgraph.TaskGraph;
 import com.zhongbo.mindos.assistant.dispatcher.decision.Decision;
+import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalysisResult;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
-import java.util.LinkedHashMap;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 
 @Component
@@ -29,17 +32,7 @@ public class DefaultOrchestrationPlanner implements OrchestrationPlanner {
     @Override
     public Decision plan(DecisionOrchestrator.UserInput input) {
         DecisionOrchestrator.UserInput safeInput = DecisionOrchestrator.UserInput.safe(input);
-        Decision explicitDecision = explicitSkillDecision(safeInput);
-        if (explicitDecision != null) {
-            return explicitDecision;
-        }
-        DecisionOrchestrator.OrchestrationRequest request = safeInput.toRequest();
-        Decision decision = decisionPlanner.plan(
-                request.userInput(),
-                "",
-                request.skillContext() == null ? java.util.Map.of() : request.skillContext().attributes(),
-                request.skillContext()
-        );
+        Decision decision = decisionPlanner.plan(safeInput, collectSignals(safeInput));
         return DecisionInputMetadata.enrich(decision, safeInput);
     }
 
@@ -76,34 +69,54 @@ public class DefaultOrchestrationPlanner implements OrchestrationPlanner {
         return taskGraphPlanner instanceof DefaultTaskGraphPlanner planner ? planner : null;
     }
 
-    private Decision explicitSkillDecision(DecisionOrchestrator.UserInput input) {
-        if (input == null || input.userInput() == null) {
-            return null;
+    private List<DecisionSignal> collectSignals(DecisionOrchestrator.UserInput input) {
+        DecisionOrchestrator.UserInput safeInput = DecisionOrchestrator.UserInput.safe(input);
+        List<DecisionSignal> signals = new ArrayList<>();
+        addSignal(signals, explicitSkillTarget(safeInput.userInput()), 1.0, "explicit");
+        Map<String, Object> attributes = safeInput.skillContext() == null || safeInput.skillContext().attributes() == null
+                ? Map.of()
+                : safeInput.skillContext().attributes();
+        addSignal(signals, stringValue(attributes.get("explicitTarget")), 0.99, "explicit");
+        addSignal(signals, stringValue(attributes.get("explicitSkill")), 0.99, "explicit");
+        addSignal(signals, stringValue(attributes.get("_target")), 0.98, "explicit");
+        addSignal(signals, stringValue(attributes.get("target")), 0.97, "explicit");
+        double semanticConfidence = semanticConfidence(attributes);
+        addSignal(signals, stringValue(attributes.get(SemanticAnalysisResult.ATTR_SUGGESTED_SKILL)), semanticConfidence, "semantic");
+        addSignal(signals, stringValue(attributes.get(SemanticAnalysisResult.ATTR_INTENT)), Math.max(0.60, semanticConfidence - 0.05), "semantic");
+        return List.copyOf(signals);
+    }
+
+    private void addSignal(List<DecisionSignal> signals, String target, double score, String source) {
+        if (target == null || target.isBlank()) {
+            return;
         }
-        String trimmed = input.userInput().trim();
+        signals.add(new DecisionSignal(target, score, source));
+    }
+
+    private String explicitSkillTarget(String userInput) {
+        if (userInput == null) {
+            return "";
+        }
+        String trimmed = userInput.trim();
         if (!trimmed.startsWith("skill:")) {
-            return null;
+            return "";
         }
         String[] tokens = trimmed.split("\\s+");
         if (tokens.length == 0) {
-            return null;
+            return "";
         }
-        String skillName = tokens[0].substring("skill:".length()).trim();
-        if (skillName.isBlank()) {
-            return null;
+        return tokens[0].substring("skill:".length()).trim();
+    }
+
+    private String stringValue(Object value) {
+        return value == null ? "" : String.valueOf(value).trim();
+    }
+
+    private double semanticConfidence(Map<String, Object> attributes) {
+        Object raw = attributes.get(SemanticAnalysisResult.ATTR_CONFIDENCE);
+        if (raw instanceof Number number) {
+            return Math.max(0.0, Math.min(1.0, number.doubleValue()));
         }
-        Map<String, Object> params = new LinkedHashMap<>();
-        for (int index = 1; index < tokens.length; index++) {
-            String token = tokens[index];
-            int splitIndex = token.indexOf('=');
-            if (splitIndex > 0 && splitIndex < token.length() - 1) {
-                params.put(token.substring(0, splitIndex), token.substring(splitIndex + 1));
-            }
-        }
-        params.put("_target", skillName);
-        return DecisionInputMetadata.enrich(
-                new Decision(skillName, skillName, params, 1.0, false),
-                input
-        );
+        return 0.82;
     }
 }

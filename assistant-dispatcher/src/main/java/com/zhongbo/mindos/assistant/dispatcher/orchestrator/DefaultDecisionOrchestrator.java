@@ -362,23 +362,6 @@ final class DefaultDecisionExecutor implements DecisionExecutor {
                         "nodeCount", plan.taskGraph().nodes().size()
                 ));
                 result = executePlannedGraph(plan, request, traceId);
-                if (shouldEscalateToFallback(plan, result == null ? null : result.outcome())) {
-                    traceEvent(traceId, "planner", "fallback-task-graph", Map.of(
-                            "strategy", plan.fallbackStrategy(),
-                            "nodeCount", plan.fallbackTaskGraph().nodes().size()
-                    ));
-                    TaskGraphCoordinator.TaskGraphOrchestrationResult fallback = taskGraphCoordinator.orchestrateTaskGraph(
-                            decision,
-                            plan.fallbackTaskGraph(),
-                            plan.fallbackEffectiveParams(),
-                            request,
-                            traceId,
-                            plan.fallbackStrategy(),
-                            plan.intent(),
-                            plan.trigger()
-                    );
-                    result = executionResult(plan, request, fallback.outcome(), fallback.memoryWrites());
-                }
             }
         } finally {
             finishTrace(traceId, decision, request, result == null ? null : result.outcome());
@@ -441,15 +424,6 @@ final class DefaultDecisionExecutor implements DecisionExecutor {
             merged.putAll(params);
         }
         return merged.isEmpty() ? Map.of() : Map.copyOf(merged);
-    }
-
-    private boolean shouldEscalateToFallback(TaskGraphPlan plan, OrchestrationOutcome outcome) {
-        return plan != null
-                && plan.hasFallbackTaskGraph()
-                && outcome != null
-                && outcome.hasResult()
-                && outcome.result() != null
-                && !outcome.result().success();
     }
 
     private Map<String, Object> applyContextPatch(Map<String, Object> baseContext, Map<String, Object> patch) {
