@@ -6,6 +6,7 @@ import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.skill.Skill;
 import com.zhongbo.mindos.assistant.skill.SkillDescriptor;
 import com.zhongbo.mindos.assistant.skill.SkillDescriptorProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -19,6 +20,7 @@ public class EchoSkill implements Skill, SkillDescriptorProvider {
     private static final Logger LOGGER = Logger.getLogger(EchoSkill.class.getName());
     private final LlmClient llmClient;
 
+    @Autowired
     public EchoSkill(LlmClient llmClient) {
         this.llmClient = llmClient;
     }
@@ -53,7 +55,7 @@ public class EchoSkill implements Skill, SkillDescriptorProvider {
             try {
                 String prompt = "你是一个智能回声助手，请智能地复述或扩展用户输入内容，仅输出文本。输入：" + echoedText;
                 String llmReply = llmClient.generateResponse(prompt, buildLlmContext(context));
-                if (llmReply != null && !llmReply.isBlank()) {
+                if (isUsableLlmReply(llmReply)) {
                     return SkillResult.success(name(), llmReply.trim());
                 }
             } catch (Exception ex) {
@@ -71,7 +73,15 @@ public class EchoSkill implements Skill, SkillDescriptorProvider {
                 return normalized;
             }
         }
-        return null;
+        if (context == null || context.input() == null) {
+            return null;
+        }
+        String input = context.input().trim();
+        if (!input.regionMatches(true, 0, "echo ", 0, "echo ".length())) {
+            return input.isBlank() ? null : input;
+        }
+        String echoed = input.length() <= "echo ".length() ? "" : input.substring("echo ".length()).trim();
+        return echoed.isBlank() ? null : echoed;
     }
 
     private Map<String, Object> buildLlmContext(SkillContext context) {
@@ -79,5 +89,9 @@ public class EchoSkill implements Skill, SkillDescriptorProvider {
         llmContext.put("userId", context.userId() == null ? "" : context.userId());
         llmContext.put("channel", name());
         return llmContext;
+    }
+
+    private boolean isUsableLlmReply(String llmReply) {
+        return llmReply != null && !llmReply.isBlank() && !llmReply.startsWith("[LLM ");
     }
 }

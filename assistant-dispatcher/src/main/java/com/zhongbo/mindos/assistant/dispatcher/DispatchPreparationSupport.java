@@ -3,6 +3,7 @@ package com.zhongbo.mindos.assistant.dispatcher;
 import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.common.dto.PromptMemoryContextDto;
 import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryFacade;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.DecisionTargetResolver;
 import com.zhongbo.mindos.assistant.dispatcher.routing.RoutingCoordinator;
 import com.zhongbo.mindos.assistant.skill.SkillCatalogFacade;
 import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalysisResult;
@@ -17,6 +18,7 @@ final class DispatchPreparationSupport {
 
     private static final int SEMANTIC_SUMMARY_MIN_CHARS = 120;
     private static final double SEMANTIC_CONTEXT_MIN_CONFIDENCE = 0.45;
+    private static final DecisionTargetResolver TARGET_RESOLVER = new DecisionTargetResolver();
 
     private final DispatcherMemoryFacade dispatcherMemoryFacade;
     private final SkillCatalogFacade skillEngine;
@@ -112,6 +114,7 @@ final class DispatchPreparationSupport {
                 chatHistory,
                 semanticAnalysis
         );
+        context = enrichPrimarySemanticContext(userId, userInput, context, semanticAnalysis);
         Map<String, Object> llmContext = new LinkedHashMap<>(dispatcherMemoryFacade.buildFallbackLlmContext(
                 userId,
                 routingInput,
@@ -150,6 +153,53 @@ final class DispatchPreparationSupport {
                 context,
                 llmContext
         );
+    }
+
+    private SkillContext enrichPrimarySemanticContext(String userId,
+                                                      String userInput,
+                                                      SkillContext context,
+                                                      SemanticAnalysisResult semanticAnalysis) {
+        if (context == null || semanticAnalysis == null) {
+            return context;
+        }
+        String targetHint = semanticTargetHint(semanticAnalysis);
+        if (targetHint.isBlank()) {
+            return context;
+        }
+        Map<String, Object> effectivePayload = semanticRoutingSupport.completeSemanticPayload(
+                userId,
+                semanticAnalysis,
+                userInput,
+                targetHint
+        );
+        if (effectivePayload.isEmpty()) {
+            return context;
+        }
+        Map<String, Object> attributes = new LinkedHashMap<>(context.attributes() == null ? Map.of() : context.attributes());
+        attributes.put(SemanticAnalysisResult.ATTR_PAYLOAD, effectivePayload);
+        return new SkillContext(context.userId(), context.input(), attributes);
+    }
+
+    private String semanticTargetHint(SemanticAnalysisResult semanticAnalysis) {
+        if (semanticAnalysis == null) {
+            return "";
+        }
+        String suggestedSkill = TARGET_RESOLVER.canonicalize(semanticAnalysis.suggestedSkill());
+        if (!suggestedSkill.isBlank()) {
+            return suggestedSkill;
+        }
+        if (semanticAnalysis.candidateIntents() != null) {
+            for (SemanticAnalysisResult.CandidateIntent candidate : semanticAnalysis.candidateIntents()) {
+                if (candidate == null) {
+                    continue;
+                }
+                String candidateTarget = TARGET_RESOLVER.canonicalize(candidate.intent());
+                if (!candidateTarget.isBlank()) {
+                    return candidateTarget;
+                }
+            }
+        }
+        return TARGET_RESOLVER.canonicalize(semanticAnalysis.intent());
     }
 
     interface PreparationBridge {

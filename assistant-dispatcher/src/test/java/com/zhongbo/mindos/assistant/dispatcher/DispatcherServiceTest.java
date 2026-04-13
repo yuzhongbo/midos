@@ -677,7 +677,7 @@ class DispatcherServiceTest {
     }
 
     @Test
-    void shouldRestrictLlmDispatcherPromptToShortlistedSkills() {
+    void shouldPreferPrimaryPlannerBeforeLlmDispatcherShortlist() {
         MemoryManager memoryManager = createMemoryManager();
         RecordingLlmClient llmClient = new RecordingLlmClient(List.of(
                 "{\"intent\":\"code.fix\",\"target\":\"code.generate\",\"params\":{\"task\":\"修复 spring 接口 bug\"},\"confidence\":0.91,\"requireClarify\":false}"
@@ -691,13 +691,9 @@ class DispatcherServiceTest {
         DispatchResult result = service.dispatch("coding-user", "帮我修复 Spring 接口 bug");
 
         assertEquals("code.generate", result.channel());
-        assertEquals(1, llmClient.routingCallCount());
-        assertFalse(llmClient.routingPrompts().isEmpty());
-        String routingPrompt = llmClient.routingPrompts().get(0);
-        assertTrue(routingPrompt.contains("code.generate - Generate code and repair Spring API bugs"));
-        assertFalse(routingPrompt.contains("eq.coach - Coach emotional communication conflicts"));
-        assertFalse(routingPrompt.contains("teaching.plan - Generate study plans and teaching plans"));
-        assertEquals("llm-dsl", result.executionTrace().routing().route());
+        assertEquals(0, llmClient.routingCallCount());
+        assertTrue(llmClient.routingPrompts().isEmpty());
+        assertTrue(Set.of("semantic-analysis", "orchestrator-primary").contains(result.executionTrace().routing().route()));
         assertEquals("code.generate", result.executionTrace().routing().selectedSkill());
         assertTrue(result.executionTrace().routing().confidence() > 0.7);
     }

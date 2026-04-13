@@ -11,6 +11,7 @@ import com.zhongbo.mindos.assistant.dispatcher.orchestrator.DecisionOrchestrator
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.memory.MemoryWriteBatch;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.memory.OrchestratorMemoryWriter;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.step5.TraceLogger;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
@@ -38,6 +39,7 @@ public class MasterOrchestrator {
         this(plannerAgent, executorAgent, memoryAgent, toolAgent, traceLogger, null);
     }
 
+    @Autowired
     public MasterOrchestrator(PlannerAgent plannerAgent,
                               ExecutorAgent executorAgent,
                               MemoryAgent memoryAgent,
@@ -280,18 +282,11 @@ public class MasterOrchestrator {
         if (decision == null) {
             return null;
         }
-        String intent = firstNonBlank(decision.intent(), decision.target());
-        String target = firstNonBlank(decision.target(), decision.intent());
-        if (intent.isBlank() && target.isBlank()) {
+        String target = safeText(decision.target(), "").trim();
+        if (target.isBlank()) {
             return null;
         }
-        return new Decision(
-                intent.isBlank() ? target : intent,
-                target.isBlank() ? intent : target,
-                decision.params(),
-                decision.confidence(),
-                decision.requireClarify()
-        );
+        return decision;
     }
 
     private String firstNonBlank(String first, String second) {

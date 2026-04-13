@@ -126,6 +126,21 @@ final class SemanticRoutingSupport {
                 .toList();
     }
 
+    Map<String, Object> completeSemanticPayload(String userId,
+                                                SemanticAnalysisResult semanticAnalysis,
+                                                String originalInput,
+                                                String targetSkill) {
+        if (semanticAnalysis == null || targetSkill == null || targetSkill.isBlank()) {
+            return Map.of();
+        }
+        return semanticPayloadCompleter.buildEffectiveSemanticPayload(
+                userId,
+                semanticAnalysis,
+                originalInput,
+                targetSkill
+        );
+    }
+
     String buildSemanticClarifyReply(SemanticAnalysisResult semanticAnalysis,
                                      SemanticRoutingPlan semanticPlan) {
         return semanticClarifyPolicy.buildSemanticClarifyReply(semanticAnalysis, semanticPlan);

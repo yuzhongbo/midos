@@ -714,7 +714,6 @@ public class DispatcherService implements ContextCompressionMetricsReader,
                 this.dispatchMemoryLifecycle,
                 this.dispatchPreparationSupport,
                 this.dispatchRoutingPipeline,
-                compatibilityDecisionPlanner,
                 this.decisionOrchestrator,
                 this.metaOrchestratorService,
                 this.dispatchResultFinalizer,
@@ -849,6 +848,11 @@ public class DispatcherService implements ContextCompressionMetricsReader,
         if (!searchAttempted) {
             return "not-applicable";
         }
+        if (finalResultSuccess
+                && !selectedSkill.isBlank()
+                && selectedSkill.equalsIgnoreCase(normalizeOptional(finalChannel))) {
+            return "success";
+        }
         if (!finalResultSuccess) {
             return "failed";
         }
@@ -862,9 +866,6 @@ public class DispatcherService implements ContextCompressionMetricsReader,
                     return "failed";
                 }
             }
-        }
-        if (!selectedSkill.isBlank() && selectedSkill.equalsIgnoreCase(normalizeOptional(finalChannel))) {
-            return "success";
         }
         if ("llm".equalsIgnoreCase(normalizeOptional(finalChannel))) {
             return "failed";
