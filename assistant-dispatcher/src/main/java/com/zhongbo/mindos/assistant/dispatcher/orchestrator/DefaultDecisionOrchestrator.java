@@ -17,6 +17,7 @@ import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.common.dto.CritiqueReportDto;
 import com.zhongbo.mindos.assistant.common.dto.ExecutionTraceDto;
 import com.zhongbo.mindos.assistant.common.dto.PlanStepDto;
+import com.zhongbo.mindos.assistant.common.dto.RoutingDecisionDto;
 import com.zhongbo.mindos.assistant.dispatcher.decision.Decision;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.memory.MemoryWriteBatch;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.memory.OrchestratorMemoryWriter;
@@ -41,6 +42,8 @@ import java.util.function.Consumer;
 
 @Component
 public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
+
+    private static final DecisionTargetResolver TARGET_RESOLVER = new DecisionTargetResolver();
 
     private final OrchestrationPlanner planner;
     private final ParamValidator paramValidator;
@@ -135,10 +138,8 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
 
     @Override
     public OrchestrationOutcome handle(UserInput input) {
-        TaskGraph graph = planner.buildGraph(preview(input));
-        OrchestrationExecutionResult result = reflection.analyze(executor.execute(graph).normalizeFailures());
-        memoryFacade.record(result);
-        return result.outcome();
+        UserInput safeInput = UserInput.safe(input);
+        return executePlanned(preview(safeInput), safeInput.toRequest());
     }
 
     @Override
@@ -160,11 +161,7 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
 
     @Override
     public OrchestrationOutcome executePlanned(Decision decision, OrchestrationRequest request) {
-        Decision enrichedDecision = DecisionInputMetadata.enrich(decision, UserInput.from(request));
-        Decision validatedDecision = paramValidator.validate(enrichedDecision).applyTo(enrichedDecision);
-        OrchestrationExecutionResult result = reflection.analyze(
-                executor.execute(planner.buildGraph(validatedDecision)).normalizeFailures()
-        );
+        OrchestrationExecutionResult result = executePlannedWithReplan(decision, request);
         memoryFacade.record(result);
         return result.outcome();
     }
@@ -258,7 +255,7 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
                 maxLoops
         );
         return new ManualWiring(
-                new DefaultOrchestrationPlanner(new DefaultDecisionPlanner(), taskGraphPlanner, planStore),
+                new DefaultOrchestrationPlanner(new DefaultDecisionPlanner(null, dispatcherMemoryFacade), taskGraphPlanner, planStore),
                 new DefaultGraphExecutor(decisionExecutor, planStore),
                 new DefaultExecutionMemoryFacade(
                         memoryRecorder,
@@ -270,6 +267,120 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
     private record ManualWiring(OrchestrationPlanner planner,
                                 GraphExecutor executor,
                                 ExecutionMemoryFacade memoryFacade) {
+    }
+
+    private OrchestrationExecutionResult executePlannedWithReplan(Decision decision,
+                                                                  OrchestrationRequest request) {
+        Decision validatedDecision = validatePlannedDecision(decision, request);
+        OrchestrationExecutionResult primaryResult = executor.execute(planner.buildGraph(validatedDecision));
+        OrchestrationExecutionResult effectiveResult = primaryResult;
+        if (shouldReplan(validatedDecision, primaryResult)) {
+            Decision replannedDecision = planner.replan(UserInput.from(request), validatedDecision);
+            Decision validatedReplannedDecision = replannedDecision == null ? null : validatePlannedDecision(replannedDecision, request);
+            boolean clarificationWithoutTarget = validatedReplannedDecision != null
+                    && validatedReplannedDecision.requireClarify()
+                    && (validatedReplannedDecision.target() == null || validatedReplannedDecision.target().isBlank());
+            if (validatedReplannedDecision != null
+                    && !clarificationWithoutTarget
+                    && (validatedReplannedDecision.requireClarify() || !sameTarget(validatedDecision, validatedReplannedDecision))) {
+                OrchestrationExecutionResult replannedResult = executor.execute(planner.buildGraph(validatedReplannedDecision));
+                effectiveResult = mergePlannerReplan(primaryResult, replannedResult);
+            }
+        }
+        return reflection.analyze(effectiveResult.normalizeFailures());
+    }
+
+    private Decision validatePlannedDecision(Decision decision, OrchestrationRequest request) {
+        Decision enrichedDecision = DecisionInputMetadata.enrich(decision, UserInput.from(request));
+        return paramValidator.validate(enrichedDecision).applyTo(enrichedDecision);
+    }
+
+    private boolean shouldReplan(Decision decision, OrchestrationExecutionResult result) {
+        if (decision == null || decision.requireClarify() || result == null || result.outcome() == null) {
+            return false;
+        }
+        return result.outcome().hasResult()
+                && result.outcome().result() != null
+                && !result.outcome().result().success();
+    }
+
+    private boolean sameTarget(Decision left, Decision right) {
+        if (left == null || right == null) {
+            return false;
+        }
+        String leftTarget = TARGET_RESOLVER.canonicalize(left.target());
+        String rightTarget = TARGET_RESOLVER.canonicalize(right.target());
+        if (!leftTarget.isBlank() || !rightTarget.isBlank()) {
+            return leftTarget.equals(rightTarget);
+        }
+        return left.target() != null && left.target().equalsIgnoreCase(right.target());
+    }
+
+    private OrchestrationExecutionResult mergePlannerReplan(OrchestrationExecutionResult primaryResult,
+                                                            OrchestrationExecutionResult replannedResult) {
+        if (primaryResult == null) {
+            return replannedResult;
+        }
+        if (replannedResult == null || replannedResult.outcome() == null) {
+            return primaryResult;
+        }
+        ExecutionTraceDto mergedTrace = mergeTrace(primaryResult.trace(), replannedResult.trace());
+        OrchestrationOutcome replannedOutcome = replannedResult.outcome();
+        OrchestrationOutcome mergedOutcome = new OrchestrationOutcome(
+                replannedOutcome.result(),
+                replannedOutcome.skillDsl(),
+                replannedOutcome.clarification(),
+                mergedTrace,
+                replannedOutcome.selectedSkill(),
+                replannedOutcome.usedFallback()
+        );
+        return new OrchestrationExecutionResult(
+                replannedResult.plan(),
+                replannedResult.request(),
+                replannedResult.graph(),
+                mergedOutcome,
+                replannedResult.reflection(),
+                replannedResult.memoryWrites()
+        );
+    }
+
+    private ExecutionTraceDto mergeTrace(ExecutionTraceDto primaryTrace,
+                                         ExecutionTraceDto replannedTrace) {
+        if (primaryTrace == null && replannedTrace == null) {
+            return new ExecutionTraceDto("planner-replan", 1, null, List.of(), null);
+        }
+        if (primaryTrace == null) {
+            return new ExecutionTraceDto(
+                    replannedTrace.strategy(),
+                    replannedTrace.replanCount() + 1,
+                    replannedTrace.critique(),
+                    replannedTrace.steps(),
+                    replannedTrace.routing()
+            );
+        }
+        if (replannedTrace == null) {
+            return new ExecutionTraceDto(
+                    primaryTrace.strategy(),
+                    primaryTrace.replanCount() + 1,
+                    primaryTrace.critique(),
+                    primaryTrace.steps(),
+                    primaryTrace.routing()
+            );
+        }
+        List<PlanStepDto> steps = new ArrayList<>(primaryTrace.steps());
+        steps.addAll(replannedTrace.steps());
+        CritiqueReportDto critique = replannedTrace.critique() == null ? primaryTrace.critique() : replannedTrace.critique();
+        RoutingDecisionDto routing = replannedTrace.routing() == null ? primaryTrace.routing() : replannedTrace.routing();
+        String strategy = replannedTrace.strategy() == null || replannedTrace.strategy().isBlank()
+                ? primaryTrace.strategy()
+                : replannedTrace.strategy();
+        return new ExecutionTraceDto(
+                strategy == null || strategy.isBlank() ? "planner-replan" : strategy,
+                primaryTrace.replanCount() + replannedTrace.replanCount() + 1,
+                critique,
+                List.copyOf(steps),
+                routing
+        );
     }
 }
 
@@ -426,7 +537,7 @@ final class DefaultDecisionExecutor implements DecisionExecutor {
                 null,
                 conversationLoop.requestClarification(target, message),
                 null,
-                null,
+                target,
                 false
         );
     }

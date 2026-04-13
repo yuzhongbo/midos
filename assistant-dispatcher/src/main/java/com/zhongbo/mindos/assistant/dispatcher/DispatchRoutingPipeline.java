@@ -30,6 +30,18 @@ final class DispatchRoutingPipeline {
 
     private static final Logger LOGGER = Logger.getLogger(DispatchRoutingPipeline.class.getName());
     private static final Pattern ROUTING_TOKEN_SPLIT_PATTERN = Pattern.compile("[^\\p{L}\\p{N}.#_-]+");
+    private static final List<String> DEFAULT_SEARCH_PRIORITY_ORDER = List.of(
+            "mcp.qwensearch.websearch",
+            "mcp.serper.websearch",
+            "mcp.serpapi.websearch",
+            "mcp.bravesearch.websearch"
+    );
+    private static final List<String> DEFAULT_BRAVE_FIRST_PRIORITY_ORDER = List.of(
+            "mcp.bravesearch.websearch",
+            "mcp.qwensearch.websearch",
+            "mcp.serper.websearch",
+            "mcp.serpapi.websearch"
+    );
 
     private final SkillCatalogFacade skillEngine;
     private final SkillDslParser skillDslParser;
@@ -90,12 +102,10 @@ final class DispatchRoutingPipeline {
         this.parallelDetectedSkillRoutingEnabled = parallelDetectedSkillRoutingEnabled;
         this.parallelDetectedSkillRoutingMaxCandidates = parallelDetectedSkillRoutingMaxCandidates;
         this.parallelDetectedSkillRoutingTimeoutMs = parallelDetectedSkillRoutingTimeoutMs;
-        this.parallelSearchPriorityOrder = parallelSearchPriorityOrder == null
-                ? List.of()
-                : parallelSearchPriorityOrder.stream()
-                .map(this::normalize)
-                .filter(value -> !value.isBlank())
-                .toList();
+        this.parallelSearchPriorityOrder = resolveSearchPriorityOrder(
+                parallelSearchPriorityOrder,
+                braveFirstSearchRoutingEnabled || parallelDetectedSkillRoutingEnabled
+        );
         this.semanticAnalysisRouteMinConfidence = semanticAnalysisRouteMinConfidence;
         this.skillPreAnalyzeSkipSkills = skillPreAnalyzeSkipSkills == null ? Set.of() : Set.copyOf(skillPreAnalyzeSkipSkills);
         this.skillPreAnalyzeRequestCount = skillPreAnalyzeRequestCount;
@@ -113,6 +123,22 @@ final class DispatchRoutingPipeline {
                 new DetectedOrHabitRoutingStage(),
                 new LlmPreAnalyzeRoutingStage()
         );
+    }
+
+    private List<String> resolveSearchPriorityOrder(List<String> configuredOrder,
+                                                    boolean preferBraveSearch) {
+        List<String> configured = configuredOrder == null
+                ? List.of()
+                : configuredOrder.stream()
+                .map(this::normalize)
+                .filter(value -> !value.isBlank())
+                .toList();
+        if (!configured.isEmpty()) {
+            return configured;
+        }
+        return preferBraveSearch
+                ? DEFAULT_BRAVE_FIRST_PRIORITY_ORDER
+                : DEFAULT_SEARCH_PRIORITY_ORDER;
     }
 
     CompletableFuture<RoutingOutcome> routeToSkillAsync(String userId,

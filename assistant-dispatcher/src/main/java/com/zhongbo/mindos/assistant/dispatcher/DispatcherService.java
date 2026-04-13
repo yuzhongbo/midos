@@ -529,7 +529,7 @@ public class DispatcherService implements ContextCompressionMetricsReader,
                 this.behaviorLearningDefaultParamThreshold
         );
         this.dispatchRuleCatalog = new DispatchRuleCatalog(this.skillEngine);
-        DecisionPlanner compatibilityDecisionPlanner = new DefaultDecisionPlanner(this.skillEngine);
+        DecisionPlanner compatibilityDecisionPlanner = new DefaultDecisionPlanner(this.skillEngine, this.dispatcherMemoryFacade);
         this.skillRoutingSupport = new SkillRoutingSupport(
                 this.skillEngine,
                 compatibilityDecisionPlanner,

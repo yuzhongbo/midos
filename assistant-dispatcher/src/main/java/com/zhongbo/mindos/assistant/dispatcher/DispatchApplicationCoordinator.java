@@ -337,12 +337,14 @@ final class DispatchApplicationCoordinator {
             if (preview == null || preview.target() == null || preview.target().isBlank()) {
                 return SkillResult.failure("decision.orchestrator", "primary planner produced no target");
             }
-            Optional<SkillResult> capabilityBlock = bridge.maybeBlockByCapability(preview.target());
-            if (capabilityBlock.isPresent()) {
-                return SkillResult.failure("decision.orchestrator", "primary target blocked by capability policy");
-            }
-            if (bridge.isSkillLoopGuardBlocked(userId, preview.target(), userInput)) {
-                return SkillResult.failure("decision.orchestrator", "primary target blocked by loop guard");
+            if (!preview.requireClarify()) {
+                Optional<SkillResult> capabilityBlock = bridge.maybeBlockByCapability(preview.target());
+                if (capabilityBlock.isPresent()) {
+                    return SkillResult.failure("decision.orchestrator", "primary target blocked by capability policy");
+                }
+                if (bridge.isSkillLoopGuardBlocked(userId, preview.target(), userInput)) {
+                    return SkillResult.failure("decision.orchestrator", "primary target blocked by loop guard");
+                }
             }
             DecisionOrchestrator.OrchestrationOutcome outcome = decisionOrchestrator.executePlanned(
                     preview,
@@ -359,9 +361,6 @@ final class DispatchApplicationCoordinator {
                 return SkillResult.failure("decision.orchestrator", "primary orchestrator produced no result");
             }
             if (outcome.hasClarification()) {
-                if (outcome.selectedSkill() == null || outcome.selectedSkill().isBlank()) {
-                    return SkillResult.failure("decision.orchestrator", "primary planner produced no target");
-                }
                 return outcome.clarification();
             }
             if (outcome.hasResult() && outcome.result().success()) {

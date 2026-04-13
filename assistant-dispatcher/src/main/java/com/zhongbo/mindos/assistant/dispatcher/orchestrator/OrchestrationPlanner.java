@@ -7,5 +7,9 @@ public interface OrchestrationPlanner {
 
     Decision plan(DecisionOrchestrator.UserInput input);
 
+    default Decision replan(DecisionOrchestrator.UserInput input, Decision failedDecision) {
+        return plan(input);
+    }
+
     TaskGraph buildGraph(Decision decision);
 }

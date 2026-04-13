@@ -1,6 +1,7 @@
 package com.zhongbo.mindos.assistant.dispatcher.orchestrator;
 
 import com.zhongbo.mindos.assistant.common.SkillContext;
+import com.zhongbo.mindos.assistant.dispatcher.FinalPlanner;
 import com.zhongbo.mindos.assistant.dispatcher.decision.Decision;
 
 import java.util.LinkedHashMap;
@@ -23,7 +24,7 @@ final class DecisionInputMetadata {
             return null;
         }
         DecisionOrchestrator.UserInput safeInput = DecisionOrchestrator.UserInput.safe(input);
-        Map<String, Object> enriched = new LinkedHashMap<>(businessParams(decision.params()));
+        Map<String, Object> enriched = new LinkedHashMap<>(forwardedParams(decision.params()));
         enriched.put(USER_ID, safeInput.userId());
         enriched.put(USER_INPUT, safeInput.userInput());
         enriched.put(CONTEXT_ATTRIBUTES, safeInput.skillContext() == null ? Map.of() : safeInput.skillContext().attributes());
@@ -81,7 +82,11 @@ final class DecisionInputMetadata {
         if (decision == null || decision.params() == null) {
             return "";
         }
-        return stringValue(decision.params().get(VALIDATION_MESSAGE));
+        String validationMessage = stringValue(decision.params().get(VALIDATION_MESSAGE));
+        if (!validationMessage.isBlank()) {
+            return validationMessage;
+        }
+        return stringValue(decision.params().get(FinalPlanner.PLANNER_CLARIFY_MESSAGE_KEY));
     }
 
     static DecisionOrchestrator.OrchestrationRequest requestOf(Decision decision) {
@@ -110,6 +115,19 @@ final class DecisionInputMetadata {
         return business.isEmpty() ? Map.of() : Map.copyOf(business);
     }
 
+    private static Map<String, Object> forwardedParams(Map<String, Object> params) {
+        Map<String, Object> forwarded = new LinkedHashMap<>(businessParams(params));
+        if (params == null || params.isEmpty()) {
+            return forwarded.isEmpty() ? Map.of() : Map.copyOf(forwarded);
+        }
+        params.forEach((key, value) -> {
+            if (isPlannerKey(key)) {
+                forwarded.put(key, value);
+            }
+        });
+        return forwarded.isEmpty() ? Map.of() : Map.copyOf(forwarded);
+    }
+
     private static Map<String, Object> metadataParams(Map<String, Object> params) {
         Map<String, Object> metadata = new LinkedHashMap<>();
         if (params == null || params.isEmpty()) {
@@ -124,7 +142,17 @@ final class DecisionInputMetadata {
     }
 
     private static boolean isReservedKey(String key) {
+        return isOrchestratorKey(key) || isPlannerKey(key);
+    }
+
+    private static boolean isOrchestratorKey(String key) {
         return key != null && key.startsWith(PREFIX);
+    }
+
+    private static boolean isPlannerKey(String key) {
+        return key != null
+                && (key.startsWith(FinalPlanner.PLANNER_METADATA_PREFIX)
+                || FinalPlanner.PLANNER_ROUTE_SOURCE_KEY.equals(key));
     }
 
     private static String stringValue(Object value) {
