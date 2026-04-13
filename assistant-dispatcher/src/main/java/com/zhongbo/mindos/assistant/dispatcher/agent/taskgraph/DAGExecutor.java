@@ -12,6 +12,8 @@ import java.util.Map;
 
 public class DAGExecutor {
 
+    public static final String RESOLVED_NODE_PARAMS_KEY = "_taskNodeParams";
+
     public TaskGraphExecutionResult execute(TaskGraph graph,
                                             SkillContext baseContext,
                                             TaskNodeRunner runner) {
@@ -57,11 +59,15 @@ public class DAGExecutor {
                 CompletableFuture<TaskGraphExecutionResult.NodeResult> future = CompletableFuture.supplyAsync(() -> {
                     boolean blocked = graph.dependenciesOf(node.id()).stream().anyMatch(dependency -> {
                         TaskGraphExecutionResult.NodeResult dependencyResult = resultsById.get(dependency);
+                        TaskNode dependencyNode = byId.get(dependency);
+                        if (dependencyNode != null && dependencyNode.optional()) {
+                            return false;
+                        }
                         return dependencyResult == null || dependencyResult.result() == null || !dependencyResult.result().success();
                     });
                     if (blocked) {
                         TaskGraphExecutionResult.NodeResult nr = new TaskGraphExecutionResult.NodeResult(
-                                node.id(), node.target(), "blocked", SkillResult.failure(node.target(), "blocked by dependency"), false
+                                node.id(), node.target(), "blocked", SkillResult.failure(node.target(), "blocked by dependency"), false, 1
                         );
                         resultsById.put(node.id(), nr);
                         return nr;
@@ -73,15 +79,22 @@ public class DAGExecutor {
                         contextSnapshot = new java.util.LinkedHashMap<>(contextAttributes);
                     }
                     Map<String, Object> resolvedParams = resolveParams(node.params(), contextSnapshot);
+                    Map<String, Object> executionContext = new java.util.LinkedHashMap<>(mergeAttributes(contextSnapshot, resolvedParams));
+                    executionContext.put(RESOLVED_NODE_PARAMS_KEY, resolvedParams);
                     SkillContext nodeContext = new SkillContext(
                             baseContext == null ? "" : baseContext.userId(),
                             baseContext == null ? "" : baseContext.input(),
-                            mergeAttributes(contextSnapshot, resolvedParams)
+                            Map.copyOf(executionContext)
                     );
-                    NodeExecution execution = runner.run(node, nodeContext);
+                    NodeExecution execution = executeWithRetry(node, nodeContext, runner);
                     SkillResult sr = execution.result();
                     TaskGraphExecutionResult.NodeResult nr = new TaskGraphExecutionResult.NodeResult(
-                            node.id(), node.target(), (sr != null && sr.success()) ? "success" : "failed", sr, execution.usedFallback()
+                            node.id(),
+                            node.target(),
+                            (sr != null && sr.success()) ? "success" : "failed",
+                            sr,
+                            execution.usedFallback(),
+                            execution.attempts()
                     );
 
                     // Update shared context attributes atomically
@@ -172,11 +185,37 @@ public class DAGExecutor {
         return Map.copyOf(merged);
     }
 
+    private NodeExecution executeWithRetry(TaskNode node,
+                                           SkillContext nodeContext,
+                                           TaskNodeRunner runner) {
+        int maxAttempts = node == null ? 1 : node.maxAttempts();
+        NodeExecution lastExecution = new NodeExecution(null, false, 1);
+        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+            NodeExecution rawExecution = runner.run(node, nodeContext);
+            NodeExecution execution = rawExecution == null
+                    ? new NodeExecution(SkillResult.failure(node == null ? "" : node.target(), "missing node execution"), false, attempt)
+                    : new NodeExecution(rawExecution.result(), rawExecution.usedFallback(), attempt);
+            lastExecution = execution;
+            if (execution.result() != null && execution.result().success()) {
+                return execution;
+            }
+        }
+        return lastExecution;
+    }
+
     @FunctionalInterface
     public interface TaskNodeRunner {
         NodeExecution run(TaskNode node, SkillContext nodeContext);
     }
 
-    public record NodeExecution(SkillResult result, boolean usedFallback) {
+    public record NodeExecution(SkillResult result, boolean usedFallback, int attempts) {
+
+        public NodeExecution(SkillResult result, boolean usedFallback) {
+            this(result, usedFallback, 1);
+        }
+
+        public NodeExecution {
+            attempts = Math.max(1, attempts);
+        }
     }
 }

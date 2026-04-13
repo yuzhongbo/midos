@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -55,5 +56,55 @@ class TaskGraphExecutorTest {
         );
         assertThrows(IllegalArgumentException.class,
                 () -> new TaskGraphExecutor().execute(graph, new SkillContext("u1", "cycle", Map.of()), (node, context) -> null));
+    }
+
+    @Test
+    void shouldRetryNodeUntilSuccessWithinConfiguredAttempts() {
+        AtomicInteger attempts = new AtomicInteger();
+        TaskGraph graph = new TaskGraph(List.of(
+                new TaskNode("retry", "code.generate", Map.of("task", "controller"), List.of(), "result", false, 2)
+        ));
+
+        TaskGraphExecutionResult result = new TaskGraphExecutor().execute(
+                graph,
+                new SkillContext("u1", "retry", Map.of()),
+                (node, context) -> {
+                    int attempt = attempts.incrementAndGet();
+                    if (attempt == 1) {
+                        return new TaskGraphExecutor.NodeExecution(SkillResult.failure(node.target(), "temporary failure"), false);
+                    }
+                    return new TaskGraphExecutor.NodeExecution(SkillResult.success(node.target(), "recovered"), false);
+                }
+        );
+
+        assertTrue(result.success());
+        assertEquals(2, result.nodeResults().get(0).attempts());
+        assertEquals(2, attempts.get());
+    }
+
+    @Test
+    void shouldContinueWhenOptionalDependencyFails() {
+        TaskGraph graph = new TaskGraph(
+                List.of(
+                        new TaskNode("optional-search", "file.search", Map.of("query", "missing"), List.of(), "search", true, 1),
+                        new TaskNode("generate", "code.generate", Map.of("task", "controller"), List.of("optional-search"), "result", false, 1)
+                ),
+                List.of(new TaskEdge("optional-search", "generate"))
+        );
+
+        TaskGraphExecutionResult result = new TaskGraphExecutor().execute(
+                graph,
+                new SkillContext("u1", "optional", Map.of()),
+                (node, context) -> {
+                    if ("optional-search".equals(node.id())) {
+                        return new TaskGraphExecutor.NodeExecution(SkillResult.failure(node.target(), "not found"), false);
+                    }
+                    return new TaskGraphExecutor.NodeExecution(SkillResult.success(node.target(), "generated"), false);
+                }
+        );
+
+        assertEquals(List.of("optional-search", "generate"), result.executionOrder());
+        assertEquals("code.generate", result.finalResult().skillName());
+        assertTrue(result.successfulNodeIds().contains("generate"));
     }
 }

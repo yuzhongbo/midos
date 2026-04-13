@@ -12,6 +12,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 @Service
@@ -22,12 +23,13 @@ public class DefaultAgentLoop implements AgentLoop {
     private final EvaluatorAgent evaluatorAgent;
     private final MemoryEvolution memoryEvolution;
     private final OrchestratorMemoryWriter memoryWriter;
+    private final AutonomousLoopEngine autonomousLoopEngine;
 
     public DefaultAgentLoop(GoalGenerator goalGenerator,
                             MasterOrchestrator masterOrchestrator,
                             EvaluatorAgent evaluatorAgent,
                             MemoryEvolution memoryEvolution) {
-        this(goalGenerator, masterOrchestrator, evaluatorAgent, memoryEvolution, null);
+        this(goalGenerator, masterOrchestrator, evaluatorAgent, memoryEvolution, null, null);
     }
 
     @Autowired
@@ -35,12 +37,14 @@ public class DefaultAgentLoop implements AgentLoop {
                             MasterOrchestrator masterOrchestrator,
                             EvaluatorAgent evaluatorAgent,
                             MemoryEvolution memoryEvolution,
-                            OrchestratorMemoryWriter memoryWriter) {
+                            OrchestratorMemoryWriter memoryWriter,
+                            AutonomousLoopEngine autonomousLoopEngine) {
         this.goalGenerator = goalGenerator;
         this.masterOrchestrator = masterOrchestrator;
         this.evaluatorAgent = evaluatorAgent;
         this.memoryEvolution = memoryEvolution;
         this.memoryWriter = memoryWriter;
+        this.autonomousLoopEngine = autonomousLoopEngine;
     }
 
     @Override
@@ -128,6 +132,23 @@ public class DefaultAgentLoop implements AgentLoop {
                 startedAt,
                 Instant.now()
         );
+    }
+
+    @Override
+    public AutonomousGoalRunResult runGoal(String userId,
+                                           String goalDescription,
+                                           Map<String, Object> profileContext) {
+        if (autonomousLoopEngine == null) {
+            Instant now = Instant.now();
+            return new AutonomousGoalRunResult(
+                    Goal.of(goalDescription, 1.0).markFailed(),
+                    List.of(),
+                    "autonomous-loop-engine-unavailable",
+                    now,
+                    now
+            );
+        }
+        return autonomousLoopEngine.run(Goal.of(goalDescription, 1.0), userId, profileContext == null ? Map.of() : profileContext);
     }
 
     private AutonomousGoal fallbackGoal(String userId) {

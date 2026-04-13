@@ -8,7 +8,17 @@ public record TaskNode(String id,
                        Map<String, Object> params,
                        List<String> dependsOn,
                        String saveAs,
-                       boolean optional) {
+                       boolean optional,
+                       int maxAttempts) {
+
+    public TaskNode(String id,
+                    String target,
+                    Map<String, Object> params,
+                    List<String> dependsOn,
+                    String saveAs,
+                    boolean optional) {
+        this(id, target, params, dependsOn, saveAs, optional, 1);
+    }
 
     public TaskNode {
         target = target == null ? "" : target.trim();
@@ -16,5 +26,10 @@ public record TaskNode(String id,
         params = params == null ? Map.of() : Map.copyOf(params);
         dependsOn = dependsOn == null ? List.of() : List.copyOf(dependsOn);
         saveAs = saveAs == null ? "" : saveAs.trim();
+        maxAttempts = Math.max(1, maxAttempts);
+    }
+
+    public boolean retryEnabled() {
+        return maxAttempts > 1;
     }
 }

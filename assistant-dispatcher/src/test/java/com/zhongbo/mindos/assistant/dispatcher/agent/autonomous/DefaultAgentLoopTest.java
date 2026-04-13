@@ -4,6 +4,9 @@ import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.common.dto.CritiqueReportDto;
 import com.zhongbo.mindos.assistant.common.dto.ExecutionTraceDto;
 import com.zhongbo.mindos.assistant.dispatcher.agent.multiagent.MasterOrchestrationResult;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.ExecutionMemoryFacade;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.OrchestrationExecutionResult;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.memory.MemoryWriteBatch;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
@@ -84,5 +87,44 @@ class DefaultAgentLoopTest {
         assertNotNull(masterOrchestrator.lastDecision);
         assertEquals("llm.orchestrate", masterOrchestrator.lastDecision.target());
         assertSame(goal, first.goal());
+    }
+
+    @Test
+    void shouldRunExplicitGoalThroughAutonomousLoopEngine() {
+        AutonomousLoopEngine loopEngine = new AutonomousLoopEngine(
+                null,
+                null,
+                null,
+                new GoalMemory(),
+                new NoopExecutionMemoryFacade(),
+                1
+        ) {
+            @Override
+            public AutonomousGoalRunResult run(Goal goal, String userId, Map<String, Object> profileContext) {
+                Instant now = Instant.now();
+                return new AutonomousGoalRunResult(goal.markCompleted(), List.of(), "completed", now, now);
+            }
+        };
+
+        DefaultAgentLoop loop = new DefaultAgentLoop(null, null, null, null, null, loopEngine);
+        AutonomousGoalRunResult result = loop.runGoal("u-explicit", "写代码", Map.of("channel", "test"));
+
+        assertTrue(result.success());
+        assertEquals(GoalStatus.COMPLETED, result.goal().status());
+        assertEquals("completed", result.stopReason());
+    }
+
+    private static final class NoopExecutionMemoryFacade implements ExecutionMemoryFacade {
+        @Override
+        public void record(OrchestrationExecutionResult result) {
+        }
+
+        @Override
+        public void record(String userId, String userInput, SkillResult result, ExecutionTraceDto trace) {
+        }
+
+        @Override
+        public void commit(String userId, MemoryWriteBatch batch) {
+        }
     }
 }

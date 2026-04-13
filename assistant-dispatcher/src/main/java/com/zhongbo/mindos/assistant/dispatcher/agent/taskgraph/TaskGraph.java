@@ -37,7 +37,8 @@ public record TaskGraph(List<TaskNode> nodes, List<TaskEdge> edges) {
                     index == 1 ? (sharedParams == null ? Map.of() : sharedParams) : Map.of(),
                     previousId == null ? List.of() : List.of(previousId),
                     "step" + index,
-                    false
+                    false,
+                    1
             ));
             if (previousId != null) {
                 edges.add(new TaskEdge(previousId, nodeId));
@@ -77,7 +78,8 @@ public record TaskGraph(List<TaskNode> nodes, List<TaskEdge> edges) {
                     params,
                     dependsOn,
                     stringValue(rawTask.get("saveAs")),
-                    Boolean.parseBoolean(String.valueOf(rawTask.getOrDefault("optional", false)))
+                    Boolean.parseBoolean(String.valueOf(rawTask.getOrDefault("optional", false))),
+                    intValue(rawTask.get("maxAttempts"), intValue(params.get("maxAttempts"), 1))
             );
             nodes.add(node);
             for (String dependency : dependsOn) {
@@ -138,7 +140,8 @@ public record TaskGraph(List<TaskNode> nodes, List<TaskEdge> edges) {
                     nodeParams,
                     dependsOn,
                     stringValue(normalized.get("saveAs")),
-                    Boolean.parseBoolean(String.valueOf(normalized.getOrDefault("optional", false)))
+                    Boolean.parseBoolean(String.valueOf(normalized.getOrDefault("optional", false))),
+                    intValue(normalized.get("maxAttempts"), intValue(nodeParams.get("maxAttempts"), 1))
             );
             nodes.add(node);
             for (String dependency : dependsOn) {
@@ -230,5 +233,19 @@ public record TaskGraph(List<TaskNode> nodes, List<TaskEdge> edges) {
 
     private static String stringValue(Object value) {
         return value == null ? "" : String.valueOf(value).trim();
+    }
+
+    private static int intValue(Object value, int defaultValue) {
+        if (value == null) {
+            return defaultValue;
+        }
+        if (value instanceof Number number) {
+            return Math.max(1, number.intValue());
+        }
+        try {
+            return Math.max(1, Integer.parseInt(String.valueOf(value).trim()));
+        } catch (NumberFormatException ex) {
+            return defaultValue;
+        }
     }
 }
