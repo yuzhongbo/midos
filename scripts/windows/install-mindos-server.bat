@@ -44,13 +44,16 @@ if not exist "%INSTALL_DIR%\logs" mkdir "%INSTALL_DIR%\logs"
 if not exist "%SECRETS_FILE%" (
   (
     echo # 编辑右侧值，# 或 ; 开头为注释
-    echo # 可选：MINDOS_DISPATCHER_INTENT_ROUTING_ENABLED=true/false（可在 properties 覆盖 profile 默认值）
-    echo # MINDOS_DISPATCHER_INTENT_ROUTING_ENABLED=false
+    echo # 推荐：只改 MINDOS_MODEL_PRESET，不要手改 provider map
+    echo # 可选值：OPENROUTER_INTENT / QWEN_STABLE / DOUBAO_STABLE / LOCAL_QWEN
+    echo MINDOS_MODEL_PRESET=OPENROUTER_INTENT
     echo MINDOS_OPENROUTER_KEY=REPLACE_WITH_OPENROUTER_KEY
     echo MINDOS_QWEN_KEY=REPLACE_WITH_QWEN_KEY
     echo MINDOS_QWEN_MODEL=qwen3.6-plus
-    echo MINDOS_DOUBAO_ARK_KEY=REPLACE_WITH_DOUBAO_ARK_KEY
-    echo MINDOS_DOUBAO_ENDPOINT_ID=REPLACE_WITH_DOUBAO_ENDPOINT_ID
+    echo MINDOS_DOUBAO_ARK_KEY=
+    echo MINDOS_DOUBAO_ENDPOINT_ID=
+    echo MINDOS_LOCAL_LLM_ENDPOINT=http://localhost:11434/api/chat
+    echo MINDOS_LOCAL_LLM_MODEL=gemma3:1b-it-q4_K_M
     echo.
     echo # 钉钉 stream 模式（长连接收消息 + 会话回推）
     echo MINDOS_IM_DINGTALK_STREAM_CLIENT_ID=
@@ -136,6 +139,6 @@ echo [MindOS] 服务端安装完成！
 echo   启动: %INSTALL_DIR%\mindos-server.bat
 echo   验活: %INSTALL_DIR%\mindos-server-smoke.bat
 echo   建议启动前编辑: %SECRETS_FILE% ^(钉钉 stream 模式填写 CLIENT_ID / CLIENT_SECRET / OUTBOUND_ROBOT_CODE^)
-echo   可选：在 %SECRETS_FILE% 设置 MINDOS_DISPATCHER_INTENT_ROUTING_ENABLED=true/false 覆盖 profile 默认值
+echo   推荐：只改 %SECRETS_FILE% 里的 MINDOS_MODEL_PRESET ^(如 OPENROUTER_INTENT / LOCAL_QWEN / QWEN_STABLE^)
 echo   可选：通过 MINDOS_IM_DINGTALK_MESSAGE_CARD_ENABLED / MINDOS_IM_DINGTALK_MESSAGE_UPDATE_ENABLED 控制单卡流式更新
 endlocal

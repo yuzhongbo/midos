@@ -21,50 +21,46 @@ if not defined MINDOS_MEMORY_FILE_REPO_ENABLED set "MINDOS_MEMORY_FILE_REPO_ENAB
 if not defined MINDOS_MEMORY_FILE_REPO_BASE_DIR set "MINDOS_MEMORY_FILE_REPO_BASE_DIR=data/memory-sync"
 if not defined MINDOS_PAUSE_ON_EXIT set "MINDOS_PAUSE_ON_EXIT=true"
 
-REM LLM 配置说明（中文详解）
-REM 本节说明如何在存在多个 provider / 多个 apiKey 的情况下进行路由与配置。
-REM 核心变量（key/value 都是逗号分隔的 provider 映射）：
-REM - MINDOS_LLM_PROVIDER_ENDPOINTS
-REM     格式: provider:baseUrl,provider2:baseUrl2
-REM     例如: local:http://localhost:11434/api/chat,qwen:https://dashscope.aliyuncs.com/...
-REM - MINDOS_LLM_PROVIDER_KEYS
-REM     格式: provider:key,provider2:key2
-REM     例如: qwen:sk-qwen-xxx,openrouter:sk-or-xxx,openai:sk-oa-xxx
-REM - MINDOS_LLM_PROVIDER_MODELS
-REM     格式: provider:modelId,provider2:modelId2
-REM     例如: qwen:qwen3.6-plus,openai:gpt-4.1
-REM
-REM 多 key 情况下的常见配置策略（示例）:
-REM 1) local 优先 + 云 provider 作为降级/扩展
-REM    set "MINDOS_LLM_PROFILE=CUSTOM_LOCAL_FIRST"
-REM    REM set "MINDOS_LLM_PROVIDER_ENDPOINTS=local:http://localhost:11434/api/chat,qwen:https://dashscope..."
-REM    REM set "MINDOS_LLM_PROVIDER_KEYS=qwen:sk-qwen-xxx"
-REM    说明: 本地模型负责语义分析与大部分低成本请求；当本地不满足或需要云能力时，按 routing 设置调用 qwen
-REM
-REM 2) 多 cloud provider 并存（按场景路由）
-REM    REM set "MINDOS_LLM_PROVIDER_ENDPOINTS=qwen:https://...,openrouter:https://...,openai:https://..."
-REM    REM set "MINDOS_LLM_PROVIDER_KEYS=qwen:sk-qwen,openrouter:sk-or,openai:sk-oa"
-REM    REM set "MINDOS_LLM_ROUTING_STAGE_MAP=llm-dsl:openrouter,llm-fallback:qwen"
-REM    REM set "MINDOS_LLM_ROUTING_PRESET_MAP=cost:qwen,quality:openai"
-REM    说明: stage map 指定不同任务阶段使用哪个 provider；preset map 可按 cost/quality 选不同 provider
-REM
-REM 3) OpenRouter intent（推荐默认）
-REM    set "MINDOS_LLM_PROFILE=OPENROUTER_INTENT"
-REM    set "MINDOS_LLM_PROVIDER=gpt"
-REM    set "MINDOS_OPENROUTER_KEY=sk-or-xxx"
-REM    说明: gpt/grok/gemini 通过 OpenRouter 统一出站，qwen 可作为独立回退模型
-REM
-REM 注意事项与校验：
-REM - 键名和值中不要包含空格，map 以逗号分隔，每个条目内部以第一个冒号分隔 provider 与 value。
-REM - 脚本中有格式校验函数 mindos_validate_kv_map_format，会在启动/发布时检查 map 的语法并报错。
-REM - 为避免在 dist 模板中产生噪音，请把真实的 API keys 写入 release 专用文件（mindos-secrets.release.properties）或由 CI 在发布时注入。
-REM - local endpoint（local:http://localhost:11434/api/chat）建议作为语义分析/省 token 的可选端点，与云 provider 并存，优先级由 profile/routing 决定。
+REM LLM model preset (preferred)
+REM Edit MINDOS_MODEL_PRESET in mindos-secrets.properties instead of hand-editing provider maps.
+REM Supported shortcuts:
+REM   OPENROUTER_INTENT / OPENROUTER   -> gpt+grok+gemini on OpenRouter, optional qwen fallback
+REM   QWEN_STABLE / QWEN              -> single-provider qwen
+REM   DOUBAO_STABLE / DOUBAO          -> single-provider doubao
+REM   LOCAL_QWEN / CUSTOM_LOCAL_FIRST -> local OpenAI-compatible endpoint first, qwen fallback
+REM Advanced manual maps still work: set MINDOS_MODEL_PRESET=CUSTOM and define the map vars yourself.
+if not defined MINDOS_MODEL_PRESET if defined MINDOS_LLM_PROFILE set "MINDOS_MODEL_PRESET=%MINDOS_LLM_PROFILE%"
+if not defined MINDOS_MODEL_PRESET set "MINDOS_MODEL_PRESET=OPENROUTER_INTENT"
 
-REM 默认路由示例（模板保留最小默认，实际请在 release 中设置 keys）
-if not defined MINDOS_LLM_PROFILE set "MINDOS_LLM_PROFILE=OPENROUTER_INTENT"
-if not defined MINDOS_LLM_MODE set "MINDOS_LLM_MODE=OPENROUTER"
-if not defined MINDOS_LLM_PROVIDER set "MINDOS_LLM_PROVIDER=gpt"
+set "MINDOS_MODEL_PRESET_CANONICAL=%MINDOS_MODEL_PRESET%"
+if /I "%MINDOS_MODEL_PRESET_CANONICAL%"=="OPENROUTER" set "MINDOS_MODEL_PRESET_CANONICAL=OPENROUTER_INTENT"
+if /I "%MINDOS_MODEL_PRESET_CANONICAL%"=="QWEN" set "MINDOS_MODEL_PRESET_CANONICAL=QWEN_STABLE"
+if /I "%MINDOS_MODEL_PRESET_CANONICAL%"=="DOUBAO" set "MINDOS_MODEL_PRESET_CANONICAL=DOUBAO_STABLE"
+if /I "%MINDOS_MODEL_PRESET_CANONICAL%"=="LOCAL_QWEN" set "MINDOS_MODEL_PRESET_CANONICAL=CUSTOM_LOCAL_FIRST"
+if /I "%MINDOS_MODEL_PRESET_CANONICAL%"=="LOCALFIRST" set "MINDOS_MODEL_PRESET_CANONICAL=CUSTOM_LOCAL_FIRST"
+if /I "%MINDOS_MODEL_PRESET_CANONICAL%"=="LOCAL_FIRST" set "MINDOS_MODEL_PRESET_CANONICAL=CUSTOM_LOCAL_FIRST"
+if /I "%MINDOS_MODEL_PRESET_CANONICAL%"=="CN" set "MINDOS_MODEL_PRESET_CANONICAL=CN_DUAL"
+if /I "%MINDOS_MODEL_PRESET_CANONICAL%"=="OPENAI" set "MINDOS_MODEL_PRESET_CANONICAL=OPENAI_NATIVE"
+if /I "%MINDOS_MODEL_PRESET_CANONICAL%"=="GEMINI" set "MINDOS_MODEL_PRESET_CANONICAL=GEMINI_NATIVE"
+if /I "%MINDOS_MODEL_PRESET_CANONICAL%"=="GROK" set "MINDOS_MODEL_PRESET_CANONICAL=GROK_NATIVE"
+if /I not "%MINDOS_MODEL_PRESET_CANONICAL%"=="CUSTOM" set "MINDOS_LLM_PROFILE=%MINDOS_MODEL_PRESET_CANONICAL%"
+set "MINDOS_MODEL_PRESET=%MINDOS_MODEL_PRESET_CANONICAL%"
+
 if not defined MINDOS_LLM_ENDPOINT_OPENROUTER set "MINDOS_LLM_ENDPOINT_OPENROUTER=https://openrouter.ai/api/v1/chat/completions"
+if not defined MINDOS_LLM_ENDPOINT_QWEN set "MINDOS_LLM_ENDPOINT_QWEN=https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+if not defined MINDOS_LLM_ENDPOINT_DOUBAO set "MINDOS_LLM_ENDPOINT_DOUBAO=https://ark.cn-beijing.volces.com/api/v3/chat/completions"
+if not defined MINDOS_LLM_ENDPOINT_OPENAI set "MINDOS_LLM_ENDPOINT_OPENAI=https://api.openai.com/v1/chat/completions"
+if not defined MINDOS_LLM_ENDPOINT_GEMINI set "MINDOS_LLM_ENDPOINT_GEMINI=https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+if not defined MINDOS_LLM_ENDPOINT_GROK set "MINDOS_LLM_ENDPOINT_GROK=https://api.x.ai/v1/chat/completions"
+if not defined MINDOS_LOCAL_LLM_ENDPOINT set "MINDOS_LOCAL_LLM_ENDPOINT=http://localhost:11434/api/chat"
+if not defined MINDOS_LOCAL_LLM_MODEL set "MINDOS_LOCAL_LLM_MODEL=gemma3:1b-it-q4_K_M"
+if not defined MINDOS_QWEN_MODEL set "MINDOS_QWEN_MODEL=qwen3.6-plus"
+if not defined MINDOS_OPENAI_MODEL set "MINDOS_OPENAI_MODEL=gpt-4.1"
+if not defined MINDOS_GEMINI_MODEL set "MINDOS_GEMINI_MODEL=gemini-2.5-pro"
+if not defined MINDOS_GROK_MODEL set "MINDOS_GROK_MODEL=grok-4"
+if not defined MINDOS_OPENROUTER_GPT_MODEL set "MINDOS_OPENROUTER_GPT_MODEL=openai/gpt-5.2"
+if not defined MINDOS_OPENROUTER_GROK_MODEL set "MINDOS_OPENROUTER_GROK_MODEL=x-ai/grok-4"
+if not defined MINDOS_OPENROUTER_GEMINI_MODEL set "MINDOS_OPENROUTER_GEMINI_MODEL=google/gemini-2.5-pro"
 
 
 REM 不要在模板中保留大量 REPLACE_WITH_* 的活跃赋值，避免在预检中产生噪音。
@@ -115,76 +111,117 @@ REM Auto-enable outbound delivery when the required values are present.
 if not defined MINDOS_IM_DINGTALK_OUTBOUND_ENABLED set "MINDOS_IM_DINGTALK_OUTBOUND_ENABLED=false"
 if /I "%MINDOS_IM_DINGTALK_OUTBOUND_ENABLED%"=="false" if defined MINDOS_IM_DINGTALK_OUTBOUND_ROBOT_CODE if defined MINDOS_IM_DINGTALK_OUTBOUND_APP_KEY if defined MINDOS_IM_DINGTALK_OUTBOUND_APP_SECRET set "MINDOS_IM_DINGTALK_OUTBOUND_ENABLED=true"
 
-REM Provider profile switch (manual and predictable)
+REM Provider preset switch
 if /I "%MINDOS_LLM_PROFILE%"=="DOUBAO_STABLE" (
   set "MINDOS_LLM_MODE=DOUBAO_NATIVE"
   set "MINDOS_LLM_PROVIDER=doubao"
   if not defined MINDOS_INTENT_ROUTING_EXPLICIT set "MINDOS_DISPATCHER_INTENT_ROUTING_ENABLED=false"
+  set "MINDOS_LLM_ROUTING_MODE=fixed"
   set "MINDOS_LLM_ROUTING_STAGE_MAP=llm-dsl:doubao,llm-fallback:doubao"
   set "MINDOS_LLM_ROUTING_PRESET_MAP=cost:doubao,balanced:doubao,quality:doubao"
   set "MINDOS_LLM_PROVIDER_ENDPOINTS=doubao:%MINDOS_LLM_ENDPOINT_DOUBAO%"
-  set "MINDOS_LLM_PROVIDER_KEYS=doubao:%MINDOS_DOUBAO_ARK_KEY%"
-  set "MINDOS_LLM_PROVIDER_MODELS=doubao:%MINDOS_DOUBAO_ENDPOINT_ID%"
+  set "MINDOS_LLM_PROVIDER_KEYS="
+  if not "%MINDOS_DOUBAO_ARK_KEY%"=="" set "MINDOS_LLM_PROVIDER_KEYS=doubao:%MINDOS_DOUBAO_ARK_KEY%"
+  set "MINDOS_LLM_PROVIDER_MODELS="
+  if not "%MINDOS_DOUBAO_ENDPOINT_ID%"=="" set "MINDOS_LLM_PROVIDER_MODELS=doubao:%MINDOS_DOUBAO_ENDPOINT_ID%"
 )
 if /I "%MINDOS_LLM_PROFILE%"=="QWEN_STABLE" (
   set "MINDOS_LLM_MODE=QWEN_NATIVE"
   set "MINDOS_LLM_PROVIDER=qwen"
   if not defined MINDOS_INTENT_ROUTING_EXPLICIT set "MINDOS_DISPATCHER_INTENT_ROUTING_ENABLED=false"
+  set "MINDOS_LLM_ROUTING_MODE=fixed"
   set "MINDOS_LLM_ROUTING_STAGE_MAP=llm-dsl:qwen,llm-fallback:qwen"
   set "MINDOS_LLM_ROUTING_PRESET_MAP=cost:qwen,balanced:qwen,quality:qwen"
   set "MINDOS_LLM_PROVIDER_ENDPOINTS=qwen:%MINDOS_LLM_ENDPOINT_QWEN%"
-  set "MINDOS_LLM_PROVIDER_KEYS=qwen:%MINDOS_QWEN_KEY%"
+  set "MINDOS_LLM_PROVIDER_KEYS="
+  if not "%MINDOS_QWEN_KEY%"=="" set "MINDOS_LLM_PROVIDER_KEYS=qwen:%MINDOS_QWEN_KEY%"
   set "MINDOS_LLM_PROVIDER_MODELS=qwen:%MINDOS_QWEN_MODEL%"
+)
+if /I "%MINDOS_LLM_PROFILE%"=="CUSTOM_LOCAL_FIRST" (
+  set "MINDOS_LLM_MODE=LOCAL_FIRST"
+  set "MINDOS_LLM_PROVIDER=local"
+  if not defined MINDOS_INTENT_ROUTING_EXPLICIT set "MINDOS_DISPATCHER_INTENT_ROUTING_ENABLED=false"
+  set "MINDOS_LLM_ROUTING_MODE=fixed"
+  set "MINDOS_LLM_ROUTING_STAGE_MAP=llm-dsl:local,llm-fallback:qwen"
+  set "MINDOS_LLM_ROUTING_PRESET_MAP=cost:local,balanced:local,quality:qwen"
+  set "MINDOS_LLM_PROVIDER_ENDPOINTS=local:%MINDOS_LOCAL_LLM_ENDPOINT%,qwen:%MINDOS_LLM_ENDPOINT_QWEN%"
+  set "MINDOS_LLM_PROVIDER_KEYS="
+  if not "%MINDOS_QWEN_KEY%"=="" set "MINDOS_LLM_PROVIDER_KEYS=qwen:%MINDOS_QWEN_KEY%"
+  set "MINDOS_LLM_PROVIDER_MODELS=local:%MINDOS_LOCAL_LLM_MODEL%,qwen:%MINDOS_QWEN_MODEL%"
+  if not defined MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_FORCE_LOCAL set "MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_FORCE_LOCAL=true"
+  if not defined MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_LLM_PROVIDER set "MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_LLM_PROVIDER=local"
+  if not defined MINDOS_DISPATCHER_LLM_DSL_PROVIDER set "MINDOS_DISPATCHER_LLM_DSL_PROVIDER=local"
+  if not defined MINDOS_DISPATCHER_LLM_FALLBACK_PROVIDER set "MINDOS_DISPATCHER_LLM_FALLBACK_PROVIDER=qwen"
+  if not defined MINDOS_DISPATCHER_SKILL_FINALIZE_WITH_LLM_PROVIDER set "MINDOS_DISPATCHER_SKILL_FINALIZE_WITH_LLM_PROVIDER=qwen"
 )
 if /I "%MINDOS_LLM_PROFILE%"=="CN_DUAL" (
   set "MINDOS_LLM_MODE=CN_DUAL_NATIVE"
   set "MINDOS_LLM_PROVIDER=qwen"
   if not defined MINDOS_INTENT_ROUTING_EXPLICIT set "MINDOS_DISPATCHER_INTENT_ROUTING_ENABLED=false"
+  set "MINDOS_LLM_ROUTING_MODE=fixed"
   set "MINDOS_LLM_ROUTING_STAGE_MAP=llm-dsl:qwen,llm-fallback:doubao"
   set "MINDOS_LLM_ROUTING_PRESET_MAP=cost:qwen,balanced:qwen,quality:doubao"
   set "MINDOS_LLM_PROVIDER_ENDPOINTS=qwen:%MINDOS_LLM_ENDPOINT_QWEN%,doubao:%MINDOS_LLM_ENDPOINT_DOUBAO%"
-  set "MINDOS_LLM_PROVIDER_KEYS=qwen:%MINDOS_QWEN_KEY%,doubao:%MINDOS_DOUBAO_ARK_KEY%"
-  set "MINDOS_LLM_PROVIDER_MODELS=qwen:%MINDOS_QWEN_MODEL%,doubao:%MINDOS_DOUBAO_ENDPOINT_ID%"
+  set "MINDOS_LLM_PROVIDER_KEYS="
+  if not "%MINDOS_QWEN_KEY%"=="" set "MINDOS_LLM_PROVIDER_KEYS=qwen:%MINDOS_QWEN_KEY%"
+  if not "%MINDOS_DOUBAO_ARK_KEY%"=="" (
+    if "%MINDOS_LLM_PROVIDER_KEYS%"=="" (
+      set "MINDOS_LLM_PROVIDER_KEYS=doubao:%MINDOS_DOUBAO_ARK_KEY%"
+    ) else (
+      set "MINDOS_LLM_PROVIDER_KEYS=%MINDOS_LLM_PROVIDER_KEYS%,doubao:%MINDOS_DOUBAO_ARK_KEY%"
+    )
+  )
+  set "MINDOS_LLM_PROVIDER_MODELS=qwen:%MINDOS_QWEN_MODEL%"
+  if not "%MINDOS_DOUBAO_ENDPOINT_ID%"=="" set "MINDOS_LLM_PROVIDER_MODELS=%MINDOS_LLM_PROVIDER_MODELS%,doubao:%MINDOS_DOUBAO_ENDPOINT_ID%"
 )
 if /I "%MINDOS_LLM_PROFILE%"=="OPENROUTER_INTENT" (
   set "MINDOS_LLM_MODE=OPENROUTER"
   set "MINDOS_LLM_PROVIDER=gpt"
   if not defined MINDOS_INTENT_ROUTING_EXPLICIT set "MINDOS_DISPATCHER_INTENT_ROUTING_ENABLED=true"
-  set "MINDOS_LLM_PROVIDER_ENDPOINTS=gpt:%MINDOS_LLM_ENDPOINT_OPENROUTER%,grok:%MINDOS_LLM_ENDPOINT_OPENROUTER%,gemini:%MINDOS_LLM_ENDPOINT_OPENROUTER%"
+  set "MINDOS_LLM_ROUTING_MODE=fixed"
+  set "MINDOS_LLM_ROUTING_STAGE_MAP=llm-dsl:gpt,llm-fallback:qwen"
+  set "MINDOS_LLM_ROUTING_PRESET_MAP=cost:gpt,balanced:gpt,quality:gemini"
+  set "MINDOS_LLM_PROVIDER_ENDPOINTS=gpt:%MINDOS_LLM_ENDPOINT_OPENROUTER%,grok:%MINDOS_LLM_ENDPOINT_OPENROUTER%,gemini:%MINDOS_LLM_ENDPOINT_OPENROUTER%,qwen:%MINDOS_LLM_ENDPOINT_QWEN%"
   set "MINDOS_LLM_PROVIDER_KEYS=gpt:%MINDOS_OPENROUTER_KEY%,grok:%MINDOS_OPENROUTER_KEY%,gemini:%MINDOS_OPENROUTER_KEY%"
-  set "MINDOS_LLM_PROVIDER_MODELS=gpt:openai/gpt-5.2,grok:x-ai/grok-4,gemini:google/gemini-2.5-pro"
+  if not "%MINDOS_QWEN_KEY%"=="" set "MINDOS_LLM_PROVIDER_KEYS=%MINDOS_LLM_PROVIDER_KEYS%,qwen:%MINDOS_QWEN_KEY%"
+  set "MINDOS_LLM_PROVIDER_MODELS=gpt:%MINDOS_OPENROUTER_GPT_MODEL%,grok:%MINDOS_OPENROUTER_GROK_MODEL%,gemini:%MINDOS_OPENROUTER_GEMINI_MODEL%,qwen:%MINDOS_QWEN_MODEL%"
 )
 if /I "%MINDOS_LLM_PROFILE%"=="OPENAI_NATIVE" (
   set "MINDOS_LLM_MODE=OPENAI_NATIVE"
   set "MINDOS_LLM_PROVIDER=openai"
   if not defined MINDOS_INTENT_ROUTING_EXPLICIT set "MINDOS_DISPATCHER_INTENT_ROUTING_ENABLED=false"
+  set "MINDOS_LLM_ROUTING_MODE=fixed"
   set "MINDOS_LLM_ROUTING_STAGE_MAP=llm-dsl:openai,llm-fallback:openai"
   set "MINDOS_LLM_ROUTING_PRESET_MAP=cost:openai,balanced:openai,quality:openai"
   set "MINDOS_LLM_PROVIDER_ENDPOINTS=openai:%MINDOS_LLM_ENDPOINT_OPENAI%"
-  set "MINDOS_LLM_PROVIDER_KEYS=openai:%MINDOS_OPENAI_KEY%"
+  set "MINDOS_LLM_PROVIDER_KEYS="
+  if not "%MINDOS_OPENAI_KEY%"=="" set "MINDOS_LLM_PROVIDER_KEYS=openai:%MINDOS_OPENAI_KEY%"
   set "MINDOS_LLM_PROVIDER_MODELS=openai:%MINDOS_OPENAI_MODEL%"
 )
 if /I "%MINDOS_LLM_PROFILE%"=="GEMINI_NATIVE" (
   set "MINDOS_LLM_MODE=GEMINI_NATIVE"
   set "MINDOS_LLM_PROVIDER=gemini"
   if not defined MINDOS_INTENT_ROUTING_EXPLICIT set "MINDOS_DISPATCHER_INTENT_ROUTING_ENABLED=false"
+  set "MINDOS_LLM_ROUTING_MODE=fixed"
   set "MINDOS_LLM_ROUTING_STAGE_MAP=llm-dsl:gemini,llm-fallback:gemini"
   set "MINDOS_LLM_ROUTING_PRESET_MAP=cost:gemini,balanced:gemini,quality:gemini"
   set "MINDOS_LLM_PROVIDER_ENDPOINTS=gemini:%MINDOS_LLM_ENDPOINT_GEMINI%"
-  set "MINDOS_LLM_PROVIDER_KEYS=gemini:%MINDOS_GEMINI_KEY%"
+  set "MINDOS_LLM_PROVIDER_KEYS="
+  if not "%MINDOS_GEMINI_KEY%"=="" set "MINDOS_LLM_PROVIDER_KEYS=gemini:%MINDOS_GEMINI_KEY%"
   set "MINDOS_LLM_PROVIDER_MODELS=gemini:%MINDOS_GEMINI_MODEL%"
 )
 if /I "%MINDOS_LLM_PROFILE%"=="GROK_NATIVE" (
   set "MINDOS_LLM_MODE=GROK_NATIVE"
   set "MINDOS_LLM_PROVIDER=grok"
   if not defined MINDOS_INTENT_ROUTING_EXPLICIT set "MINDOS_DISPATCHER_INTENT_ROUTING_ENABLED=false"
+  set "MINDOS_LLM_ROUTING_MODE=fixed"
   set "MINDOS_LLM_ROUTING_STAGE_MAP=llm-dsl:grok,llm-fallback:grok"
   set "MINDOS_LLM_ROUTING_PRESET_MAP=cost:grok,balanced:grok,quality:grok"
   set "MINDOS_LLM_PROVIDER_ENDPOINTS=grok:%MINDOS_LLM_ENDPOINT_GROK%"
-  set "MINDOS_LLM_PROVIDER_KEYS=grok:%MINDOS_GROK_KEY%"
+  set "MINDOS_LLM_PROVIDER_KEYS="
+  if not "%MINDOS_GROK_KEY%"=="" set "MINDOS_LLM_PROVIDER_KEYS=grok:%MINDOS_GROK_KEY%"
   set "MINDOS_LLM_PROVIDER_MODELS=grok:%MINDOS_GROK_MODEL%"
 )
 
 set "MINDOS_ENV_STAGE=done"
 set "MINDOS_ENV_LOADED=1"
-

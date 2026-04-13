@@ -81,12 +81,12 @@ mindos-cli -> assistant-sdk -> assistant-common
 cp mindos-secrets.local.properties.example mindos-secrets.local.properties
 
 # 3) Validate effective local config
-chmod +x ./scripts/unix/local/run-local.sh ./scripts/unix/local/run-release.sh ./scripts/check-secrets.sh
+chmod +x ./scripts/unix/local/run.sh ./scripts/check-secrets.sh
 ./scripts/check-secrets.sh --mode=local
-./scripts/unix/local/run-local.sh --dry-run
+./scripts/unix/local/run.sh --dry-run
 
 # 4) Start the API
-./scripts/unix/local/run-local.sh
+./scripts/unix/local/run.sh
 ```
 
 Alternative direct startup:
@@ -109,6 +109,7 @@ The `solo` profile is recommended for single-user daily use:
 Helpful scripts:
 
 ```bash
+./scripts/unix/local/run.sh
 ./scripts/unix/local/run-mindos-solo.sh
 ./scripts/unix/local/solo-cli.sh
 ./scripts/unix/local/solo-smoke.sh
@@ -252,12 +253,26 @@ Recommended order of configuration sources:
 5. `mindos-secrets.release.properties` – release overrides
 6. environment variables – final override layer
 
-`./scripts/unix/local/run-local.sh` loads:
+`./scripts/unix/local/run.sh --mode=local` loads:
 
 1. `dist/mindos-windows-server/mindos-secrets.properties`
 2. `mindos-secrets.local.properties` (if present)
 
-`./scripts/unix/local/run-release.sh` loads the dist file plus `mindos-secrets.release.properties` and fails fast on placeholders.
+`./scripts/unix/local/run.sh --mode=release` loads the dist file plus `mindos-secrets.release.properties` and fails fast on placeholders. `run-local.sh` and `run-release.sh` remain as thin compatibility wrappers.
+
+### Model preset shortcuts
+
+Prefer switching models with `MINDOS_MODEL_PRESET` instead of manually editing provider maps.
+
+| `MINDOS_MODEL_PRESET` | Meaning | Fill these keys |
+| --- | --- | --- |
+| `OPENROUTER_INTENT` | OpenRouter intent stack (`gpt` / `grok` / `gemini`) with optional qwen fallback | `MINDOS_OPENROUTER_KEY`, optional `MINDOS_QWEN_KEY` |
+| `QWEN_STABLE` | qwen only | `MINDOS_QWEN_KEY` |
+| `DOUBAO_STABLE` | doubao only | `MINDOS_DOUBAO_ARK_KEY`, `MINDOS_DOUBAO_ENDPOINT_ID` |
+| `LOCAL_QWEN` | local OpenAI-compatible endpoint first, qwen fallback | `MINDOS_LOCAL_LLM_ENDPOINT`, `MINDOS_LOCAL_LLM_MODEL`, optional `MINDOS_QWEN_KEY` |
+| `CUSTOM` | advanced/manual mode | fill the map variables yourself |
+
+Use `MINDOS_LLM_PROFILE` only for backward compatibility; the scripts normalize `MINDOS_MODEL_PRESET` to the existing runtime profiles automatically.
 
 ### Spring property vs environment variable naming
 
@@ -280,6 +295,162 @@ Spring Boot relaxed binding is supported, for example:
 | Skills and MCP | `mindos.skills.*`, `mindos.skill.*` | `MINDOS_SKILLS_*`, `MINDOS_SKILL_*` | MCP servers, search sources, skill config |
 | IM gateways | `mindos.im.*` | `MINDOS_IM_*` | DingTalk / Feishu / WeChat integration |
 | Security | `mindos.security.*` | `MINDOS_SECURITY_*` | admin token and risky-op protection |
+
+### IM webhook endpoints
+
+| Platform | Callback path | Method | Required toggles | Notes |
+| --- | --- | --- | --- | --- |
+| DingTalk | `/api/im/dingtalk/events` | `POST` | `mindos.im.enabled=true`, `mindos.im.dingtalk.enabled=true` | Uses `timestamp` + `sign` query params when signature verification is enabled; returns sync text by default and can hand off to async/stream flows |
+| Feishu | `/api/im/feishu/events` | `POST` | `mindos.im.enabled=true`, `mindos.im.feishu.enabled=true` | Handles Feishu challenge handshake and `im.message.receive_v1`; current implementation supports text messages only |
+| WeChat | `/api/im/wechat/events` | `GET` verify, `POST` events | `mindos.im.enabled=true`, `mindos.im.wechat.enabled=true` | `GET` returns `echostr` for initial verification; `POST` consumes XML and currently supports text messages only |
+
+DingTalk runtime observability endpoints:
+
+- `GET /api/im/dingtalk/token-monitor`
+- `GET /api/im/dingtalk/outbound-debug`
+- `GET /api/im/dingtalk/stream-stats`
+
+These admin endpoints require the configured admin token header (see `mindos.security.risky-ops.admin-token` and `X-MindOS-Admin-Token`).
+
+### IM runtime configuration
+
+Baseline IM keys:
+
+| Spring property | Default | Meaning |
+| --- | --- | --- |
+| `mindos.im.enabled` | `false` | master IM switch |
+| `mindos.im.feishu.enabled` | `false` | enable Feishu webhook handling |
+| `mindos.im.dingtalk.enabled` | `false` | enable DingTalk webhook handling |
+| `mindos.im.wechat.enabled` | `false` | enable WeChat webhook handling |
+| `mindos.im.feishu.verify-signature` | `true` | verify Feishu request signature |
+| `mindos.im.feishu.secret` | empty | Feishu signing secret |
+| `mindos.im.dingtalk.verify-signature` | `true` | verify DingTalk `timestamp/sign` |
+| `mindos.im.dingtalk.secret` | empty | DingTalk signing secret |
+| `mindos.im.dingtalk.reply-timeout-ms` | `2500` | synchronous webhook wait budget before timeout fallback |
+| `mindos.im.dingtalk.reply-max-chars` | `1200` | cap synchronous DingTalk reply size |
+| `mindos.im.wechat.verify-signature` | `true` | verify WeChat signature |
+| `mindos.im.wechat.token` | empty | WeChat verification token |
+
+If `verify-signature=true` while the corresponding secret/token is blank, requests will fail verification. In production, keep verification enabled and set the platform secret/token explicitly.
+
+### DingTalk advanced runtime switches
+
+DingTalk has the richest runtime surface. The key groups are:
+
+1. **Stream listener and waiting behavior**
+   - `mindos.im.dingtalk.stream.enabled`
+   - `mindos.im.dingtalk.stream.client-id`
+   - `mindos.im.dingtalk.stream.client-secret`
+   - `mindos.im.dingtalk.stream.topic`
+   - `mindos.im.dingtalk.stream.waiting-delay-ms`
+   - `mindos.im.dingtalk.stream.waiting-text`
+   - `mindos.im.dingtalk.stream.waiting.smart-enabled`
+   - `mindos.im.dingtalk.stream.waiting.smart.min-input-chars`
+   - `mindos.im.dingtalk.stream.waiting.smart.keywords`
+   - `mindos.im.dingtalk.stream.force-waiting`
+   - `mindos.im.dingtalk.stream.final-timeout-ms`
+   - `mindos.im.dingtalk.stream.reconnect.*`
+
+2. **Card/update rendering**
+   - `mindos.im.dingtalk.message.card.enabled`
+   - `mindos.im.dingtalk.message.update.enabled`
+   - `mindos.im.dingtalk.card.update.min-interval-ms`
+   - `mindos.im.dingtalk.card.update.min-delta-chars`
+   - `mindos.im.dingtalk.agent-status.enabled`
+   - `mindos.im.dingtalk.token-monitor.enabled`
+
+3. **Outbound push**
+   - `mindos.im.dingtalk.outbound.enabled`
+   - `mindos.im.dingtalk.outbound.robot-code`
+   - `mindos.im.dingtalk.outbound.app-key`
+   - `mindos.im.dingtalk.outbound.app-secret`
+   - `mindos.im.dingtalk.outbound.send-url`
+   - `mindos.im.dingtalk.outbound.update-url`
+
+4. **Async reply and compensation**
+   - `mindos.im.dingtalk.async-reply.enabled`
+   - `mindos.im.dingtalk.async-reply.executor-threads`
+   - `mindos.im.dingtalk.async-reply.expiry-skew-seconds`
+   - `mindos.im.dingtalk.async-reply.connect-timeout-ms`
+   - `mindos.im.dingtalk.async-reply.request-timeout-ms`
+   - `mindos.im.dingtalk.async-reply.allowed-hosts`
+   - `mindos.im.dingtalk.async-reply.allow-insecure-localhost-http`
+   - `mindos.im.dingtalk.async-reply.accepted-template`
+   - `mindos.im.dingtalk.async-reply.result-prefix`
+
+5. **OpenAPI fallback**
+   - `mindos.im.dingtalk.openapi-fallback.enabled`
+   - `mindos.im.dingtalk.openapi-fallback.app-key`
+   - `mindos.im.dingtalk.openapi-fallback.app-secret`
+   - `mindos.im.dingtalk.openapi-fallback.robot-code`
+   - `mindos.im.dingtalk.openapi-fallback.access-token-url`
+   - `mindos.im.dingtalk.openapi-fallback.send-to-conversation-url`
+   - `mindos.im.dingtalk.openapi-fallback.batch-send-url`
+   - `mindos.im.dingtalk.openapi-fallback.preferred-send-mode`
+   - `mindos.im.dingtalk.openapi-fallback.access-token-refresh-skew-seconds`
+   - `mindos.im.dingtalk.openapi-fallback.connect-timeout-ms`
+   - `mindos.im.dingtalk.openapi-fallback.request-timeout-ms`
+   - `mindos.im.dingtalk.openapi-fallback.allowed-hosts`
+   - `mindos.im.dingtalk.openapi-fallback.allow-insecure-localhost-http`
+
+Notes:
+
+- Stream mode is only really ready when `mindos.im.enabled`, `mindos.im.dingtalk.enabled`, `mindos.im.dingtalk.stream.enabled`, and stream credentials are all present.
+- Outbound push can reuse stream credentials when outbound app key/secret are left blank; this is how `DingtalkIntegrationSettings` resolves effective credentials.
+- `allow-insecure-localhost-http` is intended for local development only.
+- `preferred-send-mode=conversation-first` matches the current conversation-oriented DingTalk app shape.
+
+### IM environment variables and templates
+
+- `mindos-server.env.template.sh` and `.bat` already predeclare common **DingTalk** runtime envs such as `MINDOS_IM_DINGTALK_STREAM_CLIENT_ID`, `MINDOS_IM_DINGTALK_STREAM_CLIENT_SECRET`, `MINDOS_IM_DINGTALK_OUTBOUND_ROBOT_CODE`, and the reply / stream / card toggles.
+- The templates also support legacy aliases `MINDOS_IM_DINGTALK_APP_KEY` and `MINDOS_IM_DINGTALK_APP_SECRET`, and auto-fill outbound key/secret from stream credentials when possible.
+- **Feishu** and **WeChat** env vars are not prelisted in the templates, but Spring relaxed binding still works. You can provide `MINDOS_IM_FEISHU_ENABLED`, `MINDOS_IM_FEISHU_SECRET`, `MINDOS_IM_WECHAT_ENABLED`, `MINDOS_IM_WECHAT_TOKEN`, and similar keys in `mindos-secrets.local.properties`, `mindos-secrets.release.properties`, or the process environment.
+
+### Minimal IM examples
+
+Minimal DingTalk webhook:
+
+```properties
+mindos.im.enabled=true
+mindos.im.dingtalk.enabled=true
+mindos.im.dingtalk.verify-signature=true
+mindos.im.dingtalk.secret=REPLACE_WITH_DINGTALK_SECRET
+mindos.im.dingtalk.reply-timeout-ms=2500
+mindos.im.dingtalk.reply-max-chars=1200
+```
+
+DingTalk stream + outbound:
+
+```properties
+mindos.im.enabled=true
+mindos.im.dingtalk.enabled=true
+mindos.im.dingtalk.stream.enabled=true
+mindos.im.dingtalk.stream.client-id=REPLACE_WITH_STREAM_CLIENT_ID
+mindos.im.dingtalk.stream.client-secret=REPLACE_WITH_STREAM_CLIENT_SECRET
+mindos.im.dingtalk.outbound.enabled=true
+mindos.im.dingtalk.outbound.robot-code=REPLACE_WITH_ROBOT_CODE
+# Optional when they differ from stream credentials:
+# mindos.im.dingtalk.outbound.app-key=
+# mindos.im.dingtalk.outbound.app-secret=
+```
+
+Minimal Feishu:
+
+```properties
+mindos.im.enabled=true
+mindos.im.feishu.enabled=true
+mindos.im.feishu.verify-signature=true
+mindos.im.feishu.secret=REPLACE_WITH_FEISHU_SECRET
+```
+
+Minimal WeChat:
+
+```properties
+mindos.im.enabled=true
+mindos.im.wechat.enabled=true
+mindos.im.wechat.verify-signature=true
+mindos.im.wechat.token=REPLACE_WITH_WECHAT_TOKEN
+```
 
 ### LLM and local-first routing
 
@@ -367,18 +538,15 @@ Important keys:
 `mindos-secrets.local.properties`:
 
 ```properties
-MINDOS_LLM_PROFILE=CUSTOM_LOCAL_FIRST
-MINDOS_LLM_MODE=LOCAL_FIRST
-MINDOS_LLM_PROVIDER=qwen
-MINDOS_LLM_PROVIDER_ENDPOINTS=local:http://localhost:11434/api/chat,qwen:https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions
-MINDOS_LLM_PROVIDER_MODELS=local:gemma3:1b-it-q4_K_M,qwen:qwen3.6-plus
+MINDOS_MODEL_PRESET=LOCAL_QWEN
+MINDOS_LOCAL_LLM_ENDPOINT=http://localhost:11434/api/chat
+MINDOS_LOCAL_LLM_MODEL=gemma3:1b-it-q4_K_M
 MINDOS_QWEN_KEY=REPLACE_WITH_QWEN_KEY
-MINDOS_LLM_PROVIDER_KEYS=qwen:REPLACE_WITH_QWEN_KEY
+MINDOS_QWEN_MODEL=qwen3.6-plus
 
-MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_LLM_ENABLED=true
-MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_FORCE_LOCAL=true
-MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_LLM_PROVIDER=local
 MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_CLARIFY_MIN_CONFIDENCE=0.70
+MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_LOCAL_ESCALATION_ENABLED=false
+MINDOS_DISPATCHER_LOCAL_ESCALATION_ENABLED=false
 
 MINDOS_CORUNTIME_APPROVAL_RISK_THRESHOLD=0.68
 MINDOS_CORUNTIME_MIN_TRUST_TO_AUTONOMY=0.45
@@ -402,10 +570,20 @@ Recommended checks:
 ```bash
 ./scripts/check-secrets.sh --mode=local
 ./scripts/check-secrets.sh --mode=release
-./scripts/unix/local/run-local.sh --dry-run
-./scripts/unix/local/run-release.sh --dry-run
+./scripts/unix/local/run.sh --dry-run
+./scripts/unix/local/run.sh --mode=release --dry-run
 ./mvnw -q test
 ```
+
+### Windows bundle export
+
+```bash
+./scripts/unix/export/export-mindos-windows-dist.sh
+# or
+./scripts/unix/export/export-mindos-windows-dist.sh "$HOME/dist/mindos-windows-server"
+```
+
+The exported bundle now defaults to the repository `dist/mindos-windows-server` directory when no path is provided. On the target Windows machine, change `MINDOS_MODEL_PRESET` in `mindos-secrets.properties`, fill the matching key(s), and use `README-windows-server.txt` as the runtime cheat sheet.
 
 Cloud helpers:
 

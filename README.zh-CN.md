@@ -84,12 +84,12 @@ mindos-cli -> assistant-sdk -> assistant-common
 cp mindos-secrets.local.properties.example mindos-secrets.local.properties
 
 # 3）检查本地配置是否有效
-chmod +x ./scripts/unix/local/run-local.sh ./scripts/unix/local/run-release.sh ./scripts/check-secrets.sh
+chmod +x ./scripts/unix/local/run.sh ./scripts/check-secrets.sh
 ./scripts/check-secrets.sh --mode=local
-./scripts/unix/local/run-local.sh --dry-run
+./scripts/unix/local/run.sh --dry-run
 
 # 4）启动服务
-./scripts/unix/local/run-local.sh
+./scripts/unix/local/run.sh
 ```
 
 也可以直接启动：
@@ -112,6 +112,7 @@ chmod +x ./scripts/unix/local/run-local.sh ./scripts/unix/local/run-release.sh .
 常用脚本：
 
 ```bash
+./scripts/unix/local/run.sh
 ./scripts/unix/local/run-mindos-solo.sh
 ./scripts/unix/local/solo-cli.sh
 ./scripts/unix/local/solo-smoke.sh
@@ -255,12 +256,26 @@ AutonomousGoalRunResult result = agentLoop.runGoal(
 5. `mindos-secrets.release.properties`：发布覆盖
 6. 环境变量：最终覆盖层
 
-`./scripts/unix/local/run-local.sh` 的加载顺序是：
+`./scripts/unix/local/run.sh --mode=local` 的加载顺序是：
 
 1. `dist/mindos-windows-server/mindos-secrets.properties`
 2. `mindos-secrets.local.properties`（若存在）
 
-`./scripts/unix/local/run-release.sh` 会加载 dist 文件和 `mindos-secrets.release.properties`，并对占位值做严格失败。
+`./scripts/unix/local/run.sh --mode=release` 会加载 dist 文件和 `mindos-secrets.release.properties`，并对占位值做严格失败。`run-local.sh` / `run-release.sh` 仍然保留为兼容包装脚本。
+
+### 模型预设快捷切换
+
+优先通过 `MINDOS_MODEL_PRESET` 切换模型栈，不要手工改 provider map。
+
+| `MINDOS_MODEL_PRESET` | 含义 | 需要填写 |
+| --- | --- | --- |
+| `OPENROUTER_INTENT` | OpenRouter 意图栈（`gpt` / `grok` / `gemini`）+ 可选 qwen 回退 | `MINDOS_OPENROUTER_KEY`，可选 `MINDOS_QWEN_KEY` |
+| `QWEN_STABLE` | 仅 qwen | `MINDOS_QWEN_KEY` |
+| `DOUBAO_STABLE` | 仅 doubao | `MINDOS_DOUBAO_ARK_KEY`、`MINDOS_DOUBAO_ENDPOINT_ID` |
+| `LOCAL_QWEN` | 本地 OpenAI-compatible 端点优先，qwen 兜底 | `MINDOS_LOCAL_LLM_ENDPOINT`、`MINDOS_LOCAL_LLM_MODEL`，可选 `MINDOS_QWEN_KEY` |
+| `CUSTOM` | 高级手工模式 | 自己填写 map 变量 |
+
+`MINDOS_LLM_PROFILE` 仍兼容旧配置；现在脚本会自动把 `MINDOS_MODEL_PRESET` 归一化到现有 runtime profile。
 
 ### Spring 配置名与环境变量的对应关系
 
@@ -283,6 +298,162 @@ Spring Boot relaxed binding 生效，例如：
 | Skills / MCP | `mindos.skills.*`、`mindos.skill.*` | `MINDOS_SKILLS_*`、`MINDOS_SKILL_*` | MCP server、搜索源、skill 配置 |
 | IM 网关 | `mindos.im.*` | `MINDOS_IM_*` | 钉钉 / 飞书 / 企业微信 |
 | 安全 | `mindos.security.*` | `MINDOS_SECURITY_*` | 管理 token、危险操作保护 |
+
+### IM 回调地址
+
+| 平台 | 回调路径 | 方法 | 必要开关 | 说明 |
+| --- | --- | --- | --- | --- |
+| 钉钉 | `/api/im/dingtalk/events` | `POST` | `mindos.im.enabled=true`、`mindos.im.dingtalk.enabled=true` | 开启签名校验时使用查询参数 `timestamp` 和 `sign`；默认同步返回文本，也可切到 async / stream / outbound |
+| 飞书 | `/api/im/feishu/events` | `POST` | `mindos.im.enabled=true`、`mindos.im.feishu.enabled=true` | 支持 challenge 握手和 `im.message.receive_v1`；当前实现只处理文本消息 |
+| 企业微信 / 微信 | `/api/im/wechat/events` | `GET` 验证、`POST` 收消息 | `mindos.im.enabled=true`、`mindos.im.wechat.enabled=true` | `GET` 返回 `echostr` 做接入验证；`POST` 处理 XML，目前只支持文本消息 |
+
+钉钉运行时观测接口：
+
+- `GET /api/im/dingtalk/token-monitor`
+- `GET /api/im/dingtalk/outbound-debug`
+- `GET /api/im/dingtalk/stream-stats`
+
+这些接口都需要管理员 token（见 `mindos.security.risky-ops.admin-token` 和请求头 `X-MindOS-Admin-Token`）。
+
+### IM 运行时配置
+
+基础 IM 配置：
+
+| Spring 配置项 | 默认值 | 含义 |
+| --- | --- | --- |
+| `mindos.im.enabled` | `false` | IM 总开关 |
+| `mindos.im.feishu.enabled` | `false` | 开启飞书 webhook |
+| `mindos.im.dingtalk.enabled` | `false` | 开启钉钉 webhook |
+| `mindos.im.wechat.enabled` | `false` | 开启企业微信 / 微信 webhook |
+| `mindos.im.feishu.verify-signature` | `true` | 校验飞书签名 |
+| `mindos.im.feishu.secret` | 空 | 飞书签名密钥 |
+| `mindos.im.dingtalk.verify-signature` | `true` | 校验钉钉 `timestamp/sign` |
+| `mindos.im.dingtalk.secret` | 空 | 钉钉签名密钥 |
+| `mindos.im.dingtalk.reply-timeout-ms` | `2500` | 钉钉同步 webhook 等待预算 |
+| `mindos.im.dingtalk.reply-max-chars` | `1200` | 钉钉同步回包最大字符数 |
+| `mindos.im.wechat.verify-signature` | `true` | 校验微信签名 |
+| `mindos.im.wechat.token` | 空 | 微信校验 token |
+
+如果 `verify-signature=true`，但对应 secret / token 为空，请求会直接验签失败。生产环境建议保持验签开启，并显式配置 secret / token。
+
+### 钉钉高级运行时开关
+
+钉钉是当前配置面最丰富的平台，主要分为 5 组：
+
+1. **Stream 监听与等待文案**
+   - `mindos.im.dingtalk.stream.enabled`
+   - `mindos.im.dingtalk.stream.client-id`
+   - `mindos.im.dingtalk.stream.client-secret`
+   - `mindos.im.dingtalk.stream.topic`
+   - `mindos.im.dingtalk.stream.waiting-delay-ms`
+   - `mindos.im.dingtalk.stream.waiting-text`
+   - `mindos.im.dingtalk.stream.waiting.smart-enabled`
+   - `mindos.im.dingtalk.stream.waiting.smart.min-input-chars`
+   - `mindos.im.dingtalk.stream.waiting.smart.keywords`
+   - `mindos.im.dingtalk.stream.force-waiting`
+   - `mindos.im.dingtalk.stream.final-timeout-ms`
+   - `mindos.im.dingtalk.stream.reconnect.*`
+
+2. **卡片 / 增量更新**
+   - `mindos.im.dingtalk.message.card.enabled`
+   - `mindos.im.dingtalk.message.update.enabled`
+   - `mindos.im.dingtalk.card.update.min-interval-ms`
+   - `mindos.im.dingtalk.card.update.min-delta-chars`
+   - `mindos.im.dingtalk.agent-status.enabled`
+   - `mindos.im.dingtalk.token-monitor.enabled`
+
+3. **Outbound 主动推送**
+   - `mindos.im.dingtalk.outbound.enabled`
+   - `mindos.im.dingtalk.outbound.robot-code`
+   - `mindos.im.dingtalk.outbound.app-key`
+   - `mindos.im.dingtalk.outbound.app-secret`
+   - `mindos.im.dingtalk.outbound.send-url`
+   - `mindos.im.dingtalk.outbound.update-url`
+
+4. **异步回包与补偿**
+   - `mindos.im.dingtalk.async-reply.enabled`
+   - `mindos.im.dingtalk.async-reply.executor-threads`
+   - `mindos.im.dingtalk.async-reply.expiry-skew-seconds`
+   - `mindos.im.dingtalk.async-reply.connect-timeout-ms`
+   - `mindos.im.dingtalk.async-reply.request-timeout-ms`
+   - `mindos.im.dingtalk.async-reply.allowed-hosts`
+   - `mindos.im.dingtalk.async-reply.allow-insecure-localhost-http`
+   - `mindos.im.dingtalk.async-reply.accepted-template`
+   - `mindos.im.dingtalk.async-reply.result-prefix`
+
+5. **OpenAPI fallback**
+   - `mindos.im.dingtalk.openapi-fallback.enabled`
+   - `mindos.im.dingtalk.openapi-fallback.app-key`
+   - `mindos.im.dingtalk.openapi-fallback.app-secret`
+   - `mindos.im.dingtalk.openapi-fallback.robot-code`
+   - `mindos.im.dingtalk.openapi-fallback.access-token-url`
+   - `mindos.im.dingtalk.openapi-fallback.send-to-conversation-url`
+   - `mindos.im.dingtalk.openapi-fallback.batch-send-url`
+   - `mindos.im.dingtalk.openapi-fallback.preferred-send-mode`
+   - `mindos.im.dingtalk.openapi-fallback.access-token-refresh-skew-seconds`
+   - `mindos.im.dingtalk.openapi-fallback.connect-timeout-ms`
+   - `mindos.im.dingtalk.openapi-fallback.request-timeout-ms`
+   - `mindos.im.dingtalk.openapi-fallback.allowed-hosts`
+   - `mindos.im.dingtalk.openapi-fallback.allow-insecure-localhost-http`
+
+说明：
+
+- Stream 模式真正就绪，至少要同时满足：`mindos.im.enabled=true`、`mindos.im.dingtalk.enabled=true`、`mindos.im.dingtalk.stream.enabled=true`，并配置好 stream 凭据。
+- 如果 `outbound.app-key` / `outbound.app-secret` 留空，运行时会优先复用 stream 凭据，这也是 `DingtalkIntegrationSettings` 的默认行为。
+- `allow-insecure-localhost-http` 仅适合本地联调，不建议在生产环境开启。
+- `preferred-send-mode=conversation-first` 对应当前以会话为中心的钉钉机器人形态。
+
+### IM 环境变量与模板说明
+
+- `mindos-server.env.template.sh` 和 `.bat` 已经预置了常见 **钉钉** 运行时变量，例如 `MINDOS_IM_DINGTALK_STREAM_CLIENT_ID`、`MINDOS_IM_DINGTALK_STREAM_CLIENT_SECRET`、`MINDOS_IM_DINGTALK_OUTBOUND_ROBOT_CODE` 以及 reply / stream / card 相关开关。
+- 模板也兼容旧别名 `MINDOS_IM_DINGTALK_APP_KEY` 和 `MINDOS_IM_DINGTALK_APP_SECRET`，并会在可能时自动把 stream 凭据复用到 outbound。
+- **飞书** 和 **微信** 的环境变量没有在模板里显式预置，但 Spring relaxed binding 一样可用。你仍然可以在 `mindos-secrets.local.properties`、`mindos-secrets.release.properties` 或进程环境中提供 `MINDOS_IM_FEISHU_ENABLED`、`MINDOS_IM_FEISHU_SECRET`、`MINDOS_IM_WECHAT_ENABLED`、`MINDOS_IM_WECHAT_TOKEN` 等变量。
+
+### IM 最小配置示例
+
+最小钉钉 webhook：
+
+```properties
+mindos.im.enabled=true
+mindos.im.dingtalk.enabled=true
+mindos.im.dingtalk.verify-signature=true
+mindos.im.dingtalk.secret=REPLACE_WITH_DINGTALK_SECRET
+mindos.im.dingtalk.reply-timeout-ms=2500
+mindos.im.dingtalk.reply-max-chars=1200
+```
+
+钉钉 stream + outbound：
+
+```properties
+mindos.im.enabled=true
+mindos.im.dingtalk.enabled=true
+mindos.im.dingtalk.stream.enabled=true
+mindos.im.dingtalk.stream.client-id=REPLACE_WITH_STREAM_CLIENT_ID
+mindos.im.dingtalk.stream.client-secret=REPLACE_WITH_STREAM_CLIENT_SECRET
+mindos.im.dingtalk.outbound.enabled=true
+mindos.im.dingtalk.outbound.robot-code=REPLACE_WITH_ROBOT_CODE
+# 如与 stream 凭据不同，再额外填写：
+# mindos.im.dingtalk.outbound.app-key=
+# mindos.im.dingtalk.outbound.app-secret=
+```
+
+最小飞书：
+
+```properties
+mindos.im.enabled=true
+mindos.im.feishu.enabled=true
+mindos.im.feishu.verify-signature=true
+mindos.im.feishu.secret=REPLACE_WITH_FEISHU_SECRET
+```
+
+最小微信：
+
+```properties
+mindos.im.enabled=true
+mindos.im.wechat.enabled=true
+mindos.im.wechat.verify-signature=true
+mindos.im.wechat.token=REPLACE_WITH_WECHAT_TOKEN
+```
 
 ### LLM 与 local-first 路由
 
@@ -373,18 +544,15 @@ MINDOS_CORUNTIME_MIN_TRUST_TO_AUTONOMY=0.50
 `mindos-secrets.local.properties`：
 
 ```properties
-MINDOS_LLM_PROFILE=CUSTOM_LOCAL_FIRST
-MINDOS_LLM_MODE=LOCAL_FIRST
-MINDOS_LLM_PROVIDER=qwen
-MINDOS_LLM_PROVIDER_ENDPOINTS=local:http://localhost:11434/api/chat,qwen:https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions
-MINDOS_LLM_PROVIDER_MODELS=local:gemma3:1b-it-q4_K_M,qwen:qwen3.6-plus
+MINDOS_MODEL_PRESET=LOCAL_QWEN
+MINDOS_LOCAL_LLM_ENDPOINT=http://localhost:11434/api/chat
+MINDOS_LOCAL_LLM_MODEL=gemma3:1b-it-q4_K_M
 MINDOS_QWEN_KEY=REPLACE_WITH_QWEN_KEY
-MINDOS_LLM_PROVIDER_KEYS=qwen:REPLACE_WITH_QWEN_KEY
+MINDOS_QWEN_MODEL=qwen3.6-plus
 
-MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_LLM_ENABLED=true
-MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_FORCE_LOCAL=true
-MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_LLM_PROVIDER=local
 MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_CLARIFY_MIN_CONFIDENCE=0.70
+MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_LOCAL_ESCALATION_ENABLED=false
+MINDOS_DISPATCHER_LOCAL_ESCALATION_ENABLED=false
 
 MINDOS_CORUNTIME_APPROVAL_RISK_THRESHOLD=0.68
 MINDOS_CORUNTIME_MIN_TRUST_TO_AUTONOMY=0.45
@@ -408,10 +576,20 @@ curl http://localhost:11434/api/chat \
 ```bash
 ./scripts/check-secrets.sh --mode=local
 ./scripts/check-secrets.sh --mode=release
-./scripts/unix/local/run-local.sh --dry-run
-./scripts/unix/local/run-release.sh --dry-run
+./scripts/unix/local/run.sh --dry-run
+./scripts/unix/local/run.sh --mode=release --dry-run
 ./mvnw -q test
 ```
+
+### Windows 分发包导出
+
+```bash
+./scripts/unix/export/export-mindos-windows-dist.sh
+# 或者
+./scripts/unix/export/export-mindos-windows-dist.sh "$HOME/dist/mindos-windows-server"
+```
+
+现在不传路径时，会默认导出到仓库里的 `dist/mindos-windows-server`。在 Windows 目标机上，优先修改 `mindos-secrets.properties` 里的 `MINDOS_MODEL_PRESET`，补齐对应密钥，再按 `README-windows-server.txt` 里的说明启动即可。
 
 云端辅助脚本：
 
