@@ -41,16 +41,24 @@ public class RuntimeScheduler {
         }
         TaskGraph plannedGraph = safeTask.graph();
         Map<CognitiveCapability, String> assignedPlugins = new EnumMap<>(CognitiveCapability.class);
-        for (CognitivePlugin plugin : modules.activePlugins()) {
+        for (CognitivePlugin plugin : orderedPlugins(modules)) {
             if (plugin == null) {
                 continue;
             }
-            CognitivePluginOutput output = plugin.run(new CognitivePluginContext(safeTask, safeState, memory, attributes));
+            Task taskForPlugin = new Task(
+                    safeTask.taskId(),
+                    safeTask.goal(),
+                    plannedGraph == null ? safeTask.graph() : plannedGraph,
+                    safeTask.policy(),
+                    safeTask.metadata()
+            );
+            RuntimeState stateForPlugin = safeState.withContext(safeState.context().withAttributes(attributes), safeState.summary());
+            CognitivePluginOutput output = plugin.run(new CognitivePluginContext(taskForPlugin, stateForPlugin, memory, attributes));
             attributes.putAll(output.attributes());
             assignedPlugins.put(plugin.capability(), plugin.pluginId());
-            if ((plannedGraph == null || plannedGraph.isEmpty())
-                    && output.proposedGraph() != null
-                    && !output.proposedGraph().isEmpty()) {
+            if (output.proposedGraph() != null
+                    && !output.proposedGraph().isEmpty()
+                    && ((plannedGraph == null || plannedGraph.isEmpty()) || plugin.capability() == CognitiveCapability.PLANNING)) {
                 plannedGraph = output.proposedGraph();
             }
         }
@@ -116,6 +124,26 @@ public class RuntimeScheduler {
                 }
             });
         }
+        if (booleanAttribute(attributes, "coruntime.shared", false) || attributes.containsKey("human.intent.goal")) {
+            String userId = String.valueOf(task.metadata().getOrDefault("userId", ""));
+            String intentGoal = String.valueOf(attributes.getOrDefault("human.intent.goal", task.goal().description()));
+            objects.add(new RuntimeObject(
+                    "human:" + userId,
+                    RuntimeObjectType.HUMAN_INTERFACE,
+                    "human-interface",
+                    Map.of(
+                            "userId", userId,
+                            "goal", intentGoal,
+                            "sharedDecision", true
+                    )
+            ));
+            objects.add(new RuntimeObject(
+                    "rule:explainable",
+                    RuntimeObjectType.RULE,
+                    "explainable",
+                    Map.of("required", true, "humanInLoop", true)
+            ));
+        }
         objects.add(new RuntimeObject(
                 "rule:interruptible",
                 RuntimeObjectType.RULE,
@@ -143,6 +171,29 @@ public class RuntimeScheduler {
             ));
         }
         return List.copyOf(objects);
+    }
+
+    private List<CognitivePlugin> orderedPlugins(CognitiveModule modules) {
+        if (modules == null) {
+            return List.of();
+        }
+        List<CognitivePlugin> ordered = new ArrayList<>();
+        if (modules.memoryModule() != null) {
+            ordered.add(modules.memoryModule());
+        }
+        if (modules.reasoningModule() != null) {
+            ordered.add(modules.reasoningModule());
+        }
+        if (modules.planningModule() != null) {
+            ordered.add(modules.planningModule());
+        }
+        if (modules.predictionModule() != null) {
+            ordered.add(modules.predictionModule());
+        }
+        if (modules.toolUseModule() != null) {
+            ordered.add(modules.toolUseModule());
+        }
+        return List.copyOf(ordered);
     }
 
     private double baseCompute(ExecutionPolicy policy, int nodeCount) {
@@ -181,5 +232,26 @@ public class RuntimeScheduler {
         } catch (NumberFormatException ignore) {
             return fallback;
         }
+    }
+
+    private boolean booleanAttribute(Map<String, Object> attributes, String key, boolean fallback) {
+        if (attributes == null || key == null || key.isBlank()) {
+            return fallback;
+        }
+        Object value = attributes.get(key);
+        if (value instanceof Boolean bool) {
+            return bool;
+        }
+        if (value == null) {
+            return fallback;
+        }
+        String normalized = String.valueOf(value).trim().toLowerCase(java.util.Locale.ROOT);
+        if ("true".equals(normalized) || "yes".equals(normalized) || "1".equals(normalized)) {
+            return true;
+        }
+        if ("false".equals(normalized) || "no".equals(normalized) || "0".equals(normalized)) {
+            return false;
+        }
+        return fallback;
     }
 }
