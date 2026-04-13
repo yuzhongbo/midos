@@ -9,8 +9,10 @@ import org.springframework.stereotype.Component;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 @Component
 public class MultiAgentCoordinator {
@@ -32,9 +34,15 @@ public class MultiAgentCoordinator {
     }
 
     public PlanSelection selectBestPlan(Goal goal, AutonomousPlanningContext context) {
+        return selectBestPlan(goal, context, List.of());
+    }
+
+    public PlanSelection selectBestPlan(Goal goal,
+                                        AutonomousPlanningContext context,
+                                        List<String> allowedAgentIds) {
         AutonomousPlanningContext safeContext = AutonomousPlanningContext.safe(context);
         List<PlanProposal> proposals = new ArrayList<>();
-        for (PlannerAgent plannerAgent : plannerAgents) {
+        for (PlannerAgent plannerAgent : eligiblePlannerAgents(allowedAgentIds)) {
             if (plannerAgent == null) {
                 continue;
             }
@@ -82,6 +90,31 @@ public class MultiAgentCoordinator {
 
     public TaskGraph selectBestPlanGraph(Goal goal, AutonomousPlanningContext context) {
         return selectBestPlan(goal, context).graph();
+    }
+
+    public List<String> plannerAgentIds() {
+        return plannerAgents.stream()
+                .filter(agent -> agent != null && agent.agentId() != null && !agent.agentId().isBlank())
+                .map(PlannerAgent::agentId)
+                .toList();
+    }
+
+    private List<PlannerAgent> eligiblePlannerAgents(List<String> allowedAgentIds) {
+        if (allowedAgentIds == null || allowedAgentIds.isEmpty()) {
+            return plannerAgents;
+        }
+        Set<String> allowed = new LinkedHashSet<>();
+        for (String allowedAgentId : allowedAgentIds) {
+            if (allowedAgentId != null && !allowedAgentId.isBlank()) {
+                allowed.add(allowedAgentId.trim().toLowerCase(java.util.Locale.ROOT));
+            }
+        }
+        if (allowed.isEmpty()) {
+            return plannerAgents;
+        }
+        return plannerAgents.stream()
+                .filter(agent -> agent != null && allowed.contains(agent.agentId().trim().toLowerCase(java.util.Locale.ROOT)))
+                .toList();
     }
 
     private String buildSummary(PlanProposal winner, List<PlanProposal> proposals) {

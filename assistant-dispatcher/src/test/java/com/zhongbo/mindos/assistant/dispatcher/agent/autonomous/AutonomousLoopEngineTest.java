@@ -2,6 +2,15 @@ package com.zhongbo.mindos.assistant.dispatcher.agent.autonomous;
 
 import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.common.dto.ExecutionTraceDto;
+import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.organization.AIOrganizationRuntime;
+import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.organization.EvaluationDepartmentService;
+import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.organization.ExecutionDepartmentService;
+import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.organization.KpiSystem;
+import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.organization.OrgDecisionEngine;
+import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.organization.OrgMemory;
+import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.organization.OrgRestructuringEngine;
+import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.organization.PlanningDepartmentService;
+import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.organization.StrategyDepartmentService;
 import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.worldmodel.MultiAgentCoordinator;
 import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.worldmodel.PlanEvaluator;
 import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.worldmodel.PlanScore;
@@ -38,7 +47,7 @@ class AutonomousLoopEngineTest {
         RecordingExecutionMemoryFacade memoryFacade = new RecordingExecutionMemoryFacade();
         MultiAgentCoordinator coordinator = new MultiAgentCoordinator(List.of(), new WorldModel(null, worldMemory), new PlanEvaluator(), evolutionEngine) {
             @Override
-            public PlanSelection selectBestPlan(Goal goal, AutonomousPlanningContext context) {
+            public PlanSelection selectBestPlan(Goal goal, AutonomousPlanningContext context, List<String> allowedAgentIds) {
                 int call = selectionCalls.incrementAndGet();
                 TaskGraph graph = call == 1 ? failingGraph() : successfulGraph();
                 String agentId = call == 1 ? "aggressive-planner" : "conservative-planner";
@@ -87,14 +96,20 @@ class AutonomousLoopEngineTest {
                 );
             }
         };
+        AIOrganizationRuntime organizationRuntime = new AIOrganizationRuntime(
+                new StrategyDepartmentService(),
+                new PlanningDepartmentService(coordinator),
+                new ExecutionDepartmentService(executor),
+                new EvaluationDepartmentService(new DefaultEvaluator(), new KpiSystem(), worldMemory, evolutionEngine),
+                new OrgDecisionEngine(),
+                new OrgRestructuringEngine(),
+                new OrgMemory(),
+                List.of()
+        );
 
         AutonomousLoopEngine engine = new AutonomousLoopEngine(
-                coordinator,
-                executor,
-                new DefaultEvaluator(),
+                organizationRuntime,
                 goalMemory,
-                worldMemory,
-                evolutionEngine,
                 memoryFacade,
                 3
         );
@@ -109,6 +124,8 @@ class AutonomousLoopEngineTest {
         assertEquals(2, memoryFacade.recordedResults.size());
         assertTrue(goalMemory.failedTargets(goal.goalId()).contains("file.search"));
         assertEquals(2, runResult.worldTraces().size());
+        assertEquals(2, runResult.orgTraces().size());
+        assertTrue(runResult.organization() != null && runResult.organization().revision() >= 2);
         assertTrue(evolutionEngine.weightOf("conservative-planner") > evolutionEngine.weightOf("aggressive-planner"));
     }
 

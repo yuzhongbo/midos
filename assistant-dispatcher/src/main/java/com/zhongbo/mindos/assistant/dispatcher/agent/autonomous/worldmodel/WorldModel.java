@@ -32,24 +32,32 @@ public class WorldModel {
 
     public PredictionResult predict(TaskGraph graph, AutonomousPlanningContext context) {
         TaskGraph safeGraph = graph == null ? new TaskGraph(List.of(), List.of()) : graph;
+        AutonomousPlanningContext safeContext = AutonomousPlanningContext.safe(context);
         if (safeGraph.isEmpty() || safeGraph.nodes().isEmpty()) {
             return new PredictionResult(0.0, 1.0, 1.0, 1.0);
         }
         String strategyType = strategyTypeOf(safeGraph);
         String agentId = agentIdOf(safeGraph);
-        Map<String, SkillUsageStats> statsByTarget = statsByTarget(AutonomousPlanningContext.safe(context).userId());
+        String orgStrategyMode = profileString(safeContext, "orgStrategyMode", "balanced");
+        double planningScenarioDepth = profileDouble(safeContext, "orgPlanningScenarioDepth", 1.0);
+        Map<String, SkillUsageStats> statsByTarget = statsByTarget(safeContext.userId());
         double historicalSuccess = historicalSuccess(safeGraph, statsByTarget);
         double complexityPenalty = complexityPenalty(safeGraph);
         double calibrationOffset = worldMemory == null
                 ? 0.0
                 : clampSigned(worldMemory.averageErrorGap(agentId) * 0.35 + averageTargetGap(safeGraph) * 0.15);
+        double organizationSuccessAdjustment = organizationSuccessAdjustment(strategyType, orgStrategyMode, planningScenarioDepth);
         double successProbability = clamp(historicalSuccess
                 + strategySuccessBias(strategyType)
+                + organizationSuccessAdjustment
                 - complexityPenalty
                 + calibrationOffset);
-        double cost = clamp(costScore(safeGraph, strategyType));
-        double latency = clamp(latencyScore(safeGraph, strategyType));
-        double risk = clamp(1.0 - successProbability + strategyRiskBias(strategyType) + parallelismPenalty(safeGraph));
+        double cost = clamp(costScore(safeGraph, strategyType) + organizationCostAdjustment(orgStrategyMode, planningScenarioDepth));
+        double latency = clamp(latencyScore(safeGraph, strategyType) + organizationLatencyAdjustment(orgStrategyMode, planningScenarioDepth));
+        double risk = clamp(1.0 - successProbability
+                + strategyRiskBias(strategyType)
+                + parallelismPenalty(safeGraph)
+                + organizationRiskAdjustment(strategyType, orgStrategyMode, planningScenarioDepth));
         return new PredictionResult(successProbability, cost, latency, risk);
     }
 
@@ -204,6 +212,85 @@ public class WorldModel {
 
     private String normalize(String value) {
         return value == null ? "" : value.trim().toLowerCase(Locale.ROOT);
+    }
+
+    private String profileString(AutonomousPlanningContext context, String key, String fallback) {
+        if (context == null || context.profileContext() == null || key == null || key.isBlank()) {
+            return fallback;
+        }
+        Object value = context.profileContext().get(key);
+        if (value == null) {
+            return fallback;
+        }
+        String normalized = String.valueOf(value).trim().toLowerCase(Locale.ROOT);
+        return normalized.isBlank() ? fallback : normalized;
+    }
+
+    private double profileDouble(AutonomousPlanningContext context, String key, double fallback) {
+        if (context == null || context.profileContext() == null || key == null || key.isBlank()) {
+            return fallback;
+        }
+        Object value = context.profileContext().get(key);
+        if (value instanceof Number number) {
+            return number.doubleValue();
+        }
+        if (value == null) {
+            return fallback;
+        }
+        try {
+            return Double.parseDouble(String.valueOf(value).trim());
+        } catch (NumberFormatException ignore) {
+            return fallback;
+        }
+    }
+
+    private double organizationSuccessAdjustment(String strategyType, String orgStrategyMode, double planningScenarioDepth) {
+        double scenarioBonus = Math.max(0.0, planningScenarioDepth - 1.0) * 0.025;
+        return switch (orgStrategyMode) {
+            case "stabilize", "audit" -> switch (strategyType) {
+                case "conservative" -> 0.05 + scenarioBonus;
+                case "aggressive" -> -0.04 + scenarioBonus * 0.5;
+                default -> 0.02 + scenarioBonus;
+            };
+            case "expand" -> switch (strategyType) {
+                case "aggressive" -> 0.03 + scenarioBonus;
+                default -> 0.01 + scenarioBonus * 0.5;
+            };
+            case "lean" -> scenarioBonus * 0.5;
+            default -> scenarioBonus;
+        };
+    }
+
+    private double organizationRiskAdjustment(String strategyType, String orgStrategyMode, double planningScenarioDepth) {
+        double scenarioAdjustment = -Math.max(0.0, planningScenarioDepth - 1.0) * 0.02;
+        return switch (orgStrategyMode) {
+            case "stabilize", "audit" -> switch (strategyType) {
+                case "conservative" -> -0.04 + scenarioAdjustment;
+                case "aggressive" -> 0.06 + scenarioAdjustment;
+                default -> -0.02 + scenarioAdjustment;
+            };
+            case "expand" -> "aggressive".equals(strategyType) ? -0.01 + scenarioAdjustment : scenarioAdjustment;
+            case "lean" -> 0.02 + scenarioAdjustment;
+            default -> scenarioAdjustment;
+        };
+    }
+
+    private double organizationCostAdjustment(String orgStrategyMode, double planningScenarioDepth) {
+        double scenarioCost = Math.max(0.0, planningScenarioDepth - 1.0) * 0.01;
+        return switch (orgStrategyMode) {
+            case "lean" -> -0.03 + scenarioCost;
+            case "expand" -> 0.01 + scenarioCost;
+            default -> scenarioCost;
+        };
+    }
+
+    private double organizationLatencyAdjustment(String orgStrategyMode, double planningScenarioDepth) {
+        double scenarioLatency = Math.max(0.0, planningScenarioDepth - 1.0) * 0.01;
+        return switch (orgStrategyMode) {
+            case "stabilize", "audit" -> scenarioLatency;
+            case "lean" -> -0.02 + scenarioLatency;
+            default -> scenarioLatency;
+        };
     }
 
     private double clamp(double value) {

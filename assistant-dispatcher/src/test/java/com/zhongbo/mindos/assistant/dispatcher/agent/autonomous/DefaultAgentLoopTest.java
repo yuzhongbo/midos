@@ -3,7 +3,6 @@ package com.zhongbo.mindos.assistant.dispatcher.agent.autonomous;
 import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.common.dto.CritiqueReportDto;
 import com.zhongbo.mindos.assistant.common.dto.ExecutionTraceDto;
-import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.worldmodel.WorldMemory;
 import com.zhongbo.mindos.assistant.dispatcher.agent.multiagent.MasterOrchestrationResult;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.ExecutionMemoryFacade;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.OrchestrationExecutionResult;
@@ -94,11 +93,7 @@ class DefaultAgentLoopTest {
     void shouldRunExplicitGoalThroughAutonomousLoopEngine() {
         AutonomousLoopEngine loopEngine = new AutonomousLoopEngine(
                 null,
-                null,
-                null,
                 new GoalMemory(),
-                new WorldMemory(),
-                null,
                 new NoopExecutionMemoryFacade(),
                 1
         ) {

@@ -74,4 +74,20 @@ public abstract class PlannerAgent {
         }
         return stampedNodes.isEmpty() ? new TaskGraph(List.of(), List.of()) : new TaskGraph(stampedNodes, graph.edges());
     }
+
+    protected int retryBudgetCap(AutonomousPlanningContext context, int fallback) {
+        AutonomousPlanningContext safeContext = AutonomousPlanningContext.safe(context);
+        Object value = safeContext.profileContext().get("orgExecutionRetryCap");
+        if (value instanceof Number number) {
+            return Math.max(1, number.intValue());
+        }
+        if (value != null) {
+            try {
+                return Math.max(1, Integer.parseInt(String.valueOf(value).trim()));
+            } catch (NumberFormatException ignore) {
+                return Math.max(1, fallback);
+            }
+        }
+        return Math.max(1, fallback);
+    }
 }

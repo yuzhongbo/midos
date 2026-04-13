@@ -27,6 +27,7 @@ public class ConservativePlannerAgent extends PlannerAgent {
         }
         TaskGraph stabilized = withPreflight(goal, base);
         List<TaskNode> tunedNodes = new ArrayList<>();
+        int retryBudgetCap = retryBudgetCap(context, 3);
         for (TaskNode node : stabilized.nodes()) {
             if (node == null) {
                 continue;
@@ -40,7 +41,7 @@ public class ConservativePlannerAgent extends PlannerAgent {
                     node.dependsOn(),
                     node.saveAs(),
                     node.optional(),
-                    Math.max(3, node.maxAttempts())
+                    Math.max(1, Math.min(retryBudgetCap, Math.max(3, node.maxAttempts())))
             ));
         }
         return tunedNodes.isEmpty() ? new TaskGraph(List.of(), List.of()) : new TaskGraph(tunedNodes, stabilized.edges());
