@@ -5,6 +5,7 @@ import com.zhongbo.mindos.assistant.common.dto.ExecutionTraceDto;
 import com.zhongbo.mindos.assistant.dispatcher.agent.multiagent.MasterOrchestrationResult;
 import com.zhongbo.mindos.assistant.dispatcher.agent.multiagent.MasterOrchestrator;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.memory.OrchestratorMemoryWriter;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
@@ -29,6 +30,7 @@ public class DefaultAgentLoop implements AgentLoop {
         this(goalGenerator, masterOrchestrator, evaluatorAgent, memoryEvolution, null);
     }
 
+    @Autowired
     public DefaultAgentLoop(GoalGenerator goalGenerator,
                             MasterOrchestrator masterOrchestrator,
                             EvaluatorAgent evaluatorAgent,

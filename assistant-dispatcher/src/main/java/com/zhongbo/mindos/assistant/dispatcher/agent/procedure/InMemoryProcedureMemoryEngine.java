@@ -116,6 +116,9 @@ public class InMemoryProcedureMemoryEngine implements ProcedureMemoryEngine {
                 score += 0.15;
                 reasons.add("step-match");
             }
+            if (reasons.isEmpty()) {
+                continue;
+            }
             score += Math.min(0.10, template.successRate() * 0.10);
             if (score > 0.0) {
                 matches.add(new ProcedureMatch(template, Math.round(score * 1000.0) / 1000.0, reasons));

@@ -1,6 +1,7 @@
 package com.zhongbo.mindos.assistant.dispatcher;
 
 import com.zhongbo.mindos.assistant.common.SkillContext;
+import com.zhongbo.mindos.assistant.common.SkillDsl;
 import com.zhongbo.mindos.assistant.common.dto.PromptMemoryContextDto;
 import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryFacade;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.DecisionTargetResolver;
@@ -25,6 +26,7 @@ final class DispatchPreparationSupport {
     private final PersonaCoreService personaCoreService;
     private final SemanticAnalyzer semanticAnalyzer;
     private final SemanticRoutingSupport semanticRoutingSupport;
+    private final BehaviorRoutingSupport behaviorRoutingSupport;
     private final IntentModelRoutingPolicy intentModelRoutingPolicy;
     private final PreparationBridge bridge;
     private final int memoryContextMaxChars;
@@ -37,6 +39,7 @@ final class DispatchPreparationSupport {
                                PersonaCoreService personaCoreService,
                                SemanticAnalyzer semanticAnalyzer,
                                SemanticRoutingSupport semanticRoutingSupport,
+                               BehaviorRoutingSupport behaviorRoutingSupport,
                                IntentModelRoutingPolicy intentModelRoutingPolicy,
                                PreparationBridge bridge,
                                int memoryContextMaxChars,
@@ -48,6 +51,7 @@ final class DispatchPreparationSupport {
         this.personaCoreService = personaCoreService;
         this.semanticAnalyzer = semanticAnalyzer;
         this.semanticRoutingSupport = semanticRoutingSupport;
+        this.behaviorRoutingSupport = behaviorRoutingSupport;
         this.intentModelRoutingPolicy = intentModelRoutingPolicy;
         this.bridge = bridge;
         this.memoryContextMaxChars = memoryContextMaxChars;
@@ -115,6 +119,7 @@ final class DispatchPreparationSupport {
                 semanticAnalysis
         );
         context = enrichPrimarySemanticContext(userId, userInput, context, semanticAnalysis);
+        context = enrichPrimaryHabitContext(userId, userInput, context, realtimeLookup);
         Map<String, Object> llmContext = new LinkedHashMap<>(dispatcherMemoryFacade.buildFallbackLlmContext(
                 userId,
                 routingInput,
@@ -178,6 +183,40 @@ final class DispatchPreparationSupport {
         Map<String, Object> attributes = new LinkedHashMap<>(context.attributes() == null ? Map.of() : context.attributes());
         attributes.put(SemanticAnalysisResult.ATTR_PAYLOAD, effectivePayload);
         return new SkillContext(context.userId(), context.input(), attributes);
+    }
+
+    private SkillContext enrichPrimaryHabitContext(String userId,
+                                                   String userInput,
+                                                   SkillContext context,
+                                                   boolean realtimeLikeInput) {
+        if (context == null || realtimeLikeInput) {
+            return context;
+        }
+        List<DecisionSignal> habitCandidates = behaviorRoutingSupport.recommendSkillsWithMemoryHabits(
+                userId,
+                userInput,
+                context.attributes(),
+                null
+        );
+        for (DecisionSignal habitCandidate : habitCandidates) {
+            SkillDsl habitDsl = behaviorRoutingSupport.buildHabitSkillDsl(
+                    userId,
+                    userInput,
+                    context.attributes(),
+                    habitCandidate
+            ).orElse(null);
+            if (habitDsl == null || habitDsl.skill() == null || habitDsl.skill().isBlank()) {
+                continue;
+            }
+            Map<String, Object> attributes = new LinkedHashMap<>(context.attributes() == null ? Map.of() : context.attributes());
+            Map<String, Object> payload = new LinkedHashMap<>(habitDsl.input() == null ? Map.of() : habitDsl.input());
+            behaviorRoutingSupport.applyBehaviorLearnedDefaults(userId, habitDsl.skill(), payload);
+            attributes.put("habitTarget", habitDsl.skill());
+            attributes.put("habitSignalSource", habitCandidate.source());
+            attributes.putAll(payload);
+            return new SkillContext(context.userId(), context.input(), attributes);
+        }
+        return context;
     }
 
     private String semanticTargetHint(SemanticAnalysisResult semanticAnalysis) {

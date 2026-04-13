@@ -6,6 +6,7 @@ import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.skill.Skill;
 import com.zhongbo.mindos.assistant.skill.SkillDescriptor;
 import com.zhongbo.mindos.assistant.skill.SkillDescriptorProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.time.Clock;
@@ -19,6 +20,7 @@ import java.util.logging.Logger;
 public class TodoCreateSkill implements Skill, SkillDescriptorProvider {
     private final TodoCreateSkillExecutor executor;
 
+    @Autowired
     public TodoCreateSkill(LlmClient llmClient) {
         this(llmClient, Clock.systemDefaultZone());
     }
@@ -96,7 +98,7 @@ final class TodoCreateSkillExecutor {
                     prompt.append("。时区偏好：").append(draft.timezone());
                 }
                 String llmReply = llmClient.generateResponse(prompt.toString(), buildLlmContext(context));
-                if (llmReply != null && !llmReply.isBlank()) {
+                if (isUsableLlmReply(llmReply)) {
                     return SkillResult.success(name(), llmReply.trim());
                 }
             } catch (Exception ex) {
@@ -162,6 +164,10 @@ final class TodoCreateSkillExecutor {
         }
         String normalized = String.valueOf(value).trim();
         return normalized.isBlank() ? "" : normalized;
+    }
+
+    private boolean isUsableLlmReply(String llmReply) {
+        return llmReply != null && !llmReply.isBlank() && !llmReply.startsWith("[LLM ");
     }
 
     private record TodoDraft(String task,

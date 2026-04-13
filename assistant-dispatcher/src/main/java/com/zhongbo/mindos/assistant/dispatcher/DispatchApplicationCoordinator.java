@@ -22,6 +22,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -326,8 +327,26 @@ final class DispatchApplicationCoordinator {
                                                               DispatchExecutionState executionState,
                                                               Map<String, Object> resolvedProfileContext) {
         return CompletableFuture.supplyAsync(() -> {
-            DecisionOrchestrator.OrchestrationOutcome outcome = decisionOrchestrator.handle(
-                    new DecisionOrchestrator.UserInput(
+            DecisionOrchestrator.UserInput orchestratorInput = new DecisionOrchestrator.UserInput(
+                    userId,
+                    userInput,
+                    context,
+                    resolvedProfileContext
+            );
+            Decision preview = decisionOrchestrator.preview(orchestratorInput);
+            if (preview == null || preview.target() == null || preview.target().isBlank()) {
+                return SkillResult.failure("decision.orchestrator", "primary planner produced no target");
+            }
+            Optional<SkillResult> capabilityBlock = bridge.maybeBlockByCapability(preview.target());
+            if (capabilityBlock.isPresent()) {
+                return SkillResult.failure("decision.orchestrator", "primary target blocked by capability policy");
+            }
+            if (bridge.isSkillLoopGuardBlocked(userId, preview.target(), userInput)) {
+                return SkillResult.failure("decision.orchestrator", "primary target blocked by loop guard");
+            }
+            DecisionOrchestrator.OrchestrationOutcome outcome = decisionOrchestrator.executePlanned(
+                    preview,
+                    new DecisionOrchestrator.OrchestrationRequest(
                             userId,
                             userInput,
                             context,
@@ -346,7 +365,14 @@ final class DispatchApplicationCoordinator {
                 return outcome.clarification();
             }
             if (outcome.hasResult() && outcome.result().success()) {
-                return outcome.result();
+                SkillResult result = outcome.result();
+                String selectedSkill = result.skillName() == null || result.skillName().isBlank()
+                        ? preview.target()
+                        : result.skillName();
+                if (isHabitSelection(context, selectedSkill)) {
+                    return bridge.enrichMemoryHabitResult(result, selectedSkill, context.attributes());
+                }
+                return result;
             }
             return SkillResult.failure("decision.orchestrator", "primary orchestrator failed");
         });
@@ -376,6 +402,15 @@ final class DispatchApplicationCoordinator {
                 || "decision.orchestrator".equals(skillName);
     }
 
+    private boolean isExplicitSkillDslInput(String userInput) {
+        if (userInput == null) {
+            return false;
+        }
+        String trimmed = userInput.trim();
+        return trimmed.startsWith("skill:")
+                || (trimmed.startsWith("{") && trimmed.contains("\"skill\""));
+    }
+
     private CompletableFuture<SkillResult> executeCompatibilityPass(String userId,
                                                                     String userInput,
                                                                     SkillContext context,
@@ -386,11 +421,13 @@ final class DispatchApplicationCoordinator {
                                                                     DispatchExecutionState executionState,
                                                                     SemanticAnalysisResult semanticAnalysis,
                                                                     RoutingReplayProbe replayProbe) {
+        boolean explicitSkillRequest = isExplicitSkillDslInput(userInput);
         return dispatchRoutingPipeline.routeToSkillAsync(userId, userInput, context, memoryContext, semanticAnalysis, replayProbe)
                 .thenApply(routingOutcome -> {
                     executionState.setRoutingDecision(routingOutcome.routingDecision());
                     SkillResult routedResult = routingOutcome.result().orElse(null);
-                    if (!shouldFallbackFromCompatibilityResult(routedResult)) {
+                    if (!shouldFallbackFromCompatibilityResult(routedResult)
+                            && !(explicitSkillRequest && routedResult != null && !routedResult.success())) {
                         return routedResult;
                     }
                     return bridge.buildFallbackResult(
@@ -424,6 +461,9 @@ final class DispatchApplicationCoordinator {
         String route = resolvePrimaryRoute(outcome, selectedSkill, context);
         ArrayList<String> reasons = new ArrayList<>();
         reasons.add("primary route executed through orchestrator planner");
+        if ("memory-habit".equals(route)) {
+            reasons.add("memory-habit-signal=true");
+        }
         if (isSemanticRoute(route)) {
             reasons.add("semantic-signal=true");
         }
@@ -451,6 +491,9 @@ final class DispatchApplicationCoordinator {
     private String resolvePrimaryRoute(DecisionOrchestrator.OrchestrationOutcome outcome,
                                        String selectedSkill,
                                        SkillContext context) {
+        if (isHabitSelection(context, selectedSkill)) {
+            return "memory-habit";
+        }
         if (outcome != null && outcome.hasClarification() && hasSemanticHints(context)) {
             return "semantic-clarify";
         }
@@ -478,6 +521,22 @@ final class DispatchApplicationCoordinator {
             }
         }
         return false;
+    }
+
+    private boolean isHabitSelection(SkillContext context, String selectedSkill) {
+        if (context == null || context.attributes() == null || selectedSkill == null || selectedSkill.isBlank()) {
+            return false;
+        }
+        String habitTarget = normalizeString(context.attributes().get("habitTarget"));
+        if (habitTarget.isBlank()) {
+            return false;
+        }
+        String canonicalSelected = TARGET_RESOLVER.canonicalize(selectedSkill);
+        String canonicalHabit = TARGET_RESOLVER.canonicalize(habitTarget);
+        if (!canonicalSelected.isBlank() && canonicalSelected.equals(canonicalHabit)) {
+            return true;
+        }
+        return canonicalSelected.isBlank() && selectedSkill.equalsIgnoreCase(habitTarget);
     }
 
     private boolean hasSemanticHints(SkillContext context) {
@@ -659,6 +718,12 @@ final class DispatchApplicationCoordinator {
         boolean shouldUseMasterOrchestrator(Map<String, Object> profileContext);
 
         Decision buildMultiAgentDecision(String userInput, SemanticAnalysisResult semanticAnalysis, SkillContext context);
+
+        Optional<SkillResult> maybeBlockByCapability(String skillName);
+
+        boolean isSkillLoopGuardBlocked(String userId, String skillName, String userInput);
+
+        SkillResult enrichMemoryHabitResult(SkillResult result, String routedSkill, Map<String, Object> profileContext);
 
         SkillResult buildFallbackResult(String memoryContext,
                                         PromptMemoryContextDto promptMemoryContext,

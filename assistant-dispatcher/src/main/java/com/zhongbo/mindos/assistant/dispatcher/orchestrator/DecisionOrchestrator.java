@@ -11,7 +11,15 @@ import java.util.Map;
 
 public interface DecisionOrchestrator {
 
+    default Decision preview(UserInput input) {
+        return null;
+    }
+
     OrchestrationOutcome handle(UserInput input);
+
+    default OrchestrationOutcome executePlanned(Decision decision, OrchestrationRequest request) {
+        return orchestrate(decision, request);
+    }
 
     OrchestrationOutcome orchestrate(Decision decision, OrchestrationRequest request);
 

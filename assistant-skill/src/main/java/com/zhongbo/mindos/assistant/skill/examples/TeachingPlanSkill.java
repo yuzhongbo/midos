@@ -8,6 +8,7 @@ import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.skill.Skill;
 import com.zhongbo.mindos.assistant.skill.SkillDescriptor;
 import com.zhongbo.mindos.assistant.skill.SkillDescriptorProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -31,6 +32,7 @@ public class TeachingPlanSkill implements Skill, SkillDescriptorProvider {
     private final LlmClient llmClient;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
+    @Autowired
     public TeachingPlanSkill(LlmClient llmClient) {
         this.llmClient = llmClient;
     }

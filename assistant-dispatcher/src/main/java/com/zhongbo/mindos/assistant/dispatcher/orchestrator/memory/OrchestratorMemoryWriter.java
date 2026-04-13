@@ -83,8 +83,7 @@ public class OrchestratorMemoryWriter {
         if (proceduralMemoryCommandService == null) {
             return memoryCommandService;
         }
-        if (operation instanceof MemoryWriteOperation.WriteProcedural
-                || operation instanceof MemoryWriteOperation.RecordProcedureSuccess
+        if (operation instanceof MemoryWriteOperation.RecordProcedureSuccess
                 || operation instanceof MemoryWriteOperation.DeleteProcedure) {
             return proceduralMemoryCommandService;
         }

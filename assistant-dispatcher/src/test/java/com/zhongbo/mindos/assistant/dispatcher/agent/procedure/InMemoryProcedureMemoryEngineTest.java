@@ -44,7 +44,7 @@ class InMemoryProcedureMemoryEngineTest {
     }
 
     @Test
-    void shouldDeleteProcedureAndGraphNode() {
+    void shouldDeleteProcedureWithoutGraphSideEffects() {
         GraphMemory graphMemory = new GraphMemory();
         InMemoryProcedureMemoryEngine engine = new InMemoryProcedureMemoryEngine(graphMemory);
         TaskGraph graph = new TaskGraph(List.of(
@@ -55,7 +55,7 @@ class InMemoryProcedureMemoryEngineTest {
         Procedure procedure = engine.recordSuccessfulGraph("u1", "weather.notify", "查天气并发钉钉", graph, Map.of());
 
         assertFalse(engine.listProcedures("u1").isEmpty());
-        assertFalse(graphMemory.searchNodes("u1", "procedure", 5).isEmpty());
+        assertTrue(graphMemory.searchNodes("u1", "procedure", 5).isEmpty());
         assertTrue(engine.deleteProcedure("u1", procedure.id()));
         assertTrue(engine.listProcedures("u1").isEmpty());
         assertTrue(graphMemory.searchNodes("u1", "procedure", 5).isEmpty());

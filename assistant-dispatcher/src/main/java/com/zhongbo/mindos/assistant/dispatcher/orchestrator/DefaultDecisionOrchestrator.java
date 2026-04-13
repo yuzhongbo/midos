@@ -135,12 +135,17 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
 
     @Override
     public OrchestrationOutcome handle(UserInput input) {
-        Decision decision = planner.plan(UserInput.safe(input));
-        ParamValidator.ValidationResult validation = paramValidator.validate(decision);
-        TaskGraph graph = planner.buildGraph(validation.applyTo(decision));
+        TaskGraph graph = planner.buildGraph(preview(input));
         OrchestrationExecutionResult result = reflection.analyze(executor.execute(graph).normalizeFailures());
         memoryFacade.record(result);
         return result.outcome();
+    }
+
+    @Override
+    public Decision preview(UserInput input) {
+        Decision decision = planner.plan(UserInput.safe(input));
+        ParamValidator.ValidationResult validation = paramValidator.validate(decision);
+        return validation.applyTo(decision);
     }
 
     @Override
@@ -150,6 +155,17 @@ public class DefaultDecisionOrchestrator implements DecisionOrchestrator {
         ).applyTo(DecisionInputMetadata.enrich(decision, UserInput.from(request)));
         OrchestrationExecutionResult result = executor.execute(planner.buildGraph(validatedDecision));
         memoryFacade.commit(result.userId(), result.memoryWrites());
+        return result.outcome();
+    }
+
+    @Override
+    public OrchestrationOutcome executePlanned(Decision decision, OrchestrationRequest request) {
+        Decision enrichedDecision = DecisionInputMetadata.enrich(decision, UserInput.from(request));
+        Decision validatedDecision = paramValidator.validate(enrichedDecision).applyTo(enrichedDecision);
+        OrchestrationExecutionResult result = reflection.analyze(
+                executor.execute(planner.buildGraph(validatedDecision)).normalizeFailures()
+        );
+        memoryFacade.record(result);
         return result.outcome();
     }
 

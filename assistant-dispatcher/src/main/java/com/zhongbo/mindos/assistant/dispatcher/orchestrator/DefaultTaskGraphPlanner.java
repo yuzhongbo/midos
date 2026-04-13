@@ -66,22 +66,24 @@ public class DefaultTaskGraphPlanner implements TaskGraphPlanner {
                     ""
             );
         }
-        java.util.Optional<ProceduralMemory.ReusableProcedure> reusableProcedure = matchReusableProcedure(decision, request, effectiveParams);
-        if (reusableProcedure.isPresent() && !reusableProcedure.get().taskGraph().isEmpty()) {
-            TaskGraph graph = reusableProcedure.get().taskGraph();
-            return new TaskGraphPlan(
-                    decision,
-                    graph,
-                    slowPathPlanBuilder.attachTaskGraph(effectiveParams, graph),
-                    "procedural-memory",
-                    resolveIntent(decision),
-                    request == null ? "" : request.userInput(),
-                    new TaskGraph(List.of(), List.of()),
-                    Map.of(),
-                    "",
-                    "",
-                    ""
-            );
+        if (!isExplicitRequest(request)) {
+            java.util.Optional<ProceduralMemory.ReusableProcedure> reusableProcedure = matchReusableProcedure(decision, request, effectiveParams);
+            if (reusableProcedure.isPresent() && !reusableProcedure.get().taskGraph().isEmpty()) {
+                TaskGraph graph = reusableProcedure.get().taskGraph();
+                return new TaskGraphPlan(
+                        decision,
+                        graph,
+                        slowPathPlanBuilder.attachTaskGraph(effectiveParams, graph),
+                        "procedural-memory",
+                        resolveIntent(decision),
+                        request == null ? "" : request.userInput(),
+                        new TaskGraph(List.of(), List.of()),
+                        Map.of(),
+                        "",
+                        "",
+                        ""
+                );
+            }
         }
         if ("task.plan".equalsIgnoreCase(decision.target()) || shouldUseSlowPath(decision)) {
             return slowPathPlan(decision, effectiveParams, request, null, "slow-path", true);
@@ -168,8 +170,8 @@ public class DefaultTaskGraphPlanner implements TaskGraphPlanner {
     }
 
     private java.util.Optional<ProceduralMemory.ReusableProcedure> matchReusableProcedure(Decision decision,
-                                                                                          DecisionOrchestrator.OrchestrationRequest request,
-                                                                                          Map<String, Object> effectiveParams) {
+                                                                                           DecisionOrchestrator.OrchestrationRequest request,
+                                                                                           Map<String, Object> effectiveParams) {
         if (decision == null) {
             return java.util.Optional.empty();
         }
@@ -179,6 +181,40 @@ public class DefaultTaskGraphPlanner implements TaskGraphPlanner {
                 resolveIntent(decision),
                 effectiveParams
         );
+    }
+
+    private boolean isExplicitRequest(DecisionOrchestrator.OrchestrationRequest request) {
+        if (request == null) {
+            return false;
+        }
+        String userInput = request.userInput() == null ? "" : request.userInput().trim();
+        if (userInput.startsWith("skill:")) {
+            return true;
+        }
+        if (userInput.startsWith("{") && userInput.contains("\"skill\"")) {
+            return true;
+        }
+        if (isDirectBuiltinCommand(userInput)) {
+            return true;
+        }
+        SkillContext context = request.skillContext();
+        if (context == null || context.attributes() == null) {
+            return false;
+        }
+        return hasText(context.attributes().get("explicitTarget"))
+                || hasText(context.attributes().get("explicitSkill"))
+                || hasText(context.attributes().get("_target"));
+    }
+
+    private boolean isDirectBuiltinCommand(String userInput) {
+        if (userInput == null || userInput.isBlank()) {
+            return false;
+        }
+        String normalized = userInput.trim().toLowerCase(java.util.Locale.ROOT);
+        if (normalized.equals("time") || normalized.startsWith("time ")) {
+            return true;
+        }
+        return normalized.equals("echo") || normalized.startsWith("echo ");
     }
 
     private DispatcherMemoryFacade activeProcedureMemoryFacade() {
@@ -191,6 +227,10 @@ public class DefaultTaskGraphPlanner implements TaskGraphPlanner {
 
     private boolean isMcpSkill(String target) {
         return target != null && target.startsWith("mcp.");
+    }
+
+    private boolean hasText(Object value) {
+        return value != null && !String.valueOf(value).trim().isBlank();
     }
 
     private Map<String, Object> buildEffectiveParams(Map<String, Object> params, SkillContext skillContext) {

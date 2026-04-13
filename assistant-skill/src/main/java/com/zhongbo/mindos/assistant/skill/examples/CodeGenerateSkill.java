@@ -6,6 +6,7 @@ import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.skill.Skill;
 import com.zhongbo.mindos.assistant.skill.SkillDescriptor;
 import com.zhongbo.mindos.assistant.skill.SkillDescriptorProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.beans.factory.annotation.Value;
 
@@ -19,6 +20,7 @@ import java.util.logging.Logger;
 public class CodeGenerateSkill implements Skill, SkillDescriptorProvider {
     private final CodeGenerateSkillExecutor executor;
 
+    @Autowired
     public CodeGenerateSkill(LlmClient llmClient,
                              @Value("${mindos.skill.code-generate.llm-provider:gpt}") String defaultProvider,
                              @Value("${mindos.skill.code-generate.model.easy:}") String easyModel,
@@ -107,7 +109,7 @@ final class CodeGenerateSkillExecutor {
                     prompt.append("。输出语言偏好：").append(language);
                 }
                 String llmReply = llmClient.generateResponse(prompt.toString(), buildLlmContext(context, taskDescription));
-                if (llmReply != null && !llmReply.isBlank()) {
+                if (isUsableLlmReply(llmReply)) {
                     return SkillResult.success(name(), llmReply.trim());
                 }
             } catch (Exception ex) {
@@ -214,6 +216,10 @@ final class CodeGenerateSkillExecutor {
         }
         String normalized = value.trim();
         return normalized.isBlank() ? null : normalized;
+    }
+
+    private boolean isUsableLlmReply(String llmReply) {
+        return llmReply != null && !llmReply.isBlank() && !llmReply.startsWith("[LLM ");
     }
 
     private enum Difficulty {

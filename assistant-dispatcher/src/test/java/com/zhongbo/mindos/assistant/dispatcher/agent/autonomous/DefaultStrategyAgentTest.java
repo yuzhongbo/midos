@@ -12,7 +12,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class DefaultStrategyAgentTest {
 
     @Test
-    void shouldGenerateScheduleConflictStrategy() {
+    void shouldGenerateScheduleConflictStrategyWithoutDirectMemoryWrites() {
         AutonomousTestFixtures.MemoryGatewayStub memoryGateway = new AutonomousTestFixtures.MemoryGatewayStub(
                 List.of(
                         ConversationTurn.user("排课冲突太多了，需要自动检测"),
@@ -32,9 +32,9 @@ class DefaultStrategyAgentTest {
         assertTrue(goal.priority() > 0.85);
         assertTrue(goal.actions().contains("优化排课算法"));
         assertTrue(goal.actions().contains("增加自动冲突检测"));
-        assertEquals(1, memoryGateway.semanticTexts.size());
-        assertEquals(1, memoryGateway.proceduralEntries.size());
-        assertEquals("strategy.longterm", memoryGateway.semanticBuckets.get(0));
+        assertTrue(memoryGateway.semanticTexts.isEmpty());
+        assertTrue(memoryGateway.proceduralEntries.isEmpty());
+        assertTrue(memoryGateway.semanticBuckets.isEmpty());
     }
 
     @Test

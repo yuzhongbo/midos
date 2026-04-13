@@ -7,7 +7,6 @@ import com.zhongbo.mindos.assistant.skill.Skill;
 import com.zhongbo.mindos.assistant.skill.SkillDescriptor;
 import com.zhongbo.mindos.assistant.skill.SkillDescriptorProvider;
 import com.zhongbo.mindos.assistant.skill.mcp.McpToolDefinition;
-import com.zhongbo.mindos.assistant.skill.mcp.McpToolExecutor;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -441,8 +440,11 @@ class ChatControllerTest {
                                    String description,
                                    java.util.function.Function<SkillContext, String> output) {
             McpToolDefinition definition = new McpToolDefinition(alias, "http://unused.local/mcp", toolName, description);
-            McpToolExecutor executor = new McpToolExecutor();
-            java.util.List<String> routingKeywords = new java.util.ArrayList<>(executor.routingKeywords(definition));
+            java.util.List<String> routingKeywords = new java.util.ArrayList<>(java.util.List.of(
+                    definition.skillName(),
+                    alias,
+                    toolName
+            ));
             if ("qwensearch".equals(alias) && "webSearch".equals(toolName)) {
                 routingKeywords.addAll(java.util.List.of("今天新闻", "最新新闻", "新闻", "news"));
             } else if ("bravesearch".equals(alias) && "webSearch".equals(toolName)) {

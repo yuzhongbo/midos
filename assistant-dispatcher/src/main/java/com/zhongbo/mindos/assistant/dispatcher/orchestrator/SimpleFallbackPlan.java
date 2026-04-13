@@ -1,5 +1,6 @@
 package com.zhongbo.mindos.assistant.dispatcher.orchestrator;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -14,6 +15,7 @@ public class SimpleFallbackPlan implements FallbackPlan {
 
     private final Map<String, List<String>> configuredFallbacks;
 
+    @Autowired
     public SimpleFallbackPlan(@Value("${mindos.dispatcher.orchestrator.fallbacks:}") String configuredFallbacks) {
         this.configuredFallbacks = parseConfigured(configuredFallbacks);
     }

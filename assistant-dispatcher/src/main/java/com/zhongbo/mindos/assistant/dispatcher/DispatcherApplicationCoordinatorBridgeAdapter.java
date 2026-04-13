@@ -9,6 +9,7 @@ import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalysisResult;
 
 import java.time.Instant;
 import java.util.Map;
+import java.util.Optional;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
@@ -39,6 +40,9 @@ final class DispatcherApplicationCoordinatorBridgeAdapter implements DispatchApp
     private final DispatchLlmSupport llmSupport;
     private final Supplier<MasterOrchestrator> masterOrchestratorSupplier;
     private final Supplier<RoutingCoordinator> routingCoordinatorSupplier;
+    private final Function<String, Optional<SkillResult>> capabilityBlocker;
+    private final DispatcherRoutingBridgeAdapter.SkillGuard skillLoopGuard;
+    private final DispatcherRoutingBridgeAdapter.MemoryHabitEnricher memoryHabitResultEnricher;
     private final Function<String, String> clipper;
     private final Function<String, String> normalizer;
     private final DrainingResultBuilder drainingResultBuilder;
@@ -49,6 +53,9 @@ final class DispatcherApplicationCoordinatorBridgeAdapter implements DispatchApp
                                                   DispatchLlmSupport llmSupport,
                                                   Supplier<MasterOrchestrator> masterOrchestratorSupplier,
                                                   Supplier<RoutingCoordinator> routingCoordinatorSupplier,
+                                                  Function<String, Optional<SkillResult>> capabilityBlocker,
+                                                  DispatcherRoutingBridgeAdapter.SkillGuard skillLoopGuard,
+                                                  DispatcherRoutingBridgeAdapter.MemoryHabitEnricher memoryHabitResultEnricher,
                                                   Function<String, String> clipper,
                                                   Function<String, String> normalizer,
                                                   DrainingResultBuilder drainingResultBuilder,
@@ -58,6 +65,9 @@ final class DispatcherApplicationCoordinatorBridgeAdapter implements DispatchApp
         this.llmSupport = llmSupport;
         this.masterOrchestratorSupplier = masterOrchestratorSupplier;
         this.routingCoordinatorSupplier = routingCoordinatorSupplier;
+        this.capabilityBlocker = capabilityBlocker;
+        this.skillLoopGuard = skillLoopGuard;
+        this.memoryHabitResultEnricher = memoryHabitResultEnricher;
         this.clipper = clipper;
         this.normalizer = normalizer;
         this.drainingResultBuilder = drainingResultBuilder;
@@ -112,6 +122,21 @@ final class DispatcherApplicationCoordinatorBridgeAdapter implements DispatchApp
         return routingCoordinator == null
                 ? null
                 : routingCoordinator.buildMultiAgentDecision(userInput, semanticAnalysis, context);
+    }
+
+    @Override
+    public Optional<SkillResult> maybeBlockByCapability(String skillName) {
+        return capabilityBlocker.apply(skillName);
+    }
+
+    @Override
+    public boolean isSkillLoopGuardBlocked(String userId, String skillName, String userInput) {
+        return skillLoopGuard.test(userId, skillName, userInput);
+    }
+
+    @Override
+    public SkillResult enrichMemoryHabitResult(SkillResult result, String routedSkill, Map<String, Object> profileContext) {
+        return memoryHabitResultEnricher.enrich(result, routedSkill, profileContext);
     }
 
     @Override

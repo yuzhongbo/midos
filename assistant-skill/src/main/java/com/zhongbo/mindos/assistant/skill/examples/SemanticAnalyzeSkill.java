@@ -6,6 +6,7 @@ import com.zhongbo.mindos.assistant.skill.Skill;
 import com.zhongbo.mindos.assistant.skill.SkillDescriptor;
 import com.zhongbo.mindos.assistant.skill.SkillDescriptorProvider;
 import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalysisService;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -15,6 +16,7 @@ public class SemanticAnalyzeSkill implements Skill, SkillDescriptorProvider {
 
     private final SemanticAnalyzeExecutor executor;
 
+    @Autowired
     public SemanticAnalyzeSkill(SemanticAnalysisService semanticAnalysisService) {
         this(new SemanticAnalyzeExecutor(semanticAnalysisService));
     }

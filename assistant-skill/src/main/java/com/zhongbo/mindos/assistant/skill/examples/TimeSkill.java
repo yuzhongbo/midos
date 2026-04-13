@@ -6,6 +6,7 @@ import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.skill.Skill;
 import com.zhongbo.mindos.assistant.skill.SkillDescriptor;
 import com.zhongbo.mindos.assistant.skill.SkillDescriptorProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.time.ZoneId;
@@ -25,6 +26,7 @@ public class TimeSkill implements Skill, SkillDescriptorProvider {
     private static final Logger LOGGER = Logger.getLogger(TimeSkill.class.getName());
     private final LlmClient llmClient;
 
+    @Autowired
     public TimeSkill(LlmClient llmClient) {
         this.llmClient = llmClient;
     }
@@ -54,7 +56,7 @@ public class TimeSkill implements Skill, SkillDescriptorProvider {
             try {
                 String prompt = "你是一个时间助手，请用自然语言回答当前时间，仅输出文本。";
                 String llmReply = llmClient.generateResponse(prompt, buildLlmContext(context));
-                if (llmReply != null && !llmReply.isBlank()) {
+                if (isUsableLlmReply(llmReply)) {
                     return SkillResult.success(name(), llmReply.trim());
                 }
             } catch (Exception ex) {
@@ -139,5 +141,9 @@ public class TimeSkill implements Skill, SkillDescriptorProvider {
         if (value != null) {
             target.put(key, value);
         }
+    }
+
+    private boolean isUsableLlmReply(String llmReply) {
+        return llmReply != null && !llmReply.isBlank() && !llmReply.startsWith("[LLM ");
     }
 }

@@ -12,9 +12,13 @@ import org.springframework.stereotype.Component;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 @Component
 public class DefaultOrchestrationPlanner implements OrchestrationPlanner {
+
+    private static final Pattern JSON_SKILL_PATTERN = Pattern.compile("\"skill\"\\s*:\\s*\"([^\"]+)\"");
 
     private final DecisionPlanner decisionPlanner;
     private final TaskGraphPlanner taskGraphPlanner;
@@ -80,6 +84,7 @@ public class DefaultOrchestrationPlanner implements OrchestrationPlanner {
         addSignal(signals, stringValue(attributes.get("explicitSkill")), 0.99, "explicit");
         addSignal(signals, stringValue(attributes.get("_target")), 0.98, "explicit");
         addSignal(signals, stringValue(attributes.get("target")), 0.97, "explicit");
+        addSignal(signals, stringValue(attributes.get("habitTarget")), 0.89, "memory");
         double semanticConfidence = semanticConfidence(attributes);
         addSignal(signals, stringValue(attributes.get(SemanticAnalysisResult.ATTR_SUGGESTED_SKILL)), semanticConfidence, "semantic");
         addSignal(signals, stringValue(attributes.get(SemanticAnalysisResult.ATTR_INTENT)), Math.max(0.60, semanticConfidence - 0.05), "semantic");
@@ -98,6 +103,10 @@ public class DefaultOrchestrationPlanner implements OrchestrationPlanner {
             return "";
         }
         String trimmed = userInput.trim();
+        if (trimmed.startsWith("{")) {
+            Matcher matcher = JSON_SKILL_PATTERN.matcher(trimmed);
+            return matcher.find() ? matcher.group(1).trim() : "";
+        }
         if (!trimmed.startsWith("skill:")) {
             return "";
         }

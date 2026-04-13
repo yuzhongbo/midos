@@ -6,6 +6,7 @@ import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.skill.Skill;
 import com.zhongbo.mindos.assistant.skill.SkillDescriptor;
 import com.zhongbo.mindos.assistant.skill.SkillDescriptorProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.LinkedHashSet;
@@ -20,6 +21,7 @@ import java.util.logging.Logger;
 public class FileSearchSkill implements Skill, SkillDescriptorProvider {
     private final FileSearchSkillExecutor executor;
 
+    @Autowired
     public FileSearchSkill(LlmClient llmClient) {
         this.executor = new FileSearchSkillExecutor(llmClient);
     }
@@ -82,7 +84,7 @@ final class FileSearchSkillExecutor {
                         + "，建议候选数："
                         + request.limit();
                 String llmReply = llmClient.generateResponse(prompt, buildLlmContext(context));
-                if (llmReply != null && !llmReply.isBlank()) {
+                if (isUsableLlmReply(llmReply)) {
                     return SkillResult.success(name(), llmReply.trim());
                 }
             } catch (Exception ex) {
@@ -197,6 +199,10 @@ final class FileSearchSkillExecutor {
             return token.toUpperCase(Locale.ROOT);
         }
         return Character.toUpperCase(token.charAt(0)) + token.substring(1);
+    }
+
+    private boolean isUsableLlmReply(String llmReply) {
+        return llmReply != null && !llmReply.isBlank() && !llmReply.startsWith("[LLM ");
     }
 
     private record SearchRequest(String path, String keyword, String fileType, int limit) {

@@ -14,6 +14,7 @@ import java.util.Optional;
 final class DecisionParamAssembler {
 
     private final SkillCommandAssembler skillCommandAssembler;
+    private final SkillDslParser skillDslParser;
 
     DecisionParamAssembler() {
         this(null);
@@ -21,6 +22,7 @@ final class DecisionParamAssembler {
 
     DecisionParamAssembler(SkillCommandAssembler skillCommandAssembler) {
         this.skillCommandAssembler = skillCommandAssembler;
+        this.skillDslParser = new SkillDslParser(new SkillDslValidator());
     }
 
     Map<String, Object> assembleParams(String skillName,
@@ -169,6 +171,12 @@ final class DecisionParamAssembler {
             return Map.of();
         }
         String trimmed = userInput.trim();
+        if (trimmed.startsWith("{")) {
+            return skillDslParser.parse(trimmed)
+                    .map(SkillDsl::input)
+                    .map(input -> input == null || input.isEmpty() ? Map.<String, Object>of() : Map.copyOf(new LinkedHashMap<>(input)))
+                    .orElse(Map.of());
+        }
         if (!trimmed.startsWith("skill:")) {
             return Map.of();
         }

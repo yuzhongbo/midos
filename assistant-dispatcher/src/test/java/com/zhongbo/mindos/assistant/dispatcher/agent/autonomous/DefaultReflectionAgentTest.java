@@ -41,9 +41,11 @@ class DefaultReflectionAgentTest {
         assertEquals("missing_param", result.pattern());
         assertTrue(result.rootCause().contains("studentId"));
         assertTrue(result.improvement().contains("ParamValidator"));
-        assertEquals(1, memoryGateway.proceduralEntries.size());
-        assertEquals(1, memoryGateway.semanticTexts.size());
-        assertEquals("autonomous.reflection", memoryGateway.semanticBuckets.get(0));
+        assertTrue(memoryGateway.proceduralEntries.isEmpty());
+        assertTrue(memoryGateway.semanticTexts.isEmpty());
+        assertTrue(result.proceduralWritten());
+        assertTrue(result.semanticWritten());
+        assertEquals(2, result.memoryWrites().operations().size());
         assertFalse(result.dimensionScores().isEmpty());
     }
 
