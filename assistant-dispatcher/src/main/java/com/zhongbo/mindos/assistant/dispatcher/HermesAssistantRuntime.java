@@ -1,0 +1,729 @@
+package com.zhongbo.mindos.assistant.dispatcher;
+
+import com.zhongbo.mindos.assistant.common.SkillResult;
+import com.zhongbo.mindos.assistant.common.dto.CritiqueReportDto;
+import com.zhongbo.mindos.assistant.common.dto.ExecutionTraceDto;
+import com.zhongbo.mindos.assistant.common.dto.PlanStepDto;
+import com.zhongbo.mindos.assistant.common.dto.RoutingDecisionDto;
+import com.zhongbo.mindos.assistant.dispatcher.decision.Decision;
+import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryFacade;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.DecisionOrchestrator;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.ParamValidator;
+import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalysisResult;
+
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Consumer;
+
+final class HermesAssistantRuntime {
+
+    private static final String CLARIFY_PREFIX = "我理解你的意思了，但还缺少关键参数：";
+
+    private final DispatchHeuristicsSupport heuristicsSupport;
+    private final HermesDecisionContextFactory contextFactory;
+    private final HermesDecisionEngine decisionEngine;
+    private final ParamValidator paramValidator;
+    private final HermesSkillRouter skillRouter;
+    private final HermesMemoryRecorder memoryRecorder;
+    private final DispatchLlmSupport llmSupport;
+    private final DispatcherMemoryFacade dispatcherMemoryFacade;
+    private final DispatcherRoutingCompatibilitySupport compatibilitySupport;
+    private final DispatchRuleCatalog dispatchRuleCatalog;
+    private final String promptInjectionSafeReply;
+    private final AtomicBoolean acceptingRequests = new AtomicBoolean(true);
+    private final AtomicLong activeDispatchCount = new AtomicLong();
+
+    HermesAssistantRuntime(DispatchHeuristicsSupport heuristicsSupport,
+                           HermesDecisionContextFactory contextFactory,
+                           HermesDecisionEngine decisionEngine,
+                           ParamValidator paramValidator,
+                           HermesSkillRouter skillRouter,
+                           HermesMemoryRecorder memoryRecorder,
+                           DispatchLlmSupport llmSupport,
+                           DispatcherMemoryFacade dispatcherMemoryFacade,
+                           DispatcherRoutingCompatibilitySupport compatibilitySupport,
+                           DispatchRuleCatalog dispatchRuleCatalog,
+                           String promptInjectionSafeReply) {
+        this.heuristicsSupport = heuristicsSupport;
+        this.contextFactory = contextFactory;
+        this.decisionEngine = decisionEngine;
+        this.paramValidator = paramValidator;
+        this.skillRouter = skillRouter;
+        this.memoryRecorder = memoryRecorder;
+        this.llmSupport = llmSupport;
+        this.dispatcherMemoryFacade = dispatcherMemoryFacade;
+        this.compatibilitySupport = compatibilitySupport;
+        this.dispatchRuleCatalog = dispatchRuleCatalog;
+        this.promptInjectionSafeReply = promptInjectionSafeReply == null || promptInjectionSafeReply.isBlank()
+                ? "为了安全，我不能执行这类请求。"
+                : promptInjectionSafeReply;
+    }
+
+    DispatchResult dispatch(String userId, String userInput, Map<String, Object> profileContext) {
+        return dispatchInternal(userId, userInput, profileContext, null, false);
+    }
+
+    CompletableFuture<DispatchResult> dispatchAsync(String userId, String userInput, Map<String, Object> profileContext) {
+        return CompletableFuture.supplyAsync(() -> dispatch(userId, userInput, profileContext));
+    }
+
+    CompletableFuture<DispatchResult> dispatchStream(String userId,
+                                                     String userInput,
+                                                     Map<String, Object> profileContext,
+                                                     Consumer<String> deltaConsumer) {
+        return CompletableFuture.supplyAsync(() -> dispatchInternal(userId, userInput, profileContext, deltaConsumer, true));
+    }
+
+    void beginDrain() {
+        acceptingRequests.set(false);
+    }
+
+    boolean isAcceptingRequests() {
+        return acceptingRequests.get();
+    }
+
+    long getActiveDispatchCount() {
+        return activeDispatchCount.get();
+    }
+
+    boolean waitForActiveDispatches(long timeoutMs) {
+        long deadline = System.currentTimeMillis() + Math.max(0L, timeoutMs);
+        while (System.currentTimeMillis() <= deadline) {
+            if (activeDispatchCount.get() <= 0L) {
+                return true;
+            }
+            try {
+                Thread.sleep(25L);
+            } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
+                return activeDispatchCount.get() <= 0L;
+            }
+        }
+        return activeDispatchCount.get() <= 0L;
+    }
+
+    private DispatchResult dispatchInternal(String userId,
+                                            String userInput,
+                                            Map<String, Object> profileContext,
+                                            Consumer<String> deltaConsumer,
+                                            boolean streamMode) {
+        if (!acceptingRequests.get()) {
+            return buildDrainingResult();
+        }
+
+        activeDispatchCount.incrementAndGet();
+        Instant startedAt = Instant.now();
+        try {
+            String safeUserId = safeText(userId);
+            String safeInput = userInput == null ? "" : userInput.trim();
+            Map<String, Object> safeProfileContext = profileContext == null ? Map.of() : Map.copyOf(profileContext);
+
+            if (isPromptInjectionAttempt(safeInput)) {
+                SkillResult guarded = SkillResult.success("security.guard", promptInjectionSafeReply);
+                emit(deltaConsumer, guarded.output());
+                DispatchResult result = buildDispatchResult(
+                        guarded.output(),
+                        guarded.skillName(),
+                        "security.guard",
+                        guarded.skillName(),
+                        1.0d,
+                        List.of("prompt injection guard rejected the input"),
+                        List.of(),
+                        true,
+                        List.of(primaryStep("success", guarded.skillName(), guarded.output(), startedAt, Instant.now()))
+                );
+                result = enrichObservability(result, safeInput, SemanticAnalysisResult.empty());
+                memoryRecorder.record(safeUserId, safeInput, guarded, safeProfileContext, SemanticAnalysisResult.empty(), null, null);
+                return result;
+            }
+
+            Optional<SkillResult> metaReply = dispatchRuleCatalog == null
+                    ? Optional.empty()
+                    : dispatchRuleCatalog.answerMetaQuestion(safeInput);
+            if (metaReply.isPresent()) {
+                SkillResult metaResult = metaReply.get();
+                emit(deltaConsumer, metaResult.output());
+                DispatchResult result = buildDispatchResult(
+                        metaResult.output(),
+                        metaResult.skillName(),
+                        "meta-help",
+                        metaResult.skillName(),
+                        0.97d,
+                        List.of("input matched a built-in meta help question"),
+                        List.of(),
+                        true,
+                        List.of(primaryStep("success", metaResult.skillName(), metaResult.output(), startedAt, Instant.now()))
+                );
+                result = enrichObservability(result, safeInput, SemanticAnalysisResult.empty());
+                memoryRecorder.record(safeUserId, safeInput, metaResult, safeProfileContext, SemanticAnalysisResult.empty(), null, null);
+                return result;
+            }
+
+            HermesDecisionContext decisionContext = contextFactory.create(safeUserId, safeInput, safeProfileContext);
+            HermesDecisionEngine.DecisionPlan decisionPlan = decisionEngine.decide(decisionContext);
+            Decision decision = decisionPlan.decision();
+
+            if (decision != null && decision.needClarify() && decisionPlan.clarifyReply() != null && !decisionPlan.clarifyReply().isBlank()) {
+                SkillResult clarifyResult = SkillResult.success("semantic.clarify", decisionPlan.clarifyReply());
+                emit(deltaConsumer, clarifyResult.output());
+                DispatchResult result = buildDispatchResult(
+                        clarifyResult.output(),
+                        clarifyResult.skillName(),
+                        "semantic-clarify",
+                        decision.target(),
+                        decision.confidence(),
+                        decisionPlan.reasons(),
+                        decisionPlan.rejectedReasons(),
+                        true,
+                        List.of(primaryStep("success", clarifyResult.skillName(), clarifyResult.output(), startedAt, Instant.now()))
+                );
+                result = enrichObservability(result, safeInput, decisionContext.semanticAnalysis());
+                memoryRecorder.record(safeUserId, safeInput, clarifyResult, decisionContext.profileContext(), decisionContext.semanticAnalysis(), null, null);
+                return result;
+            }
+
+            if (decision == null || decision.target() == null || decision.target().isBlank() || "llm".equalsIgnoreCase(decision.target())) {
+                DispatchResult llmDslResult = maybeRouteWithLlmDsl(
+                        safeUserId,
+                        safeInput,
+                        safeProfileContext,
+                        decisionContext,
+                        deltaConsumer,
+                        streamMode,
+                        startedAt
+                );
+                if (llmDslResult != null) {
+                    return llmDslResult;
+                }
+
+                SkillResult llmResult = fallbackToLlm(decisionContext, safeInput, safeProfileContext, deltaConsumer, streamMode);
+                DispatchResult result = buildDispatchResult(
+                        llmResult.output(),
+                        llmResult.skillName(),
+                        decisionPlan.route(),
+                        llmResult.skillName(),
+                        decision == null ? 0.0d : decision.confidence(),
+                        decisionPlan.reasons(),
+                        decisionPlan.rejectedReasons(),
+                        llmResult.success(),
+                        List.of(primaryStep(llmResult.success() ? "success" : "failed", llmResult.skillName(), llmResult.output(), startedAt, Instant.now()))
+                );
+                result = enrichObservability(result, safeInput, decisionContext.semanticAnalysis());
+                memoryRecorder.record(safeUserId, safeInput, llmResult, decisionContext.profileContext(), decisionContext.semanticAnalysis(), null, null);
+                return result;
+            }
+
+            return executeRoutedDecision(
+                    safeUserId,
+                    safeInput,
+                    safeProfileContext,
+                    decisionContext,
+                    decisionPlan,
+                    decision,
+                    deltaConsumer,
+                    streamMode,
+                    startedAt
+            );
+        } finally {
+            activeDispatchCount.decrementAndGet();
+        }
+    }
+
+    private DispatchResult maybeRouteWithLlmDsl(String userId,
+                                                String userInput,
+                                                Map<String, Object> profileContext,
+                                                HermesDecisionContext decisionContext,
+                                                Consumer<String> deltaConsumer,
+                                                boolean streamMode,
+                                                Instant startedAt) {
+        if (compatibilitySupport == null || decisionContext == null) {
+            return null;
+        }
+        LlmDetectionResult detection = compatibilitySupport.detectSkillWithLlm(
+                userId,
+                userInput,
+                decisionContext.memoryContext(),
+                decisionContext.skillContext(),
+                decisionContext.profileContext()
+        );
+        if (detection.directResult().isPresent()) {
+            SkillResult directResult = detection.directResult().get();
+            emit(deltaConsumer, directResult.output());
+            DispatchResult result = buildDispatchResult(
+                    directResult.output(),
+                    directResult.skillName(),
+                    "llm-dsl-clarify",
+                    directResult.skillName(),
+                    0.40d,
+                    List.of("LLM router requested clarification"),
+                    List.of(),
+                    directResult.success(),
+                    List.of(primaryStep("success", directResult.skillName(), directResult.output(), startedAt, Instant.now()))
+            );
+            result = enrichObservability(result, userInput, decisionContext.semanticAnalysis());
+            memoryRecorder.record(userId, userInput, directResult, decisionContext.profileContext(), decisionContext.semanticAnalysis(), null, null);
+            return result;
+        }
+        if (detection.result().isPresent()) {
+            SkillResult executed = detection.result().get();
+            if (isLoopGuardBlocked(userId, executed.skillName(), userInput)) {
+                return null;
+            }
+            SkillFinalizeOutcome finalized = llmSupport.maybeFinalizeSkillResultWithLlm(
+                    userInput,
+                    executed,
+                    new LinkedHashMap<>(decisionContext.llmContext())
+            );
+            SkillResult resultToReturn = finalized.result();
+            emit(deltaConsumer, resultToReturn.output());
+            DispatchResult result = buildDispatchResult(
+                    resultToReturn.output(),
+                    resultToReturn.skillName(),
+                    "llm-dsl",
+                    resultToReturn.skillName(),
+                    0.76d,
+                    List.of("LLM router selected one of the shortlisted candidate skills"),
+                    List.of(),
+                    resultToReturn.success(),
+                    List.of(primaryStep(resultToReturn.success() ? "success" : "failed", resultToReturn.skillName(), resultToReturn.output(), startedAt, Instant.now()))
+            );
+            result = enrichObservability(result, userInput, decisionContext.semanticAnalysis());
+            memoryRecorder.record(userId, userInput, resultToReturn, decisionContext.profileContext(), decisionContext.semanticAnalysis(), resultToReturn.skillName(), resultToReturn.success());
+            return result;
+        }
+        if (detection.skillDsl().isEmpty()) {
+            return null;
+        }
+        if (isLoopGuardBlocked(userId, detection.skillDsl().get().skill(), userInput)) {
+            return null;
+        }
+        Decision llmDecision = new Decision(
+                detection.skillDsl().get().skill(),
+                detection.skillDsl().get().skill(),
+                detection.skillDsl().get().input(),
+                0.76d,
+                false
+        );
+        HermesDecisionEngine.DecisionPlan llmDecisionPlan = new HermesDecisionEngine.DecisionPlan(
+                llmDecision,
+                "llm-dsl",
+                List.of("LLM router selected one of the shortlisted candidate skills"),
+                List.of(),
+                null
+        );
+        return executeRoutedDecision(
+                userId,
+                userInput,
+                profileContext,
+                decisionContext,
+                llmDecisionPlan,
+                llmDecision,
+                deltaConsumer,
+                streamMode,
+                startedAt
+        );
+    }
+
+    private DispatchResult executeRoutedDecision(String userId,
+                                                 String userInput,
+                                                 Map<String, Object> profileContext,
+                                                 HermesDecisionContext decisionContext,
+                                                 HermesDecisionEngine.DecisionPlan decisionPlan,
+                                                 Decision decision,
+                                                 Consumer<String> deltaConsumer,
+                                                 boolean streamMode,
+                                                 Instant startedAt) {
+        Optional<SkillResult> capabilityBlocked = maybeBlockedByCapability(decision == null ? null : decision.target());
+        if (capabilityBlocked.isPresent()) {
+            SkillResult blocked = capabilityBlocked.get();
+            emit(deltaConsumer, blocked.output());
+            DispatchResult result = buildDispatchResult(
+                    blocked.output(),
+                    blocked.skillName(),
+                    "security.guard",
+                    decision == null ? blocked.skillName() : decision.target(),
+                    decision == null ? 0.0d : decision.confidence(),
+                    List.of("capability guard blocked skill execution"),
+                    List.of(),
+                    true,
+                    List.of(primaryStep("success", blocked.skillName(), blocked.output(), startedAt, Instant.now()))
+            );
+            result = enrichObservability(result, userInput, decisionContext.semanticAnalysis());
+            memoryRecorder.record(userId, userInput, blocked, decisionContext.profileContext(), decisionContext.semanticAnalysis(), null, null);
+            return result;
+        }
+        if (isLoopGuardBlocked(userId, decision == null ? null : decision.target(), userInput)) {
+            SkillResult llmResult = fallbackToLlm(decisionContext, userInput, profileContext, deltaConsumer, streamMode);
+            DispatchResult result = buildDispatchResult(
+                    llmResult.output(),
+                    llmResult.skillName(),
+                    "llm-fallback",
+                    llmResult.skillName(),
+                    decision == null ? 0.0d : decision.confidence(),
+                    decisionPlan.reasons(),
+                    List.of("skill blocked by loop guard"),
+                    llmResult.success(),
+                    List.of(primaryStep(llmResult.success() ? "success" : "failed", llmResult.skillName(), llmResult.output(), startedAt, Instant.now()))
+            );
+            result = enrichObservability(result, userInput, decisionContext.semanticAnalysis());
+            memoryRecorder.record(userId, userInput, llmResult, decisionContext.profileContext(), decisionContext.semanticAnalysis(), null, null);
+            return result;
+        }
+
+        ParamValidator.ValidationResult validation = paramValidator.validate(
+                decision.target(),
+                decision.params(),
+                new DecisionOrchestrator.OrchestrationRequest(
+                        userId,
+                        userInput,
+                        decisionContext.skillContext(),
+                        decisionContext.profileContext()
+                )
+        );
+
+        if (!validation.valid()) {
+            if (validation.needsClarification() && clarificationAttempts(userId) < 2) {
+                String reply = decisionPlan.clarifyReply() != null && !decisionPlan.clarifyReply().isBlank()
+                        ? decisionPlan.clarifyReply()
+                        : buildClarifyReply(decision, validation);
+                SkillResult clarifyResult = SkillResult.success("semantic.clarify", reply);
+                emit(deltaConsumer, clarifyResult.output());
+                List<String> reasons = new ArrayList<>(decisionPlan.reasons());
+                reasons.add(validation.message());
+                DispatchResult result = buildDispatchResult(
+                        clarifyResult.output(),
+                        clarifyResult.skillName(),
+                        "semantic-clarify",
+                        decision.target(),
+                        decision.confidence(),
+                        reasons,
+                        decisionPlan.rejectedReasons(),
+                        true,
+                        List.of(primaryStep("success", clarifyResult.skillName(), clarifyResult.output(), startedAt, Instant.now()))
+                );
+                result = enrichObservability(result, userInput, decisionContext.semanticAnalysis());
+                memoryRecorder.record(userId, userInput, clarifyResult, decisionContext.profileContext(), decisionContext.semanticAnalysis(), null, null);
+                return result;
+            }
+
+            List<String> rejectedReasons = new ArrayList<>(decisionPlan.rejectedReasons());
+            rejectedReasons.add(validation.message());
+            SkillResult llmResult = fallbackToLlm(decisionContext, userInput, profileContext, deltaConsumer, streamMode);
+            DispatchResult result = buildDispatchResult(
+                    llmResult.output(),
+                    llmResult.skillName(),
+                    "llm-fallback",
+                    llmResult.skillName(),
+                    decision.confidence(),
+                    decisionPlan.reasons(),
+                    rejectedReasons,
+                    llmResult.success(),
+                    List.of(primaryStep(llmResult.success() ? "success" : "failed", llmResult.skillName(), llmResult.output(), startedAt, Instant.now()))
+            );
+            result = enrichObservability(result, userInput, decisionContext.semanticAnalysis());
+            memoryRecorder.record(userId, userInput, llmResult, decisionContext.profileContext(), decisionContext.semanticAnalysis(), null, null);
+            return result;
+        }
+
+        Decision validatedDecision = validation.applyTo(decision);
+        String attemptedSkill = validatedDecision.target();
+        SkillResult routedResult = skillRouter.execute(validatedDecision, decisionContext.skillContext());
+        boolean attemptedSuccess = routedResult != null && routedResult.success();
+
+        if (attemptedSuccess) {
+            if ("memory-habit".equals(decisionPlan.route()) && compatibilitySupport != null) {
+                routedResult = compatibilitySupport.enrichMemoryHabitResult(routedResult, attemptedSkill, decisionContext.profileContext());
+            }
+            SkillFinalizeOutcome finalized = llmSupport.maybeFinalizeSkillResultWithLlm(
+                    userInput,
+                    routedResult,
+                    new LinkedHashMap<>(decisionContext.llmContext())
+            );
+            SkillResult resultToReturn = finalized.result();
+            emit(deltaConsumer, resultToReturn.output());
+            DispatchResult result = buildDispatchResult(
+                    resultToReturn.output(),
+                    resultToReturn.skillName(),
+                    decisionPlan.route(),
+                    resultToReturn.skillName(),
+                    validatedDecision.confidence(),
+                    decisionPlan.reasons(),
+                    decisionPlan.rejectedReasons(),
+                    true,
+                    List.of(primaryStep("success", resultToReturn.skillName(), resultToReturn.output(), startedAt, Instant.now()))
+            );
+            result = enrichObservability(result, userInput, decisionContext.semanticAnalysis());
+            memoryRecorder.record(userId, userInput, resultToReturn, decisionContext.profileContext(), decisionContext.semanticAnalysis(), attemptedSkill, true);
+            return result;
+        }
+
+        List<String> rejectedReasons = new ArrayList<>(decisionPlan.rejectedReasons());
+        rejectedReasons.add(routedResult != null && routedResult.output() != null && !routedResult.output().isBlank()
+                ? "skill execution failed: " + clip(routedResult.output())
+                : "skill execution failed");
+        SkillResult llmResult = fallbackToLlm(decisionContext, userInput, profileContext, deltaConsumer, streamMode);
+        DispatchResult result = buildDispatchResult(
+                llmResult.output(),
+                llmResult.skillName(),
+                "llm-fallback",
+                attemptedSkill,
+                validatedDecision.confidence(),
+                decisionPlan.reasons(),
+                rejectedReasons,
+                llmResult.success(),
+                "meta-replan",
+                1,
+                List.of(
+                        primaryStep("failed", attemptedSkill, routedResult == null ? "" : routedResult.output(), startedAt, Instant.now()),
+                        fallbackStep(llmResult.skillName(), llmResult.output(), startedAt, Instant.now())
+                )
+        );
+        result = enrichObservability(result, userInput, decisionContext.semanticAnalysis());
+        memoryRecorder.record(userId, userInput, llmResult, decisionContext.profileContext(), decisionContext.semanticAnalysis(), attemptedSkill, false);
+        return result;
+    }
+
+    private SkillResult fallbackToLlm(HermesDecisionContext context,
+                                      String userInput,
+                                      Map<String, Object> profileContext,
+                                      Consumer<String> deltaConsumer,
+                                      boolean streamMode) {
+        Map<String, Object> llmContext = new LinkedHashMap<>(context.llmContext());
+        llmContext.put("routeStage", "llm-fallback");
+        llmSupport.applyStageLlmRoute("llm-fallback", profileContext, llmContext);
+        boolean realtimeIntent = heuristicsSupport != null
+                && heuristicsSupport.isRealtimeIntent(userInput, context.semanticAnalysis());
+        if (streamMode) {
+            SkillResult result = llmSupport.buildLlmFallbackStreamResult(
+                    context.memoryContext(),
+                    context.promptMemoryContext(),
+                    userInput,
+                    llmContext,
+                    realtimeIntent,
+                    deltaConsumer
+            );
+            return capLlmResult(result);
+        }
+        SkillResult result = llmSupport.buildFallbackResult(
+                context.memoryContext(),
+                context.promptMemoryContext(),
+                userInput,
+                llmContext,
+                realtimeIntent
+        );
+        return capLlmResult(result);
+    }
+
+    private DispatchResult enrichObservability(DispatchResult result,
+                                               String userInput,
+                                               SemanticAnalysisResult semanticAnalysis) {
+        if (result == null || result.executionTrace() == null || result.executionTrace().routing() == null) {
+            return result;
+        }
+        RoutingDecisionDto routing = result.executionTrace().routing();
+        List<String> reasons = new ArrayList<>(routing.reasons() == null ? List.of() : routing.reasons());
+        boolean realtimeLookup = heuristicsSupport != null && heuristicsSupport.isRealtimeIntent(userInput, semanticAnalysis);
+        boolean memoryDirectBypassed = realtimeLookup && !"memory.direct".equalsIgnoreCase(result.channel());
+        String actualSearchSource = llmSupport.classifyMcpSearchSource(firstNonBlank(routing.selectedSkill(), result.channel()));
+        upsertReason(reasons, "realtimeLookup", String.valueOf(realtimeLookup));
+        upsertReason(reasons, "memoryDirectBypassed", String.valueOf(memoryDirectBypassed));
+        upsertReason(reasons, "actualSearchSource", actualSearchSource);
+        RoutingDecisionDto updatedRouting = new RoutingDecisionDto(
+                routing.route(),
+                routing.selectedSkill(),
+                routing.confidence(),
+                List.copyOf(reasons),
+                routing.rejectedReasons()
+        );
+        ExecutionTraceDto updatedTrace = new ExecutionTraceDto(
+                result.executionTrace().strategy(),
+                result.executionTrace().replanCount(),
+                result.executionTrace().critique(),
+                result.executionTrace().steps(),
+                updatedRouting
+        );
+        return new DispatchResult(result.reply(), result.channel(), updatedTrace);
+    }
+
+    private void upsertReason(List<String> reasons, String key, String value) {
+        String prefix = key + "=";
+        for (int index = 0; index < reasons.size(); index++) {
+            if (reasons.get(index) != null && reasons.get(index).startsWith(prefix)) {
+                reasons.set(index, prefix + value);
+                return;
+            }
+        }
+        reasons.add(prefix + value);
+    }
+
+    private String buildClarifyReply(Decision decision, ParamValidator.ValidationResult validation) {
+        StringBuilder reply = new StringBuilder(CLARIFY_PREFIX);
+        if (validation.missingParams() != null && !validation.missingParams().isEmpty()) {
+            reply.append(String.join("、", validation.missingParams()));
+        } else if (validation.message() != null && !validation.message().isBlank()) {
+            reply.append(validation.message());
+        } else {
+            reply.append("请补充执行所需参数");
+        }
+        if (decision != null && decision.target() != null && !decision.target().isBlank()) {
+            reply.append("。目标能力：").append(decision.target());
+        }
+        reply.append("。请一次性补充这些信息，我再继续执行。");
+        return reply.toString();
+    }
+
+    private int clarificationAttempts(String userId) {
+        if (dispatcherMemoryFacade == null || userId == null || userId.isBlank()) {
+            return 0;
+        }
+        return (int) dispatcherMemoryFacade.recentHistory(userId).stream()
+                .filter(turn -> turn != null
+                        && "assistant".equalsIgnoreCase(safeText(turn.role()))
+                        && safeText(turn.content()).startsWith(CLARIFY_PREFIX))
+                .count();
+    }
+
+    private boolean isPromptInjectionAttempt(String userInput) {
+        return heuristicsSupport != null && heuristicsSupport.isPromptInjectionAttempt(userInput);
+    }
+
+    private DispatchResult buildDispatchResult(String reply,
+                                               String channel,
+                                               String route,
+                                               String selectedSkill,
+                                               double confidence,
+                                               List<String> reasons,
+                                               List<String> rejectedReasons,
+                                               boolean success,
+                                               List<PlanStepDto> steps) {
+        return buildDispatchResult(reply, channel, route, selectedSkill, confidence, reasons, rejectedReasons, success,
+                "hermes-single-decision", 0, steps);
+    }
+
+    private DispatchResult buildDispatchResult(String reply,
+                                               String channel,
+                                               String route,
+                                               String selectedSkill,
+                                               double confidence,
+                                               List<String> reasons,
+                                               List<String> rejectedReasons,
+                                               boolean success,
+                                               String strategy,
+                                               int replanCount,
+                                               List<PlanStepDto> steps) {
+        RoutingDecisionDto routingDecision = new RoutingDecisionDto(
+                route == null || route.isBlank() ? "decision-engine" : route,
+                selectedSkill == null || selectedSkill.isBlank() ? channel : selectedSkill,
+                Math.max(0.0d, Math.min(1.0d, confidence)),
+                reasons == null ? List.of() : List.copyOf(reasons),
+                rejectedReasons == null ? List.of() : List.copyOf(rejectedReasons)
+        );
+        ExecutionTraceDto trace = new ExecutionTraceDto(
+                strategy == null || strategy.isBlank() ? "hermes-single-decision" : strategy,
+                Math.max(0, replanCount),
+                new CritiqueReportDto(success, success ? "completed" : "failed", "none"),
+                steps == null ? List.of() : List.copyOf(steps),
+                routingDecision
+        );
+        return new DispatchResult(reply == null ? "" : reply, channel == null ? "" : channel, trace);
+    }
+
+    private PlanStepDto primaryStep(String status,
+                                    String channel,
+                                    String details,
+                                    Instant startedAt,
+                                    Instant finishedAt) {
+        return new PlanStepDto(
+                "primary",
+                status,
+                channel == null ? "" : channel,
+                safeText(details),
+                startedAt,
+                finishedAt
+        );
+    }
+
+    private PlanStepDto fallbackStep(String channel,
+                                     String details,
+                                     Instant startedAt,
+                                     Instant finishedAt) {
+        return new PlanStepDto(
+                "fallback",
+                "success",
+                channel == null ? "" : channel,
+                safeText(details),
+                startedAt,
+                finishedAt
+        );
+    }
+
+    private DispatchResult buildDrainingResult() {
+        Instant now = Instant.now();
+        return buildDispatchResult(
+                "系统正在升级维护，请稍后重试。",
+                "system.draining",
+                "system.draining",
+                "system.draining",
+                1.0d,
+                List.of("dispatcher is currently draining and rejecting new requests"),
+                List.of(),
+                true,
+                List.of(primaryStep("success", "system.draining", "系统正在升级维护，请稍后重试。", now, now))
+        );
+    }
+
+    private void emit(Consumer<String> deltaConsumer, String text) {
+        if (deltaConsumer != null && text != null && !text.isBlank()) {
+            deltaConsumer.accept(text);
+        }
+    }
+
+    private String safeText(String value) {
+        return value == null ? "" : value.trim();
+    }
+
+    private String clip(String value) {
+        if (value == null) {
+            return "";
+        }
+        int max = 160;
+        return value.length() <= max ? value : value.substring(0, max) + "...";
+    }
+
+    private String firstNonBlank(String... values) {
+        if (values == null) {
+            return "";
+        }
+        for (String value : values) {
+            if (value != null && !value.isBlank()) {
+                return value.trim();
+            }
+        }
+        return "";
+    }
+
+    private Optional<SkillResult> maybeBlockedByCapability(String skillName) {
+        return compatibilitySupport == null ? Optional.empty() : compatibilitySupport.maybeBlockByCapability(skillName);
+    }
+
+    private boolean isLoopGuardBlocked(String userId, String skillName, String userInput) {
+        return compatibilitySupport != null
+                && skillName != null
+                && !skillName.isBlank()
+                && compatibilitySupport.isSkillLoopGuardBlocked(userId, skillName, userInput);
+    }
+
+    private SkillResult capLlmResult(SkillResult result) {
+        if (result == null || result.skillName() == null || !"llm".equalsIgnoreCase(result.skillName())) {
+            return result;
+        }
+        return SkillResult.success(result.skillName(), llmSupport.capLlmReply(result.output()));
+    }
+}

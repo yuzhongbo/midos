@@ -34,12 +34,13 @@ public class SemanticAnalysisService implements SemanticAnalyzer {
     private static final List<String> INTERNAL_SEMANTIC_ROUTE_SKILLS = List.of("semantic.analyze");
     private static final List<String> SEMANTIC_META_HINTS = List.of("语义", "分析", "路由", "结构化", "意图", "候选", "semantic", "解析");
     private static final int DEFAULT_LLM_COMPLEXITY_MIN_INPUT_CHARS = 10;
-    private static final String DEFAULT_LLM_COMPLEXITY_TRIGGER_TERMS = "新闻,搜索,实时,分析,规划,计划,代码,排查,debug,search,latest,news,plan,report";
+    private static final String DEFAULT_LLM_COMPLEXITY_TRIGGER_TERMS = "新闻,搜索,实时,分析,规划,计划,代码,排查,文档,手册,指南,debug,search,latest,news,plan,report,docs,documentation,manual,guide,api";
 
     private final LlmClient llmClient;
     private final SkillRegistry skillRegistry;
     private final DefaultSkillCatalog skillCatalog;
     private final ObjectMapper objectMapper = new ObjectMapper();
+    private final SemanticDecisionPromptBuilder decisionPromptBuilder = new SemanticDecisionPromptBuilder();
     private final boolean enabled;
     private final boolean llmEnabled;
     private final boolean forceLocalProvider;
@@ -245,12 +246,13 @@ public class SemanticAnalysisService implements SemanticAnalyzer {
         if (shouldSkipLlmByComplexity(userInput)) {
             return Optional.empty();
         }
-        String prompt = "You are MindOS semantic dispatch analyzer. Return strict JSON only. "
-                + "Required keys: intent, suggestedSkill, summary, confidence, payload (params is allowed as alias), keywords. "
-                + "If no local skill applies, leave suggestedSkill empty and payload empty.\n"
-                + "Available skills: " + summarizeAvailableSkills(availableSkillSummaries) + "\n"
-                + "Memory context:\n" + capText(memoryContext, 1000) + "\n"
-                + "User input:\n" + capText(userInput, 400);
+        String prompt = decisionPromptBuilder.buildPrompt(
+                userInput,
+                memoryContext,
+                profileContext,
+                availableSkillSummaries,
+                baseline
+        );
 
         if (semanticLocalEscalationEnabled) {
             Optional<SemanticAnalysisResult> localResult = callSemanticLlm(prompt, userId, userInput, profileContext, SEMANTIC_LOCAL_PROVIDER, llmPreset, resolveSemanticLocalModel());
@@ -404,14 +406,22 @@ public class SemanticAnalysisService implements SemanticAnalyzer {
         }
         Map<String, Object> cleaned = new LinkedHashMap<>();
 
-        cleaned.put("intent", stringValue(raw.get("intent")));
-        cleaned.put("rewrittenInput", stringValue(raw.get("rewrittenInput")));
-        cleaned.put("suggestedSkill", stringValue(raw.get("suggestedSkill")));
-        cleaned.put("summary", stringValue(raw.get("summary")));
+        cleaned.put("intent", firstNonBlankString(raw.get("intent"), raw.get("intentLabel"), raw.get("intent_label")));
+        cleaned.put("rewrittenInput", firstNonBlankString(raw.get("rewrittenInput"), raw.get("rewritten_input"), raw.get("query")));
+        cleaned.put("suggestedSkill", firstNonBlankString(
+                raw.get("suggestedSkill"),
+                raw.get("suggested_skill"),
+                raw.get("target"),
+                raw.get("selectedSkill"),
+                raw.get("skill")
+        ));
+        cleaned.put("summary", firstNonBlankString(raw.get("summary"), raw.get("intentSummary"), raw.get("intent_summary")));
         cleaned.put("payload", resolvePayloadMap(raw));
         logMalformedPayloadIfNeeded(raw, cleaned);
         cleaned.put("keywords", parseKeywords(raw.get("keywords")));
-        cleaned.put("candidate_intents", parseCandidateIntents(raw.get("candidate_intents")));
+        cleaned.put("candidate_intents", parseCandidateIntents(raw.containsKey("candidate_intents")
+                ? raw.get("candidate_intents")
+                : raw.get("candidateIntents")));
         cleaned.put("confidence", clampConfidence(numberValue(raw.get("confidence"), 0.0)));
         return cleaned;
     }
@@ -763,6 +773,9 @@ public class SemanticAnalysisService implements SemanticAnalyzer {
         if (isInternalSemanticRouteSkill(suggestedSkill)) {
             return "";
         }
+        if (suggestedSkill.startsWith("im.") || suggestedSkill.startsWith("internal.")) {
+            return "";
+        }
         if (!suggestedSkill.isBlank() && skillRegistry.getSkill(suggestedSkill).isEmpty()) {
             return "";
         }
@@ -788,6 +801,9 @@ public class SemanticAnalysisService implements SemanticAnalyzer {
         }
         return candidateIntents.stream()
                 .filter(candidate -> !isInternalSemanticRouteSkill(candidate.intent()))
+                .filter(candidate -> candidate.intent() != null
+                        && !candidate.intent().startsWith("im.")
+                        && !candidate.intent().startsWith("internal."))
                 .toList();
     }
 
@@ -807,29 +823,25 @@ public class SemanticAnalysisService implements SemanticAnalyzer {
         return normalized.substring(0, maxLength) + "...";
     }
 
-    private String summarizeAvailableSkills(List<String> availableSkillSummaries) {
-        List<String> skills = availableSkillSummaries == null ? List.of() : availableSkillSummaries;
-        if (skills.isEmpty()) {
-            return "";
-        }
-        int limit = Math.min(8, skills.size());
-        List<String> summarized = new ArrayList<>(limit);
-        for (int i = 0; i < limit; i++) {
-            summarized.add(capText(skills.get(i), 72));
-        }
-        String joined = String.join(", ", summarized);
-        if (skills.size() > limit) {
-            joined += " …(+" + (skills.size() - limit) + ")";
-        }
-        return capText(joined, 320);
-    }
-
     private String normalizeSkillName(String value) {
         if (value == null) {
             return "";
         }
         String normalized = value.trim();
         return normalized.isBlank() ? "" : normalized;
+    }
+
+    private String firstNonBlankString(Object... values) {
+        if (values == null) {
+            return "";
+        }
+        for (Object value : values) {
+            String normalized = stringValue(value);
+            if (!normalized.isBlank()) {
+                return normalized;
+            }
+        }
+        return "";
     }
 
     private String stringValue(Object value) {

@@ -38,6 +38,11 @@ mindos_is_placeholder() {
   [[ "$upper" == REPLACE_WITH_* || "$upper" == YOUR_* ]]
 }
 
+mindos_is_blank_or_placeholder() {
+  local value="${1:-}"
+  [[ -z "$value" ]] || mindos_is_placeholder "$value"
+}
+
 mindos_count_csv_entries() {
   local raw="${1:-}"
   if [[ -z "$raw" ]]; then
@@ -322,10 +327,6 @@ mindos_has_legacy_news_search_serper_config() {
 mindos_collect_placeholder_warnings() {
   local warnings=()
 
-  if mindos_is_placeholder "${MINDOS_QWEN_KEY:-}"; then
-    warnings+=("MINDOS_QWEN_KEY is still a placeholder.")
-  fi
-
   if [[ "${MINDOS_LLM_PROVIDER_KEYS:-}" == *REPLACE_WITH_* ]]; then
     warnings+=("MINDOS_LLM_PROVIDER_KEYS contains placeholder values.")
   fi
@@ -343,6 +344,59 @@ mindos_collect_placeholder_warnings() {
   fi
 }
 
+mindos_collect_required_secret_warnings() {
+  local warnings=()
+  local preset="${MINDOS_MODEL_PRESET:-}"
+
+  case "$preset" in
+    OPENROUTER_INTENT)
+      if mindos_is_blank_or_placeholder "${MINDOS_OPENROUTER_KEY:-}"; then
+        warnings+=("MINDOS_OPENROUTER_KEY is required when MINDOS_MODEL_PRESET=OPENROUTER_INTENT.")
+      fi
+      ;;
+    QWEN_STABLE)
+      if mindos_is_blank_or_placeholder "${MINDOS_QWEN_KEY:-}"; then
+        warnings+=("MINDOS_QWEN_KEY is required when MINDOS_MODEL_PRESET=QWEN_STABLE.")
+      fi
+      ;;
+    DOUBAO_STABLE)
+      if mindos_is_blank_or_placeholder "${MINDOS_DOUBAO_ARK_KEY:-}"; then
+        warnings+=("MINDOS_DOUBAO_ARK_KEY is required when MINDOS_MODEL_PRESET=DOUBAO_STABLE.")
+      fi
+      if mindos_is_blank_or_placeholder "${MINDOS_DOUBAO_ENDPOINT_ID:-}"; then
+        warnings+=("MINDOS_DOUBAO_ENDPOINT_ID is required when MINDOS_MODEL_PRESET=DOUBAO_STABLE.")
+      fi
+      ;;
+    CUSTOM_LOCAL_FIRST)
+      if mindos_is_blank_or_placeholder "${MINDOS_LOCAL_LLM_ENDPOINT:-}"; then
+        warnings+=("MINDOS_LOCAL_LLM_ENDPOINT is required when MINDOS_MODEL_PRESET=LOCAL_QWEN/CUSTOM_LOCAL_FIRST.")
+      fi
+      if mindos_is_blank_or_placeholder "${MINDOS_LOCAL_LLM_MODEL:-}"; then
+        warnings+=("MINDOS_LOCAL_LLM_MODEL is required when MINDOS_MODEL_PRESET=LOCAL_QWEN/CUSTOM_LOCAL_FIRST.")
+      fi
+      ;;
+    OPENAI_NATIVE)
+      if mindos_is_blank_or_placeholder "${MINDOS_OPENAI_KEY:-}"; then
+        warnings+=("MINDOS_OPENAI_KEY is required when MINDOS_MODEL_PRESET=OPENAI_NATIVE.")
+      fi
+      ;;
+    GEMINI_NATIVE)
+      if mindos_is_blank_or_placeholder "${MINDOS_GEMINI_KEY:-}"; then
+        warnings+=("MINDOS_GEMINI_KEY is required when MINDOS_MODEL_PRESET=GEMINI_NATIVE.")
+      fi
+      ;;
+    GROK_NATIVE)
+      if mindos_is_blank_or_placeholder "${MINDOS_GROK_KEY:-}"; then
+        warnings+=("MINDOS_GROK_KEY is required when MINDOS_MODEL_PRESET=GROK_NATIVE.")
+      fi
+      ;;
+  esac
+
+  if [[ -n "${warnings[*]-}" ]]; then
+    printf '%s\n' "${warnings[@]}"
+  fi
+}
+
 mindos_print_or_fail_placeholder_warnings() {
   local strict_mode="$1"
   local warning
@@ -352,18 +406,21 @@ mindos_print_or_fail_placeholder_warnings() {
     [[ -z "$warning" ]] && continue
     echo "[WARN] $warning"
     count=$((count + 1))
-  done < <(mindos_collect_placeholder_warnings)
+  done < <(
+    mindos_collect_placeholder_warnings
+    mindos_collect_required_secret_warnings
+  )
 
   if (( count == 0 )); then
     return 0
   fi
 
   if [[ "$strict_mode" == "true" ]]; then
-    echo "[ERROR] Placeholder values detected in strict mode. Fix secrets before startup."
+    echo "[ERROR] Placeholder values or missing preset-required secrets detected in strict mode. Fix secrets before startup."
     return 1
   fi
 
-  echo "[WARN] Placeholder values detected. Local model can still run, but cloud/MCP features may fail."
+  echo "[WARN] Placeholder values or missing preset-required secrets detected. Local model can still run, but cloud/MCP features may fail."
   return 0
 }
 
@@ -431,18 +488,6 @@ mindos_collect_drift_warnings() {
   fi
   if [[ "$profile" == "CUSTOM_LOCAL_FIRST" && "$provider" != "local" ]]; then
     warnings+=("Profile CUSTOM_LOCAL_FIRST usually expects MINDOS_LLM_PROVIDER=local (current=$provider).")
-  fi
-  if [[ "${MINDOS_MODEL_PRESET:-}" == "OPENROUTER_INTENT" && -z "${MINDOS_OPENROUTER_KEY:-}" ]]; then
-    warnings+=("Model preset OPENROUTER_INTENT is selected but MINDOS_OPENROUTER_KEY is blank.")
-  fi
-  if [[ "${MINDOS_MODEL_PRESET:-}" == "QWEN_STABLE" && -z "${MINDOS_QWEN_KEY:-}" ]]; then
-    warnings+=("Model preset QWEN_STABLE is selected but MINDOS_QWEN_KEY is blank.")
-  fi
-  if [[ "${MINDOS_MODEL_PRESET:-}" == "DOUBAO_STABLE" && -z "${MINDOS_DOUBAO_ARK_KEY:-}" ]]; then
-    warnings+=("Model preset DOUBAO_STABLE is selected but MINDOS_DOUBAO_ARK_KEY is blank.")
-  fi
-  if [[ "${MINDOS_MODEL_PRESET:-}" == "DOUBAO_STABLE" && -z "${MINDOS_DOUBAO_ENDPOINT_ID:-}" ]]; then
-    warnings+=("Model preset DOUBAO_STABLE is selected but MINDOS_DOUBAO_ENDPOINT_ID is blank.")
   fi
   if [[ "${MINDOS_LLM_ROUTING_STAGE_MAP:-}" == *"llm-fallback:gpt"* ]]; then
     warnings+=("Stage map routes llm-fallback to gpt; check whether this matches your local-first expectation.")

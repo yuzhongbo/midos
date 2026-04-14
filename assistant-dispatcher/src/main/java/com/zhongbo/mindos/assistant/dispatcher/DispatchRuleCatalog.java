@@ -180,8 +180,11 @@ final class DispatchRuleCatalog {
         boolean hasTimeSkill = false;
         boolean hasTeachingPlanSkill = false;
         for (String skill : skills) {
-            reply.append("\n- ").append(skill);
             String normalizedSkill = normalize(skill);
+            if (normalizedSkill.startsWith("im.") || normalizedSkill.startsWith("internal.")) {
+                continue;
+            }
+            reply.append("\n- ").append(skill);
             if (normalizedSkill.startsWith("time ") || normalizedSkill.startsWith("time-") || normalizedSkill.startsWith("time")) {
                 hasTimeSkill = true;
             }

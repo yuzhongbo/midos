@@ -243,24 +243,6 @@ public class ImGatewayService {
         }
 
         String userId = buildUserId(platform, senderId);
-        String asyncTaskReply = tryHandleDingtalkAsyncTaskIntent(platform, userId, normalizedText);
-        if (asyncTaskReply != null) {
-            String reply = sanitizeAndObserve(platform, senderId, chatId, userId, "async-task", asyncTaskReply);
-            if (deltaConsumer != null) {
-                deltaConsumer.accept(reply);
-            }
-            return CompletableFuture.completedFuture(reply);
-        }
-
-        String memoryReply = tryHandleMemoryPlanningIntent(userId, normalizedText);
-        if (memoryReply != null) {
-            String reply = sanitizeAndObserve(platform, senderId, chatId, userId, "memory-intent", memoryReply);
-            if (deltaConsumer != null) {
-                deltaConsumer.accept(reply);
-            }
-            return CompletableFuture.completedFuture(reply);
-        }
-
         Map<String, Object> profileContext = buildProfileContext(platform, senderId, chatId);
         return dispatcherService.dispatchStream(userId, normalizedText, profileContext, deltaConsumer)
                 .thenApply(result -> {
@@ -413,16 +395,6 @@ public class ImGatewayService {
     private String buildReply(ImPlatform platform, String senderId, String chatId, String normalizedText) {
         String userId = buildUserId(platform, senderId);
         Map<String, Object> profileContext = buildProfileContext(platform, senderId, chatId);
-
-        String asyncTaskReply = tryHandleDingtalkAsyncTaskIntent(platform, userId, normalizedText);
-        if (asyncTaskReply != null) {
-            return sanitizeAndObserve(platform, senderId, chatId, userId, "async-task", asyncTaskReply);
-        }
-
-        String memoryReply = tryHandleMemoryPlanningIntent(userId, normalizedText);
-        if (memoryReply != null) {
-            return sanitizeAndObserve(platform, senderId, chatId, userId, "memory-intent", memoryReply);
-        }
 
         DispatchResult result = dispatcherService.dispatch(userId, normalizedText, profileContext);
         String replySource = result.channel() == null || result.channel().isBlank()

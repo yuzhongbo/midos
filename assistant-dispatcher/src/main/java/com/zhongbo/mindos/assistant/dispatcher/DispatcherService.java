@@ -27,7 +27,9 @@ import com.zhongbo.mindos.assistant.dispatcher.orchestrator.CandidatePlanner;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.DecisionPlanner;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.DecisionOrchestrator;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.DefaultDecisionPlanner;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.InMemoryParamSchemaRegistry;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.ParamValidator;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.ParamSchemaRegistry;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.SimpleCandidatePlanner;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.SimpleConversationLoop;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.SimpleFallbackPlan;
@@ -40,6 +42,7 @@ import com.zhongbo.mindos.assistant.dispatcher.routing.DispatchPlan;
 import com.zhongbo.mindos.assistant.dispatcher.routing.RoutingCoordinator;
 import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalysisResult;
 import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalyzer;
+import com.zhongbo.mindos.assistant.skill.SkillExecutionGateway;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -205,6 +208,10 @@ public class DispatcherService implements ContextCompressionMetricsReader,
     private final DispatcherRoutingCompatibilitySupport dispatcherRoutingCompatibilitySupport;
     private final DispatchRoutingPipeline dispatchRoutingPipeline;
     private final DispatchApplicationCoordinator dispatchApplicationCoordinator;
+    private volatile HermesAssistantRuntime hermesAssistantRuntime;
+    private ParamSchemaRegistry paramSchemaRegistry;
+    private SkillExecutionGateway skillExecutionGateway;
+    private List<DispatchSkillDslResolver> dispatchSkillDslResolvers = List.of();
     private MasterOrchestrator masterOrchestrator;
     private RoutingCoordinator routingCoordinator;
 
@@ -749,8 +756,83 @@ public class DispatcherService implements ContextCompressionMetricsReader,
         this.routingCoordinator = routingCoordinator;
     }
 
+    @Autowired(required = false)
+    void setParamSchemaRegistry(ParamSchemaRegistry paramSchemaRegistry) {
+        this.paramSchemaRegistry = paramSchemaRegistry;
+    }
+
+    @Autowired(required = false)
+    void setSkillExecutionGateway(SkillExecutionGateway skillExecutionGateway) {
+        this.skillExecutionGateway = skillExecutionGateway;
+    }
+
+    @Autowired(required = false)
+    void setDispatchSkillDslResolvers(List<DispatchSkillDslResolver> dispatchSkillDslResolvers) {
+        this.dispatchSkillDslResolvers = dispatchSkillDslResolvers == null ? List.of() : List.copyOf(dispatchSkillDslResolvers);
+    }
+
     private DispatcherMemoryFacade activeDispatcherMemoryFacade() {
         return dispatcherMemoryFacade;
+    }
+
+    private HermesAssistantRuntime hermesAssistantRuntime() {
+        HermesAssistantRuntime runtime = this.hermesAssistantRuntime;
+        if (runtime != null) {
+            return runtime;
+        }
+        synchronized (this) {
+            if (this.hermesAssistantRuntime == null) {
+                ParamSchemaRegistry effectiveSchemaRegistry = this.paramSchemaRegistry;
+                if (effectiveSchemaRegistry == null) {
+                    InMemoryParamSchemaRegistry fallbackRegistry = new InMemoryParamSchemaRegistry();
+                    fallbackRegistry.registerDefaults();
+                    effectiveSchemaRegistry = fallbackRegistry;
+                }
+                HermesToolSchemaCatalog toolSchemaCatalog = new HermesToolSchemaCatalog(this.skillEngine, effectiveSchemaRegistry);
+                this.hermesAssistantRuntime = new HermesAssistantRuntime(
+                        this.dispatchHeuristicsSupport,
+                        new HermesDecisionContextFactory(
+                                this.dispatcherMemoryFacade,
+                                this.personaCoreService,
+                                this.semanticAnalyzer,
+                                toolSchemaCatalog,
+                                this.promptMaxChars,
+                                this.memoryContextMaxChars,
+                                stats -> this.recordContextCompressionMetrics(
+                                        stats.rawChars(),
+                                        stats.finalChars(),
+                                        stats.compressed(),
+                                        stats.summarizedTurns()
+                                )
+                        ),
+                        new HermesDecisionEngine(
+                                this.skillDslParser,
+                                this.skillEngine,
+                                toolSchemaCatalog,
+                                this.semanticRoutingSupport,
+                                this.behaviorRoutingSupport,
+                                this.decisionParamAssembler,
+                                this.dispatchHeuristicsSupport,
+                                resolveHermesSearchPriorityOrder(),
+                                this.dispatchSkillDslResolvers
+                        ),
+                        this.paramValidator,
+                        new HermesSkillRouter(this.skillExecutionGateway),
+                        new HermesMemoryRecorder(
+                                this.dispatcherMemoryFacade,
+                                this.memoryCommandService,
+                                this.dispatchMemoryLifecycle,
+                                this.semanticRoutingSupport
+                        ),
+                        this.dispatchLlmSupport,
+                        this.dispatcherMemoryFacade,
+                        this.dispatcherRoutingCompatibilitySupport,
+                        this.dispatchRuleCatalog,
+                        this.promptInjectionSafeReply
+                );
+            }
+            return this.hermesAssistantRuntime;
+        }
     }
 
     public DispatchResult dispatch(String userId, String userInput) {
@@ -758,7 +840,16 @@ public class DispatcherService implements ContextCompressionMetricsReader,
     }
 
     public DispatchResult dispatch(String userId, String userInput, Map<String, Object> profileContext) {
-        return dispatchApplicationCoordinator.dispatch(userId, userInput, profileContext);
+        Instant startedAt = Instant.now();
+        Map<String, Object> effectiveProfileContext = enrichHermesProfileContext(profileContext);
+        try {
+            DispatchResult result = hermesAssistantRuntime().dispatch(userId, userInput, effectiveProfileContext);
+            logHermesDispatchCompletion(userId, result, false, startedAt, null);
+            return result;
+        } catch (RuntimeException ex) {
+            logHermesDispatchCompletion(userId, null, false, startedAt, ex);
+            throw ex;
+        }
     }
 
     public CompletableFuture<DispatchResult> dispatchAsync(String userId, String userInput) {
@@ -766,14 +857,20 @@ public class DispatcherService implements ContextCompressionMetricsReader,
     }
 
     public CompletableFuture<DispatchResult> dispatchAsync(String userId, String userInput, Map<String, Object> profileContext) {
-        return dispatchApplicationCoordinator.dispatchAsync(userId, userInput, profileContext);
+        Instant startedAt = Instant.now();
+        Map<String, Object> effectiveProfileContext = enrichHermesProfileContext(profileContext);
+        return hermesAssistantRuntime().dispatchAsync(userId, userInput, effectiveProfileContext)
+                .whenComplete((result, error) -> logHermesDispatchCompletion(userId, result, false, startedAt, error));
     }
 
     public CompletableFuture<DispatchResult> dispatchStream(String userId,
                                                             String userInput,
                                                             Map<String, Object> profileContext,
                                                             Consumer<String> deltaConsumer) {
-        return dispatchApplicationCoordinator.dispatchStream(userId, userInput, profileContext, deltaConsumer);
+        Instant startedAt = Instant.now();
+        Map<String, Object> effectiveProfileContext = enrichHermesProfileContext(profileContext);
+        return hermesAssistantRuntime().dispatchStream(userId, userInput, effectiveProfileContext, deltaConsumer)
+                .whenComplete((result, error) -> logHermesDispatchCompletion(userId, result, true, startedAt, error));
     }
 
     private void logDispatchCompletion(String userId,
@@ -796,13 +893,37 @@ public class DispatcherService implements ContextCompressionMetricsReader,
                 + ", durationMs=" + durationMs);
         logFinalAggregateTrace(
                 userId,
-                result.channel(),
+                observedFinalTraceChannel(result),
                 result.executionTrace(),
                 executionState.skillPostprocessSent(),
                 executionState.finalResultSuccess(),
                 executionState.realtimeLookup(),
                 executionState.memoryDirectBypassed()
         );
+    }
+
+    private void logHermesDispatchCompletion(String userId,
+                                             DispatchResult result,
+                                             boolean streamMode,
+                                             Instant startTime,
+                                             Throwable error) {
+        if (error != null) {
+            long durationMs = Duration.between(startTime, Instant.now()).toMillis();
+            String dispatcherLabel = streamMode ? "Dispatcher(stream)" : "Dispatcher";
+            LOGGER.log(Level.SEVERE,
+                    dispatcherLabel + " error: userId=" + userId + ", durationMs=" + durationMs,
+                    error);
+            return;
+        }
+        if (result == null) {
+            return;
+        }
+        DispatchExecutionState state = new DispatchExecutionState();
+        state.setFinalResultSuccess(isSuccessfulFinalResult(result));
+        state.setSkillPostprocessSent(isHermesSkillPostprocessSent(result));
+        state.setRealtimeLookup(extractTraceBoolean(result, "realtimeLookup"));
+        state.setMemoryDirectBypassed(extractTraceBoolean(result, "memoryDirectBypassed"));
+        logDispatchCompletion(userId, result, state, streamMode, startTime, null);
     }
 
     private void logFinalAggregateTrace(String userId,
@@ -881,8 +1002,79 @@ public class DispatcherService implements ContextCompressionMetricsReader,
         return value == null ? "" : value.trim();
     }
 
+    private boolean isSuccessfulFinalResult(DispatchResult result) {
+        if (result == null) {
+            return false;
+        }
+        if (result.executionTrace() != null
+                && result.executionTrace().steps() != null
+                && !result.executionTrace().steps().isEmpty()) {
+            var primary = result.executionTrace().steps().get(0);
+            if (primary != null
+                    && "primary".equalsIgnoreCase(normalizeOptional(primary.stepName()))
+                    && "failed".equalsIgnoreCase(normalizeOptional(primary.status()))) {
+                return false;
+            }
+        }
+        if (result.executionTrace() == null || result.executionTrace().critique() == null) {
+            return result != null;
+        }
+        return result.executionTrace().critique().success();
+    }
+
+    private boolean isHermesSkillPostprocessSent(DispatchResult result) {
+        if (!skillFinalizeWithLlmEnabled || result == null) {
+            return false;
+        }
+        String selected = result.executionTrace() == null || result.executionTrace().routing() == null
+                ? null
+                : result.executionTrace().routing().selectedSkill();
+        String effectiveSkill = firstNonBlank(selected, result.channel());
+        return matchesConfiguredSkill(effectiveSkill, skillFinalizeWithLlmSkills);
+    }
+
+    private boolean extractTraceBoolean(DispatchResult result, String key) {
+        if (result == null
+                || result.executionTrace() == null
+                || result.executionTrace().routing() == null
+                || result.executionTrace().routing().reasons() == null) {
+            return false;
+        }
+        String prefix = key + "=";
+        return result.executionTrace().routing().reasons().stream()
+                .filter(reason -> reason != null && reason.startsWith(prefix))
+                .map(reason -> reason.substring(prefix.length()))
+                .findFirst()
+                .map(Boolean::parseBoolean)
+                .orElse(false);
+    }
+
+    private String observedFinalTraceChannel(DispatchResult result) {
+        if (result == null) {
+            return "";
+        }
+        String channel = normalizeOptional(result.channel());
+        if (!"llm".equalsIgnoreCase(channel)
+                || result.executionTrace() == null
+                || result.executionTrace().routing() == null
+                || result.executionTrace().steps() == null
+                || result.executionTrace().steps().isEmpty()) {
+            return channel;
+        }
+        String selectedSkill = normalizeOptional(result.executionTrace().routing().selectedSkill());
+        var primary = result.executionTrace().steps().get(0);
+        if (!selectedSkill.isBlank()
+                && selectedSkill.startsWith("mcp.")
+                && primary != null
+                && "primary".equalsIgnoreCase(normalizeOptional(primary.stepName()))
+                && "failed".equalsIgnoreCase(normalizeOptional(primary.status()))) {
+            return selectedSkill;
+        }
+        return channel;
+    }
+
     public void beginDrain() {
-        dispatchApplicationCoordinator.beginDrain();
+        hermesAssistantRuntime().beginDrain();
     }
 
     public void resumeAcceptingRequests() {
@@ -890,15 +1082,15 @@ public class DispatcherService implements ContextCompressionMetricsReader,
     }
 
     public boolean isAcceptingRequests() {
-        return dispatchApplicationCoordinator.isAcceptingRequests();
+        return hermesAssistantRuntime().isAcceptingRequests();
     }
 
     public long getActiveDispatchCount() {
-        return dispatchApplicationCoordinator.getActiveDispatchCount();
+        return hermesAssistantRuntime().getActiveDispatchCount();
     }
 
     public boolean waitForActiveDispatches(long timeoutMs) {
-        return dispatchApplicationCoordinator.waitForActiveDispatches(timeoutMs);
+        return hermesAssistantRuntime().waitForActiveDispatches(timeoutMs);
     }
 
     private DispatchResult buildDrainingResult(String userInput) {
@@ -1280,6 +1472,60 @@ public class DispatcherService implements ContextCompressionMetricsReader,
             }
         }
         return parsed.isEmpty() ? List.of() : List.copyOf(parsed);
+    }
+
+    private List<String> resolveHermesSearchPriorityOrder() {
+        List<String> configured = parseCsvList(System.getProperty("mindos.dispatcher.parallel-routing.search-priority-order", ""));
+        if (!configured.isEmpty()) {
+            return configured;
+        }
+        if (braveFirstSearchRoutingEnabled || parallelDetectedSkillRoutingEnabled) {
+            return List.of(
+                    "mcp.bravesearch.websearch",
+                    "mcp.qwensearch.websearch",
+                    "mcp.serper.websearch",
+                    "mcp.serpapi.websearch"
+            );
+        }
+        return List.of();
+    }
+
+    private Map<String, Object> enrichHermesProfileContext(Map<String, Object> profileContext) {
+        Map<String, Object> safeProfileContext = profileContext == null ? Map.of() : profileContext;
+        List<String> searchPriorityOrder = resolveHermesSearchPriorityOrder();
+        if (searchPriorityOrder.isEmpty() || safeProfileContext.containsKey("searchPriorityOrder")) {
+            return safeProfileContext;
+        }
+        Map<String, Object> enriched = new LinkedHashMap<>(safeProfileContext);
+        enriched.put("searchPriorityOrder", searchPriorityOrder);
+        return Map.copyOf(enriched);
+    }
+
+    private boolean matchesConfiguredSkill(String skillName, Set<String> configuredSkills) {
+        if (skillName == null || skillName.isBlank()) {
+            return false;
+        }
+        if (configuredSkills == null || configuredSkills.isEmpty()) {
+            return true;
+        }
+        String normalized = normalize(skillName);
+        for (String configured : configuredSkills) {
+            if (configured == null || configured.isBlank()) {
+                continue;
+            }
+            String candidate = normalize(configured);
+            if (candidate.endsWith(".*")) {
+                String prefix = candidate.substring(0, candidate.length() - 1);
+                if (!prefix.isBlank() && normalized.startsWith(prefix)) {
+                    return true;
+                }
+                continue;
+            }
+            if (normalized.equals(candidate)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private ExecutionTraceDto enrichTraceWithRouting(ExecutionTraceDto trace, RoutingDecisionDto routingDecision) {

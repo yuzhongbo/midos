@@ -414,13 +414,27 @@ final class DispatchLlmSupport {
                                            String userInput,
                                            PromptMemoryContextDto promptMemoryContext) {
         String userId = llmContext == null ? "" : Objects.toString(llmContext.get("userId"), "");
+        boolean conversationalInput = heuristicsSupport != null
+                && heuristicsSupport.isConversationalBypassInput(heuristicsSupport.normalize(userInput));
         return new QueryContext(
                 userId,
                 userInput,
                 promptMemoryContext,
-                isExplicitLlmRequest(userInput),
+                conversationalInput || isShortFollowUpRequest(userInput) || isExplicitLlmRequest(userInput),
                 requiresComplexReasoning(userInput)
         );
+    }
+
+    private boolean isShortFollowUpRequest(String userInput) {
+        if (userInput == null || userInput.isBlank()) {
+            return false;
+        }
+        String normalized = userInput.trim().toLowerCase(Locale.ROOT);
+        return normalized.startsWith("再来一次")
+                || normalized.startsWith("再来")
+                || normalized.startsWith("再说一遍")
+                || normalized.startsWith("重新说")
+                || normalized.startsWith("换个说法");
     }
 
     private boolean isExplicitLlmRequest(String userInput) {

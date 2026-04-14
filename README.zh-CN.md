@@ -261,7 +261,7 @@ AutonomousGoalRunResult result = agentLoop.runGoal(
 1. `dist/mindos-windows-server/mindos-secrets.properties`
 2. `mindos-secrets.local.properties`（若存在）
 
-`./scripts/unix/local/run.sh --mode=release` 会加载 dist 文件和 `mindos-secrets.release.properties`，并对占位值做严格失败。`run-local.sh` / `run-release.sh` 仍然保留为兼容包装脚本。
+`./scripts/unix/local/run.sh --mode=release` 会加载 dist 文件和 `mindos-secrets.release.properties`，并在当前 preset 缺少必填密钥或激活字段仍保留占位值时直接失败。`run-local.sh` / `run-release.sh` 仍然保留为兼容包装脚本。
 
 ### 模型预设快捷切换
 
@@ -547,7 +547,7 @@ MINDOS_CORUNTIME_MIN_TRUST_TO_AUTONOMY=0.50
 MINDOS_MODEL_PRESET=LOCAL_QWEN
 MINDOS_LOCAL_LLM_ENDPOINT=http://localhost:11434/api/chat
 MINDOS_LOCAL_LLM_MODEL=gemma3:1b-it-q4_K_M
-MINDOS_QWEN_KEY=REPLACE_WITH_QWEN_KEY
+MINDOS_QWEN_KEY=
 MINDOS_QWEN_MODEL=qwen3.6-plus
 
 MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_CLARIFY_MIN_CONFIDENCE=0.70
@@ -568,6 +568,21 @@ curl http://localhost:11434/api/chat \
 ```
 
 如果这里就失败，先修 Ollama；否则 MindOS 可能看起来已经“路由到 local”，但语义分析阶段仍然无法真正产出。
+
+### 通过 export 变量生成 `mindos-secrets.properties`
+
+```bash
+export MINDOS_MODEL_PRESET=OPENROUTER_INTENT
+export MINDOS_OPENROUTER_KEY=sk-or-xxxx
+./scripts/unix/export/export-mindos-secrets.sh ./mindos-secrets.properties
+
+export MINDOS_MODEL_PRESET=LOCAL_QWEN
+export MINDOS_LOCAL_LLM_ENDPOINT=http://localhost:11434/api/chat
+export MINDOS_LOCAL_LLM_MODEL=gemma3:1b-it-q4_K_M
+./scripts/unix/export/export-mindos-secrets.sh --force ./mindos-secrets.properties
+```
+
+同一个命令也可以直接指向 `mindos-secrets.release.properties` 或 `dist/mindos-windows-server/mindos-secrets.properties`，这样三处都会使用同一份精简模板。
 
 ## 验证与部署辅助
 
@@ -590,6 +605,7 @@ curl http://localhost:11434/api/chat \
 ```
 
 现在不传路径时，会默认导出到仓库里的 `dist/mindos-windows-server`。在 Windows 目标机上，优先修改 `mindos-secrets.properties` 里的 `MINDOS_MODEL_PRESET`，补齐对应密钥，再按 `README-windows-server.txt` 里的说明启动即可。
+Windows 分发包里的 `mindos-secrets.properties` 现在也由同一个精简生成脚本产出，因此单独生成和打包导出的模板保持一致。
 
 云端辅助脚本：
 

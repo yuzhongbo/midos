@@ -18,6 +18,7 @@ import org.junit.jupiter.api.Test;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.logging.Handler;
@@ -50,11 +51,9 @@ class ImGatewayServiceTest {
 
     @Test
     void shouldReturnKeyPointReviewAfterAffirmativeFollowUp() {
-        DispatcherFacade dispatcherService = mock(DispatcherFacade.class);
         MemoryManager memoryManager = mock(MemoryManager.class);
         MemoryConsolidationService consolidationService = new MemoryConsolidationService();
-        ImGatewayService service = new ImGatewayService(
-                dispatcherService,
+        ImConversationCommandService service = new ImConversationCommandService(
                 new MemoryFacade(memoryManager),
                 consolidationService
         );
@@ -66,19 +65,27 @@ class ImGatewayServiceTest {
         );
         when(memoryManager.buildMemoryCompressionPlan(eq("im:dingtalk:u1"), any(), any(), any())).thenReturn(plan);
 
-        String first = service.chat(
-                ImPlatform.DINGTALK,
-                "u1",
-                "c1",
-                "按我的风格压缩这段记忆：今天18:30前必须提交合同，不要遗漏附件"
-        );
+        String userId = "im:dingtalk:u1";
+        Map<String, Object> profileContext = Map.of("imPlatform", "dingtalk");
+        String first = service.executeMemoryCommand(
+                userId,
+                service.resolveSkillDsl(userId, "按我的风格压缩这段记忆：今天18:30前必须提交合同，不要遗漏附件", profileContext)
+                        .orElseThrow()
+                        .input()
+        ).output();
         assertTrue(first.contains("如果你愿意，我可以再列出原文关键点"));
 
-        String second = service.chat(ImPlatform.DINGTALK, "u1", "c1", "好的");
+        String second = service.executeMemoryCommand(
+                userId,
+                service.resolveSkillDsl(userId, "好的", profileContext).orElseThrow().input()
+        ).output();
         assertTrue(second.contains("原文关键点"));
         assertTrue(second.contains("必须提交合同"));
 
-        String third = service.chat(ImPlatform.DINGTALK, "u1", "c1", "生成待办");
+        String third = service.executeMemoryCommand(
+                userId,
+                service.resolveSkillDsl(userId, "生成待办", profileContext).orElseThrow().input()
+        ).output();
         assertTrue(third.contains("执行清单"));
         assertTrue(third.contains("优先级说明：P1=今天必须完成"));
         assertTrue(third.contains("当前待办策略：P1>= 45，P2>= 25"));
@@ -217,11 +224,9 @@ class ImGatewayServiceTest {
         System.setProperty("mindos.todo.window.p2", "建议两天内完成");
         System.setProperty("mindos.todo.legend", "优先级说明：按团队自定义策略执行。");
 
-        DispatcherFacade dispatcherService = mock(DispatcherFacade.class);
         MemoryManager memoryManager = mock(MemoryManager.class);
         MemoryConsolidationService consolidationService = new MemoryConsolidationService();
-        ImGatewayService service = new ImGatewayService(
-                dispatcherService,
+        ImConversationCommandService service = new ImConversationCommandService(
                 new MemoryFacade(memoryManager),
                 consolidationService
         );
@@ -233,9 +238,22 @@ class ImGatewayServiceTest {
         );
         when(memoryManager.buildMemoryCompressionPlan(eq("im:dingtalk:u3"), any(), any(), any())).thenReturn(plan);
 
-        service.chat(ImPlatform.DINGTALK, "u3", "c3", "按我的风格压缩这段记忆：今天18:30前必须提交合同，不要遗漏附件");
-        service.chat(ImPlatform.DINGTALK, "u3", "c3", "好的");
-        String todo = service.chat(ImPlatform.DINGTALK, "u3", "c3", "生成待办");
+        String userId = "im:dingtalk:u3";
+        Map<String, Object> profileContext = Map.of("imPlatform", "dingtalk");
+        service.executeMemoryCommand(
+                userId,
+                service.resolveSkillDsl(userId, "按我的风格压缩这段记忆：今天18:30前必须提交合同，不要遗漏附件", profileContext)
+                        .orElseThrow()
+                        .input()
+        );
+        service.executeMemoryCommand(
+                userId,
+                service.resolveSkillDsl(userId, "好的", profileContext).orElseThrow().input()
+        );
+        String todo = service.executeMemoryCommand(
+                userId,
+                service.resolveSkillDsl(userId, "生成待办", profileContext).orElseThrow().input()
+        ).output();
 
         assertTrue(todo.contains("优先级说明：按团队自定义策略执行。"));
         assertTrue(todo.contains("当前待办策略：P1>= 100，P2>= 10"));

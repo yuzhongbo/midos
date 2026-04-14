@@ -10,4 +10,8 @@ public record Decision(String intent, String target, Map<String, Object> params,
         Map<String, Object> safeParams = params == null ? Map.of() : params;
         params = Collections.unmodifiableMap(new LinkedHashMap<>(safeParams));
     }
+
+    public boolean needClarify() {
+        return requireClarify;
+    }
 }

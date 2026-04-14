@@ -258,7 +258,7 @@ Recommended order of configuration sources:
 1. `dist/mindos-windows-server/mindos-secrets.properties`
 2. `mindos-secrets.local.properties` (if present)
 
-`./scripts/unix/local/run.sh --mode=release` loads the dist file plus `mindos-secrets.release.properties` and fails fast on placeholders. `run-local.sh` and `run-release.sh` remain as thin compatibility wrappers.
+`./scripts/unix/local/run.sh --mode=release` loads the dist file plus `mindos-secrets.release.properties` and fails fast when the selected preset still misses required secrets or keeps placeholder values in active fields. `run-local.sh` and `run-release.sh` remain as thin compatibility wrappers.
 
 ### Model preset shortcuts
 
@@ -541,7 +541,7 @@ Important keys:
 MINDOS_MODEL_PRESET=LOCAL_QWEN
 MINDOS_LOCAL_LLM_ENDPOINT=http://localhost:11434/api/chat
 MINDOS_LOCAL_LLM_MODEL=gemma3:1b-it-q4_K_M
-MINDOS_QWEN_KEY=REPLACE_WITH_QWEN_KEY
+MINDOS_QWEN_KEY=
 MINDOS_QWEN_MODEL=qwen3.6-plus
 
 MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_CLARIFY_MIN_CONFIDENCE=0.70
@@ -562,6 +562,21 @@ curl http://localhost:11434/api/chat \
 ```
 
 If this fails, fix Ollama first; otherwise MindOS may appear routed to `local` while semantic analysis still cannot complete.
+
+### Generate `mindos-secrets.properties` from exported env vars
+
+```bash
+export MINDOS_MODEL_PRESET=OPENROUTER_INTENT
+export MINDOS_OPENROUTER_KEY=sk-or-xxxx
+./scripts/unix/export/export-mindos-secrets.sh ./mindos-secrets.properties
+
+export MINDOS_MODEL_PRESET=LOCAL_QWEN
+export MINDOS_LOCAL_LLM_ENDPOINT=http://localhost:11434/api/chat
+export MINDOS_LOCAL_LLM_MODEL=gemma3:1b-it-q4_K_M
+./scripts/unix/export/export-mindos-secrets.sh --force ./mindos-secrets.properties
+```
+
+Point the same command at `mindos-secrets.release.properties` or `dist/mindos-windows-server/mindos-secrets.properties` if you want the identical minimal template in those locations.
 
 ## Validation and deployment helpers
 
@@ -584,6 +599,7 @@ Recommended checks:
 ```
 
 The exported bundle now defaults to the repository `dist/mindos-windows-server` directory when no path is provided. On the target Windows machine, change `MINDOS_MODEL_PRESET` in `mindos-secrets.properties`, fill the matching key(s), and use `README-windows-server.txt` as the runtime cheat sheet.
+The bundle now renders `mindos-secrets.properties` through the same minimal generator script, so the standalone export command and the packaged template stay aligned.
 
 Cloud helpers:
 

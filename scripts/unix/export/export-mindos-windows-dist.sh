@@ -88,70 +88,7 @@ if [[ ! -f "$ENV_TEMPLATE" ]]; then
 fi
 cp "$ENV_TEMPLATE" "$OUTPUT_DIR/mindos-server.env.bat"
 
-cat > "$OUTPUT_DIR/mindos-secrets.properties" <<'PROPS'
-# Only edit the values on the right side. Lines starting with # or ; are ignored.
-# Recommended workflow:
-# 1) Change only MINDOS_MODEL_PRESET to switch model stacks.
-# 2) Fill the matching key(s) below.
-# 3) Leave provider maps blank unless you intentionally want advanced manual routing.
-
-######################### 1) Core runtime #########################
-MINDOS_SPRING_PROFILE=solo
-MINDOS_MODEL_PRESET=OPENROUTER_INTENT
-
-# Supported presets:
-# OPENROUTER_INTENT -> gpt+grok+gemini on OpenRouter, optional qwen fallback
-# QWEN_STABLE       -> qwen only
-# DOUBAO_STABLE     -> doubao only
-# LOCAL_QWEN        -> local OpenAI-compatible endpoint first, qwen fallback
-# CUSTOM            -> advanced users manually provide map variables below
-MINDOS_OPENROUTER_KEY=REPLACE_WITH_OPENROUTER_KEY
-MINDOS_QWEN_KEY=REPLACE_WITH_QWEN_KEY
-MINDOS_QWEN_MODEL=qwen3.6-plus
-MINDOS_DOUBAO_ARK_KEY=
-MINDOS_DOUBAO_ENDPOINT_ID=
-MINDOS_LOCAL_LLM_ENDPOINT=http://localhost:11434/api/chat
-MINDOS_LOCAL_LLM_MODEL=gemma3:1b-it-q4_K_M
-
-# Optional explicit endpoint/model overrides.
-# MINDOS_LLM_ENDPOINT_OPENROUTER=https://openrouter.ai/api/v1/chat/completions
-# MINDOS_LLM_ENDPOINT_QWEN=https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions
-# MINDOS_LLM_ENDPOINT_DOUBAO=https://ark.cn-beijing.volces.com/api/v3/chat/completions
-# MINDOS_OPENROUTER_GPT_MODEL=openai/gpt-5.2
-# MINDOS_OPENROUTER_GROK_MODEL=x-ai/grok-4
-# MINDOS_OPENROUTER_GEMINI_MODEL=google/gemini-2.5-pro
-
-######################### 2) Integrations / optional #########################
-# One search-source entry for both news_search and search-style MCP skills.
-MINDOS_SKILLS_SEARCH_SOURCES=
-
-# Generic MCP tools (non-search only).
-# MINDOS_SKILLS_MCP_SERVERS=
-# MINDOS_SKILLS_MCP_SERVER_HEADERS=
-
-# DingTalk stream/outbound (leave blank to disable).
-MINDOS_IM_DINGTALK_STREAM_CLIENT_ID=
-MINDOS_IM_DINGTALK_STREAM_CLIENT_SECRET=
-MINDOS_IM_DINGTALK_OUTBOUND_ROBOT_CODE=
-
-######################### 3) Safe tuning / advanced manual override #########################
-# Keep local->cloud auto escalation disabled unless you explicitly want it.
-MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_LOCAL_ESCALATION_ENABLED=false
-MINDOS_DISPATCHER_LOCAL_ESCALATION_ENABLED=false
-
-# Advanced users only: set MINDOS_MODEL_PRESET=CUSTOM before using manual maps.
-# MINDOS_LLM_PROVIDER_ENDPOINTS=
-# MINDOS_LLM_PROVIDER_KEYS=
-# MINDOS_LLM_PROVIDER_MODELS=
-# MINDOS_LLM_ROUTING_STAGE_MAP=
-# MINDOS_LLM_ROUTING_PRESET_MAP=
-
-# Logger overrides for deep debugging (commented by default)
-# LOGGING_LEVEL_COM_ZHONGBO_MINDOS_ASSISTANT_DISPATCHER=DEBUG
-# LOGGING_LEVEL_COM_ZHONGBO_MINDOS_ASSISTANT_LLM=DEBUG
-# LOGGING_LEVEL_COM_ZHONGBO_MINDOS_ASSISTANT_SKILL_MCP=DEBUG
-
-PROPS
+"$ROOT_DIR/scripts/unix/export/export-mindos-secrets.sh" --force "$OUTPUT_DIR/mindos-secrets.properties"
 
 cat > "$OUTPUT_DIR/mindos-server.full.env.bat" <<'BAT'
 @echo off

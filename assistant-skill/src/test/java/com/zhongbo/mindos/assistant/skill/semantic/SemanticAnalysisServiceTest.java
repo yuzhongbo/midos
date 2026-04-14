@@ -425,6 +425,45 @@ class SemanticAnalysisServiceTest {
     }
 
     @Test
+    void shouldBuildProductionDecisionPromptWithMemoryAndToolSchemas() {
+        SkillRegistry registry = new SkillRegistry(List.of(
+                new FixedSkill("todo.create"),
+                new FixedSkill("mcp.docs.searchDocs"),
+                new FixedSkill("mcp.bravesearch.webSearch")
+        ));
+        AtomicReference<String> capturedPrompt = new AtomicReference<>("");
+        LlmClient llmClient = (prompt, context) -> {
+            capturedPrompt.set(prompt);
+            return "{\"intent\":\"docs_lookup\",\"target\":\"mcp.docs.searchDocs\",\"params\":{\"query\":\"Spring Boot RestClient 官方文档\"},\"confidence\":0.93}";
+        };
+        SemanticAnalysisService service = new SemanticAnalysisService(llmClient, registry, true, true, true, "", "local", "cost", 120);
+
+        SemanticAnalysisResult result = service.analyze(
+                "u1",
+                "帮我查 Spring Boot RestClient 官方文档",
+                "Recent conversation:\n- user: 继续看文档\nUser skill habits:\n- mcp.docs.searchDocs",
+                Map.of(
+                        "imPlatform", "dingtalk",
+                        "searchPriorityOrder", List.of("mcp.docs.searchDocs", "mcp.bravesearch.webSearch")
+                ),
+                List.of(
+                        "mcp.docs.searchDocs - Search official documentation | required=query | keywords=docs/manual/guide",
+                        "mcp.bravesearch.webSearch - Search latest web info | required=query | keywords=search/news/weather"
+                )
+        );
+
+        assertEquals("mcp.docs.searchDocs", result.suggestedSkill());
+        assertEquals("Spring Boot RestClient 官方文档", result.payload().get("query"));
+        assertTrue(capturedPrompt.get().contains("Return strict JSON only"));
+        assertTrue(capturedPrompt.get().contains("CONFIRMED_MEMORY_AND_CONTEXT:"));
+        assertTrue(capturedPrompt.get().contains("AVAILABLE_TOOLS:"));
+        assertTrue(capturedPrompt.get().contains("SEARCH_PRIORITY_ORDER:"));
+        assertTrue(capturedPrompt.get().contains("BASELINE_ROUTING_HINT:"));
+        assertTrue(capturedPrompt.get().contains("Only use skill names listed in AVAILABLE_TOOLS."));
+        assertTrue(capturedPrompt.get().contains("mcp.docs.searchDocs - Search official documentation"));
+    }
+
+    @Test
     void shouldExposeSemanticSummaryForHeuristicResult() {
         SkillRegistry registry = new SkillRegistry(List.of(new FixedSkill("todo.create")));
         SemanticAnalysisService service = new SemanticAnalysisService((prompt, context) -> "stub", registry, true, false, true, "", "local", "cost", 120);
@@ -459,6 +498,27 @@ class SemanticAnalysisServiceTest {
         assertEquals("llm", result.source());
         assertEquals("todo.create", result.suggestedSkill());
         assertEquals("提交周报", result.payload().get("task"));
+    }
+
+    @Test
+    void shouldParseTargetAliasAndCandidateIntentsCamelCase() {
+        SkillRegistry registry = new SkillRegistry(List.of(new FixedSkill("todo.create")));
+        LlmClient llmClient = (prompt, context) ->
+                "{\"intent\":\"task_create\",\"target\":\"todo.create\",\"params\":{\"task\":\"提交周报\"},\"candidateIntents\":[{\"intent\":\"todo.create\",\"confidence\":0.88}],\"confidence\":0.88}";
+        SemanticAnalysisService service = new SemanticAnalysisService(llmClient, registry, true, true, true, "", "local", "cost", 120);
+
+        SemanticAnalysisResult result = service.analyze(
+                "u1",
+                "帮我创建一个待办：提交周报",
+                "history",
+                Map.of(),
+                List.of("todo.create - Creates todo items")
+        );
+
+        assertEquals("todo.create", result.suggestedSkill());
+        assertEquals("提交周报", result.payload().get("task"));
+        assertEquals(1, result.candidateIntents().size());
+        assertEquals("todo.create", result.candidateIntents().get(0).intent());
     }
 
     @Test

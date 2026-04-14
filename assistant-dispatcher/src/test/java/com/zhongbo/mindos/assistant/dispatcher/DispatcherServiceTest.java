@@ -1804,12 +1804,13 @@ class DispatcherServiceTest {
                 "",
                 280
         );
+        DefaultSkillExecutionGateway skillExecutionGateway = new DefaultSkillExecutionGateway(registry, dslExecutor);
         DecisionOrchestrator decisionOrchestrator = new DefaultDecisionOrchestrator(
                 new SimpleCandidatePlanner(skillEngine, dispatcherMemoryFacade(memoryGateway), 3, 0.40, 0.35, 0.15, 0.10),
                 paramValidator,
                 new SimpleConversationLoop(),
                 new SimpleFallbackPlan(),
-                new DefaultSkillExecutionGateway(registry, dslExecutor),
+                skillExecutionGateway,
                 memoryGateway,
                 memoryRecorder,
                 new TaskExecutor(3),
@@ -1819,7 +1820,7 @@ class DispatcherServiceTest {
                 "eq.coach timeout",
                 3
         );
-        return new DispatcherService(
+        DispatcherService dispatcherService = new DispatcherService(
                 skillEngine,
                 parser,
                 paramValidator,
@@ -1888,6 +1889,9 @@ class DispatcherServiceTest {
                 2,
                 2500
         );
+        dispatcherService.setParamSchemaRegistry(paramSchemaRegistry);
+        dispatcherService.setSkillExecutionGateway(skillExecutionGateway);
+        return dispatcherService;
     }
 
     private DispatcherService createDispatcherWithSemanticService(MemoryManager memoryManager,
@@ -1937,12 +1941,13 @@ class DispatcherServiceTest {
                 "",
                 280
         );
+        DefaultSkillExecutionGateway skillExecutionGateway = new DefaultSkillExecutionGateway(registry, dslExecutor);
         DecisionOrchestrator decisionOrchestrator = new DefaultDecisionOrchestrator(
                 new SimpleCandidatePlanner(skillEngine, dispatcherMemoryFacade(memoryGateway), 3, 0.40, 0.35, 0.15, 0.10),
                 paramValidator,
                 new SimpleConversationLoop(),
                 new SimpleFallbackPlan(),
-                new DefaultSkillExecutionGateway(registry, dslExecutor),
+                skillExecutionGateway,
                 memoryGateway,
                 memoryRecorder,
                 new TaskExecutor(3),
@@ -1952,7 +1957,7 @@ class DispatcherServiceTest {
                 "eq.coach timeout",
                 3
         );
-        return new DispatcherService(
+        DispatcherService dispatcherService = new DispatcherService(
                 skillEngine,
                 parser,
                 paramValidator,
@@ -2021,6 +2026,9 @@ class DispatcherServiceTest {
                 2,
                 2500
         );
+        dispatcherService.setParamSchemaRegistry(paramSchemaRegistry);
+        dispatcherService.setSkillExecutionGateway(skillExecutionGateway);
+        return dispatcherService;
     }
 
     private DispatcherService createDispatcher(MemoryManager memoryManager,
@@ -2417,12 +2425,13 @@ class DispatcherServiceTest {
                 postSkillSummarySkills,
                 280
         );
+        DefaultSkillExecutionGateway skillExecutionGateway = new DefaultSkillExecutionGateway(registry, dslExecutor);
         DecisionOrchestrator decisionOrchestrator = new DefaultDecisionOrchestrator(
                 new SimpleCandidatePlanner(skillEngine, dispatcherMemoryFacade(memoryGateway), 3, 0.40, 0.35, 0.15, 0.10),
                 paramValidator,
                 new SimpleConversationLoop(),
                 new SimpleFallbackPlan(),
-                new DefaultSkillExecutionGateway(registry, dslExecutor),
+                skillExecutionGateway,
                 memoryGateway,
                 memoryRecorder,
                 new TaskExecutor(3),
@@ -2432,7 +2441,7 @@ class DispatcherServiceTest {
                 eqCoachTimeoutReply,
                 3
         );
-        return new DispatcherService(
+        DispatcherService dispatcherService = new DispatcherService(
                 skillEngine,
                 parser,
                 paramValidator,
@@ -2501,6 +2510,9 @@ class DispatcherServiceTest {
                 2,
                 2500
         );
+        dispatcherService.setParamSchemaRegistry(paramSchemaRegistry);
+        dispatcherService.setSkillExecutionGateway(skillExecutionGateway);
+        return dispatcherService;
     }
 
     private DispatcherService createDispatcherWithTuning(MemoryManager memoryManager,
@@ -2562,12 +2574,13 @@ class DispatcherServiceTest {
                 "",
                 280
         );
+        DefaultSkillExecutionGateway skillExecutionGateway = new DefaultSkillExecutionGateway(registry, dslExecutor);
         DecisionOrchestrator decisionOrchestrator = new DefaultDecisionOrchestrator(
                 new SimpleCandidatePlanner(skillEngine, dispatcherMemoryFacade(memoryGateway), 3, 0.40, 0.35, 0.15, 0.10),
                 paramValidator,
                 new SimpleConversationLoop(),
                 new SimpleFallbackPlan(),
-                new DefaultSkillExecutionGateway(registry, dslExecutor),
+                skillExecutionGateway,
                 memoryGateway,
                 memoryRecorder,
                 new TaskExecutor(3),
@@ -2577,7 +2590,7 @@ class DispatcherServiceTest {
                 "eq.coach timeout",
                 3
         );
-        return new DispatcherService(
+        DispatcherService dispatcherService = new DispatcherService(
                 skillEngine,
                 parser,
                 paramValidator,
@@ -2646,6 +2659,9 @@ class DispatcherServiceTest {
                 2,
                 2500
         );
+        dispatcherService.setParamSchemaRegistry(paramSchemaRegistry);
+        dispatcherService.setSkillExecutionGateway(skillExecutionGateway);
+        return dispatcherService;
     }
 
     private DispatcherService createDispatcher(MemoryManager memoryManager,
