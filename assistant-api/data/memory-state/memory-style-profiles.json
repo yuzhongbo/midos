@@ -1,15 +1,15 @@
 {
-  "tune-user" : {
-    "styleName" : "action",
-    "tone" : "warm",
-    "outputFormat" : "plain"
-  },
   "plan-user" : {
     "styleName" : "action",
     "tone" : "warm",
     "outputFormat" : "bullet"
   },
   "im:dingtalk:ding-style-user" : {
+    "styleName" : "action",
+    "tone" : "warm",
+    "outputFormat" : "plain"
+  },
+  "tune-user" : {
     "styleName" : "action",
     "tone" : "warm",
     "outputFormat" : "plain"
