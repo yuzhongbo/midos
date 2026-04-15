@@ -11,6 +11,7 @@ import com.zhongbo.mindos.assistant.dispatcher.orchestrator.memory.MemoryWriteOp
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.memory.OrchestratorMemoryWriter;
 import com.zhongbo.mindos.assistant.memory.MemoryGateway;
 import com.zhongbo.mindos.assistant.memory.model.ProceduralMemoryEntry;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -20,6 +21,7 @@ import java.util.Map;
 import java.util.Set;
 
 @Component
+@ConditionalOnProperty(name = "mindos.autonomous.runtime.enabled", havingValue = "true")
 public class PostExecutionMemoryRecorder {
 
     private final DispatcherMemoryFacade dispatcherMemoryFacade;

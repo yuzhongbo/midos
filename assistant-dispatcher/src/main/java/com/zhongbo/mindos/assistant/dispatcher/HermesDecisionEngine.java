@@ -25,25 +25,28 @@ final class HermesDecisionEngine {
     private final SemanticRoutingSupport semanticRoutingSupport;
     private final BehaviorRoutingSupport behaviorRoutingSupport;
     private final DecisionParamAssembler decisionParamAssembler;
+    private final LLMDecisionEngine llmDecisionEngine;
     private final DispatchHeuristicsSupport heuristicsSupport;
     private final List<String> parallelSearchPriorityOrder;
     private final List<DispatchSkillDslResolver> dispatchSkillDslResolvers;
 
     HermesDecisionEngine(SkillDslParser skillDslParser,
                          SkillCatalogFacade skillCatalog,
-                         HermesToolSchemaCatalog toolSchemaCatalog,
-                         SemanticRoutingSupport semanticRoutingSupport,
-                         BehaviorRoutingSupport behaviorRoutingSupport,
-                         DecisionParamAssembler decisionParamAssembler,
-                         DispatchHeuristicsSupport heuristicsSupport,
-                         List<String> parallelSearchPriorityOrder,
-                         List<DispatchSkillDslResolver> dispatchSkillDslResolvers) {
+                          HermesToolSchemaCatalog toolSchemaCatalog,
+                          SemanticRoutingSupport semanticRoutingSupport,
+                          BehaviorRoutingSupport behaviorRoutingSupport,
+                          DecisionParamAssembler decisionParamAssembler,
+                          LLMDecisionEngine llmDecisionEngine,
+                          DispatchHeuristicsSupport heuristicsSupport,
+                          List<String> parallelSearchPriorityOrder,
+                          List<DispatchSkillDslResolver> dispatchSkillDslResolvers) {
         this.skillDslParser = skillDslParser;
         this.skillCatalog = skillCatalog;
         this.toolSchemaCatalog = toolSchemaCatalog;
         this.semanticRoutingSupport = semanticRoutingSupport;
         this.behaviorRoutingSupport = behaviorRoutingSupport;
         this.decisionParamAssembler = decisionParamAssembler;
+        this.llmDecisionEngine = llmDecisionEngine;
         this.heuristicsSupport = heuristicsSupport;
         this.parallelSearchPriorityOrder = parallelSearchPriorityOrder == null
                 ? List.of()
@@ -111,12 +114,11 @@ final class HermesDecisionEngine {
             if (!semanticAnalysis.summary().isBlank()) {
                 reasons.add("semantic-summary=" + semanticAnalysis.summary());
             }
-            return new DecisionPlan(
-                    new Decision(resolveIntent(semanticAnalysis), "llm", Map.of(), semanticAnalysis.effectiveConfidence(), false),
-                    "llm-fallback",
+            return answerFallbackPlan(
+                    safeContext,
+                    semanticAnalysis,
                     List.copyOf(reasons),
-                    List.of("no explicit SkillDSL", "no deterministic rule matched current input"),
-                    null
+                    List.of("no explicit SkillDSL", "no deterministic rule matched current input")
             );
         }
 
@@ -128,6 +130,105 @@ final class HermesDecisionEngine {
                 best.needClarify()
         );
         return new DecisionPlan(decision, best.route(), List.copyOf(best.reasons()), List.of(), best.clarifyReply());
+    }
+
+    private DecisionPlan answerFallbackPlan(HermesDecisionContext context,
+                                            SemanticAnalysisResult semanticAnalysis,
+                                            List<String> reasons,
+                                            List<String> rejectedReasons) {
+        QueryContext queryContext = buildQueryContext(context);
+        boolean realtimeLike = heuristicsSupport != null
+                && heuristicsSupport.isRealtimeLikeInput(context == null ? "" : context.userInput(), semanticAnalysis);
+        boolean shouldCallLlm = llmDecisionEngine == null || llmDecisionEngine.shouldCallLLM(queryContext);
+        double confidence = Math.max(MIN_ROUTE_CONFIDENCE, semanticAnalysis == null ? 0.0d : semanticAnalysis.effectiveConfidence());
+        List<String> effectiveReasons = new ArrayList<>(reasons == null ? List.of() : reasons);
+        if (!realtimeLike && !shouldCallLlm) {
+            effectiveReasons.add("relevant memory can answer directly");
+            return new DecisionPlan(
+                    new Decision(resolveFallbackIntent(semanticAnalysis, "memory.direct"), "memory.direct", Map.of(), confidence, false),
+                    "memory-direct",
+                    List.copyOf(effectiveReasons),
+                    rejectedReasons == null ? List.of() : List.copyOf(rejectedReasons),
+                    null
+            );
+        }
+        effectiveReasons.add(realtimeLike
+                ? "realtime-like query requires fresh answer generation"
+                : "memory is insufficient for a direct answer");
+        return new DecisionPlan(
+                new Decision(resolveFallbackIntent(semanticAnalysis, "llm"), "llm", Map.of(), confidence, false),
+                "llm-fallback",
+                List.copyOf(effectiveReasons),
+                rejectedReasons == null ? List.of() : List.copyOf(rejectedReasons),
+                null
+        );
+    }
+
+    private QueryContext buildQueryContext(HermesDecisionContext context) {
+        if (context == null) {
+            return new QueryContext("", "", null, false, false);
+        }
+        String userInput = context.userInput();
+        String normalizedInput = heuristicsSupport == null
+                ? normalize(userInput).toLowerCase(Locale.ROOT)
+                : heuristicsSupport.normalize(userInput);
+        boolean conversationalInput = heuristicsSupport != null
+                && heuristicsSupport.isConversationalBypassInput(normalizedInput);
+        return new QueryContext(
+                context.userId(),
+                userInput,
+                context.promptMemoryContext(),
+                conversationalInput || isShortFollowUpRequest(userInput) || isExplicitLlmRequest(userInput),
+                requiresComplexReasoning(userInput)
+        );
+    }
+
+    private String resolveFallbackIntent(SemanticAnalysisResult semanticAnalysis, String fallbackTarget) {
+        if (semanticAnalysis != null && !semanticAnalysis.intent().isBlank()) {
+            return semanticAnalysis.intent();
+        }
+        if (semanticAnalysis != null && !semanticAnalysis.suggestedSkill().isBlank()) {
+            return semanticAnalysis.suggestedSkill();
+        }
+        return fallbackTarget == null ? "" : fallbackTarget;
+    }
+
+    private boolean isShortFollowUpRequest(String userInput) {
+        if (userInput == null || userInput.isBlank()) {
+            return false;
+        }
+        String normalized = userInput.trim().toLowerCase(Locale.ROOT);
+        return normalized.startsWith("再来一次")
+                || normalized.startsWith("再来")
+                || normalized.startsWith("再说一遍")
+                || normalized.startsWith("重新说")
+                || normalized.startsWith("换个说法");
+    }
+
+    private boolean isExplicitLlmRequest(String userInput) {
+        if (userInput == null || userInput.isBlank()) {
+            return false;
+        }
+        String normalized = userInput.toLowerCase(Locale.ROOT);
+        return normalized.contains("调用llm")
+                || normalized.contains("调用大模型")
+                || normalized.contains("step by step")
+                || normalized.contains("请详细分析")
+                || normalized.contains("请深入分析");
+    }
+
+    private boolean requiresComplexReasoning(String userInput) {
+        if (userInput == null || userInput.isBlank()) {
+            return false;
+        }
+        String normalized = userInput.toLowerCase(Locale.ROOT);
+        return normalized.contains("为什么")
+                || normalized.contains("比较")
+                || normalized.contains("权衡")
+                || normalized.contains("tradeoff")
+                || normalized.contains("设计方案")
+                || normalized.contains("根因")
+                || normalized.contains("如何设计");
     }
 
     private Optional<DecisionPlan> directReservedSkillPlan(HermesDecisionContext context) {

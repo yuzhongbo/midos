@@ -168,8 +168,46 @@ final class HermesAssistantRuntime {
                 return result;
             }
 
-            if (decision == null || decision.target() == null || decision.target().isBlank() || "llm".equalsIgnoreCase(decision.target())) {
-                SkillResult llmResult = fallbackToLlm(decisionContext, safeInput, safeProfileContext, deltaConsumer, streamMode);
+            if (decision == null || decision.target() == null || decision.target().isBlank()) {
+                SkillResult invalidDecision = SkillResult.failure("decision.invalid", "未能确定执行目标，请补充更多信息。");
+                emit(deltaConsumer, invalidDecision.output());
+                DispatchResult result = buildDispatchResult(
+                        invalidDecision.output(),
+                        invalidDecision.skillName(),
+                        "decision-invalid",
+                        invalidDecision.skillName(),
+                        0.0d,
+                        decisionPlan.reasons(),
+                        decisionPlan.rejectedReasons(),
+                        false,
+                        List.of(primaryStep("failed", invalidDecision.skillName(), invalidDecision.output(), startedAt, Instant.now()))
+                );
+                result = enrichObservability(result, safeInput, decisionContext.semanticAnalysis());
+                memoryRecorder.record(safeUserId, safeInput, invalidDecision, decisionContext.profileContext(), decisionContext.semanticAnalysis(), null, null);
+                return result;
+            }
+
+            if ("memory.direct".equalsIgnoreCase(decision.target())) {
+                SkillResult memoryResult = llmSupport.buildMemoryDirectResult(decisionContext.promptMemoryContext(), safeInput);
+                emit(deltaConsumer, memoryResult.output());
+                DispatchResult result = buildDispatchResult(
+                        memoryResult.output(),
+                        memoryResult.skillName(),
+                        decisionPlan.route(),
+                        memoryResult.skillName(),
+                        decision.confidence(),
+                        decisionPlan.reasons(),
+                        decisionPlan.rejectedReasons(),
+                        memoryResult.success(),
+                        List.of(primaryStep(memoryResult.success() ? "success" : "failed", memoryResult.skillName(), memoryResult.output(), startedAt, Instant.now()))
+                );
+                result = enrichObservability(result, safeInput, decisionContext.semanticAnalysis());
+                memoryRecorder.record(safeUserId, safeInput, memoryResult, decisionContext.profileContext(), decisionContext.semanticAnalysis(), null, null);
+                return result;
+            }
+
+            if ("llm".equalsIgnoreCase(decision.target())) {
+                SkillResult llmResult = executeLlmDecision(decisionContext, safeInput, safeProfileContext, deltaConsumer, streamMode);
                 DispatchResult result = buildDispatchResult(
                         llmResult.output(),
                         llmResult.skillName(),
@@ -231,20 +269,24 @@ final class HermesAssistantRuntime {
             return result;
         }
         if (isLoopGuardBlocked(userId, decision == null ? null : decision.target(), userInput)) {
-            SkillResult llmResult = fallbackToLlm(decisionContext, userInput, profileContext, deltaConsumer, streamMode);
+            SkillResult loopGuardResult = SkillResult.failure(
+                    "loop.guard",
+                    "检测到重复执行风险，已阻止继续调用 " + (decision == null ? "" : decision.target()) + "。请补充新的输入或换个目标。"
+            );
+            emit(deltaConsumer, loopGuardResult.output());
             DispatchResult result = buildDispatchResult(
-                    llmResult.output(),
-                    llmResult.skillName(),
-                    "llm-fallback",
-                    llmResult.skillName(),
+                    loopGuardResult.output(),
+                    loopGuardResult.skillName(),
+                    "loop-guard",
+                    decision == null ? loopGuardResult.skillName() : decision.target(),
                     decision == null ? 0.0d : decision.confidence(),
                     decisionPlan.reasons(),
                     List.of("skill blocked by loop guard"),
-                    llmResult.success(),
-                    List.of(primaryStep(llmResult.success() ? "success" : "failed", llmResult.skillName(), llmResult.output(), startedAt, Instant.now()))
+                    false,
+                    List.of(primaryStep("failed", loopGuardResult.skillName(), loopGuardResult.output(), startedAt, Instant.now()))
             );
             result = enrichObservability(result, userInput, decisionContext.semanticAnalysis());
-            memoryRecorder.record(userId, userInput, llmResult, decisionContext.profileContext(), decisionContext.semanticAnalysis(), null, null);
+            memoryRecorder.record(userId, userInput, loopGuardResult, decisionContext.profileContext(), decisionContext.semanticAnalysis(), null, null);
             return result;
         }
 
@@ -286,20 +328,21 @@ final class HermesAssistantRuntime {
 
             List<String> rejectedReasons = new ArrayList<>(decisionPlan.rejectedReasons());
             rejectedReasons.add(validation.message());
-            SkillResult llmResult = fallbackToLlm(decisionContext, userInput, profileContext, deltaConsumer, streamMode);
+            SkillResult validationFailure = SkillResult.failure(decision.target(), validation.message());
+            emit(deltaConsumer, validationFailure.output());
             DispatchResult result = buildDispatchResult(
-                    llmResult.output(),
-                    llmResult.skillName(),
-                    "llm-fallback",
-                    llmResult.skillName(),
+                    validationFailure.output(),
+                    validationFailure.skillName(),
+                    "param-validation",
+                    decision.target(),
                     decision.confidence(),
                     decisionPlan.reasons(),
                     rejectedReasons,
-                    llmResult.success(),
-                    List.of(primaryStep(llmResult.success() ? "success" : "failed", llmResult.skillName(), llmResult.output(), startedAt, Instant.now()))
+                    false,
+                    List.of(primaryStep("failed", validationFailure.skillName(), validationFailure.output(), startedAt, Instant.now()))
             );
             result = enrichObservability(result, userInput, decisionContext.semanticAnalysis());
-            memoryRecorder.record(userId, userInput, llmResult, decisionContext.profileContext(), decisionContext.semanticAnalysis(), null, null);
+            memoryRecorder.record(userId, userInput, validationFailure, decisionContext.profileContext(), decisionContext.semanticAnalysis(), null, null);
             return result;
         }
 
@@ -359,11 +402,11 @@ final class HermesAssistantRuntime {
         return result;
     }
 
-    private SkillResult fallbackToLlm(HermesDecisionContext context,
-                                      String userInput,
-                                      Map<String, Object> profileContext,
-                                      Consumer<String> deltaConsumer,
-                                      boolean streamMode) {
+    private SkillResult executeLlmDecision(HermesDecisionContext context,
+                                           String userInput,
+                                           Map<String, Object> profileContext,
+                                           Consumer<String> deltaConsumer,
+                                           boolean streamMode) {
         Map<String, Object> llmContext = new LinkedHashMap<>(context.llmContext());
         llmContext.put("routeStage", "llm-fallback");
         llmSupport.applyStageLlmRoute("llm-fallback", profileContext, llmContext);

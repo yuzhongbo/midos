@@ -71,6 +71,7 @@ public class DispatcherService implements ContextCompressionMetricsReader,
     private final DispatcherMemoryFacade dispatcherMemoryFacade;
     private final DispatcherMemoryCommandService memoryCommandService;
     private final SemanticAnalyzer semanticAnalyzer;
+    private final LLMDecisionEngine llmDecisionEngine;
     private final boolean preferenceReuseEnabled;
     private final boolean habitRoutingEnabled;
     private final int habitRoutingMinTotalCount;
@@ -394,6 +395,7 @@ public class DispatcherService implements ContextCompressionMetricsReader,
         this.dispatcherMemoryFacade = Objects.requireNonNull(dispatcherMemoryFacade, "dispatcherMemoryFacade");
         this.memoryCommandService = new DispatcherMemoryCommandService(this.dispatcherMemoryFacade, null);
         this.semanticAnalyzer = semanticAnalyzer;
+        this.llmDecisionEngine = llmDecisionEngine;
         this.paramValidator = paramValidator;
         this.preferenceReuseEnabled = preferenceReuseEnabled;
         this.habitRoutingEnabled = habitRoutingEnabled;
@@ -524,7 +526,6 @@ public class DispatcherService implements ContextCompressionMetricsReader,
         this.dispatchLlmSupport = new DispatchLlmSupport(
                 llmClient,
                 promptBuilder,
-                llmDecisionEngine,
                 this.dispatchHeuristicsSupport,
                 new DispatchLlmSupport.PromptConfig(
                         this.promptMaxChars,
@@ -669,6 +670,7 @@ public class DispatcherService implements ContextCompressionMetricsReader,
                                 this.semanticRoutingSupport,
                                 this.behaviorRoutingSupport,
                                 this.decisionParamAssembler,
+                                this.llmDecisionEngine,
                                 this.dispatchHeuristicsSupport,
                                 resolveHermesSearchPriorityOrder(),
                                 this.dispatchSkillDslResolvers

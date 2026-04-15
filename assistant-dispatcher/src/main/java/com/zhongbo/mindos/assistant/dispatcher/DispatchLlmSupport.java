@@ -35,7 +35,6 @@ final class DispatchLlmSupport {
 
     private final LlmClient llmClient;
     private final PromptBuilder promptBuilder;
-    private final LLMDecisionEngine llmDecisionEngine;
     private final DispatchHeuristicsSupport heuristicsSupport;
     private final PromptConfig promptConfig;
     private final StageRouteConfig stageRouteConfig;
@@ -45,7 +44,6 @@ final class DispatchLlmSupport {
 
     DispatchLlmSupport(LlmClient llmClient,
                        PromptBuilder promptBuilder,
-                       LLMDecisionEngine llmDecisionEngine,
                        DispatchHeuristicsSupport heuristicsSupport,
                        PromptConfig promptConfig,
                        StageRouteConfig stageRouteConfig,
@@ -54,7 +52,6 @@ final class DispatchLlmSupport {
                        Metrics metrics) {
         this.llmClient = llmClient;
         this.promptBuilder = promptBuilder;
-        this.llmDecisionEngine = llmDecisionEngine;
         this.heuristicsSupport = heuristicsSupport;
         this.promptConfig = promptConfig;
         this.stageRouteConfig = stageRouteConfig;
@@ -80,9 +77,6 @@ final class DispatchLlmSupport {
         } catch (Exception e) {
             // best-effort debug logging
         }
-        if (!realtimeLookup && !llmDecisionEngine.shouldCallLLM(queryContext)) {
-            return buildMemoryDirectResult(promptMemoryContext, userInput);
-        }
         return SkillResult.success("llm", callLlmWithLocalEscalation(
                 buildFallbackPrompt(memoryContext, promptMemoryContext, userInput, realtimeIntentInput),
                 llmContext
@@ -106,13 +100,6 @@ final class DispatchLlmSupport {
             );
         } catch (Exception e) {
             // best-effort debug logging
-        }
-        if (!realtimeLookup && !llmDecisionEngine.shouldCallLLM(queryContext)) {
-            SkillResult result = buildMemoryDirectResult(promptMemoryContext, userInput);
-            if (deltaConsumer != null) {
-                deltaConsumer.accept(result.output());
-            }
-            return result;
         }
         String prompt = buildFallbackPrompt(memoryContext, promptMemoryContext, userInput, realtimeIntentInput);
         StringBuilder aggregated = new StringBuilder();
@@ -363,7 +350,7 @@ final class DispatchLlmSupport {
         return capText(promptBuilder.build(promptMemoryContext, userInput), promptConfig.promptMaxChars());
     }
 
-    private SkillResult buildMemoryDirectResult(PromptMemoryContextDto promptMemoryContext, String userInput) {
+    SkillResult buildMemoryDirectResult(PromptMemoryContextDto promptMemoryContext, String userInput) {
         List<String> items = promptMemoryContext == null || promptMemoryContext.debugTopItems() == null
                 ? List.of()
                 : promptMemoryContext.debugTopItems().stream()

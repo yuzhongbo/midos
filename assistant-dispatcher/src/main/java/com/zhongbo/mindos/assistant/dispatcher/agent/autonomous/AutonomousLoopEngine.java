@@ -17,6 +17,7 @@ import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.kernel.TaskHandl
 import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.kernel.TaskState;
 import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.worldmodel.WorldMemory;
 import com.zhongbo.mindos.assistant.dispatcher.agent.taskgraph.TaskGraph;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.ExecutionMemoryFacade;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -29,6 +30,7 @@ import java.util.List;
 import java.util.Map;
 
 @Component
+@ConditionalOnProperty(name = "mindos.autonomous.runtime.enabled", havingValue = "true")
 public class AutonomousLoopEngine {
 
     private final AGIRuntimeKernel runtimeKernel;

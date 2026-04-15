@@ -14,6 +14,7 @@ import com.zhongbo.mindos.assistant.memory.graph.GraphMemoryGateway;
 import com.zhongbo.mindos.assistant.memory.graph.MemoryEdge;
 import com.zhongbo.mindos.assistant.memory.graph.MemoryNode;
 import com.zhongbo.mindos.assistant.dispatcher.agent.taskgraph.TaskGraph;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -26,6 +27,7 @@ import java.util.Locale;
 import java.util.Map;
 
 @Component
+@ConditionalOnProperty(name = "mindos.autonomous.runtime.enabled", havingValue = "true")
 public class DefaultMemoryEvolution implements MemoryEvolution {
 
     private final GraphMemoryGateway graphMemoryGateway;

@@ -20,6 +20,8 @@ final class HermesMemoryRecorder {
             "memory.direct",
             "semantic.clarify",
             "conversational-bypass",
+            "decision.invalid",
+            "loop.guard",
             "security.guard",
             "system.draining"
     );
