@@ -60,9 +60,9 @@ class NewsSearchSkillTest {
 
         assertTrue(result.success());
         assertTrue(result.output().contains("[news_search]"));
-        assertTrue(result.output().contains("主题: AI硬件"));
-        assertTrue(result.output().contains("热点关键词: AI芯片、创业投资、产业链"));
-        assertTrue(result.output().contains("上下文总结: 当前上下文更关注 AI 芯片与产业动态。"));
+        assertTrue(result.output().contains("摘要: 产业继续升温，AI 芯片与创业投资都在加速。"));
+        assertTrue(result.output().contains("时间: 2026-04-03 11:00 Z"));
+        assertTrue(result.output().contains("详细链接: https://36kr.example/ai-startup"));
         assertTrue(result.output().contains("36Kr AI 创业观察"));
         assertTrue(capturedPrompt.get().contains("用户上下文: 用户最近一直关注芯片和创业投资。"));
         assertEquals("local", capturedContext.get().get("llmProvider"));
@@ -125,10 +125,10 @@ class NewsSearchSkillTest {
         SkillResult result = skill.run(new SkillContext("u1", "", Map.of("query", "AI")));
 
         assertTrue(result.success());
-        assertTrue(result.output().contains("摘要: AI 相关新闻共 1 条"));
-        assertTrue(result.output().contains("热点关键词:"));
-        assertTrue(result.output().contains("上下文总结:"));
-        assertTrue(result.output().contains("36kr 1 条"));
+        assertTrue(result.output().contains("摘要: 已整理 1 条与“AI”相关的新闻"));
+        assertFalse(result.output().contains("热点关键词:"));
+        assertFalse(result.output().contains("上下文总结:"));
+        assertTrue(result.output().contains("详细链接: https://36kr.example/ai-startup"));
     }
 
     @Test
@@ -267,6 +267,44 @@ class NewsSearchSkillTest {
         assertTrue(result.output().contains("关键词: 国际"));
         assertFalse(result.output().contains("并总结"));
         assertFalse(result.output().contains("今天的国际新闻"));
+    }
+
+    @Test
+    void shouldNormalizePrefilledUpstreamQueryAndKeepStructuredOutput() {
+        NewsSearchSkill skill = new NewsSearchSkill(
+                (prompt, context) -> {
+                    throw new RuntimeException("skip llm");
+                },
+                (url, timeoutMs) -> """
+                        <rss><channel>
+                          <item>
+                            <title>国际局势最新进展</title>
+                            <link>https://36kr.example/global-update</link>
+                            <description>国际动态整理</description>
+                            <pubDate>Fri, 03 Apr 2026 11:00:00 GMT</pubDate>
+                          </item>
+                        </channel></rss>
+                        """,
+                true,
+                "https://36kr.com/feed",
+                3000,
+                300,
+                64,
+                8,
+                true,
+                "local",
+                "cost",
+                "gemma3:1b-it-q4_K_M",
+                220
+        );
+
+        SkillResult result = skill.run(newsContext("u1", "查看最新的国际新闻", Map.of("query", "查看最新的国际新闻")));
+
+        assertTrue(result.success());
+        assertTrue(result.output().contains("关键词: 国际"));
+        assertTrue(result.output().contains("1. 标题: 国际局势最新进展"));
+        assertTrue(result.output().contains("时间: 2026-04-03 11:00 Z"));
+        assertTrue(result.output().contains("详细链接: https://36kr.example/global-update"));
     }
 
     @Test

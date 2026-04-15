@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zhongbo.mindos.assistant.common.LlmClient;
 import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.common.SkillResult;
+import com.zhongbo.mindos.assistant.common.command.NewsSearchCommandSupport;
 import com.zhongbo.mindos.assistant.skill.Skill;
 import com.zhongbo.mindos.assistant.skill.SkillDescriptor;
 import com.zhongbo.mindos.assistant.skill.SkillDescriptorProvider;
@@ -32,6 +33,8 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
@@ -44,7 +47,6 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Level;
 import com.zhongbo.mindos.assistant.skill.examples.util.TitleCleaner;
 import java.util.logging.Logger;
@@ -230,6 +232,7 @@ final class NewsSearchSkillExecutor {
 
     private static final Logger LOGGER = Logger.getLogger(NewsSearchSkill.class.getName());
     private static final DateTimeFormatter RFC1123 = DateTimeFormatter.RFC_1123_DATE_TIME;
+    private static final DateTimeFormatter OUTPUT_TIME_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
     private static final Pattern JSON_BLOCK_PATTERN = Pattern.compile("\\{.*}", Pattern.DOTALL);
     private static final Set<String> HOT_KEYWORD_STOP_WORDS = Set.of(
             "google", "news", "rss", "36kr", "today", "with", "from", "that", "this", "以及", "相关", "新闻", "今日", "最新", "报道"
@@ -249,6 +252,7 @@ final class NewsSearchSkillExecutor {
     private final String summaryPreset;
     private final String summaryModel;
     private final int summaryMaxTokens;
+    private final NewsSearchCommandSupport newsSearchCommandSupport = new NewsSearchCommandSupport();
     private final List<SearchSourceConfig> searchSources;
     private final SearchProviderChain searchProviderChain;
     private final boolean serperEnabled;
@@ -425,27 +429,27 @@ final class NewsSearchSkillExecutor {
             return SkillResult.failure(name(), "news_search 已禁用，请联系管理员开启。");
         }
         Map<String, Object> resolved = attributes(context);
-        String query = asTrimmedText(resolved.get("query"));
-        if (query.isBlank()) {
+        QueryPlan queryPlan = resolveQueryPlan(context, resolved);
+        if (queryPlan.displayQuery().isBlank()) {
             return SkillResult.failure(name(), "请提供新闻关键词，例如：news_search AI 芯片");
         }
         SourceSelection sourceSelection = resolveSource(asTrimmedText(resolved.get("source")));
         SortMode sortMode = resolveSort(asTrimmedText(resolved.get("sort")));
         int requestedLimit = resolveLimit(resolved.get("limit"));
         int effectiveLimit = Math.min(requestedLimit, maxItems);
-        String cacheKey = normalize(query) + "|" + sourceSelection.cacheKey() + "|" + sortMode.cacheKey() + "|" + effectiveLimit;
-        CacheEntry cacheEntry = loadWithCache(cacheKey, query, effectiveLimit, sourceSelection, sortMode);
+        String cacheKey = normalize(queryPlan.searchQuery()) + "|" + sourceSelection.cacheKey() + "|" + sortMode.cacheKey() + "|" + effectiveLimit;
+        CacheEntry cacheEntry = loadWithCache(cacheKey, queryPlan.searchQuery(), effectiveLimit, sourceSelection, sortMode);
         List<NewsItem> items = cacheEntry.items();
         if (items.isEmpty()) {
-            return SkillResult.success(name(), "[news_search]\n未获取到相关新闻，请稍后重试。关键词：" + query);
+            return SkillResult.success(name(), "[news_search]\n未获取到相关新闻，请稍后重试。关键词：" + queryPlan.displayQuery());
         }
 
         SummaryBundle summaryBundle = cacheEntry.summaryBundle();
         if (summaryBundle == null) {
-            summaryBundle = summarize(query, items, context);
+            summaryBundle = summarize(queryPlan.displayQuery(), items, context);
             cache.put(cacheKey, new CacheEntry(items, summaryBundle, cacheEntry.expiresAtMs()));
         }
-        return SkillResult.success(name(), renderOutput(query, sourceSelection, sortMode, items, summaryBundle));
+        return SkillResult.success(name(), renderOutput(queryPlan.displayQuery(), sourceSelection, sortMode, items, summaryBundle, context));
     }
 
     private CacheEntry loadWithCache(String cacheKey, String query, int limit, SourceSelection sourceSelection, SortMode sortMode) {
@@ -487,18 +491,14 @@ final class NewsSearchSkillExecutor {
                                 SourceSelection sourceSelection,
                                 SortMode sortMode,
                                 List<NewsItem> items,
-                                SummaryBundle summaryBundle) {
+                                SummaryBundle summaryBundle,
+                                SkillContext context) {
         StringBuilder output = new StringBuilder();
         output.append("[news_search]\n关键词: ").append(query).append("\n");
-        appendOutputLine(output, "主题", summaryBundle.theme());
-        if (!summaryBundle.hotKeywords().isEmpty()) {
-            output.append("热点关键词: ").append(String.join("、", summaryBundle.hotKeywords())).append("\n");
-        }
         appendOutputLine(output, "摘要", summaryBundle.summary());
-        appendOutputLine(output, "上下文总结", summaryBundle.contextBrief());
         output.append("来源: ").append(describeSource(sourceSelection, items)).append("\n");
         output.append("排序: ").append(sortMode.displayName()).append("\n\n");
-        appendOutputItems(output, items);
+        appendOutputItems(output, items, context);
         return output.toString().trim();
     }
 
@@ -508,16 +508,17 @@ final class NewsSearchSkillExecutor {
         }
     }
 
-    private void appendOutputItems(StringBuilder output, List<NewsItem> items) {
+    private void appendOutputItems(StringBuilder output, List<NewsItem> items, SkillContext context) {
         for (int i = 0; i < items.size(); i++) {
             NewsItem item = items.get(i);
             output.append(i + 1)
-                    .append(". ")
+                    .append(". 标题: ")
                     .append(item.title())
-                    .append(" [")
+                    .append("\n   时间: ")
+                    .append(formatPublishedAt(item.publishedAt(), context))
+                    .append("\n   来源: ")
                     .append(item.source())
-                    .append("]\n")
-                    .append("   ")
+                    .append("\n   详细链接: ")
                     .append(item.link())
                     .append("\n");
         }
@@ -837,18 +838,11 @@ final class NewsSearchSkillExecutor {
     }
 
     private SummaryBundle fallbackSummaryBundle(String query, List<NewsItem> items, SkillContext context) {
-        AtomicInteger krCount = new AtomicInteger();
-        AtomicInteger serperCount = new AtomicInteger();
-        items.forEach(item -> {
-            if ("36kr".equals(item.source())) {
-                krCount.incrementAndGet();
-            }
-            if ("Serper".equalsIgnoreCase(item.source()) || "serper".equalsIgnoreCase(item.source())) {
-                serperCount.incrementAndGet();
-            }
-        });
+        String summary = items.isEmpty()
+                ? "暂未获取到与“" + query + "”相关的新闻。"
+                : "已整理 " + items.size() + " 条与“" + query + "”相关的新闻，优先展示较新的结果。";
         return new SummaryBundle(
-                query + " 相关新闻共 " + items.size() + " 条，36kr " + krCount.get() + " 条，Serper " + serperCount.get() + " 条。",
+                summary,
                 buildFallbackContextBrief(query, context, items),
                 extractHotKeywords(query, items),
                 buildFallbackTheme(query, items)
@@ -988,6 +982,49 @@ final class NewsSearchSkillExecutor {
             return query + " 热点追踪";
         }
         return query;
+    }
+
+    private QueryPlan resolveQueryPlan(SkillContext context, Map<String, Object> resolved) {
+        String displayQuery = newsSearchCommandSupport.normalizeQuery(firstNonBlank(
+                asTrimmedText(resolved.get("query")),
+                asTrimmedText(resolved.get("keyword"))
+        ));
+        if (displayQuery.isBlank() && context != null) {
+            displayQuery = newsSearchCommandSupport.normalizeQuery(context.input());
+        }
+        String searchQuery = buildSearchQuery(displayQuery);
+        return new QueryPlan(displayQuery, searchQuery.isBlank() ? displayQuery : searchQuery);
+    }
+
+    private String buildSearchQuery(String displayQuery) {
+        if (displayQuery == null || displayQuery.isBlank()) {
+            return "";
+        }
+        String normalized = normalize(displayQuery);
+        if (normalized.contains("新闻")
+                || normalized.contains("资讯")
+                || normalized.contains("消息")
+                || normalized.contains("头条")
+                || normalized.contains("热点")
+                || normalized.contains("news")
+                || normalized.contains("headline")) {
+            return displayQuery;
+        }
+        if (isCompactHanTopic(displayQuery)) {
+            return displayQuery + "新闻";
+        }
+        return displayQuery;
+    }
+
+    private boolean isCompactHanTopic(String value) {
+        if (value == null || value.isBlank()) {
+            return false;
+        }
+        int codePointCount = value.codePointCount(0, value.length());
+        if (codePointCount > 4) {
+            return false;
+        }
+        return value.codePoints().allMatch(codePoint -> Character.UnicodeScript.of(codePoint) == Character.UnicodeScript.HAN);
     }
 
     private String asTrimmedText(Object value) {
@@ -1193,6 +1230,26 @@ final class NewsSearchSkillExecutor {
         return withoutTags.replaceAll("\\s+", " ").trim();
     }
 
+    private String formatPublishedAt(Instant publishedAt, SkillContext context) {
+        if (publishedAt == null || Instant.EPOCH.equals(publishedAt)) {
+            return "未知";
+        }
+        ZoneId zoneId = resolveOutputZoneId(context);
+        return OUTPUT_TIME_FORMATTER.format(publishedAt.atZone(zoneId)) + " " + zoneId.getId();
+    }
+
+    private ZoneId resolveOutputZoneId(SkillContext context) {
+        String timezone = context == null ? "" : asTrimmedText(attributes(context).get("timezone"));
+        if (timezone.isBlank()) {
+            return ZoneOffset.UTC;
+        }
+        try {
+            return ZoneId.of(timezone);
+        } catch (Exception ignored) {
+            return ZoneOffset.UTC;
+        }
+    }
+
     private void cleanupExpiredCache(long now) {
         if (cache.size() > cacheMaxEntries) {
             cache.entrySet().removeIf(entry -> entry.getValue().expiresAtMs() <= now);
@@ -1226,6 +1283,9 @@ final class NewsSearchSkillExecutor {
     }
 
     private record CacheEntry(List<NewsItem> items, SummaryBundle summaryBundle, long expiresAtMs) {
+    }
+
+    private record QueryPlan(String displayQuery, String searchQuery) {
     }
 
     private record FetchPlan(SourceMode mode,

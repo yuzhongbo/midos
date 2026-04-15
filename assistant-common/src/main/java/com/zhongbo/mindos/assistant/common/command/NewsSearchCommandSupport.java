@@ -16,7 +16,7 @@ public final class NewsSearchCommandSupport {
     private static final Pattern COUNT_LIMIT_PATTERN = Pattern.compile("(?:前|看|来|给我看|给我|帮我看)?\\s*([0-9一二两三四五六七八九十百千万]+)\\s*(?:条|篇|个)");
     private static final Pattern PARAMETER_TOKEN_PATTERN = Pattern.compile("(?i)\\b(source|sort|limit)\\s*=\\s*[^\\s]+");
     private static final Pattern SOURCE_TOKEN_PATTERN = Pattern.compile("(?i)(?:36kr|36氪|serper|serpapi)");
-    private static final Pattern LEADING_QUERY_NOISE_PATTERN = Pattern.compile("^(?:只看|仅看|只要|仅限|帮我看|给我看|看|查|搜|搜索|查询|请|请帮我)?\\s*");
+    private static final Pattern LEADING_QUERY_NOISE_PATTERN = Pattern.compile("^(?:只看|仅看|只要|仅限|帮我看|给我看|帮我查|给我查|帮我搜|给我搜|查看|查找|看|查|搜|搜索|查询|请|请帮我)?\\s*");
     private static final Pattern LEADING_TOPIC_CONNECTOR_PATTERN = Pattern.compile("^(?:的|关于|有关|针对|围绕)\\s*");
     private static final Pattern RECENCY_NOISE_PATTERN = Pattern.compile("(?:今天的|今日的|今天|今日|最新的|最新|最近的|最近|实时的|实时)");
     private static final Pattern TRAILING_NEWS_NOISE_PATTERN = Pattern.compile("(?:新闻|资讯|消息|头条|热点|热搜)+$");
@@ -45,14 +45,12 @@ public final class NewsSearchCommandSupport {
         return Map.copyOf(resolved);
     }
 
-    private String resolveQuery(SkillContext context) {
-        String query = firstNonBlank(attributeText(context, "query"), attributeText(context, "keyword"));
-        if (!query.isBlank()) {
-            return query;
+    public String normalizeQuery(String rawQuery) {
+        String candidate = rawQuery == null ? "" : rawQuery.trim();
+        if (candidate.isBlank()) {
+            return "";
         }
-        String input = context == null || context.input() == null ? "" : context.input().trim();
-        String normalized = input.replaceFirst("(?i)^news[_ ]search", "").trim();
-        String candidate = normalized.isBlank() ? input : normalized;
+        candidate = candidate.replaceFirst("(?i)^news[_ ]search", "").trim();
         candidate = PARAMETER_TOKEN_PATTERN.matcher(candidate).replaceAll(" ").trim();
         candidate = COUNT_LIMIT_PATTERN.matcher(candidate).replaceAll(" ").trim();
         candidate = candidate.replace("几条", " ").replace("若干条", " ");
@@ -65,6 +63,15 @@ public final class NewsSearchCommandSupport {
         candidate = TRAILING_NEWS_NOISE_PATTERN.matcher(candidate).replaceFirst("").trim();
         candidate = LEADING_TOPIC_CONNECTOR_PATTERN.matcher(candidate).replaceFirst("").trim();
         return candidate.replaceAll("\\s+", " ").trim();
+    }
+
+    private String resolveQuery(SkillContext context) {
+        String query = normalizeQuery(firstNonBlank(attributeText(context, "query"), attributeText(context, "keyword")));
+        if (!query.isBlank()) {
+            return query;
+        }
+        String input = context == null || context.input() == null ? "" : context.input().trim();
+        return normalizeQuery(input);
     }
 
     private String resolveSource(SkillContext context) {

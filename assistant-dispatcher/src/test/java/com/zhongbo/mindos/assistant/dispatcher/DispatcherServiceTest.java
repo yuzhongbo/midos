@@ -480,15 +480,14 @@ class DispatcherServiceTest {
             String rawNewsOutput = """
                     [news_search]
                     关键词: 科技新闻
-                    主题: 科技
-                    热点关键词: AI、芯片
                     摘要: 这是实时搜索返回的摘要。
-                    上下文总结: 当前更关注科技和产业动态。
                     来源: Serper
                     排序: latest
                     
-                    1. Serper AI 观察 [Serper]
-                       https://example.com/ai
+                    1. 标题: Serper AI 观察
+                       时间: 2026-04-03 11:00 Z
+                       来源: Serper
+                       详细链接: https://example.com/ai
                     """.trim();
             DispatcherService service = createDispatcher(
                     memoryManager,
