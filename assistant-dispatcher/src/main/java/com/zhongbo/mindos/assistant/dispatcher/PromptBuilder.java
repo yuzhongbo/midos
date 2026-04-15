@@ -26,7 +26,7 @@ public class PromptBuilder {
     private static final int MAX_SECTION_TOKENS = 320;
 
     public String build(PromptMemoryContextDto promptMemoryContext, String userQuery) {
-        return build(promptMemoryContext, deriveCurrentTask(userQuery), userQuery);
+        return build(promptMemoryContext, deriveCurrentTask(userQuery, topMemoryItems(promptMemoryContext)), userQuery);
     }
 
     public String build(PromptMemoryContextDto promptMemoryContext, String currentTask, String userQuery) {
@@ -134,16 +134,27 @@ public class PromptBuilder {
         return "[" + label + "] " + capByTokens(text, 120);
     }
 
-    private String deriveCurrentTask(String userQuery) {
+    private String deriveCurrentTask(String userQuery, List<String> relevantMemory) {
         String normalized = normalize(userQuery);
         if (normalized.isBlank()) {
             return "(none)";
         }
+        String leadMemory = relevantMemory == null || relevantMemory.isEmpty()
+                ? ""
+                : normalize(humanizeMemoryText(relevantMemory.get(0)));
         if (isShortContinuation(normalized)) {
-            return capByTokens("Continue the active thread naturally and move the user's current task forward using the available context.", 120);
+            String base = "Continue the active thread naturally and move the user's current task forward using the available context.";
+            if (!leadMemory.isBlank()) {
+                base += " Most relevant active context: " + leadMemory;
+            }
+            return capByTokens(base, 120);
         }
         if (isConversational(normalized)) {
-            return capByTokens("Have a natural private-assistant conversation while staying helpful and context-aware.", 120);
+            String base = "Have a natural private-assistant conversation while staying helpful and context-aware.";
+            if (!leadMemory.isBlank()) {
+                base += " Keep continuity with: " + leadMemory;
+            }
+            return capByTokens(base, 120);
         }
         return capByTokens("Answer the user's current request directly: " + normalized, 120);
     }

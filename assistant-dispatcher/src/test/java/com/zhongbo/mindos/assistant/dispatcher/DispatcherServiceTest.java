@@ -1359,6 +1359,22 @@ class DispatcherServiceTest {
     }
 
     @Test
+    void shouldUseMemoryDirectForColloquialRecallInLlmFirstMode() {
+        MemoryManager memoryManager = createMemoryManager();
+        memoryManager.storeKnowledge("llm-first-memory-colloquial-user", "周五前提交周报并同步项目风险", List.of(0.2, 0.3), "task");
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of("不应调用 llm"));
+        DispatcherLlmTuningProperties tuningProperties = new DispatcherLlmTuningProperties();
+        tuningProperties.setAnswerMode("llm-first");
+        DispatcherService service = createDispatcherWithTuning(memoryManager, llmClient, List.of(), 2, tuningProperties);
+
+        DispatchResult result = service.dispatch("llm-first-memory-colloquial-user", "刚才说啥");
+
+        assertEquals("memory.direct", result.channel());
+        assertTrue(result.reply().contains("我回顾了一下我们之前的内容"));
+        assertEquals(0, llmClient.fallbackCallCount());
+    }
+
+    @Test
     void shouldDisableMemoryReadsAndWritesUntilMemoryIsReenabled() {
         MemoryManager memoryManager = createMemoryManager();
         memoryManager.storeKnowledge("no-memory-user", "周五前提交周报并同步项目风险", List.of(0.2, 0.3), "task");
@@ -1414,10 +1430,11 @@ class DispatcherServiceTest {
 
         service.dispatch("semantic-memory-user", "帮我创建待办：周五前提交周报");
 
-        List<SemanticMemoryEntry> entries = memoryManager.searchKnowledge("semantic-memory-user", "semantic-summary", 10, "task");
-        assertTrue(entries.stream().anyMatch(entry -> entry.text().contains("params=task=提交周报")));
-        assertTrue(entries.stream().anyMatch(entry -> entry.text().contains("intentType=tool-call")));
-        assertTrue(entries.stream().anyMatch(entry -> entry.text().contains("contextScope=standalone")));
+        List<SemanticMemoryEntry> entries = memoryManager.searchKnowledge("semantic-memory-user", "意图摘要", 10, "task");
+        assertTrue(entries.stream().anyMatch(entry -> entry.text().contains("[意图摘要]")));
+        assertTrue(entries.stream().anyMatch(entry -> entry.text().contains("用户当前想要：用户要创建待办事项")));
+        assertTrue(entries.stream().anyMatch(entry -> entry.text().contains("可用执行方式：todo.create")));
+        assertTrue(entries.stream().anyMatch(entry -> entry.text().contains("已确认信息：task=提交周报")));
     }
 
     @Test
@@ -1450,9 +1467,10 @@ class DispatcherServiceTest {
 
         service.dispatch("conversation-rollup-user", "帮我创建待办：周五前提交周报");
 
-        List<SemanticMemoryEntry> entries = memoryManager.searchKnowledge("conversation-rollup-user", "intent=", 10, "conversation-rollup");
-        assertTrue(entries.stream().anyMatch(entry -> entry.text().contains("outcome=success")));
-        assertTrue(entries.stream().anyMatch(entry -> entry.text().contains("params=dueDate=周五, task=提交周报")));
+        List<SemanticMemoryEntry> entries = memoryManager.searchKnowledge("conversation-rollup-user", "助手上下文", 10, "conversation-rollup");
+        assertTrue(entries.stream().anyMatch(entry -> entry.text().contains("[助手上下文]")));
+        assertTrue(entries.stream().anyMatch(entry -> entry.text().contains("结果：已推进")));
+        assertTrue(entries.stream().anyMatch(entry -> entry.text().contains("关键信息：dueDate=周五, task=提交周报")));
         assertTrue(entries.stream().noneMatch(entry -> entry.text().contains("reply=")));
     }
 
