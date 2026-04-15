@@ -32,10 +32,12 @@ class PromptBuilderTest {
 
         String prompt = builder.build(context, "请总结当前任务");
 
+        assertTrue(prompt.contains("[Assistant Role]"));
         assertTrue(prompt.contains("[User Profile]"));
         assertTrue(prompt.contains("[Current Task]"));
         assertTrue(prompt.contains("[Relevant Memory]"));
         assertTrue(prompt.contains("[User Query]"));
+        assertTrue(prompt.contains("private assistant"));
         assertFalse(prompt.contains("raw conversation should not be dumped"));
         assertTrue(prompt.contains("epsilon"));
         assertFalse(prompt.contains("zeta"));

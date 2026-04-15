@@ -15,6 +15,7 @@ import java.util.Set;
 
 final class HermesMemoryRecorder {
 
+    private static final String ASSISTANT_CONTEXT_MARKER = "[助手上下文]";
     private static final Set<String> NON_SKILL_CHANNELS = Set.of(
             "llm",
             "memory.direct",
@@ -152,20 +153,22 @@ final class HermesMemoryRecorder {
             return "";
         }
         StringBuilder entry = new StringBuilder();
-        entry.append("intent=").append(firstNonBlank(semanticAnalysis.intent(), "unknown"));
-        entry.append("; intentType=").append(semanticAnalysis.intentType());
-        entry.append("; contextScope=").append(semanticAnalysis.contextScope());
+        entry.append(ASSISTANT_CONTEXT_MARKER).append(' ');
+        entry.append("用户刚才在处理：").append(summary);
         if (finalResult != null && finalResult.skillName() != null && !finalResult.skillName().isBlank()) {
-            entry.append("; channel=").append(finalResult.skillName());
+            entry.append("；执行方式：").append(finalResult.skillName());
         }
-        entry.append("; outcome=").append(finalResult.success() ? "success" : "failed");
-        entry.append("; summary=").append(summary);
+        entry.append("；结果：").append(finalResult.success() ? "已推进" : "遇到阻塞");
+        String scope = humanizedContextScope(semanticAnalysis.contextScope());
+        if (!scope.isBlank()) {
+            entry.append("；上下文：").append(scope);
+        }
         String paramsDigest = summarizePayload(semanticAnalysis.payload());
         if (!paramsDigest.isBlank()) {
-            entry.append("; params=").append(paramsDigest);
+            entry.append("；关键信息：").append(paramsDigest);
         }
         if (userInput != null && !userInput.isBlank()) {
-            entry.append("; input=").append(cap(userInput, 120));
+            entry.append("；用户原话：").append(cap(userInput, 120));
         }
         return cap(entry.toString(), 320);
     }
@@ -184,6 +187,19 @@ final class HermesMemoryRecorder {
                     builder.append(entry.getKey()).append('=').append(entry.getValue());
                 });
         return cap(builder.toString(), 120);
+    }
+
+    private String humanizedContextScope(String contextScope) {
+        if (contextScope == null || contextScope.isBlank()) {
+            return "";
+        }
+        return switch (contextScope) {
+            case "continuation" -> "延续上文";
+            case "realtime" -> "需要最新信息";
+            case "memory" -> "围绕历史内容";
+            case "standalone" -> "独立请求";
+            default -> "";
+        };
     }
 
     private String sanitizeProfileValue(Object value) {

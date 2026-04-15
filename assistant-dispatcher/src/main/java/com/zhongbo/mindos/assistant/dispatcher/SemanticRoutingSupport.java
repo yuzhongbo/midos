@@ -16,6 +16,7 @@ import java.util.function.Predicate;
 final class SemanticRoutingSupport {
 
     private static final double SEMANTIC_SUMMARY_MIN_CONFIDENCE = 0.60;
+    private static final String INTENT_SUMMARY_MARKER = "[意图摘要]";
 
     private final DispatcherMemoryFacade dispatcherMemoryFacade;
     private final SemanticPayloadCompleter semanticPayloadCompleter;
@@ -80,21 +81,7 @@ final class SemanticRoutingSupport {
             return MemoryWriteBatch.empty();
         }
         String paramsDigest = semanticPayloadCompleter.summarizeSemanticParams(semanticAnalysis.payload());
-        String memoryText = "semantic-summary intentType="
-                + semanticAnalysis.intentType()
-                + ", contextScope="
-                + semanticAnalysis.contextScope()
-                + ", memoryOperation="
-                + semanticAnalysis.memoryOperation()
-                + ", toolRequired="
-                + semanticAnalysis.toolRequired()
-                + ", intent="
-                + capText(semanticAnalysis.intent() == null ? "" : semanticAnalysis.intent(), 48)
-                + ", skill="
-                + capText(semanticAnalysis.suggestedSkill() == null ? "" : semanticAnalysis.suggestedSkill(), 48)
-                + ", summary="
-                + summary
-                + (paramsDigest.isBlank() ? "" : ", params=" + paramsDigest);
+        String memoryText = buildHumanizedSemanticSummary(semanticAnalysis, summary, paramsDigest);
         List<Double> embedding = List.of(
                 (double) memoryText.length(),
                 Math.abs(memoryText.hashCode() % 1000) / 1000.0
@@ -104,6 +91,63 @@ final class SemanticRoutingSupport {
                 embedding,
                 semanticPayloadCompleter.resolveMemoryBucket(userInput)
         ));
+    }
+
+    private String buildHumanizedSemanticSummary(SemanticAnalysisResult semanticAnalysis,
+                                                 String summary,
+                                                 String paramsDigest) {
+        StringBuilder builder = new StringBuilder(INTENT_SUMMARY_MARKER)
+                .append(' ')
+                .append("用户当前想要：")
+                .append(summary);
+        String intent = capText(semanticAnalysis.intent() == null ? "" : semanticAnalysis.intent(), 48);
+        if (!intent.isBlank() && !summary.contains(intent)) {
+            builder.append("；意图类型：").append(intent);
+        }
+        String scope = humanizedContextScope(semanticAnalysis.contextScope());
+        if (!scope.isBlank()) {
+            builder.append("；上下文：").append(scope);
+        }
+        if (semanticAnalysis.toolRequired()) {
+            String skill = capText(semanticAnalysis.suggestedSkill() == null ? "" : semanticAnalysis.suggestedSkill(), 48);
+            if (!skill.isBlank()) {
+                builder.append("；可用执行方式：").append(skill);
+            }
+        }
+        String memoryOperation = humanizedMemoryOperation(semanticAnalysis.memoryOperation());
+        if (!memoryOperation.isBlank()) {
+            builder.append("；记忆动作：").append(memoryOperation);
+        }
+        if (!paramsDigest.isBlank()) {
+            builder.append("；已确认信息：").append(paramsDigest);
+        }
+        return capText(builder.toString(), 280);
+    }
+
+    private String humanizedContextScope(String contextScope) {
+        if (contextScope == null || contextScope.isBlank()) {
+            return "";
+        }
+        return switch (contextScope) {
+            case "continuation" -> "延续上一个任务";
+            case "realtime" -> "需要最新信息";
+            case "memory" -> "围绕历史内容";
+            case "standalone" -> "当前独立请求";
+            default -> "";
+        };
+    }
+
+    private String humanizedMemoryOperation(String memoryOperation) {
+        if (memoryOperation == null || memoryOperation.isBlank() || "none".equals(memoryOperation)) {
+            return "";
+        }
+        return switch (memoryOperation) {
+            case "recall" -> "回顾历史";
+            case "write" -> "记录新信息";
+            case "suppress" -> "暂停记忆";
+            case "resume" -> "恢复记忆";
+            default -> "";
+        };
     }
 
     boolean shouldAskSemanticClarification(SemanticAnalysisResult semanticAnalysis,

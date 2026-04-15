@@ -357,23 +357,39 @@ final class DispatchLlmSupport {
         List<String> items = promptMemoryContext == null || promptMemoryContext.debugTopItems() == null
                 ? List.of()
                 : promptMemoryContext.debugTopItems().stream()
-                .filter(item -> item != null && item.type() != null && !"episodic".equalsIgnoreCase(item.type()))
+                .filter(item -> item != null && item.type() != null)
+                .filter(item -> !"procedural".equalsIgnoreCase(item.type()))
+                .filter(item -> !"semantic-routing".equalsIgnoreCase(item.type()))
                 .sorted(Comparator.comparingDouble(RetrievedMemoryItemDto::finalScore).reversed())
                 .limit(3)
-                .map(item -> item.text() == null ? "" : item.text().replace('\n', ' ').trim())
+                .map(item -> humanizeMemoryDirectItem(item.text()))
                 .filter(text -> !text.isBlank())
                 .toList();
         if (items.isEmpty()) {
-            items = List.of("未找到可直接复用的高相关记忆，请补充更多背景。");
+            items = List.of("我这边暂时没有找到足够清晰的历史内容，你可以提醒我一个关键词，我再接着回顾。");
         }
-        StringBuilder reply = new StringBuilder("根据已有记忆，我先直接回答：");
+        StringBuilder reply = new StringBuilder("我回顾了一下我们之前的内容：");
         for (int i = 0; i < items.size(); i++) {
             reply.append("\n").append(i + 1).append(". ").append(capText(items.get(i), 160));
         }
         if (userInput != null && !userInput.isBlank()) {
-            reply.append("\n如需更深入分析，请明确说明你希望我详细推理的部分。");
+            reply.append("\n如果你想，我也可以基于这些内容继续往下接着处理。");
         }
         return SkillResult.success("memory.direct", capText(reply.toString(), promptConfig.llmReplyMaxChars()));
+    }
+
+    private String humanizeMemoryDirectItem(String text) {
+        if (text == null || text.isBlank()) {
+            return "";
+        }
+        return text.replace('\n', ' ')
+                .replace("[意图摘要]", "")
+                .replace("[助手上下文]", "")
+                .replace("[会话摘要]", "")
+                .replace("[复盘聚焦]", "")
+                .replace("semantic-summary", "")
+                .replaceAll("\\s+", " ")
+                .trim();
     }
 
     private String promptMemoryDebugSummary(PromptMemoryContextDto ctx) {

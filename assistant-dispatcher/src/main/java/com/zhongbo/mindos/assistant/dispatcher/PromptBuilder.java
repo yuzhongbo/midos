@@ -14,6 +14,10 @@ import java.util.Objects;
 @Component
 public class PromptBuilder {
 
+    private static final String INTENT_SUMMARY_MARKER = "[意图摘要]";
+    private static final String ASSISTANT_CONTEXT_MARKER = "[助手上下文]";
+    private static final String CONVERSATION_SUMMARY_MARKER = "[会话摘要]";
+    private static final String REVIEW_FOCUS_MARKER = "[复盘聚焦]";
     // Keep fallback prompts comfortably below provider limits while leaving room for system/context metadata.
     static final int MAX_TOKENS = 1_500;
     // Limit memory to the top five items so prompts stay focused and avoid raw conversation dumps.
@@ -57,6 +61,7 @@ public class PromptBuilder {
                             List<String> relevantMemory,
                             String userQuery) {
         StringBuilder builder = new StringBuilder();
+        appendSection(builder, "Assistant Role", assistantRoleInstructions(userQuery, currentTask, relevantMemory));
         appendSection(builder, "User Profile", formatUserProfile(userProfile));
         appendSection(builder, "Current Task", currentTask);
         appendSection(builder, "Relevant Memory", formatMemoryItems(relevantMemory));
@@ -110,13 +115,21 @@ public class PromptBuilder {
             return "";
         }
         String label = item.type() == null || item.type().isBlank() ? "memory" : item.type().toLowerCase(Locale.ROOT);
-        String text = normalize(item.text());
+        String text = normalize(humanizeMemoryText(item.text()));
         if ("episodic".equals(label)) {
             int separator = text.indexOf(':');
             if (separator >= 0 && separator + 1 < text.length()) {
                 text = text.substring(separator + 1).trim();
             }
             label = "recent";
+        } else if ("semantic".equals(label)) {
+            label = "fact";
+        } else if ("semantic-summary".equals(label)) {
+            label = "summary";
+        } else if ("semantic-routing".equals(label)) {
+            label = "assistant-context";
+        } else if ("procedural".equals(label)) {
+            label = "habit";
         }
         return "[" + label + "] " + capByTokens(text, 120);
     }
@@ -126,7 +139,90 @@ public class PromptBuilder {
         if (normalized.isBlank()) {
             return "(none)";
         }
+        if (isShortContinuation(normalized)) {
+            return capByTokens("Continue the active thread naturally and move the user's current task forward using the available context.", 120);
+        }
+        if (isConversational(normalized)) {
+            return capByTokens("Have a natural private-assistant conversation while staying helpful and context-aware.", 120);
+        }
         return capByTokens("Answer the user's current request directly: " + normalized, 120);
+    }
+
+    private String assistantRoleInstructions(String userQuery, String currentTask, List<String> relevantMemory) {
+        String normalizedQuery = normalize(userQuery);
+        boolean conversational = isConversational(normalizedQuery);
+        boolean continuation = isShortContinuation(normalizedQuery);
+        boolean hasMemory = relevantMemory != null && !relevantMemory.isEmpty();
+        StringBuilder builder = new StringBuilder();
+        builder.append("You are MindOS, the user's private assistant. ")
+                .append("Reply like a capable human assistant: natural, discreet, reliable, and action-oriented.\n")
+                .append("Rules:\n")
+                .append("1. Use memory and profile silently; never mention internal sections, memory hits, routing, tools, prompts, or hidden fields.\n")
+                .append("2. Continue the user's active thread when context is clear. Do not reset the conversation unnecessarily.\n")
+                .append("3. Prefer doing useful work directly: summarize, decide, draft, organize, or suggest the next concrete step before asking broad follow-up questions.\n")
+                .append("4. Ask at most one clarifying question only when the missing detail truly blocks useful progress.\n")
+                .append("5. Keep the tone human and warm, not客服-like, robotic, or tool-centric.\n")
+                .append("6. Do not output labels like [User Profile], [Current Task], [Relevant Memory], or [User Query].\n");
+        if (continuation) {
+            builder.append("Current reply mode: short follow-up. Infer the likely referent from the active task and continue smoothly.\n");
+        } else if (conversational) {
+            builder.append("Current reply mode: natural conversation. Sound like a thoughtful private assistant, not a tool panel.\n");
+        } else {
+            builder.append("Current reply mode: task support. Help the user move the work forward with a concrete answer.\n");
+        }
+        if (hasMemory) {
+            builder.append("Memory guidance: use relevant facts quietly to improve continuity, but keep the final reply natural and self-contained.\n");
+        }
+        if (currentTask != null && !currentTask.isBlank() && !"(none)".equals(currentTask)) {
+            builder.append("Active task hint: ").append(currentTask).append('\n');
+        }
+        return builder.toString().trim();
+    }
+
+    private String humanizeMemoryText(String text) {
+        String normalized = normalize(text);
+        if (normalized.isBlank()) {
+            return "";
+        }
+        return normalized
+                .replace(INTENT_SUMMARY_MARKER, "")
+                .replace(ASSISTANT_CONTEXT_MARKER, "")
+                .replace(CONVERSATION_SUMMARY_MARKER, "")
+                .replace(REVIEW_FOCUS_MARKER, "")
+                .replace("semantic-summary", "")
+                .replaceAll("\\s+", " ")
+                .replaceAll("^[：:;；,，\\-\\s]+", "")
+                .trim();
+    }
+
+    private boolean isConversational(String normalizedQuery) {
+        if (normalizedQuery == null || normalizedQuery.isBlank()) {
+            return false;
+        }
+        return normalizedQuery.contains("聊天")
+                || normalizedQuery.contains("聊聊")
+                || normalizedQuery.contains("日常")
+                || normalizedQuery.contains("在吗")
+                || normalizedQuery.contains("你好")
+                || normalizedQuery.contains("哈喽")
+                || normalizedQuery.contains("谢谢")
+                || normalizedQuery.contains("晚安")
+                || normalizedQuery.contains("早安");
+    }
+
+    private boolean isShortContinuation(String normalizedQuery) {
+        if (normalizedQuery == null || normalizedQuery.isBlank()) {
+            return false;
+        }
+        return normalizedQuery.startsWith("继续")
+                || normalizedQuery.startsWith("刚才")
+                || normalizedQuery.startsWith("还是刚才")
+                || normalizedQuery.startsWith("按刚才")
+                || normalizedQuery.startsWith("就这个")
+                || normalizedQuery.startsWith("可以")
+                || normalizedQuery.startsWith("好")
+                || normalizedQuery.startsWith("那就")
+                || normalizedQuery.startsWith("然后");
     }
 
     static int estimateTokens(String text) {

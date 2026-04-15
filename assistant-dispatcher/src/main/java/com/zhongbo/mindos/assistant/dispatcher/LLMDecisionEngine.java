@@ -107,13 +107,33 @@ public class LLMDecisionEngine {
             return false;
         }
         String type = item.type().toLowerCase(Locale.ROOT);
-        if ("episodic".equals(type)) {
+        if ("episodic".equals(type)
+                || "procedural".equals(type)
+                || "semantic-routing".equals(type)
+                || "semantic-summary".equals(type)) {
+            return false;
+        }
+        if (looksLikeSummaryOrRoutingMemory(item.text())) {
             return false;
         }
         if (preferFresh && item.recencyScore() < FRESH_MEMORY_MIN_RECENCY) {
             return false;
         }
         return item.finalScore() >= this.relevantMemoryThreshold;
+    }
+
+    private boolean looksLikeSummaryOrRoutingMemory(String text) {
+        if (text == null || text.isBlank()) {
+            return false;
+        }
+        String normalized = text.toLowerCase(Locale.ROOT);
+        return normalized.contains("semantic-summary")
+                || normalized.contains("[意图摘要]".toLowerCase(Locale.ROOT))
+                || normalized.contains("[助手上下文]".toLowerCase(Locale.ROOT))
+                || normalized.contains("[会话摘要]".toLowerCase(Locale.ROOT))
+                || normalized.contains("[复盘聚焦]".toLowerCase(Locale.ROOT))
+                || normalized.contains("reply=")
+                || (normalized.contains("intent=") && normalized.contains("channel="));
     }
 
     private boolean containsAny(String text, List<String> terms) {

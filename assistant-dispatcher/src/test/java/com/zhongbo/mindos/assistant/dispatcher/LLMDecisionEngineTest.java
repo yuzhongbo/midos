@@ -136,15 +136,39 @@ class LLMDecisionEngineTest {
                 "最近的国际新闻",
                 new PromptMemoryContextDto(
                         "",
-                        "semantic-summary intent=获取新闻, skill=news_search, summary=用户请求获取最近的国际新闻。",
+                        "[意图摘要] 用户当前想要：获取最近的国际新闻；可用执行方式：news_search",
                         "",
                         Map.of(),
-                        List.of(new RetrievedMemoryItemDto("semantic", "semantic-summary intent=获取新闻, skill=news_search, summary=用户请求获取最近的国际新闻。", 0.95, 0.9, 0.9, 0.95, 1L))
+                        List.of(new RetrievedMemoryItemDto("semantic", "[意图摘要] 用户当前想要：获取最近的国际新闻；可用执行方式：news_search", 0.95, 0.9, 0.9, 0.95, 1L))
                 ),
                 false,
                 false
         ));
 
         assertTrue(shouldCall, "Recent news requests should not degrade to memory.direct just because a semantic summary exists");
+    }
+
+    @Test
+    void shouldIgnoreProceduralAndSummaryMemoryWhenEvaluatingMemoryHit() {
+        LLMDecisionEngine engine = new LLMDecisionEngine();
+
+        boolean shouldCall = engine.shouldCallLLM(new QueryContext(
+                "u-assistant",
+                "帮我继续优化意图分析",
+                new PromptMemoryContextDto(
+                        "",
+                        "[会话摘要] [复盘聚焦] - 用户讨论过优化意图分析",
+                        "- skill=news_search, successRate=1.00",
+                        Map.of(),
+                        List.of(
+                                new RetrievedMemoryItemDto("procedural", "- skill=news_search, successRate=1.00", 0.7, 0.9, 0.9, 0.88, 1L),
+                                new RetrievedMemoryItemDto("semantic-summary", "[会话摘要] [复盘聚焦] - 用户讨论过优化意图分析", 0.8, 0.9, 0.8, 0.91, 2L)
+                        )
+                ),
+                false,
+                false
+        ));
+
+        assertTrue(shouldCall, "Procedural habits and conversation summaries should not count as direct-answer memory hits");
     }
 }

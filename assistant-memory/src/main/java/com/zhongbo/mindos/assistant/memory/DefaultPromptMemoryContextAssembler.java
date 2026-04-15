@@ -23,6 +23,10 @@ public class DefaultPromptMemoryContextAssembler implements PromptMemoryContextA
 
     private static final String CONVERSATION_ROLLUP_BUCKET = "conversation-rollup";
     private static final String SEMANTIC_SUMMARY_PREFIX = "semantic-summary ";
+    private static final String INTENT_SUMMARY_MARKER = "[意图摘要]";
+    private static final String ASSISTANT_CONTEXT_MARKER = "[助手上下文]";
+    private static final String CONVERSATION_SUMMARY_MARKER = "[会话摘要]";
+    private static final String REVIEW_FOCUS_MARKER = "[复盘聚焦]";
     private static final int RECENT_TURNS_LIMIT = 6;
     private static final int SEMANTIC_LIMIT = 10;
     private static final int DEBUG_ITEMS_LIMIT = 12;
@@ -58,7 +62,9 @@ public class DefaultPromptMemoryContextAssembler implements PromptMemoryContextA
 
         List<ProceduralMemoryEntry> proceduralHistory = proceduralMemoryService.getHistory(userId);
         List<SkillUsageStats> usageStats = proceduralMemoryService.getSkillUsageStats(userId);
-        String proceduralHints = buildProceduralHints(proceduralHistory, usageStats, safeMaxChars * 20 / 100, normalizedQuery, candidates);
+        String proceduralHints = isConversationalQuery(normalizedQuery)
+                ? ""
+                : buildProceduralHints(proceduralHistory, usageStats, safeMaxChars * 20 / 100, normalizedQuery, candidates);
 
         Map<String, Object> personaSnapshot = buildPersonaSnapshot(userId, profileContext);
 
@@ -85,12 +91,20 @@ public class DefaultPromptMemoryContextAssembler implements PromptMemoryContextA
         }
         StringBuilder builder = new StringBuilder();
         for (ConversationTurn turn : turns) {
-            String line = turn.role() + ": " + turn.content();
+            if (!shouldIncludeConversationTurn(turn)) {
+                continue;
+            }
+            String content = normalizeConversationContent(turn);
+            if (content.isBlank()) {
+                continue;
+            }
+            String line = turn.role() + ": " + content;
             builder.append(line).append('\n');
-            double rel = lexicalOverlap(normalizedQuery, turn.content());
+            double rel = lexicalOverlap(normalizedQuery, content);
             double rec = recencyDecayHours(ageHours(turn.createdAt()), 24.0);
-            double relia = 0.7;
-            double score = score(rel, rec, relia, 0.2);
+            boolean userTurn = isUserTurn(turn);
+            double relia = userTurn ? 0.78 : 0.58;
+            double score = score(rel, rec, relia, userTurn ? 0.26 : 0.12);
             candidates.add(new RetrievedMemoryItemDto(
                     "episodic",
                     line,
@@ -124,7 +138,7 @@ public class DefaultPromptMemoryContextAssembler implements PromptMemoryContextA
             }
             String label = semanticContextLabel(ranked);
             String candidateType = semanticCandidateType(ranked);
-            String text = entry.text();
+            String text = humanizeSemanticText(ranked, entry.text());
             builder.append("- ");
             if (!label.isBlank()) {
                 builder.append(label).append(' ');
@@ -133,9 +147,9 @@ public class DefaultPromptMemoryContextAssembler implements PromptMemoryContextA
             double rec = ranked.recencyScore();
             double relia = semanticReliability(ranked);
             double typeBoost = semanticTypeBoost(ranked);
-            double score = "semantic-routing".equals(candidateType)
-                    ? semanticRoutingScore(rel, rec, relia, typeBoost)
-                    : score(rel, rec, relia, typeBoost);
+            double score = "semantic".equals(candidateType)
+                    ? score(rel, rec, relia, typeBoost)
+                    : semanticRoutingScore(rel, rec, relia, typeBoost);
             candidates.add(new RetrievedMemoryItemDto(
                     candidateType,
                     text,
@@ -263,6 +277,9 @@ public class DefaultPromptMemoryContextAssembler implements PromptMemoryContextA
     }
 
     private boolean shouldIncludeSemanticEntry(RankedSemanticMemory ranked, double relevance, int appended) {
+        if (isConversationSummary(ranked)) {
+            return relevance >= 0.28 || appended == 0;
+        }
         if (isConversationRollup(ranked)) {
             return relevance >= 0.34 || appended == 0;
         }
@@ -273,11 +290,14 @@ public class DefaultPromptMemoryContextAssembler implements PromptMemoryContextA
     }
 
     private String semanticContextLabel(RankedSemanticMemory ranked) {
+        if (isConversationSummary(ranked)) {
+            return "[summary]";
+        }
         if (isConversationRollup(ranked)) {
-            return "[rollup]";
+            return "[assistant-context]";
         }
         if (isSemanticSummary(ranked)) {
-            return "[routing]";
+            return "[summary]";
         }
         return switch (ranked.layer()) {
             case FACT -> "[fact]";
@@ -288,10 +308,16 @@ public class DefaultPromptMemoryContextAssembler implements PromptMemoryContextA
     }
 
     private String semanticCandidateType(RankedSemanticMemory ranked) {
+        if (isConversationSummary(ranked)) {
+            return "semantic-summary";
+        }
         return (isConversationRollup(ranked) || isSemanticSummary(ranked)) ? "semantic-routing" : "semantic";
     }
 
     private double semanticReliability(RankedSemanticMemory ranked) {
+        if (isConversationSummary(ranked)) {
+            return 0.32;
+        }
         if (isConversationRollup(ranked)) {
             return 0.36;
         }
@@ -307,6 +333,9 @@ public class DefaultPromptMemoryContextAssembler implements PromptMemoryContextA
     }
 
     private double semanticTypeBoost(RankedSemanticMemory ranked) {
+        if (isConversationSummary(ranked)) {
+            return 0.14;
+        }
         if (isConversationRollup(ranked)) {
             return 0.12;
         }
@@ -321,9 +350,84 @@ public class DefaultPromptMemoryContextAssembler implements PromptMemoryContextA
         return CONVERSATION_ROLLUP_BUCKET.equals(bucket);
     }
 
+    private boolean isConversationSummary(RankedSemanticMemory ranked) {
+        String text = ranked == null || ranked.entry() == null ? "" : ranked.entry().text();
+        return text.contains(CONVERSATION_SUMMARY_MARKER) || text.contains(REVIEW_FOCUS_MARKER);
+    }
+
     private boolean isSemanticSummary(RankedSemanticMemory ranked) {
         String text = ranked == null || ranked.entry() == null ? "" : ranked.entry().text();
-        return normalize(text).startsWith(normalize(SEMANTIC_SUMMARY_PREFIX));
+        return text.contains(INTENT_SUMMARY_MARKER) || normalize(text).startsWith(normalize(SEMANTIC_SUMMARY_PREFIX));
+    }
+
+    private String humanizeSemanticText(RankedSemanticMemory ranked, String text) {
+        if (text == null || text.isBlank()) {
+            return "";
+        }
+        if (!(isSemanticSummary(ranked) || isConversationRollup(ranked) || isConversationSummary(ranked))) {
+            return text;
+        }
+        return text.replace(INTENT_SUMMARY_MARKER, "")
+                .replace(ASSISTANT_CONTEXT_MARKER, "")
+                .replace(CONVERSATION_SUMMARY_MARKER, "")
+                .replace(REVIEW_FOCUS_MARKER, "")
+                .replace("semantic-summary", "")
+                .replaceAll("\\s+", " ")
+                .replaceAll("^[：:;；,，\\-\\s]+", "")
+                .trim();
+    }
+
+    private boolean shouldIncludeConversationTurn(ConversationTurn turn) {
+        if (turn == null || turn.content() == null || turn.content().isBlank()) {
+            return false;
+        }
+        return isUserTurn(turn) || !looksLikeInternalAssistantContent(turn.content());
+    }
+
+    private boolean isUserTurn(ConversationTurn turn) {
+        return turn != null && "user".equalsIgnoreCase(turn.role());
+    }
+
+    private String normalizeConversationContent(ConversationTurn turn) {
+        if (turn == null || turn.content() == null) {
+            return "";
+        }
+        String content = turn.content().trim();
+        int maxChars = isUserTurn(turn) ? 220 : 180;
+        return clip(content, maxChars);
+    }
+
+    private boolean looksLikeInternalAssistantContent(String content) {
+        String normalized = normalize(content);
+        return normalized.contains(normalize("根据已有记忆，我先直接回答"))
+                || normalized.contains(normalize(INTENT_SUMMARY_MARKER))
+                || normalized.contains(normalize(ASSISTANT_CONTEXT_MARKER))
+                || normalized.contains(normalize(CONVERSATION_SUMMARY_MARKER))
+                || normalized.contains(normalize(REVIEW_FOCUS_MARKER))
+                || normalized.contains(normalize("semantic-summary"))
+                || normalized.contains(normalize("reply="))
+                || normalized.contains(normalize("Recent conversation:"))
+                || normalized.contains(normalize("Relevant knowledge:"))
+                || normalized.contains(normalize("User skill habits:"))
+                || (normalized.contains("intent") && normalized.contains("channel"));
+    }
+
+    private boolean isConversationalQuery(String normalizedQuery) {
+        if (normalizedQuery == null || normalizedQuery.isBlank()) {
+            return false;
+        }
+        return normalizedQuery.contains("聊天")
+                || normalizedQuery.contains("聊聊")
+                || normalizedQuery.contains("日常")
+                || normalizedQuery.contains("在吗")
+                || normalizedQuery.contains("你好")
+                || normalizedQuery.contains("哈喽")
+                || normalizedQuery.contains("谢谢")
+                || normalizedQuery.contains("啥呀")
+                || normalizedQuery.contains("可以可以")
+                || normalizedQuery.contains("好的")
+                || normalizedQuery.contains("晚安")
+                || normalizedQuery.contains("早安");
     }
 
     private String normalize(String value) {

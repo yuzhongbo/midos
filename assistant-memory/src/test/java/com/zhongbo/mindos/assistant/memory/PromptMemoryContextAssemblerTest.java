@@ -100,6 +100,28 @@ class PromptMemoryContextAssemblerTest {
     }
 
     @Test
+    void shouldSuppressProceduralHintsForConversationalQueries() {
+        EpisodicMemoryService episodicMemoryService = new EpisodicMemoryService();
+        SemanticMemoryService semanticMemoryService = new SemanticMemoryService(new MemoryConsolidationService());
+        ProceduralMemoryService proceduralMemoryService = new ProceduralMemoryService();
+        PreferenceProfileService preferenceProfileService = new PreferenceProfileService(2, true);
+        DefaultPromptMemoryContextAssembler assembler = new DefaultPromptMemoryContextAssembler(
+                episodicMemoryService,
+                semanticMemoryService,
+                proceduralMemoryService,
+                preferenceProfileService
+        );
+
+        proceduralMemoryService.log("u3-chat", "news_search", "查看国际新闻", true);
+        proceduralMemoryService.log("u3-chat", "eq.coach", "分析沟通问题", true);
+
+        PromptMemoryContextDto context = assembler.assemble("u3-chat", "日常跟我聊天", 800, Map.of());
+
+        assertTrue(context.proceduralHints().isBlank());
+        assertTrue(context.debugTopItems().stream().noneMatch(item -> "procedural".equals(item.type())));
+    }
+
+    @Test
     void shouldSurfaceFactAndWorkingHintsInSemanticContext() {
         String oldLayersEnabled = System.getProperty("mindos.memory.layers.enabled");
         String oldFactMaxChars = System.getProperty("mindos.memory.layers.fact-max-chars");
@@ -176,10 +198,10 @@ class PromptMemoryContextAssemblerTest {
                 new SemanticMemoryEntry("owner Alice due 2026-04-05", List.of(0.1, 0.2), Instant.now()),
                 "task");
         semanticMemoryService.addEntry("u6",
-                new SemanticMemoryEntry("semantic-summary intentType=tool-call, contextScope=standalone, summary=用户要创建待办并确认 owner due", List.of(0.1, 0.2), Instant.now()),
+                new SemanticMemoryEntry("[意图摘要] 用户当前想要：用户要创建待办并确认 owner due；可用执行方式：todo.create", List.of(0.1, 0.2), Instant.now()),
                 "task");
         semanticMemoryService.addEntry("u6",
-                new SemanticMemoryEntry("intent=创建待办; intentType=tool-call; contextScope=standalone; channel=todo.create; outcome=success; summary=用户要创建待办并确认 owner due",
+                new SemanticMemoryEntry("[助手上下文] 用户刚才在处理：用户要创建待办并确认 owner due；执行方式：todo.create；结果：已推进",
                         List.of(0.1, 0.2),
                         Instant.now()),
                 "conversation-rollup");
@@ -198,8 +220,69 @@ class PromptMemoryContextAssemblerTest {
         assertEquals("owner Alice due 2026-04-05", factItem.text());
         assertTrue(factItem.finalScore() > routingItem.finalScore());
         assertTrue(context.semanticContext().contains("owner Alice due 2026-04-05"));
-        assertTrue(context.semanticContext().contains("[routing] semantic-summary"));
+        assertTrue(context.semanticContext().contains("[summary] 用户当前想要：用户要创建待办并确认 owner due"));
         assertFalse(context.semanticContext().contains("reply="));
+    }
+
+    @Test
+    void shouldFilterInternalAssistantRepliesFromRecentConversationContext() {
+        EpisodicMemoryService episodicMemoryService = new EpisodicMemoryService();
+        SemanticMemoryService semanticMemoryService = new SemanticMemoryService(new MemoryConsolidationService());
+        ProceduralMemoryService proceduralMemoryService = new ProceduralMemoryService();
+        PreferenceProfileService preferenceProfileService = new PreferenceProfileService(2, true);
+        DefaultPromptMemoryContextAssembler assembler = new DefaultPromptMemoryContextAssembler(
+                episodicMemoryService,
+                semanticMemoryService,
+                proceduralMemoryService,
+                preferenceProfileService
+        );
+
+        episodicMemoryService.appendTurn("u7", new ConversationTurn("user", "继续帮我整理周报重点", Instant.now().minusSeconds(90)));
+        episodicMemoryService.appendTurn("u7", new ConversationTurn("assistant", "根据已有记忆，我先直接回答：1. [会话摘要] [复盘聚焦] - intent=获取最新新闻资讯", Instant.now().minusSeconds(60)));
+        episodicMemoryService.appendTurn("u7", new ConversationTurn("assistant", "好的，我们继续推进周报重点，我先帮你拆成三部分。", Instant.now().minusSeconds(30)));
+
+        PromptMemoryContextDto context = assembler.assemble("u7", "继续整理周报", 800, Map.of());
+
+        assertTrue(context.recentConversation().contains("user: 继续帮我整理周报重点"));
+        assertTrue(context.recentConversation().contains("assistant: 好的，我们继续推进周报重点"));
+        assertFalse(context.recentConversation().contains("根据已有记忆，我先直接回答"));
+        assertTrue(context.debugTopItems().stream().noneMatch(item -> item.text().contains("根据已有记忆，我先直接回答")));
+    }
+
+    @Test
+    void shouldDownrankConversationSummaryMemoryAgainstConcreteFacts() {
+        EpisodicMemoryService episodicMemoryService = new EpisodicMemoryService();
+        SemanticMemoryService semanticMemoryService = new SemanticMemoryService(new MemoryConsolidationService());
+        ProceduralMemoryService proceduralMemoryService = new ProceduralMemoryService();
+        PreferenceProfileService preferenceProfileService = new PreferenceProfileService(2, true);
+        DefaultPromptMemoryContextAssembler assembler = new DefaultPromptMemoryContextAssembler(
+                episodicMemoryService,
+                semanticMemoryService,
+                proceduralMemoryService,
+                preferenceProfileService
+        );
+
+        semanticMemoryService.addEntry("u8",
+                new SemanticMemoryEntry("owner Alice due 2026-04-05", List.of(0.1, 0.2), Instant.now()),
+                "task");
+        semanticMemoryService.addEntry("u8",
+                new SemanticMemoryEntry("[会话摘要] [复盘聚焦] - owner Alice discussed weekly report due Friday", List.of(0.1, 0.2), Instant.now()),
+                "task");
+
+        PromptMemoryContextDto context = assembler.assemble("u8", "owner due weekly report", 800, Map.of());
+
+        RetrievedMemoryItemDto factItem = context.debugTopItems().stream()
+                .filter(item -> "semantic".equals(item.type()))
+                .findFirst()
+                .orElseThrow();
+        RetrievedMemoryItemDto summaryItem = context.debugTopItems().stream()
+                .filter(item -> "semantic-summary".equals(item.type()))
+                .findFirst()
+                .orElseThrow();
+
+        assertEquals("owner Alice due 2026-04-05", factItem.text());
+        assertTrue(factItem.finalScore() > summaryItem.finalScore());
+        assertTrue(context.semanticContext().contains("[summary] owner Alice discussed weekly report due Friday"));
     }
 
     private void restoreProperty(String key, String value) {
