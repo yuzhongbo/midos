@@ -96,6 +96,10 @@ class SemanticAnalysisResultTest {
 
         assertEquals("local", attributes.get(SemanticAnalysisResult.ATTR_ANALYSIS_SOURCE));
         assertEquals("intent", attributes.get(SemanticAnalysisResult.ATTR_INTENT));
+        assertEquals("chat", attributes.get(SemanticAnalysisResult.ATTR_INTENT_TYPE));
+        assertEquals("standalone", attributes.get(SemanticAnalysisResult.ATTR_CONTEXT_SCOPE));
+        assertEquals(Boolean.FALSE, attributes.get(SemanticAnalysisResult.ATTR_TOOL_REQUIRED));
+        assertEquals("none", attributes.get(SemanticAnalysisResult.ATTR_MEMORY_OPERATION));
         assertFalse(attributes.containsKey(SemanticAnalysisResult.ATTR_SUMMARY));
         assertFalse(attributes.containsKey(SemanticAnalysisResult.ATTR_PAYLOAD));
         assertFalse(attributes.containsKey(SemanticAnalysisResult.ATTR_KEYWORDS));
@@ -153,13 +157,36 @@ class SemanticAnalysisResultTest {
         String prompt = result.toPromptSummary();
 
         assertTrue(prompt.contains("- intent: 创建待办"));
+        assertTrue(prompt.contains("- intentType: tool-call"));
         assertTrue(prompt.contains("- suggestedSkill: todo.create"));
+        assertTrue(prompt.contains("- toolRequired: true"));
+        assertTrue(prompt.contains("- contextScope: standalone"));
+        assertTrue(prompt.contains("- memoryOperation: none"));
         assertTrue(prompt.contains("- rewrittenInput: 请创建一个待办"));
         assertTrue(prompt.contains("- keywords: 待办, 周报"));
         assertTrue(prompt.contains("- summary: 提取了关键任务"));
         assertTrue(prompt.contains("- payload: {task=提交周报}"));
         assertTrue(prompt.contains("- source: unknown"));
         assertTrue(prompt.contains("- confidence: 0.93"));
+    }
+
+    @Test
+    void shouldDeriveMemoryRecallMetadata() {
+        SemanticAnalysisResult result = new SemanticAnalysisResult(
+                "llm",
+                "根据记忆回顾之前的待办",
+                "根据记忆回顾之前的待办",
+                "",
+                Map.of(),
+                List.of("记忆", "待办"),
+                "用户要求根据记忆回顾历史信息",
+                0.81
+        );
+
+        assertEquals("memory-recall", result.intentType());
+        assertEquals("memory", result.contextScope());
+        assertEquals("recall", result.memoryOperation());
+        assertFalse(result.toolRequired());
     }
 
     @Test
@@ -203,4 +230,3 @@ class SemanticAnalysisResultTest {
         assertFalse(result.isConfident(0.70));
     }
 }
-

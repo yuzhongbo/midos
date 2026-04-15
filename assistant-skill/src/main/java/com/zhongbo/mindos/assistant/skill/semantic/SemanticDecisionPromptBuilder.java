@@ -72,8 +72,14 @@ final class SemanticDecisionPromptBuilder {
         if (!text(baseline.intent()).isBlank()) {
             lines.add("- intent: " + text(baseline.intent()));
         }
+        lines.add("- intentType: " + baseline.intentType());
         if (!text(baseline.suggestedSkill()).isBlank()) {
             lines.add("- suggestedSkill: " + text(baseline.suggestedSkill()));
+        }
+        lines.add("- toolRequired: " + baseline.toolRequired());
+        lines.add("- contextScope: " + baseline.contextScope());
+        if (!"none".equals(baseline.memoryOperation())) {
+            lines.add("- memoryOperation: " + baseline.memoryOperation());
         }
         if (!baseline.payload().isEmpty()) {
             lines.add("- payload: " + summarizeMap(baseline.payload(), 220));

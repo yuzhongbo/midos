@@ -159,6 +159,49 @@ class PromptMemoryContextAssemblerTest {
         assertTrue(semanticItem.relevanceScore() > 0.0);
     }
 
+    @Test
+    void shouldPreferFactMemoryOverRollupAndRoutingSummaries() {
+        EpisodicMemoryService episodicMemoryService = new EpisodicMemoryService();
+        SemanticMemoryService semanticMemoryService = new SemanticMemoryService(new MemoryConsolidationService());
+        ProceduralMemoryService proceduralMemoryService = new ProceduralMemoryService();
+        PreferenceProfileService preferenceProfileService = new PreferenceProfileService(2, true);
+        DefaultPromptMemoryContextAssembler assembler = new DefaultPromptMemoryContextAssembler(
+                episodicMemoryService,
+                semanticMemoryService,
+                proceduralMemoryService,
+                preferenceProfileService
+        );
+
+        semanticMemoryService.addEntry("u6",
+                new SemanticMemoryEntry("owner Alice due 2026-04-05", List.of(0.1, 0.2), Instant.now()),
+                "task");
+        semanticMemoryService.addEntry("u6",
+                new SemanticMemoryEntry("semantic-summary intentType=tool-call, contextScope=standalone, summary=用户要创建待办并确认 owner due", List.of(0.1, 0.2), Instant.now()),
+                "task");
+        semanticMemoryService.addEntry("u6",
+                new SemanticMemoryEntry("intent=创建待办; intentType=tool-call; contextScope=standalone; channel=todo.create; outcome=success; summary=用户要创建待办并确认 owner due",
+                        List.of(0.1, 0.2),
+                        Instant.now()),
+                "conversation-rollup");
+
+        PromptMemoryContextDto context = assembler.assemble("u6", "创建待办 owner due", 800, Map.of());
+
+        RetrievedMemoryItemDto factItem = context.debugTopItems().stream()
+                .filter(item -> "semantic".equals(item.type()))
+                .findFirst()
+                .orElseThrow();
+        RetrievedMemoryItemDto routingItem = context.debugTopItems().stream()
+                .filter(item -> "semantic-routing".equals(item.type()))
+                .findFirst()
+                .orElseThrow();
+
+        assertEquals("owner Alice due 2026-04-05", factItem.text());
+        assertTrue(factItem.finalScore() > routingItem.finalScore());
+        assertTrue(context.semanticContext().contains("[fact] owner Alice due 2026-04-05"));
+        assertTrue(context.semanticContext().contains("[routing] semantic-summary"));
+        assertFalse(context.semanticContext().contains("reply="));
+    }
+
     private void restoreProperty(String key, String value) {
         if (value == null) {
             System.clearProperty(key);

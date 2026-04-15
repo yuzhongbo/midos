@@ -153,17 +153,37 @@ final class HermesMemoryRecorder {
         }
         StringBuilder entry = new StringBuilder();
         entry.append("intent=").append(firstNonBlank(semanticAnalysis.intent(), "unknown"));
+        entry.append("; intentType=").append(semanticAnalysis.intentType());
+        entry.append("; contextScope=").append(semanticAnalysis.contextScope());
         if (finalResult != null && finalResult.skillName() != null && !finalResult.skillName().isBlank()) {
             entry.append("; channel=").append(finalResult.skillName());
         }
+        entry.append("; outcome=").append(finalResult.isSuccess() ? "success" : "failed");
         entry.append("; summary=").append(summary);
+        String paramsDigest = summarizePayload(semanticAnalysis.payload());
+        if (!paramsDigest.isBlank()) {
+            entry.append("; params=").append(paramsDigest);
+        }
         if (userInput != null && !userInput.isBlank()) {
             entry.append("; input=").append(cap(userInput, 120));
         }
-        if (finalResult != null && finalResult.output() != null && !finalResult.output().isBlank()) {
-            entry.append("; reply=").append(cap(finalResult.output(), 160));
-        }
         return cap(entry.toString(), 320);
+    }
+
+    private String summarizePayload(Map<String, Object> payload) {
+        if (payload == null || payload.isEmpty()) {
+            return "";
+        }
+        StringBuilder builder = new StringBuilder();
+        payload.entrySet().stream()
+                .sorted(Map.Entry.comparingByKey())
+                .forEach(entry -> {
+                    if (builder.length() > 0) {
+                        builder.append(", ");
+                    }
+                    builder.append(entry.getKey()).append('=').append(entry.getValue());
+                });
+        return cap(builder.toString(), 120);
     }
 
     private String sanitizeProfileValue(Object value) {

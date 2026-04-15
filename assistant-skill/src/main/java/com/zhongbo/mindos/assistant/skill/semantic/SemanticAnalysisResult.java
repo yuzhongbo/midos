@@ -25,6 +25,10 @@ public record SemanticAnalysisResult(String source,
     public static final String ATTR_PAYLOAD = "semanticPayload";
     public static final String ATTR_KEYWORDS = "semanticKeywords";
     public static final String ATTR_CANDIDATE_INTENTS = "semanticCandidateIntents";
+    public static final String ATTR_INTENT_TYPE = "semanticIntentType";
+    public static final String ATTR_CONTEXT_SCOPE = "semanticContextScope";
+    public static final String ATTR_TOOL_REQUIRED = "semanticToolRequired";
+    public static final String ATTR_MEMORY_OPERATION = "semanticMemoryOperation";
 
     private static final SemanticAnalysisResult EMPTY =
             new SemanticAnalysisResult("disabled", "", "", "", Map.of(), List.of(), "", 0.0, List.of());
@@ -96,12 +100,16 @@ public record SemanticAnalysisResult(String source,
     }
 
     public Map<String, Object> asAttributes() {
-        Map<String, Object> attributes = new LinkedHashMap<>(8);
+        Map<String, Object> attributes = new LinkedHashMap<>(12);
         attributes.put(ATTR_ANALYSIS_SOURCE, emptyIfNull(source));
         attributes.put(ATTR_INTENT, emptyIfNull(intent));
         attributes.put(ATTR_REWRITTEN_INPUT, emptyIfNull(rewrittenInput));
         attributes.put(ATTR_SUGGESTED_SKILL, emptyIfNull(suggestedSkill));
         attributes.put(ATTR_CONFIDENCE, effectiveConfidence());
+        attributes.put(ATTR_INTENT_TYPE, intentType());
+        attributes.put(ATTR_CONTEXT_SCOPE, contextScope());
+        attributes.put(ATTR_TOOL_REQUIRED, toolRequired());
+        attributes.put(ATTR_MEMORY_OPERATION, memoryOperation());
         if (hasText(summary)) {
             attributes.put(ATTR_SUMMARY, summary);
         }
@@ -122,8 +130,18 @@ public record SemanticAnalysisResult(String source,
         if (hasText(intent)) {
             prompt.append("- intent: ").append(intent).append('\n');
         }
+        if (hasText(intentType())) {
+            prompt.append("- intentType: ").append(intentType()).append('\n');
+        }
         if (hasText(suggestedSkill)) {
             prompt.append("- suggestedSkill: ").append(suggestedSkill).append('\n');
+        }
+        prompt.append("- toolRequired: ").append(toolRequired()).append('\n');
+        if (hasText(contextScope())) {
+            prompt.append("- contextScope: ").append(contextScope()).append('\n');
+        }
+        if (hasText(memoryOperation())) {
+            prompt.append("- memoryOperation: ").append(memoryOperation()).append('\n');
         }
         if (hasText(rewrittenInput)) {
             prompt.append("- rewrittenInput: ").append(rewrittenInput).append('\n');
@@ -137,7 +155,7 @@ public record SemanticAnalysisResult(String source,
         if (!payload.isEmpty()) {
             prompt.append("- payload: ").append(toStablePayloadString(payload)).append('\n');
         }
-        if (prompt.isEmpty()) {
+        if (prompt.length() == 0) {
             return "";
         }
         prompt.append("- source: ").append(source == null ? "unknown" : source).append('\n');
@@ -145,6 +163,105 @@ public record SemanticAnalysisResult(String source,
                 .append(String.format(java.util.Locale.ROOT, "%.2f", effectiveConfidence()))
                 .append('\n');
         return prompt.toString();
+    }
+
+    public String intentType() {
+        if (isPrivacyModeIntent()) {
+            return "privacy-control";
+        }
+        if (isMemoryRecallIntent()) {
+            return "memory-recall";
+        }
+        if (isMemoryWriteIntent()) {
+            return "memory-write";
+        }
+        if (toolRequired()) {
+            return "tool-call";
+        }
+        return "chat";
+    }
+
+    public String contextScope() {
+        String corpus = semanticCorpus();
+        if (containsAny(corpus, "继续", "按之前", "按上次", "沿用", "再来一次", "同样方式", "继续按")) {
+            return "continuation";
+        }
+        if (containsAny(corpus, "domain=news", "domain=weather", "domain=market", "domain=travel",
+                "新闻", "资讯", "快讯", "天气", "实时", "最新", "今日", "今天", "现在")) {
+            return "realtime";
+        }
+        if (!"none".equals(memoryOperation())) {
+            return "memory";
+        }
+        return "standalone";
+    }
+
+    public boolean toolRequired() {
+        return hasSuggestedSkill();
+    }
+
+    public String memoryOperation() {
+        if (isPrivacyModeIntent()) {
+            return containsAny(semanticCorpus(), "恢复记忆", "开启记忆", "恢复记录") ? "resume" : "suppress";
+        }
+        if (isMemoryRecallIntent()) {
+            return "recall";
+        }
+        if (isMemoryWriteIntent()) {
+            return "write";
+        }
+        return "none";
+    }
+
+    private boolean isMemoryRecallIntent() {
+        return containsAny(semanticCorpus(), "根据记忆", "查看记忆", "读取记忆", "回顾之前", "复述之前", "你还记得", "memory.direct");
+    }
+
+    private boolean isMemoryWriteIntent() {
+        return containsAny(semanticCorpus(), "记住", "请记住", "帮我记住", "remember", "write memory");
+    }
+
+    private boolean isPrivacyModeIntent() {
+        return containsAny(semanticCorpus(), "不要记忆", "关闭记忆", "暂停记忆", "隐私模式", "恢复记忆", "开启记忆");
+    }
+
+    private String semanticCorpus() {
+        StringBuilder builder = new StringBuilder();
+        appendCorpus(builder, intent);
+        appendCorpus(builder, rewrittenInput);
+        appendCorpus(builder, suggestedSkill);
+        appendCorpus(builder, summary);
+        if (keywords != null && !keywords.isEmpty()) {
+            for (String keyword : keywords) {
+                appendCorpus(builder, keyword);
+            }
+        }
+        if (payload != null && !payload.isEmpty()) {
+            appendCorpus(builder, toStablePayloadString(payload));
+        }
+        return builder.toString().toLowerCase(java.util.Locale.ROOT);
+    }
+
+    private void appendCorpus(StringBuilder builder, String value) {
+        if (!hasText(value)) {
+            return;
+        }
+        if (builder.length() > 0) {
+            builder.append(' ');
+        }
+        builder.append(value.trim());
+    }
+
+    private boolean containsAny(String text, String... terms) {
+        if (text == null || text.isBlank() || terms == null) {
+            return false;
+        }
+        for (String term : terms) {
+            if (term != null && !term.isBlank() && text.contains(term.toLowerCase(java.util.Locale.ROOT))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static Map<String, Object> toImmutablePayload(Map<String, Object> payload) {

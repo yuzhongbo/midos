@@ -80,7 +80,15 @@ final class SemanticRoutingSupport {
             return MemoryWriteBatch.empty();
         }
         String paramsDigest = semanticPayloadCompleter.summarizeSemanticParams(semanticAnalysis.payload());
-        String memoryText = "semantic-summary intent="
+        String memoryText = "semantic-summary intentType="
+                + semanticAnalysis.intentType()
+                + ", contextScope="
+                + semanticAnalysis.contextScope()
+                + ", memoryOperation="
+                + semanticAnalysis.memoryOperation()
+                + ", toolRequired="
+                + semanticAnalysis.toolRequired()
+                + ", intent="
                 + capText(semanticAnalysis.intent() == null ? "" : semanticAnalysis.intent(), 48)
                 + ", skill="
                 + capText(semanticAnalysis.suggestedSkill() == null ? "" : semanticAnalysis.suggestedSkill(), 48)

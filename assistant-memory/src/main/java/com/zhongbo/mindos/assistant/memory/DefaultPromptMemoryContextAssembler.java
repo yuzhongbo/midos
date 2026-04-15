@@ -21,6 +21,8 @@ import java.util.Map;
 @Service
 public class DefaultPromptMemoryContextAssembler implements PromptMemoryContextAssembler {
 
+    private static final String CONVERSATION_ROLLUP_BUCKET = "conversation-rollup";
+    private static final String SEMANTIC_SUMMARY_PREFIX = "semantic-summary ";
     private static final int RECENT_TURNS_LIMIT = 6;
     private static final int SEMANTIC_LIMIT = 10;
     private static final int DEBUG_ITEMS_LIMIT = 12;
@@ -103,9 +105,9 @@ public class DefaultPromptMemoryContextAssembler implements PromptMemoryContextA
     }
 
     private String buildSemanticContext(List<RankedSemanticMemory> entries,
-                                         int maxChars,
-                                         String normalizedQuery,
-                                         List<RetrievedMemoryItemDto> candidates) {
+                                        int maxChars,
+                                        String normalizedQuery,
+                                        List<RetrievedMemoryItemDto> candidates) {
         if (entries.isEmpty()) {
             return "";
         }
@@ -116,27 +118,27 @@ public class DefaultPromptMemoryContextAssembler implements PromptMemoryContextA
                 continue;
             }
             SemanticMemoryEntry entry = ranked.entry();
-            builder.append("- ");
-            if (ranked.layer() == MemoryLayer.FACT) {
-                builder.append("[fact] ");
-            } else if (ranked.layer() == MemoryLayer.WORKING) {
-                builder.append("[working] ");
-            } else if (ranked.layer() == MemoryLayer.BUFFER) {
-                builder.append("[buffer] ");
-            }
-            builder.append(entry.text()).append('\n');
             double rel = Math.max(lexicalOverlap(normalizedQuery, entry.text()), ranked.lexicalScore());
+            if (!shouldIncludeSemanticEntry(ranked, rel, appended)) {
+                continue;
+            }
+            String label = semanticContextLabel(ranked);
+            String candidateType = semanticCandidateType(ranked);
+            String text = entry.text();
+            builder.append("- ");
+            if (!label.isBlank()) {
+                builder.append(label).append(' ');
+            }
+            builder.append(text).append('\n');
             double rec = ranked.recencyScore();
-            double relia = switch (ranked.layer()) {
-                case FACT -> 0.9;
-                case WORKING -> 0.82;
-                case BUFFER -> 0.78;
-                case SEMANTIC -> 0.75;
-            };
-            double score = score(rel, rec, relia, 0.6);
+            double relia = semanticReliability(ranked);
+            double typeBoost = semanticTypeBoost(ranked);
+            double score = "semantic-routing".equals(candidateType)
+                    ? semanticRoutingScore(rel, rec, relia, typeBoost)
+                    : score(rel, rec, relia, typeBoost);
             candidates.add(new RetrievedMemoryItemDto(
-                    "semantic",
-                    entry.text(),
+                    candidateType,
+                    text,
                     rel,
                     rec,
                     relia,
@@ -179,8 +181,8 @@ public class DefaultPromptMemoryContextAssembler implements PromptMemoryContextA
             double successRate = stat.successCount() / (double) total;
             double rel = lexicalOverlap(normalizedQuery, stat.skillName() + " " + latest.input());
             double rec = recencyDecayHours(ageHours(latest.createdAt()), 72.0);
-            double relia = Math.max(0.2, successRate);
-            double score = score(rel, rec, relia, 0.8);
+            double relia = 0.25 + (0.35 * Math.max(0.0, Math.min(1.0, successRate)));
+            double score = proceduralScore(rel, rec, relia);
 
             String line = "- skill=" + stat.skillName() + ", successRate=" + String.format(Locale.ROOT, "%.2f", successRate);
             builder.append(line).append('\n');
@@ -222,6 +224,14 @@ public class DefaultPromptMemoryContextAssembler implements PromptMemoryContextA
         return 0.55 * rel + 0.25 * rec + 0.15 * relia + 0.05 * typeBoost;
     }
 
+    private double proceduralScore(double rel, double rec, double relia) {
+        return 0.62 * rel + 0.18 * rec + 0.12 * relia + 0.08 * 0.18;
+    }
+
+    private double semanticRoutingScore(double rel, double rec, double relia, double typeBoost) {
+        return 0.38 * rel + 0.18 * rec + 0.14 * relia + 0.05 * typeBoost;
+    }
+
     private double recencyDecayHours(long ageHours, double halfLifeHours) {
         if (ageHours <= 0) {
             return 1.0;
@@ -250,6 +260,70 @@ public class DefaultPromptMemoryContextAssembler implements PromptMemoryContextA
             }
         }
         return queryTokens.length == 0 ? 0.0 : Math.min(1.0, matched / (double) queryTokens.length);
+    }
+
+    private boolean shouldIncludeSemanticEntry(RankedSemanticMemory ranked, double relevance, int appended) {
+        if (isConversationRollup(ranked)) {
+            return relevance >= 0.34 || appended == 0;
+        }
+        if (isSemanticSummary(ranked)) {
+            return relevance >= 0.18 || appended < 2;
+        }
+        return true;
+    }
+
+    private String semanticContextLabel(RankedSemanticMemory ranked) {
+        if (isConversationRollup(ranked)) {
+            return "[rollup]";
+        }
+        if (isSemanticSummary(ranked)) {
+            return "[routing]";
+        }
+        return switch (ranked.layer()) {
+            case FACT -> "[fact]";
+            case WORKING -> "[working]";
+            case BUFFER -> "[buffer]";
+            case SEMANTIC -> "";
+        };
+    }
+
+    private String semanticCandidateType(RankedSemanticMemory ranked) {
+        return (isConversationRollup(ranked) || isSemanticSummary(ranked)) ? "semantic-routing" : "semantic";
+    }
+
+    private double semanticReliability(RankedSemanticMemory ranked) {
+        if (isConversationRollup(ranked)) {
+            return 0.36;
+        }
+        if (isSemanticSummary(ranked)) {
+            return 0.46;
+        }
+        return switch (ranked.layer()) {
+            case FACT -> 0.9;
+            case WORKING -> 0.82;
+            case BUFFER -> 0.78;
+            case SEMANTIC -> 0.75;
+        };
+    }
+
+    private double semanticTypeBoost(RankedSemanticMemory ranked) {
+        if (isConversationRollup(ranked)) {
+            return 0.12;
+        }
+        if (isSemanticSummary(ranked)) {
+            return 0.16;
+        }
+        return 0.6;
+    }
+
+    private boolean isConversationRollup(RankedSemanticMemory ranked) {
+        String bucket = ranked == null ? "" : normalize(ranked.bucket());
+        return CONVERSATION_ROLLUP_BUCKET.equals(bucket);
+    }
+
+    private boolean isSemanticSummary(RankedSemanticMemory ranked) {
+        String text = ranked == null || ranked.entry() == null ? "" : ranked.entry().text();
+        return normalize(text).startsWith(normalize(SEMANTIC_SUMMARY_PREFIX));
     }
 
     private String normalize(String value) {

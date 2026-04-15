@@ -1415,6 +1415,44 @@ class DispatcherServiceTest {
 
         List<SemanticMemoryEntry> entries = memoryManager.searchKnowledge("semantic-memory-user", "semantic-summary", 10, "task");
         assertTrue(entries.stream().anyMatch(entry -> entry.text().contains("params=task=提交周报")));
+        assertTrue(entries.stream().anyMatch(entry -> entry.text().contains("intentType=tool-call")));
+        assertTrue(entries.stream().anyMatch(entry -> entry.text().contains("contextScope=standalone")));
+    }
+
+    @Test
+    void shouldStoreConversationRollupWithoutReplyPollution() {
+        MemoryManager memoryManager = createMemoryManager();
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of("stub"));
+        SkillRegistry registry = new SkillRegistry(List.of(
+                new FixedSkill("todo.create", "Creates todo items from natural language", "待办已创建：周五前提交周报")
+        ));
+        SemanticAnalysisService semanticAnalysisService = new SemanticAnalysisService(llmClient, registry, new DefaultSkillCatalog(registry, null, new SkillRoutingProperties()), true, false, true, "", "local", "cost", 120) {
+            @Override
+            public SemanticAnalysisResult analyze(String userId,
+                                                  String userInput,
+                                                  String memoryContext,
+                                                  Map<String, Object> profileContext,
+                                                  List<String> availableSkillSummaries) {
+                return new SemanticAnalysisResult(
+                        "llm",
+                        "创建待办",
+                        userInput,
+                        "todo.create",
+                        Map.of("task", "提交周报", "dueDate", "周五"),
+                        List.of("待办", "周报"),
+                        "用户要创建待办事项",
+                        0.93
+                );
+            }
+        };
+        DispatcherService service = createDispatcherWithSemanticService(memoryManager, llmClient, registry, semanticAnalysisService, 2);
+
+        service.dispatch("conversation-rollup-user", "帮我创建待办：周五前提交周报");
+
+        List<SemanticMemoryEntry> entries = memoryManager.searchKnowledge("conversation-rollup-user", "intent=", 10, "conversation-rollup");
+        assertTrue(entries.stream().anyMatch(entry -> entry.text().contains("outcome=success")));
+        assertTrue(entries.stream().anyMatch(entry -> entry.text().contains("params=dueDate=周五, task=提交周报")));
+        assertTrue(entries.stream().noneMatch(entry -> entry.text().contains("reply=")));
     }
 
     @Test
