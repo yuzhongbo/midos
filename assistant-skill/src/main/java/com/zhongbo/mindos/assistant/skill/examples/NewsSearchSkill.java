@@ -66,7 +66,7 @@ public class NewsSearchSkill implements Skill, SkillDescriptorProvider {
                            @Value("${mindos.skill.news-search.cache-ttl-seconds:300}") int cacheTtlSeconds,
                            @Value("${mindos.skill.news-search.cache-max-entries:128}") int cacheMaxEntries,
                            @Value("${mindos.skill.news-search.max-items:8}") int maxItems,
-                           @Value("${mindos.skill.news-search.summary-enabled:true}") boolean summaryEnabled,
+                           @Value("${mindos.skill.news-search.summary-enabled:false}") boolean summaryEnabled,
                            @Value("${mindos.skill.news-search.summary-provider:}") String summaryProvider,
                            @Value("${mindos.skill.news-search.summary-preset:cost}") String summaryPreset,
                            @Value("${mindos.skill.news-search.summary-model:gemma3:1b-it-q4_K_M}") String summaryModel,
