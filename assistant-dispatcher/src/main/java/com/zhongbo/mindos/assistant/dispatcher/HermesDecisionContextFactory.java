@@ -18,6 +18,7 @@ final class HermesDecisionContextFactory {
     private final PersonaCoreService personaCoreService;
     private final SemanticAnalyzer semanticAnalyzer;
     private final HermesToolSchemaCatalog toolSchemaCatalog;
+    private final DispatcherAnswerMode answerMode;
     private final int promptMaxChars;
     private final int memoryContextMaxChars;
     private final Consumer<DispatcherMemoryFacade.MemoryCompressionStats> compressionMetricsConsumer;
@@ -26,36 +27,51 @@ final class HermesDecisionContextFactory {
                                  PersonaCoreService personaCoreService,
                                  SemanticAnalyzer semanticAnalyzer,
                                  HermesToolSchemaCatalog toolSchemaCatalog,
-                                  int promptMaxChars,
-                                 int memoryContextMaxChars,
-                                 Consumer<DispatcherMemoryFacade.MemoryCompressionStats> compressionMetricsConsumer) {
+                                 DispatcherAnswerMode answerMode,
+                                   int promptMaxChars,
+                                  int memoryContextMaxChars,
+                                  Consumer<DispatcherMemoryFacade.MemoryCompressionStats> compressionMetricsConsumer) {
         this.dispatcherMemoryFacade = dispatcherMemoryFacade;
         this.personaCoreService = personaCoreService;
         this.semanticAnalyzer = semanticAnalyzer;
         this.toolSchemaCatalog = toolSchemaCatalog;
+        this.answerMode = answerMode == null ? DispatcherAnswerMode.BALANCED : answerMode;
         this.promptMaxChars = Math.max(400, promptMaxChars);
         this.memoryContextMaxChars = Math.max(400, memoryContextMaxChars);
         this.compressionMetricsConsumer = compressionMetricsConsumer;
     }
 
     HermesDecisionContext create(String userId, String userInput, Map<String, Object> profileContext) {
-        Map<String, Object> resolvedProfileContext = personaCoreService == null
+        return create(userId, userInput, profileContext, true);
+    }
+
+    HermesDecisionContext create(String userId,
+                                 String userInput,
+                                 Map<String, Object> profileContext,
+                                 boolean memoryEnabled) {
+        Map<String, Object> resolvedProfileContext = !memoryEnabled || personaCoreService == null
                 ? safeMap(profileContext)
                 : personaCoreService.resolveProfileContext(userId, profileContext);
         List<HermesToolSchema> toolSchemas = toolSchemaCatalog == null ? List.of() : toolSchemaCatalog.listSchemas();
-        PromptMemoryContextDto promptMemoryContext = dispatcherMemoryFacade.buildPromptMemoryContext(
+        PromptMemoryContextDto promptMemoryContext = memoryEnabled
+                ? dispatcherMemoryFacade.buildPromptMemoryContext(
                 userId,
                 userInput,
                 promptMaxChars,
                 resolvedProfileContext
-        );
-        String memoryContext = dispatcherMemoryFacade.buildMemoryContext(
+        )
+                : new PromptMemoryContextDto("", "", "", Map.of(), List.of());
+        String memoryContext = memoryEnabled
+                ? dispatcherMemoryFacade.buildMemoryContext(
                 userId,
                 userInput,
                 memoryContextMaxChars,
                 compressionMetricsConsumer
-        );
-        List<Map<String, Object>> chatHistory = dispatcherMemoryFacade.buildChatHistory(userId);
+        )
+                : "";
+        List<Map<String, Object>> chatHistory = memoryEnabled
+                ? dispatcherMemoryFacade.buildChatHistory(userId)
+                : List.of();
         List<String> toolSummaries = toolSchemas.stream()
                 .map(HermesToolSchema::semanticSummary)
                 .toList();
@@ -85,12 +101,14 @@ final class HermesDecisionContextFactory {
                 userInput == null ? "" : userInput,
                 routingInput == null ? "" : routingInput,
                 resolvedProfileContext,
+                memoryEnabled,
+                answerMode,
                 promptMemoryContext,
                 memoryContext,
                 chatHistory,
                 toolSchemas,
                 semanticAnalysis,
-                buildSkillSuccessRates(userId),
+                memoryEnabled ? buildSkillSuccessRates(userId) : Map.of(),
                 llmContext,
                 skillContext
         );

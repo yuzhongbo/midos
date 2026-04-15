@@ -7,10 +7,19 @@ import org.springframework.stereotype.Component;
 @ConfigurationProperties(prefix = "mindos.dispatcher")
 public class DispatcherLlmTuningProperties {
 
+    private String answerMode = "balanced";
     private final LlmDsl llmDsl = new LlmDsl();
     private final LlmFallback llmFallback = new LlmFallback();
     private final SkillFinalizeWithLlm skillFinalizeWithLlm = new SkillFinalizeWithLlm();
     private final LocalEscalation localEscalation = new LocalEscalation();
+
+    public String getAnswerMode() {
+        return answerMode;
+    }
+
+    public void setAnswerMode(String answerMode) {
+        this.answerMode = answerMode == null ? "balanced" : answerMode.trim();
+    }
 
     public LlmDsl getLlmDsl() {
         return llmDsl;

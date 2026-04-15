@@ -186,6 +186,8 @@ public class DispatcherService implements ContextCompressionMetricsReader,
     private final DispatchLlmSupport dispatchLlmSupport;
     private final BehaviorRoutingSupport behaviorRoutingSupport;
     private final SemanticRoutingSupport semanticRoutingSupport;
+    private final DispatcherAnswerMode answerMode;
+    private final ConversationMemoryModeService conversationMemoryModeService;
     private volatile HermesAssistantRuntime hermesAssistantRuntime;
     private ParamSchemaRegistry paramSchemaRegistry;
     private SkillExecutionGateway skillExecutionGateway;
@@ -437,6 +439,8 @@ public class DispatcherService implements ContextCompressionMetricsReader,
         this.skillPreAnalyzeConfidenceThreshold = Math.max(0, skillPreAnalyzeConfidenceThreshold);
         this.skillPreAnalyzeSkipSkills = parseCsvSet(skillPreAnalyzeSkipSkills);
         DispatcherLlmTuningProperties effectiveLlmTuning = llmTuningProperties == null ? new DispatcherLlmTuningProperties() : llmTuningProperties;
+        this.answerMode = DispatcherAnswerMode.from(effectiveLlmTuning.getAnswerMode());
+        this.conversationMemoryModeService = new ConversationMemoryModeService();
         this.llmDslProvider = normalizeOptionalConfig(effectiveLlmTuning.getLlmDsl().getProvider());
         this.llmDslPreset = normalizeOptionalConfig(effectiveLlmTuning.getLlmDsl().getPreset());
         this.llmDslModel = normalizeOptionalConfig(effectiveLlmTuning.getLlmDsl().getModel());
@@ -654,6 +658,7 @@ public class DispatcherService implements ContextCompressionMetricsReader,
                                 this.personaCoreService,
                                 this.semanticAnalyzer,
                                 toolSchemaCatalog,
+                                this.answerMode,
                                 this.promptMaxChars,
                                 this.memoryContextMaxChars,
                                 stats -> this.recordContextCompressionMetrics(
@@ -672,6 +677,8 @@ public class DispatcherService implements ContextCompressionMetricsReader,
                                 this.decisionParamAssembler,
                                 this.llmDecisionEngine,
                                 this.dispatchHeuristicsSupport,
+                                this.answerMode,
+                                this.conversationMemoryModeService,
                                 resolveHermesSearchPriorityOrder(),
                                 this.dispatchSkillDslResolvers
                         ),
@@ -696,7 +703,8 @@ public class DispatcherService implements ContextCompressionMetricsReader,
                                 this.habitExplainHintEnabled,
                                 this.preferenceReuseEnabled
                         ),
-                        this.promptInjectionSafeReply
+                        this.promptInjectionSafeReply,
+                        this.conversationMemoryModeService
                 );
             }
             return this.hermesAssistantRuntime;

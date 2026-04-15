@@ -12,6 +12,8 @@ record HermesDecisionContext(
         String userInput,
         String routingInput,
         Map<String, Object> profileContext,
+        boolean memoryEnabled,
+        DispatcherAnswerMode answerMode,
         PromptMemoryContextDto promptMemoryContext,
         String memoryContext,
         List<Map<String, Object>> chatHistory,
@@ -23,6 +25,7 @@ record HermesDecisionContext(
 ) {
     HermesDecisionContext {
         profileContext = profileContext == null ? Map.of() : Map.copyOf(profileContext);
+        answerMode = answerMode == null ? DispatcherAnswerMode.BALANCED : answerMode;
         chatHistory = chatHistory == null ? List.of() : List.copyOf(chatHistory);
         toolSchemas = toolSchemas == null ? List.of() : List.copyOf(toolSchemas);
         semanticAnalysis = semanticAnalysis == null ? SemanticAnalysisResult.empty() : semanticAnalysis;

@@ -47,8 +47,9 @@ final class HermesMemoryRecorder {
                 Map<String, Object> profileContext,
                 SemanticAnalysisResult semanticAnalysis,
                 String attemptedSkill,
-                Boolean attemptedSuccess) {
-        if (userId == null || userId.isBlank() || dispatcherMemoryFacade == null) {
+                Boolean attemptedSuccess,
+                boolean memoryEnabled) {
+        if (!memoryEnabled || userId == null || userId.isBlank() || dispatcherMemoryFacade == null) {
             return;
         }
         MemoryWriteBatch batch = dispatchMemoryLifecycle == null

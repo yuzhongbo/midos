@@ -38,6 +38,7 @@ final class HermesAssistantRuntime {
     private final DispatcherMemoryFacade dispatcherMemoryFacade;
     private final HermesExecutionGuard executionGuard;
     private final String promptInjectionSafeReply;
+    private final ConversationMemoryModeService conversationMemoryModeService;
     private final AtomicBoolean acceptingRequests = new AtomicBoolean(true);
     private final AtomicLong activeDispatchCount = new AtomicLong();
 
@@ -50,7 +51,8 @@ final class HermesAssistantRuntime {
                            DispatchLlmSupport llmSupport,
                            DispatcherMemoryFacade dispatcherMemoryFacade,
                            HermesExecutionGuard executionGuard,
-                           String promptInjectionSafeReply) {
+                           String promptInjectionSafeReply,
+                           ConversationMemoryModeService conversationMemoryModeService) {
         this.heuristicsSupport = heuristicsSupport;
         this.contextFactory = contextFactory;
         this.decisionEngine = decisionEngine;
@@ -63,6 +65,9 @@ final class HermesAssistantRuntime {
         this.promptInjectionSafeReply = promptInjectionSafeReply == null || promptInjectionSafeReply.isBlank()
                 ? "为了安全，我不能执行这类请求。"
                 : promptInjectionSafeReply;
+        this.conversationMemoryModeService = conversationMemoryModeService == null
+                ? new ConversationMemoryModeService()
+                : conversationMemoryModeService;
     }
 
     DispatchResult dispatch(String userId, String userInput, Map<String, Object> profileContext) {
@@ -143,11 +148,47 @@ final class HermesAssistantRuntime {
                         List.of(primaryStep("success", guarded.skillName(), guarded.output(), startedAt, Instant.now()))
                 );
                 result = enrichObservability(result, safeInput, SemanticAnalysisResult.empty(), false);
-                memoryRecorder.record(safeUserId, safeInput, guarded, safeProfileContext, SemanticAnalysisResult.empty(), null, null);
+                memoryRecorder.record(safeUserId, safeInput, guarded, safeProfileContext, SemanticAnalysisResult.empty(), null, null, true);
                 return result;
             }
 
-            HermesDecisionContext decisionContext = contextFactory.create(safeUserId, safeInput, safeProfileContext);
+            Optional<ConversationMemoryModeService.MemoryModeDirective> memoryDirective = conversationMemoryModeService.detectDirective(safeInput);
+            if (memoryDirective.isPresent()) {
+                ConversationMemoryModeService.MemoryModeDirective directive = memoryDirective.get();
+                conversationMemoryModeService.apply(safeUserId, directive);
+                SkillResult modeResult = SkillResult.success(directive.channel(), directive.reply());
+                emit(deltaConsumer, modeResult.output());
+                return buildDispatchResult(
+                        modeResult.output(),
+                        modeResult.skillName(),
+                        "memory-mode",
+                        modeResult.skillName(),
+                        1.0d,
+                        List.of(directive.suppressed() ? "conversation memory has been disabled" : "conversation memory has been re-enabled"),
+                        List.of(),
+                        true,
+                        List.of(primaryStep("success", modeResult.skillName(), modeResult.output(), startedAt, Instant.now()))
+                );
+            }
+
+            boolean memoryEnabled = !conversationMemoryModeService.isMemorySuppressed(safeUserId);
+            if (!memoryEnabled && conversationMemoryModeService.isExplicitMemoryRecallRequest(safeInput)) {
+                SkillResult disabledRecall = SkillResult.success("memory.mode", conversationMemoryModeService.disabledRecallReply());
+                emit(deltaConsumer, disabledRecall.output());
+                return buildDispatchResult(
+                        disabledRecall.output(),
+                        disabledRecall.skillName(),
+                        "memory-disabled",
+                        disabledRecall.skillName(),
+                        1.0d,
+                        List.of("memory recall requested while conversation memory is disabled"),
+                        List.of(),
+                        true,
+                        List.of(primaryStep("success", disabledRecall.skillName(), disabledRecall.output(), startedAt, Instant.now()))
+                );
+            }
+
+            HermesDecisionContext decisionContext = contextFactory.create(safeUserId, safeInput, safeProfileContext, memoryEnabled);
             HermesDecisionEngine.DecisionPlan decisionPlan = decisionEngine.decide(decisionContext);
             Decision decision = decisionPlan.decision();
 
@@ -166,7 +207,7 @@ final class HermesAssistantRuntime {
                         List.of(primaryStep("success", clarifyResult.skillName(), clarifyResult.output(), startedAt, Instant.now()))
                 );
                 result = enrichObservability(result, safeInput, decisionContext.semanticAnalysis(), false);
-                memoryRecorder.record(safeUserId, safeInput, clarifyResult, decisionContext.profileContext(), decisionContext.semanticAnalysis(), null, null);
+                memoryRecorder.record(safeUserId, safeInput, clarifyResult, decisionContext.profileContext(), decisionContext.semanticAnalysis(), null, null, decisionContext.memoryEnabled());
                 return result;
             }
 
@@ -185,7 +226,7 @@ final class HermesAssistantRuntime {
                         List.of(primaryStep("failed", invalidDecision.skillName(), invalidDecision.output(), startedAt, Instant.now()))
                 );
                 result = enrichObservability(result, safeInput, decisionContext.semanticAnalysis(), false);
-                memoryRecorder.record(safeUserId, safeInput, invalidDecision, decisionContext.profileContext(), decisionContext.semanticAnalysis(), null, null);
+                memoryRecorder.record(safeUserId, safeInput, invalidDecision, decisionContext.profileContext(), decisionContext.semanticAnalysis(), null, null, decisionContext.memoryEnabled());
                 return result;
             }
 
@@ -204,7 +245,7 @@ final class HermesAssistantRuntime {
                         List.of(primaryStep(memoryResult.success() ? "success" : "failed", memoryResult.skillName(), memoryResult.output(), startedAt, Instant.now()))
                 );
                 result = enrichObservability(result, safeInput, decisionContext.semanticAnalysis(), false);
-                memoryRecorder.record(safeUserId, safeInput, memoryResult, decisionContext.profileContext(), decisionContext.semanticAnalysis(), null, null);
+                memoryRecorder.record(safeUserId, safeInput, memoryResult, decisionContext.profileContext(), decisionContext.semanticAnalysis(), null, null, decisionContext.memoryEnabled());
                 return result;
             }
 
@@ -222,7 +263,7 @@ final class HermesAssistantRuntime {
                         List.of(primaryStep(llmResult.success() ? "success" : "failed", llmResult.skillName(), llmResult.output(), startedAt, Instant.now()))
                 );
                 result = enrichObservability(result, safeInput, decisionContext.semanticAnalysis(), false);
-                memoryRecorder.record(safeUserId, safeInput, llmResult, decisionContext.profileContext(), decisionContext.semanticAnalysis(), null, null);
+                memoryRecorder.record(safeUserId, safeInput, llmResult, decisionContext.profileContext(), decisionContext.semanticAnalysis(), null, null, decisionContext.memoryEnabled());
                 return result;
             }
 
@@ -267,7 +308,7 @@ final class HermesAssistantRuntime {
                     List.of(primaryStep("success", blocked.skillName(), blocked.output(), startedAt, Instant.now()))
             );
             result = enrichObservability(result, userInput, decisionContext.semanticAnalysis(), false);
-            memoryRecorder.record(userId, userInput, blocked, decisionContext.profileContext(), decisionContext.semanticAnalysis(), null, null);
+            memoryRecorder.record(userId, userInput, blocked, decisionContext.profileContext(), decisionContext.semanticAnalysis(), null, null, decisionContext.memoryEnabled());
             return result;
         }
         if (isLoopGuardBlocked(userId, decision == null ? null : decision.target(), userInput)) {
@@ -288,7 +329,7 @@ final class HermesAssistantRuntime {
                     List.of(primaryStep("failed", loopGuardResult.skillName(), loopGuardResult.output(), startedAt, Instant.now()))
             );
             result = enrichObservability(result, userInput, decisionContext.semanticAnalysis(), false);
-            memoryRecorder.record(userId, userInput, loopGuardResult, decisionContext.profileContext(), decisionContext.semanticAnalysis(), null, null);
+            memoryRecorder.record(userId, userInput, loopGuardResult, decisionContext.profileContext(), decisionContext.semanticAnalysis(), null, null, decisionContext.memoryEnabled());
             return result;
         }
 
@@ -324,7 +365,7 @@ final class HermesAssistantRuntime {
                         List.of(primaryStep("success", clarifyResult.skillName(), clarifyResult.output(), startedAt, Instant.now()))
                 );
                 result = enrichObservability(result, userInput, decisionContext.semanticAnalysis(), false);
-                memoryRecorder.record(userId, userInput, clarifyResult, decisionContext.profileContext(), decisionContext.semanticAnalysis(), null, null);
+                memoryRecorder.record(userId, userInput, clarifyResult, decisionContext.profileContext(), decisionContext.semanticAnalysis(), null, null, decisionContext.memoryEnabled());
                 return result;
             }
 
@@ -344,7 +385,7 @@ final class HermesAssistantRuntime {
                     List.of(primaryStep("failed", validationFailure.skillName(), validationFailure.output(), startedAt, Instant.now()))
             );
             result = enrichObservability(result, userInput, decisionContext.semanticAnalysis(), false);
-            memoryRecorder.record(userId, userInput, validationFailure, decisionContext.profileContext(), decisionContext.semanticAnalysis(), null, null);
+            memoryRecorder.record(userId, userInput, validationFailure, decisionContext.profileContext(), decisionContext.semanticAnalysis(), null, null, decisionContext.memoryEnabled());
             return result;
         }
 
@@ -376,7 +417,7 @@ final class HermesAssistantRuntime {
                     List.of(primaryStep("success", resultToReturn.skillName(), resultToReturn.output(), startedAt, Instant.now()))
             );
             result = enrichObservability(result, userInput, decisionContext.semanticAnalysis(), finalized.applied());
-            memoryRecorder.record(userId, userInput, resultToReturn, decisionContext.profileContext(), decisionContext.semanticAnalysis(), attemptedSkill, true);
+            memoryRecorder.record(userId, userInput, resultToReturn, decisionContext.profileContext(), decisionContext.semanticAnalysis(), attemptedSkill, true, decisionContext.memoryEnabled());
             return result;
         }
 
@@ -400,7 +441,7 @@ final class HermesAssistantRuntime {
                 List.of(primaryStep("failed", attemptedSkill, failedResult.output(), startedAt, Instant.now()))
         );
         result = enrichObservability(result, userInput, decisionContext.semanticAnalysis(), false);
-        memoryRecorder.record(userId, userInput, failedResult, decisionContext.profileContext(), decisionContext.semanticAnalysis(), attemptedSkill, false);
+        memoryRecorder.record(userId, userInput, failedResult, decisionContext.profileContext(), decisionContext.semanticAnalysis(), attemptedSkill, false, decisionContext.memoryEnabled());
         return result;
     }
 

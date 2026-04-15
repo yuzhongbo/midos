@@ -27,17 +27,21 @@ final class HermesDecisionEngine {
     private final DecisionParamAssembler decisionParamAssembler;
     private final LLMDecisionEngine llmDecisionEngine;
     private final DispatchHeuristicsSupport heuristicsSupport;
+    private final DispatcherAnswerMode answerMode;
+    private final ConversationMemoryModeService conversationMemoryModeService;
     private final List<String> parallelSearchPriorityOrder;
     private final List<DispatchSkillDslResolver> dispatchSkillDslResolvers;
 
     HermesDecisionEngine(SkillDslParser skillDslParser,
-                         SkillCatalogFacade skillCatalog,
+                          SkillCatalogFacade skillCatalog,
                           HermesToolSchemaCatalog toolSchemaCatalog,
                           SemanticRoutingSupport semanticRoutingSupport,
                           BehaviorRoutingSupport behaviorRoutingSupport,
                           DecisionParamAssembler decisionParamAssembler,
                           LLMDecisionEngine llmDecisionEngine,
                           DispatchHeuristicsSupport heuristicsSupport,
+                          DispatcherAnswerMode answerMode,
+                          ConversationMemoryModeService conversationMemoryModeService,
                           List<String> parallelSearchPriorityOrder,
                           List<DispatchSkillDslResolver> dispatchSkillDslResolvers) {
         this.skillDslParser = skillDslParser;
@@ -48,6 +52,8 @@ final class HermesDecisionEngine {
         this.decisionParamAssembler = decisionParamAssembler;
         this.llmDecisionEngine = llmDecisionEngine;
         this.heuristicsSupport = heuristicsSupport;
+        this.answerMode = answerMode == null ? DispatcherAnswerMode.BALANCED : answerMode;
+        this.conversationMemoryModeService = conversationMemoryModeService;
         this.parallelSearchPriorityOrder = parallelSearchPriorityOrder == null
                 ? List.of()
                 : parallelSearchPriorityOrder.stream()
@@ -59,7 +65,7 @@ final class HermesDecisionEngine {
 
     DecisionPlan decide(HermesDecisionContext context) {
         HermesDecisionContext safeContext = context == null
-                ? new HermesDecisionContext("", "", "", Map.of(), null, "", List.of(), List.of(), SemanticAnalysisResult.empty(), Map.of(), Map.of(), null)
+                ? new HermesDecisionContext("", "", "", Map.of(), true, answerMode, null, "", List.of(), List.of(), SemanticAnalysisResult.empty(), Map.of(), Map.of(), null)
                 : context;
         SemanticAnalysisResult semanticAnalysis = safeContext.semanticAnalysis();
 
@@ -88,6 +94,11 @@ final class HermesDecisionEngine {
             return builtinHelpPlan.get();
         }
 
+        Optional<DecisionPlan> explicitMemoryRecall = explicitMemoryRecallPlan(safeContext);
+        if (explicitMemoryRecall.isPresent()) {
+            return explicitMemoryRecall.get();
+        }
+
         Optional<DecisionPlan> resolvedCommand = resolvedCommandPlan(safeContext);
         if (resolvedCommand.isPresent()) {
             return resolvedCommand.get();
@@ -96,8 +107,12 @@ final class HermesDecisionEngine {
         Map<String, Candidate> candidates = new LinkedHashMap<>();
         addSemanticCandidates(candidates, safeContext);
         addDetectedCandidates(candidates, safeContext);
-        addHabitCandidates(candidates, safeContext);
-        boostCandidatesFromMemory(candidates, safeContext.skillSuccessRates());
+        if (safeContext.memoryEnabled() && !safeContext.answerMode().llmFirst()) {
+            addHabitCandidates(candidates, safeContext);
+        }
+        if (!safeContext.answerMode().llmFirst()) {
+            boostCandidatesFromMemory(candidates, safeContext.skillSuccessRates());
+        }
         applySearchPriorityOverrides(candidates, safeContext);
         applyBuiltinSkillPreference(candidates, safeContext);
 
@@ -143,6 +158,28 @@ final class HermesDecisionEngine {
         boolean shouldCallLlm = llmDecisionEngine == null || llmDecisionEngine.shouldCallLLM(queryContext);
         double confidence = Math.max(MIN_ROUTE_CONFIDENCE, semanticAnalysis == null ? 0.0d : semanticAnalysis.effectiveConfidence());
         List<String> effectiveReasons = new ArrayList<>(reasons == null ? List.of() : reasons);
+        boolean memoryEnabled = context != null && context.memoryEnabled();
+        DispatcherAnswerMode effectiveAnswerMode = context == null ? answerMode : context.answerMode();
+        if (!memoryEnabled) {
+            effectiveReasons.add("memory is disabled for this conversation");
+            return new DecisionPlan(
+                    new Decision(resolveFallbackIntent(semanticAnalysis, "llm"), "llm", Map.of(), confidence, false),
+                    "llm-fallback",
+                    List.copyOf(effectiveReasons),
+                    rejectedReasons == null ? List.of() : List.copyOf(rejectedReasons),
+                    null
+            );
+        }
+        if (effectiveAnswerMode.llmFirst()) {
+            effectiveReasons.add("llm-first mode prefers model response for default answers");
+            return new DecisionPlan(
+                    new Decision(resolveFallbackIntent(semanticAnalysis, "llm"), "llm", Map.of(), confidence, false),
+                    "llm-fallback",
+                    List.copyOf(effectiveReasons),
+                    rejectedReasons == null ? List.of() : List.copyOf(rejectedReasons),
+                    null
+            );
+        }
         if (!realtimeLike && !shouldCallLlm) {
             effectiveReasons.add("relevant memory can answer directly");
             return new DecisionPlan(
@@ -163,6 +200,29 @@ final class HermesDecisionEngine {
                 rejectedReasons == null ? List.of() : List.copyOf(rejectedReasons),
                 null
         );
+    }
+
+    private Optional<DecisionPlan> explicitMemoryRecallPlan(HermesDecisionContext context) {
+        if (context == null
+                || !context.memoryEnabled()
+                || conversationMemoryModeService == null
+                || !conversationMemoryModeService.isExplicitMemoryRecallRequest(context.userInput())) {
+            return Optional.empty();
+        }
+        Decision decision = new Decision(
+                "memory.direct",
+                "memory.direct",
+                Map.of(),
+                0.98d,
+                false
+        );
+        return Optional.of(new DecisionPlan(
+                decision,
+                "memory-recall",
+                List.of("explicit memory recall request matched a deterministic Hermes route"),
+                List.of(),
+                null
+        ));
     }
 
     private QueryContext buildQueryContext(HermesDecisionContext context) {

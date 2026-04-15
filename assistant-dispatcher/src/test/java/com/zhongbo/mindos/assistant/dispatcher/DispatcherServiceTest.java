@@ -1325,6 +1325,65 @@ class DispatcherServiceTest {
     }
 
     @Test
+    void shouldPreferLlmFallbackInLlmFirstModeEvenWhenRelevantMemoryExists() {
+        MemoryManager memoryManager = createMemoryManager();
+        memoryManager.storeKnowledge("llm-first-user", "周五前提交周报并同步项目风险", List.of(0.2, 0.3), "task");
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of("这是模型整理后的回答"));
+        DispatcherLlmTuningProperties tuningProperties = new DispatcherLlmTuningProperties();
+        tuningProperties.setAnswerMode("llm-first");
+        DispatcherService service = createDispatcherWithTuning(memoryManager, llmClient, List.of(), 2, tuningProperties);
+
+        DispatchResult result = service.dispatch("llm-first-user", "周报什么时候提交");
+
+        assertEquals("llm", result.channel());
+        assertEquals("这是模型整理后的回答", result.reply());
+        assertEquals(1, llmClient.fallbackCallCount());
+        assertFalse(Objects.toString(llmClient.fallbackContexts().get(0).get("memoryContext"), "").isBlank());
+    }
+
+    @Test
+    void shouldUseMemoryDirectForExplicitRecallInLlmFirstMode() {
+        MemoryManager memoryManager = createMemoryManager();
+        memoryManager.storeKnowledge("llm-first-memory-user", "周五前提交周报并同步项目风险", List.of(0.2, 0.3), "task");
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of("不应调用 llm"));
+        DispatcherLlmTuningProperties tuningProperties = new DispatcherLlmTuningProperties();
+        tuningProperties.setAnswerMode("llm-first");
+        DispatcherService service = createDispatcherWithTuning(memoryManager, llmClient, List.of(), 2, tuningProperties);
+
+        DispatchResult result = service.dispatch("llm-first-memory-user", "根据记忆回答周报什么时候提交");
+
+        assertEquals("memory.direct", result.channel());
+        assertTrue(result.reply().contains("周五前提交周报"));
+        assertEquals(0, llmClient.fallbackCallCount());
+    }
+
+    @Test
+    void shouldDisableMemoryReadsAndWritesUntilMemoryIsReenabled() {
+        MemoryManager memoryManager = createMemoryManager();
+        memoryManager.storeKnowledge("no-memory-user", "周五前提交周报并同步项目风险", List.of(0.2, 0.3), "task");
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of("这次我直接按当前输入回答"));
+        DispatcherLlmTuningProperties tuningProperties = new DispatcherLlmTuningProperties();
+        tuningProperties.setAnswerMode("llm-first");
+        DispatcherService service = createDispatcherWithTuning(memoryManager, llmClient, List.of(), 2, tuningProperties);
+
+        DispatchResult disable = service.dispatch("no-memory-user", "不要记忆");
+        DispatchResult disabledQuery = service.dispatch("no-memory-user", "周报什么时候提交");
+        int conversationCountWhileDisabled = memoryManager.getRecentConversation("no-memory-user", 10).size();
+        DispatchResult enable = service.dispatch("no-memory-user", "恢复记忆");
+        DispatchResult recall = service.dispatch("no-memory-user", "根据记忆回答周报什么时候提交");
+
+        assertEquals("memory.mode", disable.channel());
+        assertEquals("llm", disabledQuery.channel());
+        assertEquals("这次我直接按当前输入回答", disabledQuery.reply());
+        assertEquals(1, llmClient.fallbackCallCount());
+        assertEquals("", Objects.toString(llmClient.fallbackContexts().get(0).get("memoryContext"), ""));
+        assertEquals(0, conversationCountWhileDisabled);
+        assertEquals("memory.mode", enable.channel());
+        assertEquals("memory.direct", recall.channel());
+        assertTrue(recall.reply().contains("周五前提交周报"));
+    }
+
+    @Test
     void shouldStoreSemanticSummaryWithKeyParamsDigest() {
         MemoryManager memoryManager = createMemoryManager();
         RecordingLlmClient llmClient = new RecordingLlmClient(List.of("stub"));
