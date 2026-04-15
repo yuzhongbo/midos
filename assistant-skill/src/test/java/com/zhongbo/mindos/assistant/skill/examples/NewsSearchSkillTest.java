@@ -132,6 +132,31 @@ class NewsSearchSkillTest {
     }
 
     @Test
+    void shouldReturnTenItemsByDefaultWhenLimitIsNotSpecified() {
+        NewsSearchSkill skill = new NewsSearchSkill(
+                (prompt, context) -> "{\"summary\":\"摘要\"}",
+                (url, timeoutMs) -> krFeed(12),
+                true,
+                "https://36kr.com/feed",
+                3000,
+                300,
+                64,
+                12,
+                true,
+                "local",
+                "cost",
+                "gemma3:1b-it-q4_K_M",
+                220
+        );
+
+        SkillResult result = skill.run(newsContext("u1", "news_search AI"));
+
+        assertTrue(result.success());
+        assertTrue(result.output().contains("10. 标题: 36Kr AI 条目 10"));
+        assertFalse(result.output().contains("11. 标题:"));
+    }
+
+    @Test
     void shouldSupportSourceSortAndNaturalLanguageLimit() {
         NewsSearchSkill skill = new NewsSearchSkill(
                 (prompt, context) -> "{\"theme\":\"AI\",\"summary\":\"摘要\",\"contextBrief\":\"上下文\",\"hotKeywords\":[\"AI\"]}",
@@ -604,6 +629,22 @@ class NewsSearchSkillTest {
                   </item>
                 </channel></rss>
                 """;
+    }
+
+    private String krFeed(int count) {
+        StringBuilder xml = new StringBuilder("<rss><channel>\n");
+        for (int i = 1; i <= count; i++) {
+            xml.append("""
+                      <item>
+                        <title>36Kr AI 条目 %d</title>
+                        <link>https://36kr.example/ai-%d</link>
+                        <description>AI 新闻条目 %d</description>
+                        <pubDate>Fri, 03 Apr 2026 11:00:00 GMT</pubDate>
+                      </item>
+                    """.formatted(i, i, i));
+        }
+        xml.append("</channel></rss>");
+        return xml.toString();
     }
 
     private HttpServer startSearchServer(AtomicInteger requestCount, String body) throws IOException {

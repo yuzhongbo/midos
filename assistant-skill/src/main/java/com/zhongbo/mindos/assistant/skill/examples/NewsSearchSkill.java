@@ -67,7 +67,7 @@ public class NewsSearchSkill implements Skill, SkillDescriptorProvider {
                            @Value("${mindos.skill.news-search.http-timeout-ms:5000}") int httpTimeoutMs,
                            @Value("${mindos.skill.news-search.cache-ttl-seconds:300}") int cacheTtlSeconds,
                            @Value("${mindos.skill.news-search.cache-max-entries:128}") int cacheMaxEntries,
-                           @Value("${mindos.skill.news-search.max-items:8}") int maxItems,
+                           @Value("${mindos.skill.news-search.max-items:10}") int maxItems,
                            @Value("${mindos.skill.news-search.summary-enabled:false}") boolean summaryEnabled,
                            @Value("${mindos.skill.news-search.summary-provider:}") String summaryProvider,
                            @Value("${mindos.skill.news-search.summary-preset:cost}") String summaryPreset,
@@ -1083,10 +1083,10 @@ final class NewsSearchSkillExecutor {
                     return parsed;
                 }
             } catch (NumberFormatException ignored) {
-                return 5;
+                return 10;
             }
         }
-        return 5;
+        return 10;
     }
 
     private Map<String, Object> attributes(SkillContext context) {

@@ -1463,6 +1463,22 @@
       "nextCheckAt" : "2026-04-13T06:28:31.111Z",
       "leaseOwner" : ""
     },
+    "c483051b-aa0d-42cb-aa64-e9aaa63b4e12" : {
+      "taskId" : "c483051b-aa0d-42cb-aa64-e9aaa63b4e12",
+      "userId" : "im:dingtalk:ding-async-user",
+      "title" : "钉钉消息处理",
+      "objective" : "echo async hi",
+      "status" : "COMPLETED",
+      "progressPercent" : 100,
+      "pendingSteps" : [ ],
+      "completedSteps" : [ "等待后台处理", "生成回复", "回推钉钉结果" ],
+      "recentNotes" : [ "im-dingtalk-async: 已开始处理钉钉消息", "im-dingtalk-async: [ASYNC_RESULT] async hi", "im-dingtalk-async: 已将结果回推到钉钉会话" ],
+      "blockedReason" : "",
+      "createdAt" : "2026-04-15T14:45:24.248908Z",
+      "updatedAt" : "2026-04-15T14:45:24.264308Z",
+      "nextCheckAt" : "2026-04-15T14:45:24.264270Z",
+      "leaseOwner" : ""
+    },
     "4a9662f0-277d-46ad-b1ab-ceb42bd25988" : {
       "taskId" : "4a9662f0-277d-46ad-b1ab-ceb42bd25988",
       "userId" : "im:dingtalk:ding-async-user",
@@ -1860,6 +1876,25 @@
       "leaseUntil" : "2026-04-13T07:51:27.678277Z"
     }
   },
+  "u-long-auto-eae2b175-cff1-47b1-a892-ee25a01cc832" : {
+    "e48aabb0-debe-4181-b0d2-975af11b84f0" : {
+      "taskId" : "e48aabb0-debe-4181-b0d2-975af11b84f0",
+      "userId" : "u-long-auto-eae2b175-cff1-47b1-a892-ee25a01cc832",
+      "title" : "自动推进任务",
+      "objective" : "",
+      "status" : "RUNNING",
+      "progressPercent" : 50,
+      "pendingSteps" : [ "step-2" ],
+      "completedSteps" : [ "step-1" ],
+      "recentNotes" : [ "auto-runner: auto-run advanced step: step-1" ],
+      "blockedReason" : "",
+      "createdAt" : "2026-04-15T14:45:23.630355Z",
+      "updatedAt" : "2026-04-15T14:45:23.636111Z",
+      "nextCheckAt" : "2026-04-15T14:47:23.636094Z",
+      "leaseOwner" : "auto-runner",
+      "leaseUntil" : "2026-04-15T14:48:23.633840Z"
+    }
+  },
   "u-long-1-81ddb288-1ee0-4c39-8a59-2a77a0fcae35" : {
     "f3c50f41-75ea-4d21-8b88-801a2b15a070" : {
       "taskId" : "f3c50f41-75ea-4d21-8b88-801a2b15a070",
@@ -1972,6 +2007,25 @@
       "nextCheckAt" : "2026-04-13T04:50:28.525974Z",
       "leaseOwner" : "worker-a",
       "leaseUntil" : "2026-04-13T04:55:28.525974Z"
+    }
+  },
+  "u-long-2-16d83ffe-754a-4729-81ed-37a3bb1e9cf3" : {
+    "39b7e38c-3bff-4b5e-89dc-0f638d651f4d" : {
+      "taskId" : "39b7e38c-3bff-4b5e-89dc-0f638d651f4d",
+      "userId" : "u-long-2-16d83ffe-754a-4729-81ed-37a3bb1e9cf3",
+      "title" : "跨天任务",
+      "objective" : "",
+      "status" : "RUNNING",
+      "progressPercent" : 0,
+      "pendingSteps" : [ "step-1", "step-2" ],
+      "completedSteps" : [ ],
+      "recentNotes" : [ ],
+      "blockedReason" : "",
+      "createdAt" : "2026-04-15T14:45:23.622027Z",
+      "updatedAt" : "2026-04-15T14:45:23.624971Z",
+      "nextCheckAt" : "2026-04-15T14:45:23.624971Z",
+      "leaseOwner" : "worker-a",
+      "leaseUntil" : "2026-04-15T14:50:23.624971Z"
     }
   },
   "u-long-1-5ba74e02-e663-459b-a820-472d2bf68622" : {
@@ -3631,6 +3685,22 @@
       "nextCheckAt" : "2026-04-10T10:49:09.489535Z",
       "leaseOwner" : ""
     },
+    "66f976ad-63d1-4df0-9d8f-fb63e676adb9" : {
+      "taskId" : "66f976ad-63d1-4df0-9d8f-fb63e676adb9",
+      "userId" : "im:dingtalk:ding-query-user",
+      "title" : "钉钉消息处理",
+      "objective" : "echo query result",
+      "status" : "COMPLETED",
+      "progressPercent" : 100,
+      "pendingSteps" : [ ],
+      "completedSteps" : [ "等待后台处理", "生成回复", "回推钉钉结果" ],
+      "recentNotes" : [ "im-dingtalk-async: 已开始处理钉钉消息", "im-dingtalk-async: [ASYNC_RESULT] query result", "im-dingtalk-async: 钉钉异步回推失败，请稍后重试或通过任务接口查看结果", "im-dingtalk-compensation: [COMPENSATED] next-message" ],
+      "blockedReason" : "",
+      "createdAt" : "2026-04-15T14:45:24.275708Z",
+      "updatedAt" : "2026-04-15T14:45:24.336458Z",
+      "nextCheckAt" : "2026-04-15T14:45:24.336446Z",
+      "leaseOwner" : ""
+    },
     "d8a32afa-0cf2-4eb5-a3e3-d83d37a7dfb5" : {
       "taskId" : "d8a32afa-0cf2-4eb5-a3e3-d83d37a7dfb5",
       "userId" : "im:dingtalk:ding-query-user",
@@ -4408,6 +4478,22 @@
       "createdAt" : "2026-04-10T11:51:11.761800Z",
       "updatedAt" : "2026-04-10T11:51:11.830133Z",
       "nextCheckAt" : "2026-04-10T11:51:11.830119Z",
+      "leaseOwner" : ""
+    },
+    "cba188f1-9827-4ab0-89f3-d78ab47a6c62" : {
+      "taskId" : "cba188f1-9827-4ab0-89f3-d78ab47a6c62",
+      "userId" : "im:dingtalk:ding-comp-user",
+      "title" : "钉钉消息处理",
+      "objective" : "echo compensation result",
+      "status" : "COMPLETED",
+      "progressPercent" : 100,
+      "pendingSteps" : [ ],
+      "completedSteps" : [ "等待后台处理", "生成回复", "回推钉钉结果" ],
+      "recentNotes" : [ "im-dingtalk-async: 已开始处理钉钉消息", "im-dingtalk-async: [ASYNC_RESULT] compensation result", "im-dingtalk-async: 钉钉异步回推失败，请稍后重试或通过任务接口查看结果", "im-dingtalk-compensation: [COMPENSATED] next-message" ],
+      "blockedReason" : "",
+      "createdAt" : "2026-04-15T14:45:24.345980Z",
+      "updatedAt" : "2026-04-15T14:45:24.408235Z",
+      "nextCheckAt" : "2026-04-15T14:45:24.408226Z",
       "leaseOwner" : ""
     },
     "b22cdd1f-815a-495d-800d-786196890c66" : {
@@ -5577,6 +5663,25 @@
       "nextCheckAt" : "2026-04-09T13:21:58.383406Z",
       "leaseOwner" : "auto-runner",
       "leaseUntil" : "2026-04-09T13:22:58.382349Z"
+    }
+  },
+  "u-long-1-92aca0fa-e385-4236-8859-b92b8d1c5cdc" : {
+    "ccb7bb00-f65a-4995-a164-b2c448a50770" : {
+      "taskId" : "ccb7bb00-f65a-4995-a164-b2c448a50770",
+      "userId" : "u-long-1-92aca0fa-e385-4236-8859-b92b8d1c5cdc",
+      "title" : "发布新版本",
+      "objective" : "三天内完成发布",
+      "status" : "RUNNING",
+      "progressPercent" : 33,
+      "pendingSteps" : [ "灰度发布", "全量发布" ],
+      "completedSteps" : [ "准备 changelog" ],
+      "recentNotes" : [ "worker-a: day1 完成准备" ],
+      "blockedReason" : "",
+      "createdAt" : "2026-04-15T14:45:23.601823Z",
+      "updatedAt" : "2026-04-15T14:45:23.616506Z",
+      "nextCheckAt" : "2026-04-15T14:45:23.616506Z",
+      "leaseOwner" : "worker-a",
+      "leaseUntil" : "2026-04-15T14:55:23.611124Z"
     }
   },
   "u-long-auto-ba5f4ac9-edf5-4785-a7e1-c464aea4355e" : {
