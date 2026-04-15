@@ -99,6 +99,7 @@ final class HermesDecisionEngine {
         addHabitCandidates(candidates, safeContext);
         boostCandidatesFromMemory(candidates, safeContext.skillSuccessRates());
         applySearchPriorityOverrides(candidates, safeContext);
+        applyBuiltinSkillPreference(candidates, safeContext);
 
         Candidate best = candidates.values().stream()
                 .max(Comparator
@@ -419,9 +420,6 @@ final class HermesDecisionEngine {
         }
         List<SkillCandidate> detected = skillCatalog.detectSkillCandidates(routingInput, 5);
         String route = detected.size() > 1 ? "detected-skill-parallel" : "detected-skill";
-        boolean hasMcpSearchCandidate = detected.stream()
-                .filter(candidate -> candidate != null)
-                .anyMatch(candidate -> isRealtimeSearchSkill(candidate.skillName()));
         for (SkillCandidate candidate : detected) {
             if (candidate == null) {
                 continue;
@@ -429,7 +427,7 @@ final class HermesDecisionEngine {
             addCandidate(
                     candidates,
                     candidate.skillName(),
-                    detectedCandidateScore(context, candidate, hasMcpSearchCandidate),
+                    detectedCandidateScore(context, candidate),
                     route,
                     detectedReasons(context, candidate),
                     buildDetectedParams(context, candidate.skillName()),
@@ -545,6 +543,42 @@ final class HermesDecisionEngine {
         ));
     }
 
+    private void applyBuiltinSkillPreference(Map<String, Candidate> candidates, HermesDecisionContext context) {
+        if (candidates.isEmpty() || context == null || isExplicitMcpToolRequest(context.userInput())) {
+            return;
+        }
+        boostBuiltinNewsSearchOverGenericMcp(candidates);
+    }
+
+    private void boostBuiltinNewsSearchOverGenericMcp(Map<String, Candidate> candidates) {
+        Candidate builtinNewsSearch = candidates.get("news_search");
+        if (builtinNewsSearch == null) {
+            return;
+        }
+        double topGenericMcpScore = candidates.values().stream()
+                .filter(candidate -> candidate != null && isGenericMcpSearchSkill(candidate.skillName()))
+                .mapToDouble(Candidate::score)
+                .max()
+                .orElse(Double.NaN);
+        if (Double.isNaN(topGenericMcpScore)) {
+            return;
+        }
+        if (builtinNewsSearch.score() >= topGenericMcpScore + 0.02d) {
+            return;
+        }
+        List<String> reasons = new ArrayList<>(builtinNewsSearch.reasons());
+        reasons.add("builtin-news-search-preferred-over-generic-mcp-search");
+        candidates.put("news_search", new Candidate(
+                builtinNewsSearch.skillName(),
+                clamp(Math.max(builtinNewsSearch.score(), topGenericMcpScore + 0.03d)),
+                builtinNewsSearch.route(),
+                builtinNewsSearch.params(),
+                List.copyOf(reasons),
+                builtinNewsSearch.needClarify(),
+                builtinNewsSearch.clarifyReply()
+        ));
+    }
+
     private void addCandidate(Map<String, Candidate> candidates,
                               String skillName,
                               double score,
@@ -613,8 +647,7 @@ final class HermesDecisionEngine {
     }
 
     private double detectedCandidateScore(HermesDecisionContext context,
-                                          SkillCandidate candidate,
-                                          boolean hasMcpSearchCandidate) {
+                                          SkillCandidate candidate) {
         if (candidate == null) {
             return 0.92d;
         }
@@ -631,9 +664,6 @@ final class HermesDecisionEngine {
         if (isRealtimeIntent(context == null ? "" : context.userInput(), context == null ? SemanticAnalysisResult.empty() : context.semanticAnalysis())) {
             if (isRealtimeSearchSkill(candidate.skillName())) {
                 score += 0.05d;
-            }
-            if (hasMcpSearchCandidate && "news_search".equals(normalize(candidate.skillName()))) {
-                score -= 0.08d;
             }
         }
         return score;
@@ -771,6 +801,28 @@ final class HermesDecisionEngine {
     private boolean isRealtimeSearchSkill(String skillName) {
         String normalized = normalize(skillName).toLowerCase(Locale.ROOT);
         return normalized.startsWith("mcp.") && normalized.contains("search");
+    }
+
+    private boolean isGenericMcpSearchSkill(String skillName) {
+        String normalized = normalize(skillName).toLowerCase(Locale.ROOT);
+        return normalized.startsWith("mcp.")
+                && normalized.contains("search")
+                && !normalized.contains("docs");
+    }
+
+    private boolean isExplicitMcpToolRequest(String userInput) {
+        String normalizedInput = normalize(userInput).toLowerCase(Locale.ROOT);
+        if (normalizedInput.isBlank()) {
+            return false;
+        }
+        return containsAny(normalizedInput,
+                "mcp.",
+                "bravesearch",
+                "qwensearch",
+                "serper",
+                "serpapi",
+                "searchdocs",
+                "websearch");
     }
 
     private boolean isKnownSkill(String skillName) {

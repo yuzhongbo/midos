@@ -166,6 +166,54 @@ class DispatcherServiceTest {
     }
 
     @Test
+    void shouldPreferBuiltInNewsSearchOverGenericMcpSearchWhenBothMatch() {
+        MemoryManager memoryManager = createMemoryManager();
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of("不应走到 llm"));
+        DispatcherService service = createDispatcher(memoryManager, llmClient, List.of(
+                scriptedSkill(
+                        "news_search",
+                        "Built-in latest news aggregation",
+                        List.of("新闻", "最新", "头条", "热点", "realtime", "latest"),
+                        context -> SkillResult.success("news_search", "[news_search]\n关键词: 新闻\n摘要: builtin news result")
+                ),
+                newMcpSkill("mcp.qwensearch.webSearch", "Search latest web news", "qwen result")
+        ), 2, false, false);
+
+        DispatchResult result = service.dispatch("news-user", "今天新闻");
+
+        assertEquals("news_search", result.channel());
+        assertEquals("[news_search]\n关键词: 新闻\n摘要: builtin news result", result.reply());
+        assertTrue(Set.of("detected-skill", "detected-skill-parallel").contains(result.executionTrace().routing().route()));
+        assertEquals("news_search", result.executionTrace().routing().selectedSkill());
+        assertEquals(0, llmClient.routingCallCount());
+        assertEquals(0, llmClient.fallbackCallCount());
+    }
+
+    @Test
+    void shouldKeepExplicitMcpSearchSelectionWhenProviderAliasIsRequested() {
+        MemoryManager memoryManager = createMemoryManager();
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of("不应走到 llm"));
+        DispatcherService service = createDispatcher(memoryManager, llmClient, List.of(
+                scriptedSkill(
+                        "news_search",
+                        "Built-in latest news aggregation",
+                        List.of("新闻", "最新", "头条", "热点", "realtime", "latest"),
+                        context -> SkillResult.success("news_search", "[news_search]\n关键词: 新闻\n摘要: builtin news result")
+                ),
+                newMcpSkill("mcp.qwensearch.webSearch", "Search latest web news", "qwen result")
+        ), 2, false, false);
+
+        DispatchResult result = service.dispatch("news-user", "用 qwensearch 查今天新闻");
+
+        assertEquals("mcp.qwensearch.webSearch", result.channel());
+        assertEquals("qwen result", result.reply());
+        assertTrue(Set.of("detected-skill", "detected-skill-parallel").contains(result.executionTrace().routing().route()));
+        assertEquals("mcp.qwensearch.webSearch", result.executionTrace().routing().selectedSkill());
+        assertEquals(0, llmClient.routingCallCount());
+        assertEquals(0, llmClient.fallbackCallCount());
+    }
+
+    @Test
     void shouldPreferSerperSearchWhenSerperAndBraveAreBothAvailable() {
         System.setProperty("mindos.dispatcher.parallel-routing.search-priority-order",
                 "mcp.serper.websearch,mcp.bravesearch.websearch");
