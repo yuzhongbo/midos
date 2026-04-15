@@ -335,29 +335,27 @@ final class HermesAssistantRuntime {
             return result;
         }
 
+        SkillResult failedResult = routedResult == null
+                ? SkillResult.failure(attemptedSkill, "skill execution failed")
+                : routedResult;
         List<String> rejectedReasons = new ArrayList<>(decisionPlan.rejectedReasons());
-        rejectedReasons.add(routedResult != null && routedResult.output() != null && !routedResult.output().isBlank()
-                ? "skill execution failed: " + clip(routedResult.output())
+        rejectedReasons.add(failedResult.output() != null && !failedResult.output().isBlank()
+                ? "skill execution failed: " + clip(failedResult.output())
                 : "skill execution failed");
-        SkillResult llmResult = fallbackToLlm(decisionContext, userInput, profileContext, deltaConsumer, streamMode);
+        emit(deltaConsumer, failedResult.output());
         DispatchResult result = buildDispatchResult(
-                llmResult.output(),
-                llmResult.skillName(),
-                "llm-fallback",
+                failedResult.output(),
+                failedResult.skillName(),
+                decisionPlan.route(),
                 attemptedSkill,
                 validatedDecision.confidence(),
                 decisionPlan.reasons(),
                 rejectedReasons,
-                llmResult.success(),
-                "meta-replan",
-                1,
-                List.of(
-                        primaryStep("failed", attemptedSkill, routedResult == null ? "" : routedResult.output(), startedAt, Instant.now()),
-                        fallbackStep(llmResult.skillName(), llmResult.output(), startedAt, Instant.now())
-                )
+                false,
+                List.of(primaryStep("failed", attemptedSkill, failedResult.output(), startedAt, Instant.now()))
         );
         result = enrichObservability(result, userInput, decisionContext.semanticAnalysis());
-        memoryRecorder.record(userId, userInput, llmResult, decisionContext.profileContext(), decisionContext.semanticAnalysis(), attemptedSkill, false);
+        memoryRecorder.record(userId, userInput, failedResult, decisionContext.profileContext(), decisionContext.semanticAnalysis(), attemptedSkill, false);
         return result;
     }
 
@@ -514,20 +512,6 @@ final class HermesAssistantRuntime {
         return new PlanStepDto(
                 "primary",
                 status,
-                channel == null ? "" : channel,
-                safeText(details),
-                startedAt,
-                finishedAt
-        );
-    }
-
-    private PlanStepDto fallbackStep(String channel,
-                                     String details,
-                                     Instant startedAt,
-                                     Instant finishedAt) {
-        return new PlanStepDto(
-                "fallback",
-                "success",
                 channel == null ? "" : channel,
                 safeText(details),
                 startedAt,
