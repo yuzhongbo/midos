@@ -62,7 +62,7 @@ class ChatControllerTest {
                         .content("{\"userId\":\"test-user\",\"message\":\"skill:code.generate task=controller\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.channel").value("code.generate"))
-                .andExpect(jsonPath("$.reply").value(org.hamcrest.Matchers.containsString("代码起步方案")));
+                .andExpect(jsonPath("$.reply").value(org.hamcrest.Matchers.containsString("code.generate 未获得可用的 LLM 结果")));
     }
 
     @Test
@@ -73,7 +73,7 @@ class ChatControllerTest {
                         .content("{\"userId\":\"test-user\",\"message\":\"" + skillDslJson + "\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.channel").value("code.generate"))
-                .andExpect(jsonPath("$.reply").value(org.hamcrest.Matchers.containsString("任务目标：service")));
+                .andExpect(jsonPath("$.reply").value(org.hamcrest.Matchers.containsString("code.generate 未获得可用的 LLM 结果")));
     }
 
     @Test

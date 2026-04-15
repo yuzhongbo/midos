@@ -22,30 +22,17 @@ import com.zhongbo.mindos.assistant.memory.model.SemanticMemoryEntry;
 import com.zhongbo.mindos.assistant.memory.model.SkillUsageStats;
 import com.zhongbo.mindos.assistant.skill.SkillCatalogFacade;
 import com.zhongbo.mindos.assistant.dispatcher.decision.Decision;
-import com.zhongbo.mindos.assistant.dispatcher.decision.DecisionParser;
-import com.zhongbo.mindos.assistant.dispatcher.orchestrator.CandidatePlanner;
-import com.zhongbo.mindos.assistant.dispatcher.orchestrator.DecisionPlanner;
-import com.zhongbo.mindos.assistant.dispatcher.orchestrator.DecisionOrchestrator;
-import com.zhongbo.mindos.assistant.dispatcher.orchestrator.DefaultDecisionPlanner;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.InMemoryParamSchemaRegistry;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.ParamValidator;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.ParamSchemaRegistry;
-import com.zhongbo.mindos.assistant.dispatcher.orchestrator.SimpleCandidatePlanner;
-import com.zhongbo.mindos.assistant.dispatcher.orchestrator.SimpleConversationLoop;
-import com.zhongbo.mindos.assistant.dispatcher.orchestrator.SimpleFallbackPlan;
-import com.zhongbo.mindos.assistant.dispatcher.orchestrator.SimpleParamValidator;
-import com.zhongbo.mindos.assistant.dispatcher.agent.multiagent.MasterOrchestrationResult;
-import com.zhongbo.mindos.assistant.dispatcher.agent.multiagent.MasterOrchestrator;
 import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryCommandService;
 import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryFacade;
 import com.zhongbo.mindos.assistant.dispatcher.routing.DispatchPlan;
-import com.zhongbo.mindos.assistant.dispatcher.routing.RoutingCoordinator;
 import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalysisResult;
 import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalyzer;
 import com.zhongbo.mindos.assistant.skill.SkillExecutionGateway;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
@@ -79,8 +66,6 @@ public class DispatcherService implements ContextCompressionMetricsReader,
 
     private final SkillCatalogFacade skillEngine;
     private final SkillDslParser skillDslParser;
-    private final IntentModelRoutingPolicy intentModelRoutingPolicy;
-    private final MetaOrchestratorService metaOrchestratorService;
     private final SkillCapabilityPolicy skillCapabilityPolicy;
     private final PersonaCoreService personaCoreService;
     private final DispatcherMemoryFacade dispatcherMemoryFacade;
@@ -192,47 +177,32 @@ public class DispatcherService implements ContextCompressionMetricsReader,
     private final AtomicLong fallbackChainHitCount = new AtomicLong();
     private final Map<String, AtomicLong> escalationReasonCounters = new java.util.concurrent.ConcurrentHashMap<>();
     private final AtomicLong routingReplayTotalCapturedCount = new AtomicLong();
-    private final DecisionParser decisionParser;
-    private final DecisionOrchestrator decisionOrchestrator;
     private final ParamValidator paramValidator;
     private final SkillCommandAssembler skillCommandAssembler;
     private final DecisionParamAssembler decisionParamAssembler;
     private final DispatchMemoryLifecycle dispatchMemoryLifecycle;
     private final DispatchHeuristicsSupport dispatchHeuristicsSupport;
     private final DispatchLlmSupport dispatchLlmSupport;
-    private final DispatchPreparationSupport dispatchPreparationSupport;
-    private final DispatchResultFinalizer dispatchResultFinalizer;
-    private final DispatchRuleCatalog dispatchRuleCatalog;
     private final BehaviorRoutingSupport behaviorRoutingSupport;
-    private final SkillRoutingSupport skillRoutingSupport;
     private final SemanticRoutingSupport semanticRoutingSupport;
-    private final DispatcherRoutingCompatibilitySupport dispatcherRoutingCompatibilitySupport;
-    private final DispatchRoutingPipeline dispatchRoutingPipeline;
-    private final DispatchApplicationCoordinator dispatchApplicationCoordinator;
     private volatile HermesAssistantRuntime hermesAssistantRuntime;
     private ParamSchemaRegistry paramSchemaRegistry;
     private SkillExecutionGateway skillExecutionGateway;
     private List<DispatchSkillDslResolver> dispatchSkillDslResolvers = List.of();
-    private MasterOrchestrator masterOrchestrator;
-    private RoutingCoordinator routingCoordinator;
 
     public DispatcherService(SkillCatalogFacade skillEngine,
                              SkillDslParser skillDslParser,
                              ParamValidator paramValidator,
-                             @Lazy DecisionOrchestrator decisionOrchestrator,
-                             @Lazy IntentModelRoutingPolicy intentModelRoutingPolicy,
-                             @Lazy MetaOrchestratorService metaOrchestratorService,
                              SkillCapabilityPolicy skillCapabilityPolicy,
                               PersonaCoreService personaCoreService,
                                DispatcherMemoryFacade dispatcherMemoryFacade,
-                              LlmClient llmClient,
-                              SemanticAnalyzer semanticAnalyzer,
-                              PromptBuilder promptBuilder,
-                              LLMDecisionEngine llmDecisionEngine,
-                              DecisionParser decisionParser,
+                               LlmClient llmClient,
+                               SemanticAnalyzer semanticAnalyzer,
+                               PromptBuilder promptBuilder,
+                               LLMDecisionEngine llmDecisionEngine,
                               boolean preferenceReuseEnabled,
-                             boolean habitRoutingEnabled,
-                             int habitRoutingMinTotalCount,
+                              boolean habitRoutingEnabled,
+                              int habitRoutingMinTotalCount,
                              double habitRoutingMinSuccessRate,
                              boolean habitExplainHintEnabled,
                              int habitContinuationInputMaxLength,
@@ -287,9 +257,6 @@ public class DispatcherService implements ContextCompressionMetricsReader,
                 skillEngine,
                 skillDslParser,
                 paramValidator,
-                decisionOrchestrator,
-                intentModelRoutingPolicy,
-                metaOrchestratorService,
                 skillCapabilityPolicy,
                 personaCoreService,
                 dispatcherMemoryFacade,
@@ -297,7 +264,6 @@ public class DispatcherService implements ContextCompressionMetricsReader,
                 semanticAnalyzer,
                 promptBuilder,
                 llmDecisionEngine,
-                decisionParser,
                 preferenceReuseEnabled,
                 habitRoutingEnabled,
                 habitRoutingMinTotalCount,
@@ -359,20 +325,16 @@ public class DispatcherService implements ContextCompressionMetricsReader,
     // primary constructor with safe defaults (disabled).
     @Autowired
     public DispatcherService(SkillCatalogFacade skillEngine,
-                           SkillDslParser skillDslParser,
-                           ParamValidator paramValidator,
-                           DecisionOrchestrator decisionOrchestrator,
-                           IntentModelRoutingPolicy intentModelRoutingPolicy,
-                           MetaOrchestratorService metaOrchestratorService,
-                            SkillCapabilityPolicy skillCapabilityPolicy,
-                                PersonaCoreService personaCoreService,
-                                DispatcherMemoryFacade dispatcherMemoryFacade,
-                                LlmClient llmClient,
-                                SemanticAnalyzer semanticAnalyzer,
-                               PromptBuilder promptBuilder,
-                               LLMDecisionEngine llmDecisionEngine,
-                               DecisionParser decisionParser,
-                               @Value("${mindos.dispatcher.preference-reuse.enabled:false}") boolean preferenceReuseEnabled,
+                            SkillDslParser skillDslParser,
+                            ParamValidator paramValidator,
+                             SkillCapabilityPolicy skillCapabilityPolicy,
+                                 PersonaCoreService personaCoreService,
+                                 DispatcherMemoryFacade dispatcherMemoryFacade,
+                                 LlmClient llmClient,
+                                 SemanticAnalyzer semanticAnalyzer,
+                                PromptBuilder promptBuilder,
+                                LLMDecisionEngine llmDecisionEngine,
+                                @Value("${mindos.dispatcher.preference-reuse.enabled:false}") boolean preferenceReuseEnabled,
                              @Value("${mindos.dispatcher.habit-routing.enabled:true}") boolean habitRoutingEnabled,
                              @Value("${mindos.dispatcher.habit-routing.min-total-count:2}") int habitRoutingMinTotalCount,
                              @Value("${mindos.dispatcher.habit-routing.min-success-rate:0.6}") double habitRoutingMinSuccessRate,
@@ -422,21 +384,17 @@ public class DispatcherService implements ContextCompressionMetricsReader,
                                @Value("${mindos.dispatcher.behavior-learning.window-size:50}") int behaviorLearningWindowSize,
                                @Value("${mindos.dispatcher.behavior-learning.default-param-threshold:0.6}") double behaviorLearningDefaultParamThreshold,
                                 @Value("${mindos.dispatcher.semantic-analysis.skip-short-simple.enabled:false}") boolean semanticAnalysisSkipShortSimpleEnabled,
-                                  @Value("${mindos.dispatcher.parallel-routing.enabled:false}") boolean parallelDetectedSkillRoutingEnabled,
-                                @Value("${mindos.dispatcher.parallel-routing.max-candidates:2}") int parallelDetectedSkillRoutingMaxCandidates,
-                                @Value("${mindos.dispatcher.parallel-routing.per-skill-timeout-ms:2500}") long parallelDetectedSkillRoutingTimeoutMs) {
+                                 @Value("${mindos.dispatcher.parallel-routing.enabled:false}") boolean parallelDetectedSkillRoutingEnabled,
+                                 @Value("${mindos.dispatcher.parallel-routing.max-candidates:2}") int parallelDetectedSkillRoutingMaxCandidates,
+                                 @Value("${mindos.dispatcher.parallel-routing.per-skill-timeout-ms:2500}") long parallelDetectedSkillRoutingTimeoutMs) {
         this.skillEngine = skillEngine;
         this.skillDslParser = skillDslParser;
-        this.intentModelRoutingPolicy = intentModelRoutingPolicy;
-        this.metaOrchestratorService = metaOrchestratorService;
         this.skillCapabilityPolicy = skillCapabilityPolicy;
         this.personaCoreService = personaCoreService;
         this.dispatcherMemoryFacade = Objects.requireNonNull(dispatcherMemoryFacade, "dispatcherMemoryFacade");
         this.memoryCommandService = new DispatcherMemoryCommandService(this.dispatcherMemoryFacade, null);
         this.semanticAnalyzer = semanticAnalyzer;
-        this.decisionParser = decisionParser;
         this.paramValidator = paramValidator;
-        this.decisionOrchestrator = decisionOrchestrator;
         this.preferenceReuseEnabled = preferenceReuseEnabled;
         this.habitRoutingEnabled = habitRoutingEnabled;
         this.habitRoutingMinTotalCount = Math.max(1, habitRoutingMinTotalCount);
@@ -536,8 +494,6 @@ public class DispatcherService implements ContextCompressionMetricsReader,
                 this.behaviorLearningWindowSize,
                 this.behaviorLearningDefaultParamThreshold
         );
-        this.dispatchRuleCatalog = null;
-        this.skillRoutingSupport = null;
         this.semanticRoutingSupport = new SemanticRoutingSupport(
                 this.dispatcherMemoryFacade,
                 this.memoryCommandService,
@@ -619,11 +575,6 @@ public class DispatcherService implements ContextCompressionMetricsReader,
                         this.escalationReasonCounters
                 )
         );
-        this.dispatcherRoutingCompatibilitySupport = null;
-        this.dispatchPreparationSupport = null;
-        this.dispatchResultFinalizer = null;
-        this.dispatchRoutingPipeline = null;
-        this.dispatchApplicationCoordinator = null;
     }
 
     @Autowired(required = false)

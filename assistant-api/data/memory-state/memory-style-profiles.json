@@ -1,17 +1,17 @@
 {
-  "plan-user" : {
+  "im:dingtalk:ding-style-user" : {
     "styleName" : "action",
     "tone" : "warm",
-    "outputFormat" : "bullet"
+    "outputFormat" : "plain"
   },
   "tune-user" : {
     "styleName" : "action",
     "tone" : "warm",
     "outputFormat" : "plain"
   },
-  "im:dingtalk:ding-style-user" : {
+  "plan-user" : {
     "styleName" : "action",
     "tone" : "warm",
-    "outputFormat" : "plain"
+    "outputFormat" : "bullet"
   }
 }

@@ -53,15 +53,15 @@ class LlmEnabledSkillsFallbackTest {
     }
 
     @Test
-    void codeGenerateSkillShouldFallbackWhenLlmFails() {
+    void codeGenerateSkillShouldFailWhenLlmFails() {
         CodeGenerateSkill skill = new CodeGenerateSkill((prompt, context) -> {
             throw new RuntimeException("boom");
         });
 
         SkillResult result = skill.run(new SkillContext(null, "", Map.of("task", "generate java dto")));
 
-        assertTrue(result.success());
-        assertTrue(result.output().contains("代码起步方案"));
+        assertTrue(!result.success());
+        assertTrue(result.output().contains("code.generate 调用 LLM 失败"));
     }
 
     @Test
@@ -88,4 +88,3 @@ class LlmEnabledSkillsFallbackTest {
         assertTrue(result.output().contains("缩小范围"));
     }
 }
-

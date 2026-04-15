@@ -1,13 +1,5 @@
 package com.zhongbo.mindos.assistant.dispatcher.agent.autonomous;
 
-import com.zhongbo.mindos.assistant.dispatcher.agent.multiagent.AgentRole;
-import com.zhongbo.mindos.assistant.dispatcher.agent.multiagent.ExecutorAgent;
-import com.zhongbo.mindos.assistant.dispatcher.agent.multiagent.MasterOrchestrationResult;
-import com.zhongbo.mindos.assistant.dispatcher.agent.multiagent.MasterOrchestrator;
-import com.zhongbo.mindos.assistant.dispatcher.agent.multiagent.MemoryAgent;
-import com.zhongbo.mindos.assistant.dispatcher.agent.multiagent.PlannerAgent;
-import com.zhongbo.mindos.assistant.dispatcher.agent.multiagent.ToolAgent;
-import com.zhongbo.mindos.assistant.dispatcher.decision.Decision;
 import com.zhongbo.mindos.assistant.memory.MemoryGateway;
 import com.zhongbo.mindos.assistant.memory.graph.GraphMemoryGateway;
 import com.zhongbo.mindos.assistant.memory.graph.MemoryEdge;
@@ -215,89 +207,6 @@ final class AutonomousTestFixtures {
             nodes.remove(nodeId);
             edges.values().removeIf(edge -> nodeId.equals(edge.from()) || nodeId.equals(edge.to()));
             return true;
-        }
-    }
-
-    static final class StubPlannerAgent implements PlannerAgent {
-        @Override
-        public String name() {
-            return "planner-agent";
-        }
-
-        @Override
-        public AgentRole role() {
-            return AgentRole.PLANNER;
-        }
-    }
-
-    static final class StubExecutorAgent implements ExecutorAgent {
-        @Override
-        public String name() {
-            return "executor-agent";
-        }
-
-        @Override
-        public AgentRole role() {
-            return AgentRole.EXECUTOR;
-        }
-    }
-
-    static final class StubMemoryAgent implements MemoryAgent {
-        @Override
-        public String name() {
-            return "memory-agent";
-        }
-
-        @Override
-        public AgentRole role() {
-            return AgentRole.MEMORY;
-        }
-    }
-
-    static final class StubToolAgent implements ToolAgent {
-        @Override
-        public String name() {
-            return "tool-agent";
-        }
-
-        @Override
-        public AgentRole role() {
-            return AgentRole.TOOL;
-        }
-    }
-
-    static class StubMasterOrchestrator extends MasterOrchestrator {
-        private final MasterOrchestrationResult result;
-        Decision lastDecision;
-        Map<String, Object> lastProfileContext = Map.of();
-        String lastUserId;
-        String lastUserInput;
-
-        StubMasterOrchestrator(MasterOrchestrationResult result) {
-            super(new StubPlannerAgent(), new StubExecutorAgent(), new StubMemoryAgent(), new StubToolAgent(), null);
-            this.result = result;
-        }
-
-        @Override
-        public MasterOrchestrationResult execute(String userId,
-                                                 String userInput,
-                                                 Decision decision,
-                                                 Map<String, Object> profileContext) {
-            this.lastUserId = userId;
-            this.lastUserInput = userInput;
-            this.lastDecision = decision;
-            this.lastProfileContext = profileContext == null ? Map.of() : new LinkedHashMap<>(profileContext);
-            return result;
-        }
-
-        @Override
-        public MasterOrchestrationResult orchestrate(Decision decision,
-                                                     com.zhongbo.mindos.assistant.dispatcher.orchestrator.DecisionOrchestrator.OrchestrationRequest request) {
-            this.lastDecision = decision;
-            this.lastUserId = request == null ? null : request.userId();
-            this.lastUserInput = request == null ? null : request.userInput();
-            this.lastProfileContext = request == null ? Map.of() : new LinkedHashMap<>(request.safeProfileContext());
-            return result;
         }
     }
 

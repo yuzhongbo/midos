@@ -17,7 +17,6 @@ final class PlannerSignalCollector {
     private static final int DEFAULT_HEURISTIC_LIMIT = 4;
 
     private final SkillCatalogFacade skillEngine;
-    private final DispatchRuleCatalog dispatchRuleCatalog;
     private final SkillDslParser skillDslParser;
     private final int heuristicLimit;
     private final List<String> searchPriorityOrder;
@@ -32,7 +31,6 @@ final class PlannerSignalCollector {
 
     PlannerSignalCollector(SkillCatalogFacade skillEngine, int heuristicLimit) {
         this.skillEngine = skillEngine;
-        this.dispatchRuleCatalog = new DispatchRuleCatalog(skillEngine);
         this.skillDslParser = new SkillDslParser(new SkillDslValidator());
         this.heuristicLimit = Math.max(1, heuristicLimit);
         this.searchPriorityOrder = parsePriorityOrder(System.getProperty("mindos.dispatcher.parallel-routing.search-priority-order"));
@@ -43,7 +41,6 @@ final class PlannerSignalCollector {
         List<DecisionSignal> signals = new ArrayList<>();
         addExplicitSignals(signals, safeInput.userInput(), safeInput.skillContext());
         addContextSignals(signals, safeInput.skillContext());
-        addRuleSignals(signals, safeInput.userInput());
         addHeuristicSignals(signals, effectiveInput(safeInput.userInput(), safeInput.skillContext()));
         return signals.isEmpty() ? List.of() : List.copyOf(signals);
     }
@@ -76,10 +73,6 @@ final class PlannerSignalCollector {
         double semanticConfidence = semanticConfidence(attributes);
         addSignal(signals, stringValue(attributes.get(SemanticAnalysisResult.ATTR_SUGGESTED_SKILL)), semanticConfidence, "semantic");
         addSignal(signals, stringValue(attributes.get(SemanticAnalysisResult.ATTR_INTENT)), Math.max(0.60, semanticConfidence - 0.05), "semantic");
-    }
-
-    private void addRuleSignals(List<DecisionSignal> signals, String userInput) {
-        dispatchRuleCatalog.recommendFallbackSignals(userInput).forEach(signals::add);
     }
 
     private void addHeuristicSignals(List<DecisionSignal> signals, String input) {

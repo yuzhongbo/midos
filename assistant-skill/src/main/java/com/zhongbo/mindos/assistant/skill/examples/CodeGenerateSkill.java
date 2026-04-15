@@ -96,30 +96,29 @@ final class CodeGenerateSkillExecutor {
         if (taskDescription == null || taskDescription.isBlank()) {
             return SkillResult.failure(name(), "请提供 task 参数，我才能生成对应代码。");
         }
+        if (llmClient == null) {
+            return SkillResult.failure(name(), "code.generate 需要可用的 LLM 配置，当前无法生成代码。");
+        }
         String style = text(resolved.get("style"));
         String language = text(resolved.get("language"));
-        if (llmClient != null) {
-            try {
-                StringBuilder prompt = new StringBuilder("你是一个代码生成助手，请根据如下任务描述生成代码，仅输出代码内容。任务描述：")
-                        .append(taskDescription);
-                if (!style.isBlank()) {
-                    prompt.append("。编码风格偏好：").append(style);
-                }
-                if (!language.isBlank()) {
-                    prompt.append("。输出语言偏好：").append(language);
-                }
-                String llmReply = llmClient.generateResponse(prompt.toString(), buildLlmContext(context, taskDescription));
-                if (isUsableLlmReply(llmReply)) {
-                    return SkillResult.success(name(), llmReply.trim());
-                }
-            } catch (Exception ex) {
-                LOGGER.log(Level.WARNING, "LLM call failed for code.generate skill, fallback to local output", ex);
+        try {
+            StringBuilder prompt = new StringBuilder("你是一个代码生成助手，请根据如下任务描述生成代码，仅输出代码内容。任务描述：")
+                    .append(taskDescription);
+            if (!style.isBlank()) {
+                prompt.append("。编码风格偏好：").append(style);
             }
+            if (!language.isBlank()) {
+                prompt.append("。输出语言偏好：").append(language);
+            }
+            String llmReply = llmClient.generateResponse(prompt.toString(), buildLlmContext(context, taskDescription));
+            if (isUsableLlmReply(llmReply)) {
+                return SkillResult.success(name(), llmReply.trim());
+            }
+            return SkillResult.failure(name(), "code.generate 未获得可用的 LLM 结果，请检查模型配置后重试。");
+        } catch (Exception ex) {
+            LOGGER.log(Level.WARNING, "LLM call failed for code.generate skill", ex);
+            return SkillResult.failure(name(), "code.generate 调用 LLM 失败：" + ex.getMessage());
         }
-        String output = "我先给你一个可落地的代码起步方案：\n"
-                + "- 任务目标：" + taskDescription + "\n"
-                + "- 下一步：告诉我你希望的语言、框架或输入输出示例，我会直接补成完整代码。";
-        return SkillResult.success(name(), output);
     }
 
     private Map<String, Object> buildLlmContext(SkillContext context, String taskDescription) {

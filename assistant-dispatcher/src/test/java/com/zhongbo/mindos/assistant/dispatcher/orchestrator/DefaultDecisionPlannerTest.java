@@ -63,7 +63,7 @@ class DefaultDecisionPlannerTest {
     }
 
     @Test
-    void shouldMoveEchoRuleFallbackIntoPlanner() {
+    void shouldClarifyWhenNoSignalsSelectEcho() {
         DefaultDecisionPlanner planner = new DefaultDecisionPlanner(new StubSkillCatalogFacade());
 
         Decision decision = planner.plan(
@@ -71,14 +71,13 @@ class DefaultDecisionPlannerTest {
                 List.of()
         );
 
-        assertEquals("echo", decision.target());
-        assertEquals("hello planner", decision.params().get("text"));
-        assertEquals("rule-fallback", decision.params().get("_plannerRouteSource"));
-        assertEquals(0.75, decision.confidence());
+        assertTrue(decision.requireClarify());
+        assertEquals("", decision.target());
+        assertEquals("需要更多信息才能确定执行目标。", decision.params().get("_planner.clarifyMessage"));
     }
 
     @Test
-    void shouldMoveTeachingPlanRuleFallbackIntoPlanner() {
+    void shouldClarifyWhenNoSignalsSelectTeachingPlan() {
         DefaultDecisionPlanner planner = new DefaultDecisionPlanner(new StubSkillCatalogFacade());
 
         Decision decision = planner.plan(
@@ -86,9 +85,9 @@ class DefaultDecisionPlannerTest {
                 List.of()
         );
 
-        assertEquals("teaching.plan", decision.target());
-        assertEquals("rule-fallback", decision.params().get("_plannerRouteSource"));
-        assertTrue(decision.params().containsKey("topic"));
+        assertTrue(decision.requireClarify());
+        assertEquals("", decision.target());
+        assertEquals("需要更多信息才能确定执行目标。", decision.params().get("_planner.clarifyMessage"));
     }
 
     private static final class StubSkillCatalogFacade implements SkillCatalogFacade {
