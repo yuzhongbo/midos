@@ -46,6 +46,7 @@ public final class NewsSearchCommandSupport {
     }
 
     public String normalizeQuery(String rawQuery) {
+        String original = rawQuery == null ? "" : rawQuery;
         String candidate = rawQuery == null ? "" : rawQuery.trim();
         if (candidate.isBlank()) {
             return "";
@@ -62,7 +63,11 @@ public final class NewsSearchCommandSupport {
         candidate = LEADING_TOPIC_CONNECTOR_PATTERN.matcher(candidate).replaceFirst("").trim();
         candidate = TRAILING_NEWS_NOISE_PATTERN.matcher(candidate).replaceFirst("").trim();
         candidate = LEADING_TOPIC_CONNECTOR_PATTERN.matcher(candidate).replaceFirst("").trim();
-        return candidate.replaceAll("\\s+", " ").trim();
+        candidate = candidate.replaceAll("\\s+", " ").trim();
+        if (candidate.isBlank() && containsNewsHint(original)) {
+            return "新闻";
+        }
+        return candidate;
     }
 
     private String resolveQuery(SkillContext context) {
@@ -257,6 +262,11 @@ public final class NewsSearchCommandSupport {
             }
         }
         return false;
+    }
+
+    private boolean containsNewsHint(String text) {
+        String normalized = normalize(text);
+        return containsAny(normalized, "新闻", "资讯", "消息", "头条", "热点", "热搜", "news", "headline");
     }
 
     private String normalize(String value) {

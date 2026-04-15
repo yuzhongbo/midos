@@ -117,13 +117,13 @@ class ChatControllerTest {
     }
 
     @Test
-    void shouldAutoRouteChineseRealtimeNewsToPreferredMcpSearchSkill() throws Exception {
+    void shouldAutoRouteChineseRealtimeNewsToBuiltInNewsSearchByDefault() throws Exception {
         mockMvc.perform(post("/chat")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"userId\":\"news-user\",\"message\":\"今天新闻\"}"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.channel").value("mcp.qwensearch.webSearch"))
-                .andExpect(jsonPath("$.reply").value(org.hamcrest.Matchers.containsString("Qwen MCP news result")));
+                .andExpect(jsonPath("$.channel").value("news_search"))
+                .andExpect(jsonPath("$.reply").value(org.hamcrest.Matchers.containsString("[news_search]")));
     }
 
     @Test

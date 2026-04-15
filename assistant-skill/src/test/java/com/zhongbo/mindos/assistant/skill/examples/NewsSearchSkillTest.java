@@ -333,6 +333,40 @@ class NewsSearchSkillTest {
     }
 
     @Test
+    void shouldFallbackToGenericNewsKeywordForPlainNewsRequest() {
+        NewsSearchSkill skill = new NewsSearchSkill(
+                (prompt, context) -> "{\"summary\":\"摘要\"}",
+                (url, timeoutMs) -> """
+                        <rss><channel>
+                          <item>
+                            <title>今日头条精选</title>
+                            <link>https://36kr.example/daily-headlines</link>
+                            <description>今日新闻整理</description>
+                            <pubDate>Fri, 03 Apr 2026 11:00:00 GMT</pubDate>
+                          </item>
+                        </channel></rss>
+                        """,
+                true,
+                "https://36kr.com/feed",
+                3000,
+                300,
+                64,
+                8,
+                true,
+                "local",
+                "cost",
+                "gemma3:1b-it-q4_K_M",
+                220
+        );
+
+        SkillResult result = skill.run(newsContext("u1", "今天新闻"));
+
+        assertTrue(result.success());
+        assertTrue(result.output().contains("关键词: 新闻"));
+        assertTrue(result.output().contains("1. 标题: 今日头条精选"));
+    }
+
+    @Test
     void shouldPreferConfiguredSearchSourcesWhenNoExplicitSourceIsProvided() throws Exception {
         AtomicInteger feedFetchCount = new AtomicInteger();
         AtomicInteger searchRequestCount = new AtomicInteger();
