@@ -13,6 +13,8 @@ set "STARTER=%INSTALL_DIR%\mindos-server.bat"
 set "ENV_FILE=%INSTALL_DIR%\mindos-server.env.bat"
 set "SMOKE=%INSTALL_DIR%\mindos-server-smoke.bat"
 set "SECRETS_FILE=%INSTALL_DIR%\mindos-secrets.properties"
+set "ENV_TEMPLATE=%REPO_DIR%\templates\env\mindos-server.env.template.bat"
+set "SECRETS_TEMPLATE=%REPO_DIR%\templates\secrets\mindos-secrets.properties.example"
 
 where java >nul 2>nul
 if errorlevel 1 (
@@ -42,43 +44,11 @@ if not exist "%API_MODULE%\target\%JAR_NAME%" (
 if not exist "%INSTALL_DIR%" mkdir "%INSTALL_DIR%"
 if not exist "%INSTALL_DIR%\logs" mkdir "%INSTALL_DIR%\logs"
 if not exist "%SECRETS_FILE%" (
-  (
-    echo # 编辑右侧值，# 或 ; 开头为注释
-    echo # 推荐：只改 MINDOS_MODEL_PRESET，不要手改 provider map
-    echo # 可选值：OPENROUTER_INTENT / QWEN_STABLE / DOUBAO_STABLE / LOCAL_QWEN
-    echo MINDOS_MODEL_PRESET=OPENROUTER_INTENT
-    echo MINDOS_OPENROUTER_KEY=REPLACE_WITH_OPENROUTER_KEY
-    echo MINDOS_QWEN_KEY=REPLACE_WITH_QWEN_KEY
-    echo MINDOS_QWEN_MODEL=qwen3.6-plus
-    echo MINDOS_DOUBAO_ARK_KEY=
-    echo MINDOS_DOUBAO_ENDPOINT_ID=
-    echo MINDOS_LOCAL_LLM_ENDPOINT=http://localhost:11434/api/chat
-    echo MINDOS_LOCAL_LLM_MODEL=gemma3:1b-it-q4_K_M
-    echo.
-    echo # 钉钉 stream 模式（长连接收消息 + 会话回推）
-    echo MINDOS_IM_DINGTALK_STREAM_CLIENT_ID=
-    echo MINDOS_IM_DINGTALK_STREAM_CLIENT_SECRET=
-    echo MINDOS_IM_DINGTALK_OUTBOUND_ROBOT_CODE=
-    echo MINDOS_IM_DINGTALK_STREAM_WAITING_DELAY_MS=1200
-    echo MINDOS_IM_DINGTALK_STREAM_WAITING_TEXT=处理中，请稍候。
-    echo MINDOS_IM_DINGTALK_STREAM_FORCE_WAITING=false
-    echo MINDOS_IM_DINGTALK_MESSAGE_CARD_ENABLED=true
-    echo MINDOS_IM_DINGTALK_MESSAGE_UPDATE_ENABLED=true
-    echo MINDOS_IM_DINGTALK_CARD_UPDATE_MIN_INTERVAL_MS=250
-    echo MINDOS_IM_DINGTALK_CARD_UPDATE_MIN_DELTA_CHARS=24
-    echo MINDOS_IM_DINGTALK_AGENT_STATUS_ENABLED=true
-    echo MINDOS_IM_DINGTALK_TOKEN_MONITOR_ENABLED=true
-    echo MINDOS_IM_DINGTALK_OUTBOUND_UPDATE_URL=https://api.dingtalk.com/v1.0/im/chat/messages/update
-    echo.
-    echo # 可选 outbound 覆盖；留空则复用上面的 stream clientId/clientSecret
-    echo MINDOS_IM_DINGTALK_OUTBOUND_APP_KEY=
-    echo MINDOS_IM_DINGTALK_OUTBOUND_APP_SECRET=
-    echo MINDOS_IM_DINGTALK_OUTBOUND_SEND_URL=https://api.dingtalk.com/v1.0/im/chat/messages/send
-    echo.
-    echo # 兼容旧变量名（若你已有旧配置，可取消注释后继续使用）
-    echo # MINDOS_IM_DINGTALK_APP_KEY=
-    echo # MINDOS_IM_DINGTALK_APP_SECRET=
-  ) > "%SECRETS_FILE%"
+  copy "%SECRETS_TEMPLATE%" "%SECRETS_FILE%" /Y >nul
+  if errorlevel 1 (
+    echo [MindOS] 复制 secrets 模板失败：%SECRETS_TEMPLATE%
+    exit /b 1
+  )
 )
 
 copy "%API_MODULE%\target\%JAR_NAME%" "%INSTALL_DIR%\" /Y >nul
@@ -88,9 +58,9 @@ if errorlevel 1 (
 )
 
 if not exist "%ENV_FILE%" (
-  copy "%REPO_DIR%mindos-server.env.template.bat" "%ENV_FILE%" /Y >nul
+  copy "%ENV_TEMPLATE%" "%ENV_FILE%" /Y >nul
   if errorlevel 1 (
-    echo [MindOS] 复制环境模板失败：%REPO_DIR%mindos-server.env.template.bat
+    echo [MindOS] 复制环境模板失败：%ENV_TEMPLATE%
     exit /b 1
   )
 )

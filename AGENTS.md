@@ -104,8 +104,8 @@ This repository is a lightweight, single-user personal AI assistant backend. Opt
 - Run API locally: `./mvnw -pl assistant-api -am spring-boot:run -Dspring-boot.run.jvmArguments=-Dfile.encoding=UTF-8`
 - Run API locally in solo profile: `./mvnw -pl assistant-api -am spring-boot:run -Dspring-boot.run.profiles=solo -Dspring-boot.run.jvmArguments=-Dfile.encoding=UTF-8`
 - Solo helper scripts: `./scripts/unix/local/run-mindos-solo.sh`, `./scripts/unix/local/solo-cli.sh`, `./scripts/unix/local/solo-smoke.sh`, `./scripts/unix/local/solo-stop.sh` (CLI semantics unchanged)
-- Local env-layered startup: `./scripts/unix/local/run-local.sh` (loads `dist/mindos-windows-server/mindos-secrets.properties` first, then optional `mindos-secrets.local.properties`; supports `--dry-run` and `--strict`)
-- Release env-layered startup/preflight: `./scripts/unix/local/run-release.sh` (loads dist secrets first, then optional `mindos-secrets.release.properties`; release mode is strict and supports `--dry-run`)
+- Local env-layered startup: `./scripts/unix/local/run-local.sh` (loads `dist/mindos-windows-server/mindos-secrets.properties` first, then optional `config/secrets/mindos-secrets.local.properties`; supports `--dry-run` and `--strict`)
+- Release env-layered startup/preflight: `./scripts/unix/local/run-release.sh` (loads dist secrets first, then optional `config/secrets/mindos-secrets.release.properties`; release mode is strict and supports `--dry-run`)
 - Secrets/map preflight: `./scripts/check-secrets.sh --mode=local` or `./scripts/check-secrets.sh --mode=release`
 - Build all modules: `./mvnw clean package`
 - Export Windows bundle: `./scripts/unix/export/export-mindos-windows-dist.sh ./dist/mindos-windows-server` (set `SKIP_TESTS=0` to package with tests)

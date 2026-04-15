@@ -141,20 +141,45 @@ run_ssh "mkdir -p '$REMOTE_RELEASE_DIR' '$REMOTE_BASE_DIR/logs' '$REMOTE_BASE_DI
 
 # 可选：将 release secrets 上传到远端主机。控制参数：
 #   UPLOAD_SECRETS=1               => 尝试上传发布用的 secrets
-#   MINDOS_RELEASE_SECRETS_FILE    => 本地的 release secrets 路径（默认：$ROOT_DIR/mindos-secrets.release.properties）
-#   SECRETS_REMOTE_PATH            => 远端写入路径（默认：$REMOTE_BASE_DIR/mindos-secrets.release.properties）
+#   MINDOS_RELEASE_SECRETS_FILE    => 本地的 release secrets 路径（默认：$ROOT_DIR/config/secrets/mindos-secrets.release.properties）
+#   SECRETS_REMOTE_PATH            => 远端写入路径（默认：$REMOTE_BASE_DIR/config/secrets/mindos-secrets.release.properties）
 #   UPLOAD_SECRETS_FORCE=1         => 强制覆盖远端文件（危险）
 #   UPLOAD_SECRETS_MERGE=1         => 合并缺失/占位键到远端文件（默认，优先保留远端真实值）
 # 行为说明：当远端已存在文件且启用合并时，会保留远端已经有且非占位的值；
 # 否则本地值会替换占位或追加缺失键。上传后会尝试设置远端文件权限为 600。
 UPLOAD_SECRETS="${UPLOAD_SECRETS:-0}"
-SECRETS_FILE="${MINDOS_RELEASE_SECRETS_FILE:-$ROOT_DIR/mindos-secrets.release.properties}"
-SECRETS_REMOTE_PATH="${SECRETS_REMOTE_PATH:-$REMOTE_BASE_DIR/mindos-secrets.release.properties}"
+DEFAULT_SECRETS_FILE="$ROOT_DIR/config/secrets/mindos-secrets.release.properties"
+LEGACY_SECRETS_FILE="$ROOT_DIR/mindos-secrets.release.properties"
+RAW_SECRETS_FILE="${MINDOS_RELEASE_SECRETS_FILE:-}"
+if [[ -n "$RAW_SECRETS_FILE" ]]; then
+  SECRETS_FILE="$RAW_SECRETS_FILE"
+elif [[ -f "$DEFAULT_SECRETS_FILE" || ! -f "$LEGACY_SECRETS_FILE" ]]; then
+  SECRETS_FILE="$DEFAULT_SECRETS_FILE"
+else
+  SECRETS_FILE="$LEGACY_SECRETS_FILE"
+fi
+
+DEFAULT_REMOTE_SECRETS_PATH="$REMOTE_BASE_DIR/config/secrets/mindos-secrets.release.properties"
+LEGACY_REMOTE_SECRETS_PATH="$REMOTE_BASE_DIR/mindos-secrets.release.properties"
+RAW_SECRETS_REMOTE_PATH="${SECRETS_REMOTE_PATH:-}"
+if [[ -n "$RAW_SECRETS_REMOTE_PATH" ]]; then
+  SECRETS_REMOTE_PATH="$RAW_SECRETS_REMOTE_PATH"
+else
+  SECRETS_REMOTE_PATH="$DEFAULT_REMOTE_SECRETS_PATH"
+fi
+
+SECRETS_REMOTE_DIR="$(dirname "$SECRETS_REMOTE_PATH")"
 UPLOAD_SECRETS_FORCE="${UPLOAD_SECRETS_FORCE:-0}"
 UPLOAD_SECRETS_MERGE="${UPLOAD_SECRETS_MERGE:-1}"
 
 if [[ "$UPLOAD_SECRETS" == "1" ]]; then
+  if [[ -z "$RAW_SECRETS_REMOTE_PATH" ]] \
+    && run_ssh "[ -f '$LEGACY_REMOTE_SECRETS_PATH' ] && [ ! -f '$DEFAULT_REMOTE_SECRETS_PATH' ] && echo yes || echo no" | grep -q yes; then
+    SECRETS_REMOTE_PATH="$LEGACY_REMOTE_SECRETS_PATH"
+    SECRETS_REMOTE_DIR="$(dirname "$SECRETS_REMOTE_PATH")"
+  fi
   echo "[INFO] Secrets upload requested. Local: $SECRETS_FILE  Remote: $SECRETS_REMOTE_PATH"
+  run_ssh "mkdir -p '$SECRETS_REMOTE_DIR'"
 
   # 检查本地 secrets 文件是否存在，否则报错
   if [[ ! -f "$SECRETS_FILE" ]]; then

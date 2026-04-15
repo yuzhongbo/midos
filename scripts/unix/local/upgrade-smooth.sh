@@ -8,7 +8,15 @@ MEMORY_DIR="$ROOT_DIR/data/memory-sync"
 source "$ROOT_DIR/scripts/unix/lib/mindos-env.sh"
 
 DIST_SECRETS_FILE="$ROOT_DIR/dist/mindos-windows-server/mindos-secrets.properties"
-LOCAL_OVERRIDE_FILE="${MINDOS_LOCAL_SECRETS_FILE:-$ROOT_DIR/mindos-secrets.local.properties}"
+DEFAULT_LOCAL_OVERRIDE_FILE="$ROOT_DIR/config/secrets/mindos-secrets.local.properties"
+LEGACY_LOCAL_OVERRIDE_FILE="$ROOT_DIR/mindos-secrets.local.properties"
+RAW_LOCAL_OVERRIDE_FILE="${MINDOS_LOCAL_SECRETS_FILE:-}"
+LOCAL_OVERRIDE_FILE="$DEFAULT_LOCAL_OVERRIDE_FILE"
+if [[ -n "$RAW_LOCAL_OVERRIDE_FILE" ]]; then
+  LOCAL_OVERRIDE_FILE="$RAW_LOCAL_OVERRIDE_FILE"
+elif [[ ! -f "$LOCAL_OVERRIDE_FILE" && -f "$LEGACY_LOCAL_OVERRIDE_FILE" ]]; then
+  LOCAL_OVERRIDE_FILE="$LEGACY_LOCAL_OVERRIDE_FILE"
+fi
 API_BASE_URL="${MINDOS_UPGRADE_API_BASE_URL:-${MINDOS_SERVER_BASE_URL:-http://localhost:${MINDOS_SERVER_PORT:-8080}}}"
 ADMIN_TOKEN_HEADER_NAME="${MINDOS_SECURITY_RISKY_OPS_ADMIN_TOKEN_HEADER:-X-MindOS-Admin-Token}"
 ADMIN_TOKEN_VALUE="${MINDOS_SECURITY_RISKY_OPS_ADMIN_TOKEN:-}"
@@ -224,4 +232,3 @@ Next step:
   1) Restart or replace the running process with the new version.
   2) Re-run the health check if you want to confirm the node remains ready.
 EOF
-

@@ -80,8 +80,8 @@ mindos-cli -> assistant-sdk -> assistant-common
 # 1）先做回归
 ./mvnw -q test
 
-# 2）创建本地覆盖文件
-cp mindos-secrets.local.properties.example mindos-secrets.local.properties
+# 2）生成对齐后的本地覆盖文件
+./scripts/unix/export/export-mindos-secrets.sh --template local ./config/secrets/mindos-secrets.local.properties
 
 # 3）检查本地配置是否有效
 chmod +x ./scripts/unix/local/run.sh ./scripts/check-secrets.sh
@@ -252,16 +252,16 @@ AutonomousGoalRunResult result = agentLoop.runGoal(
 1. `assistant-api/src/main/resources/application.properties`：仓库默认值
 2. `application-solo.properties` 或其他 profile：profile 级默认值
 3. `dist/mindos-windows-server/mindos-secrets.properties`：分发包默认值
-4. `mindos-secrets.local.properties`：本地覆盖
-5. `mindos-secrets.release.properties`：发布覆盖
+4. `config/secrets/mindos-secrets.local.properties`：本地覆盖
+5. `config/secrets/mindos-secrets.release.properties`：发布覆盖
 6. 环境变量：最终覆盖层
 
 `./scripts/unix/local/run.sh --mode=local` 的加载顺序是：
 
 1. `dist/mindos-windows-server/mindos-secrets.properties`
-2. `mindos-secrets.local.properties`（若存在）
+2. `config/secrets/mindos-secrets.local.properties`（若存在）
 
-`./scripts/unix/local/run.sh --mode=release` 会加载 dist 文件和 `mindos-secrets.release.properties`，并在当前 preset 缺少必填密钥或激活字段仍保留占位值时直接失败。`run-local.sh` / `run-release.sh` 仍然保留为兼容包装脚本。
+`./scripts/unix/local/run.sh --mode=release` 会加载 dist 文件和 `config/secrets/mindos-secrets.release.properties`，并在当前 preset 缺少必填密钥或激活字段仍保留占位值时直接失败。`run-local.sh` / `run-release.sh` 仍然保留为兼容包装脚本。
 
 ### 模型预设快捷切换
 
@@ -272,10 +272,14 @@ AutonomousGoalRunResult result = agentLoop.runGoal(
 | `OPENROUTER_INTENT` | OpenRouter 意图栈（`gpt` / `grok` / `gemini`）+ 可选 qwen 回退 | `MINDOS_OPENROUTER_KEY`，可选 `MINDOS_QWEN_KEY` |
 | `QWEN_STABLE` | 仅 qwen | `MINDOS_QWEN_KEY` |
 | `DOUBAO_STABLE` | 仅 doubao | `MINDOS_DOUBAO_ARK_KEY`、`MINDOS_DOUBAO_ENDPOINT_ID` |
+| `OPENAI_NATIVE` | 仅 openai | `MINDOS_OPENAI_KEY`，可选 `MINDOS_OPENAI_MODEL` |
+| `GEMINI_NATIVE` | 仅 gemini | `MINDOS_GEMINI_KEY`，可选 `MINDOS_GEMINI_MODEL` |
+| `GROK_NATIVE` | 仅 grok | `MINDOS_GROK_KEY`，可选 `MINDOS_GROK_MODEL` |
 | `LOCAL_QWEN` | 本地 OpenAI-compatible 端点优先，qwen 兜底 | `MINDOS_LOCAL_LLM_ENDPOINT`、`MINDOS_LOCAL_LLM_MODEL`，可选 `MINDOS_QWEN_KEY` |
 | `CUSTOM` | 高级手工模式 | 自己填写 map 变量 |
 
 `MINDOS_LLM_PROFILE` 仍兼容旧配置；现在脚本会自动把 `MINDOS_MODEL_PRESET` 归一化到现有 runtime profile。
+每个 preset 模板现在也都会显式暴露 `MINDOS_LLM_ENDPOINT_OPENROUTER`、`MINDOS_LLM_ENDPOINT_QWEN`、`MINDOS_LLM_ENDPOINT_DOUBAO`、`MINDOS_LLM_ENDPOINT_OPENAI`、`MINDOS_LLM_ENDPOINT_GEMINI`、`MINDOS_LLM_ENDPOINT_GROK` 这些接口地址覆盖项。如果你要完全手工控制路由，则切到 `CUSTOM` 并填写 `MINDOS_LLM_PROVIDER_ENDPOINTS`、`MINDOS_LLM_PROVIDER_KEYS` 等 map。
 
 ### Spring 配置名与环境变量的对应关系
 
@@ -405,9 +409,10 @@ Spring Boot relaxed binding 生效，例如：
 
 ### IM 环境变量与模板说明
 
-- `mindos-server.env.template.sh` 和 `.bat` 已经预置了常见 **钉钉** 运行时变量，例如 `MINDOS_IM_DINGTALK_STREAM_CLIENT_ID`、`MINDOS_IM_DINGTALK_STREAM_CLIENT_SECRET`、`MINDOS_IM_DINGTALK_OUTBOUND_ROBOT_CODE` 以及 reply / stream / card 相关开关。
+- `templates/env/mindos-server.env.template.sh` 和 `templates/env/mindos-server.env.template.bat` 已经预置了常见 **钉钉** 运行时变量，例如 `MINDOS_IM_DINGTALK_STREAM_CLIENT_ID`、`MINDOS_IM_DINGTALK_STREAM_CLIENT_SECRET`、`MINDOS_IM_DINGTALK_OUTBOUND_ROBOT_CODE` 以及 reply / stream / card 相关开关。
 - 模板也兼容旧别名 `MINDOS_IM_DINGTALK_APP_KEY` 和 `MINDOS_IM_DINGTALK_APP_SECRET`，并会在可能时自动把 stream 凭据复用到 outbound。
-- **飞书** 和 **微信** 的环境变量没有在模板里显式预置，但 Spring relaxed binding 一样可用。你仍然可以在 `mindos-secrets.local.properties`、`mindos-secrets.release.properties` 或进程环境中提供 `MINDOS_IM_FEISHU_ENABLED`、`MINDOS_IM_FEISHU_SECRET`、`MINDOS_IM_WECHAT_ENABLED`、`MINDOS_IM_WECHAT_TOKEN` 等变量。
+- **飞书** 和 **微信** 的环境变量没有在模板里显式预置，但 Spring relaxed binding 一样可用。你仍然可以在 `config/secrets/mindos-secrets.local.properties`、`config/secrets/mindos-secrets.release.properties` 或进程环境中提供 `MINDOS_IM_FEISHU_ENABLED`、`MINDOS_IM_FEISHU_SECRET`、`MINDOS_IM_WECHAT_ENABLED`、`MINDOS_IM_WECHAT_TOKEN` 等变量。
+- 仓库里提交的配置示例现在统一放在 `templates/secrets/`。
 
 ### IM 最小配置示例
 
@@ -541,23 +546,55 @@ MINDOS_CORUNTIME_MIN_TRUST_TO_AUTONOMY=0.50
 
 ### 本地最小配置示例
 
-`mindos-secrets.local.properties`：
+`config/secrets/mindos-secrets.local.properties`：
 
 ```properties
+MINDOS_SPRING_PROFILE=solo
 MINDOS_MODEL_PRESET=LOCAL_QWEN
-MINDOS_LOCAL_LLM_ENDPOINT=http://localhost:11434/api/chat
-MINDOS_LOCAL_LLM_MODEL=gemma3:1b-it-q4_K_M
+MINDOS_OPENROUTER_KEY=
 MINDOS_QWEN_KEY=
 MINDOS_QWEN_MODEL=qwen3.6-plus
-
-MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_CLARIFY_MIN_CONFIDENCE=0.70
+MINDOS_DOUBAO_ARK_KEY=
+MINDOS_DOUBAO_ENDPOINT_ID=
+MINDOS_LOCAL_LLM_ENDPOINT=http://localhost:11434/api/chat
+MINDOS_LOCAL_LLM_MODEL=gemma3:1b-it-q4_K_M
+MINDOS_LLM_ENDPOINT_OPENROUTER=https://openrouter.ai/api/v1/chat/completions
+MINDOS_LLM_ENDPOINT_QWEN=https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions
+MINDOS_LLM_ENDPOINT_DOUBAO=https://ark.cn-beijing.volces.com/api/v3/chat/completions
+MINDOS_LLM_ENDPOINT_OPENAI=https://api.openai.com/v1/chat/completions
+MINDOS_LLM_ENDPOINT_GEMINI=https://generativelanguage.googleapis.com/v1beta/openai/chat/completions
+MINDOS_LLM_ENDPOINT_GROK=https://api.x.ai/v1/chat/completions
 MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_LOCAL_ESCALATION_ENABLED=false
 MINDOS_DISPATCHER_LOCAL_ESCALATION_ENABLED=false
-
-MINDOS_CORUNTIME_APPROVAL_RISK_THRESHOLD=0.68
-MINDOS_CORUNTIME_MIN_TRUST_TO_AUTONOMY=0.45
-
 MINDOS_SKILLS_SEARCH_SOURCES=
+```
+
+如果你想要完整且与导出脚本一致的模板（包含显式 LLM 接口地址 / key 配置区、MCP / 钉钉占位项和高级 map 注释），直接运行 `./scripts/unix/export/export-mindos-secrets.sh --template local --force ./config/secrets/mindos-secrets.local.properties`。
+
+### 通用 `mindos-secrets.properties` 配置示例
+
+如果你不想区分 local / release 覆盖文件，而是直接维护一份独立运行时配置，可以把 `templates/secrets/mindos-secrets.properties.example` 复制成 `mindos-secrets.properties` 后直接修改。仓库里的这个 example 文件与 `./scripts/unix/export/export-mindos-secrets.sh --template dist` 保持一致。
+
+```properties
+MINDOS_SPRING_PROFILE=solo
+MINDOS_MODEL_PRESET=OPENROUTER_INTENT
+MINDOS_OPENROUTER_KEY=
+MINDOS_QWEN_KEY=
+MINDOS_QWEN_MODEL=qwen3.6-plus
+MINDOS_LOCAL_LLM_ENDPOINT=http://localhost:11434/api/chat
+MINDOS_LOCAL_LLM_MODEL=gemma3:1b-it-q4_K_M
+MINDOS_LLM_ENDPOINT_OPENROUTER=https://openrouter.ai/api/v1/chat/completions
+MINDOS_LLM_ENDPOINT_QWEN=https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions
+MINDOS_LLM_ENDPOINT_DOUBAO=https://ark.cn-beijing.volces.com/api/v3/chat/completions
+MINDOS_LLM_ENDPOINT_OPENAI=https://api.openai.com/v1/chat/completions
+MINDOS_LLM_ENDPOINT_GEMINI=https://generativelanguage.googleapis.com/v1beta/openai/chat/completions
+MINDOS_LLM_ENDPOINT_GROK=https://api.x.ai/v1/chat/completions
+MINDOS_SKILLS_SEARCH_SOURCES=
+MINDOS_IM_DINGTALK_STREAM_CLIENT_ID=
+MINDOS_IM_DINGTALK_STREAM_CLIENT_SECRET=
+MINDOS_IM_DINGTALK_OUTBOUND_ROBOT_CODE=
+MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_LOCAL_ESCALATION_ENABLED=false
+MINDOS_DISPATCHER_LOCAL_ESCALATION_ENABLED=false
 ```
 
 本地 Ollama 快速检查：
@@ -569,20 +606,30 @@ curl http://localhost:11434/api/chat \
 
 如果这里就失败，先修 Ollama；否则 MindOS 可能看起来已经“路由到 local”，但语义分析阶段仍然无法真正产出。
 
-### 通过 export 变量生成 `mindos-secrets.properties`
+### 一条命令生成对齐后的 secrets 文件
 
 ```bash
-export MINDOS_MODEL_PRESET=OPENROUTER_INTENT
-export MINDOS_OPENROUTER_KEY=sk-or-xxxx
-./scripts/unix/export/export-mindos-secrets.sh ./mindos-secrets.properties
+# 本地覆盖：默认写入 LOCAL_QWEN 模板
+./scripts/unix/export/export-mindos-secrets.sh --template local --force ./config/secrets/mindos-secrets.local.properties
 
-export MINDOS_MODEL_PRESET=LOCAL_QWEN
-export MINDOS_LOCAL_LLM_ENDPOINT=http://localhost:11434/api/chat
-export MINDOS_LOCAL_LLM_MODEL=gemma3:1b-it-q4_K_M
-./scripts/unix/export/export-mindos-secrets.sh --force ./mindos-secrets.properties
+# 发布覆盖：默认写入 OPENROUTER_INTENT 模板
+export MINDOS_OPENROUTER_KEY=sk-or-xxxx
+./scripts/unix/export/export-mindos-secrets.sh --template release --force ./config/secrets/mindos-secrets.release.properties
+
+# 示例：预填一个原生 provider 的接口地址和 key
+export MINDOS_MODEL_PRESET=OPENAI_NATIVE
+export MINDOS_LLM_ENDPOINT_OPENAI=https://your-gateway.example.com/v1/chat/completions
+export MINDOS_OPENAI_KEY=sk-xxxx
+./scripts/unix/export/export-mindos-secrets.sh --template dist --force ./dist/mindos-windows-server/mindos-secrets.properties
+
+# dist / 安装目录：生成独立的 mindos-secrets.properties
+./scripts/unix/export/export-mindos-secrets.sh --template dist --force ./dist/mindos-windows-server/mindos-secrets.properties
+
+# 或者直接从仓库里的通用 example 开始
+cp ./templates/secrets/mindos-secrets.properties.example ./mindos-secrets.properties
 ```
 
-同一个命令也可以直接指向 `mindos-secrets.release.properties` 或 `dist/mindos-windows-server/mindos-secrets.properties`，这样三处都会使用同一份精简模板。
+如果你先 export 了其他 `MINDOS_*` 变量，同一个命令也会把这些值写进生成文件，包括 `MINDOS_LLM_ENDPOINT_*`、`MINDOS_OPENAI_KEY` 这类原生 provider key，或者 `MINDOS_LLM_PROVIDER_ENDPOINTS` / `MINDOS_LLM_PROVIDER_KEYS` 这种 CUSTOM map。
 
 ## 验证与部署辅助
 
@@ -604,7 +651,7 @@ export MINDOS_LOCAL_LLM_MODEL=gemma3:1b-it-q4_K_M
 ./scripts/unix/export/export-mindos-windows-dist.sh "$HOME/dist/mindos-windows-server"
 ```
 
-现在不传路径时，会默认导出到仓库里的 `dist/mindos-windows-server`。在 Windows 目标机上，优先修改 `mindos-secrets.properties` 里的 `MINDOS_MODEL_PRESET`，补齐对应密钥，再按 `README-windows-server.txt` 里的说明启动即可。
+现在不传路径时，会默认导出到仓库里的 `dist/mindos-windows-server`。在 Windows 目标机上，优先修改 `mindos-secrets.properties` 里的 `MINDOS_MODEL_PRESET`，补齐对应密钥；如果你走代理 / 网关 / 自托管地址，再覆盖相应的 `MINDOS_LLM_ENDPOINT_*`，然后按 `README-windows-server.txt` 里的说明启动即可。
 Windows 分发包里的 `mindos-secrets.properties` 现在也由同一个精简生成脚本产出，因此单独生成和打包导出的模板保持一致。
 
 云端辅助脚本：

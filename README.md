@@ -77,8 +77,8 @@ mindos-cli -> assistant-sdk -> assistant-common
 # 1) Regression check
 ./mvnw -q test
 
-# 2) Create local override file
-cp mindos-secrets.local.properties.example mindos-secrets.local.properties
+# 2) Create the aligned local override file
+./scripts/unix/export/export-mindos-secrets.sh --template local ./config/secrets/mindos-secrets.local.properties
 
 # 3) Validate effective local config
 chmod +x ./scripts/unix/local/run.sh ./scripts/check-secrets.sh
@@ -249,16 +249,16 @@ Recommended order of configuration sources:
 1. `assistant-api/src/main/resources/application.properties` – repository defaults
 2. `application-solo.properties` or active Spring profiles – profile-specific defaults
 3. `dist/mindos-windows-server/mindos-secrets.properties` – packaged distribution defaults
-4. `mindos-secrets.local.properties` – local machine overrides
-5. `mindos-secrets.release.properties` – release overrides
+4. `config/secrets/mindos-secrets.local.properties` – local machine overrides
+5. `config/secrets/mindos-secrets.release.properties` – release overrides
 6. environment variables – final override layer
 
 `./scripts/unix/local/run.sh --mode=local` loads:
 
 1. `dist/mindos-windows-server/mindos-secrets.properties`
-2. `mindos-secrets.local.properties` (if present)
+2. `config/secrets/mindos-secrets.local.properties` (if present)
 
-`./scripts/unix/local/run.sh --mode=release` loads the dist file plus `mindos-secrets.release.properties` and fails fast when the selected preset still misses required secrets or keeps placeholder values in active fields. `run-local.sh` and `run-release.sh` remain as thin compatibility wrappers.
+`./scripts/unix/local/run.sh --mode=release` loads the dist file plus `config/secrets/mindos-secrets.release.properties` and fails fast when the selected preset still misses required secrets or keeps placeholder values in active fields. `run-local.sh` and `run-release.sh` remain as thin compatibility wrappers.
 
 ### Model preset shortcuts
 
@@ -269,10 +269,14 @@ Prefer switching models with `MINDOS_MODEL_PRESET` instead of manually editing p
 | `OPENROUTER_INTENT` | OpenRouter intent stack (`gpt` / `grok` / `gemini`) with optional qwen fallback | `MINDOS_OPENROUTER_KEY`, optional `MINDOS_QWEN_KEY` |
 | `QWEN_STABLE` | qwen only | `MINDOS_QWEN_KEY` |
 | `DOUBAO_STABLE` | doubao only | `MINDOS_DOUBAO_ARK_KEY`, `MINDOS_DOUBAO_ENDPOINT_ID` |
+| `OPENAI_NATIVE` | openai only | `MINDOS_OPENAI_KEY`, optional `MINDOS_OPENAI_MODEL` |
+| `GEMINI_NATIVE` | gemini only | `MINDOS_GEMINI_KEY`, optional `MINDOS_GEMINI_MODEL` |
+| `GROK_NATIVE` | grok only | `MINDOS_GROK_KEY`, optional `MINDOS_GROK_MODEL` |
 | `LOCAL_QWEN` | local OpenAI-compatible endpoint first, qwen fallback | `MINDOS_LOCAL_LLM_ENDPOINT`, `MINDOS_LOCAL_LLM_MODEL`, optional `MINDOS_QWEN_KEY` |
 | `CUSTOM` | advanced/manual mode | fill the map variables yourself |
 
 Use `MINDOS_LLM_PROFILE` only for backward compatibility; the scripts normalize `MINDOS_MODEL_PRESET` to the existing runtime profiles automatically.
+Every preset template also exposes explicit endpoint overrides such as `MINDOS_LLM_ENDPOINT_OPENROUTER`, `MINDOS_LLM_ENDPOINT_QWEN`, `MINDOS_LLM_ENDPOINT_DOUBAO`, `MINDOS_LLM_ENDPOINT_OPENAI`, `MINDOS_LLM_ENDPOINT_GEMINI`, and `MINDOS_LLM_ENDPOINT_GROK`. If you need full manual routing, switch to `CUSTOM` and fill `MINDOS_LLM_PROVIDER_ENDPOINTS`, `MINDOS_LLM_PROVIDER_KEYS`, and related map variables.
 
 ### Spring property vs environment variable naming
 
@@ -402,9 +406,10 @@ Notes:
 
 ### IM environment variables and templates
 
-- `mindos-server.env.template.sh` and `.bat` already predeclare common **DingTalk** runtime envs such as `MINDOS_IM_DINGTALK_STREAM_CLIENT_ID`, `MINDOS_IM_DINGTALK_STREAM_CLIENT_SECRET`, `MINDOS_IM_DINGTALK_OUTBOUND_ROBOT_CODE`, and the reply / stream / card toggles.
+- `templates/env/mindos-server.env.template.sh` and `templates/env/mindos-server.env.template.bat` already predeclare common **DingTalk** runtime envs such as `MINDOS_IM_DINGTALK_STREAM_CLIENT_ID`, `MINDOS_IM_DINGTALK_STREAM_CLIENT_SECRET`, `MINDOS_IM_DINGTALK_OUTBOUND_ROBOT_CODE`, and the reply / stream / card toggles.
 - The templates also support legacy aliases `MINDOS_IM_DINGTALK_APP_KEY` and `MINDOS_IM_DINGTALK_APP_SECRET`, and auto-fill outbound key/secret from stream credentials when possible.
-- **Feishu** and **WeChat** env vars are not prelisted in the templates, but Spring relaxed binding still works. You can provide `MINDOS_IM_FEISHU_ENABLED`, `MINDOS_IM_FEISHU_SECRET`, `MINDOS_IM_WECHAT_ENABLED`, `MINDOS_IM_WECHAT_TOKEN`, and similar keys in `mindos-secrets.local.properties`, `mindos-secrets.release.properties`, or the process environment.
+- **Feishu** and **WeChat** env vars are not prelisted in the templates, but Spring relaxed binding still works. You can provide `MINDOS_IM_FEISHU_ENABLED`, `MINDOS_IM_FEISHU_SECRET`, `MINDOS_IM_WECHAT_ENABLED`, `MINDOS_IM_WECHAT_TOKEN`, and similar keys in `config/secrets/mindos-secrets.local.properties`, `config/secrets/mindos-secrets.release.properties`, or the process environment.
+- Committed config examples now live under `templates/secrets/`.
 
 ### Minimal IM examples
 
@@ -535,23 +540,55 @@ Important keys:
 
 ### Minimal local config example
 
-`mindos-secrets.local.properties`:
+`config/secrets/mindos-secrets.local.properties`:
 
 ```properties
+MINDOS_SPRING_PROFILE=solo
 MINDOS_MODEL_PRESET=LOCAL_QWEN
-MINDOS_LOCAL_LLM_ENDPOINT=http://localhost:11434/api/chat
-MINDOS_LOCAL_LLM_MODEL=gemma3:1b-it-q4_K_M
+MINDOS_OPENROUTER_KEY=
 MINDOS_QWEN_KEY=
 MINDOS_QWEN_MODEL=qwen3.6-plus
-
-MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_CLARIFY_MIN_CONFIDENCE=0.70
+MINDOS_DOUBAO_ARK_KEY=
+MINDOS_DOUBAO_ENDPOINT_ID=
+MINDOS_LOCAL_LLM_ENDPOINT=http://localhost:11434/api/chat
+MINDOS_LOCAL_LLM_MODEL=gemma3:1b-it-q4_K_M
+MINDOS_LLM_ENDPOINT_OPENROUTER=https://openrouter.ai/api/v1/chat/completions
+MINDOS_LLM_ENDPOINT_QWEN=https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions
+MINDOS_LLM_ENDPOINT_DOUBAO=https://ark.cn-beijing.volces.com/api/v3/chat/completions
+MINDOS_LLM_ENDPOINT_OPENAI=https://api.openai.com/v1/chat/completions
+MINDOS_LLM_ENDPOINT_GEMINI=https://generativelanguage.googleapis.com/v1beta/openai/chat/completions
+MINDOS_LLM_ENDPOINT_GROK=https://api.x.ai/v1/chat/completions
 MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_LOCAL_ESCALATION_ENABLED=false
 MINDOS_DISPATCHER_LOCAL_ESCALATION_ENABLED=false
-
-MINDOS_CORUNTIME_APPROVAL_RISK_THRESHOLD=0.68
-MINDOS_CORUNTIME_MIN_TRUST_TO_AUTONOMY=0.45
-
 MINDOS_SKILLS_SEARCH_SOURCES=
+```
+
+Use `./scripts/unix/export/export-mindos-secrets.sh --template local --force ./config/secrets/mindos-secrets.local.properties` if you want the full aligned template, including explicit LLM endpoint/key sections, MCP / DingTalk placeholders, and commented advanced maps.
+
+### Generic `mindos-secrets.properties` example
+
+If you want a standalone runtime file instead of local/release overrides, copy `templates/secrets/mindos-secrets.properties.example` to `mindos-secrets.properties` and edit it in place. The committed example stays aligned with `./scripts/unix/export/export-mindos-secrets.sh --template dist`.
+
+```properties
+MINDOS_SPRING_PROFILE=solo
+MINDOS_MODEL_PRESET=OPENROUTER_INTENT
+MINDOS_OPENROUTER_KEY=
+MINDOS_QWEN_KEY=
+MINDOS_QWEN_MODEL=qwen3.6-plus
+MINDOS_LOCAL_LLM_ENDPOINT=http://localhost:11434/api/chat
+MINDOS_LOCAL_LLM_MODEL=gemma3:1b-it-q4_K_M
+MINDOS_LLM_ENDPOINT_OPENROUTER=https://openrouter.ai/api/v1/chat/completions
+MINDOS_LLM_ENDPOINT_QWEN=https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions
+MINDOS_LLM_ENDPOINT_DOUBAO=https://ark.cn-beijing.volces.com/api/v3/chat/completions
+MINDOS_LLM_ENDPOINT_OPENAI=https://api.openai.com/v1/chat/completions
+MINDOS_LLM_ENDPOINT_GEMINI=https://generativelanguage.googleapis.com/v1beta/openai/chat/completions
+MINDOS_LLM_ENDPOINT_GROK=https://api.x.ai/v1/chat/completions
+MINDOS_SKILLS_SEARCH_SOURCES=
+MINDOS_IM_DINGTALK_STREAM_CLIENT_ID=
+MINDOS_IM_DINGTALK_STREAM_CLIENT_SECRET=
+MINDOS_IM_DINGTALK_OUTBOUND_ROBOT_CODE=
+MINDOS_DISPATCHER_SEMANTIC_ANALYSIS_LOCAL_ESCALATION_ENABLED=false
+MINDOS_DISPATCHER_LOCAL_ESCALATION_ENABLED=false
 ```
 
 Quick local Ollama check:
@@ -563,20 +600,30 @@ curl http://localhost:11434/api/chat \
 
 If this fails, fix Ollama first; otherwise MindOS may appear routed to `local` while semantic analysis still cannot complete.
 
-### Generate `mindos-secrets.properties` from exported env vars
+### Generate aligned secrets files with one command
 
 ```bash
-export MINDOS_MODEL_PRESET=OPENROUTER_INTENT
-export MINDOS_OPENROUTER_KEY=sk-or-xxxx
-./scripts/unix/export/export-mindos-secrets.sh ./mindos-secrets.properties
+# Local override with LOCAL_QWEN defaults
+./scripts/unix/export/export-mindos-secrets.sh --template local --force ./config/secrets/mindos-secrets.local.properties
 
-export MINDOS_MODEL_PRESET=LOCAL_QWEN
-export MINDOS_LOCAL_LLM_ENDPOINT=http://localhost:11434/api/chat
-export MINDOS_LOCAL_LLM_MODEL=gemma3:1b-it-q4_K_M
-./scripts/unix/export/export-mindos-secrets.sh --force ./mindos-secrets.properties
+# Release override with OPENROUTER_INTENT defaults
+export MINDOS_OPENROUTER_KEY=sk-or-xxxx
+./scripts/unix/export/export-mindos-secrets.sh --template release --force ./config/secrets/mindos-secrets.release.properties
+
+# Example: prefill a native-provider endpoint + key
+export MINDOS_MODEL_PRESET=OPENAI_NATIVE
+export MINDOS_LLM_ENDPOINT_OPENAI=https://your-gateway.example.com/v1/chat/completions
+export MINDOS_OPENAI_KEY=sk-xxxx
+./scripts/unix/export/export-mindos-secrets.sh --template dist --force ./dist/mindos-windows-server/mindos-secrets.properties
+
+# Standalone dist / install secrets file
+./scripts/unix/export/export-mindos-secrets.sh --template dist --force ./dist/mindos-windows-server/mindos-secrets.properties
+
+# Or start from the committed generic example
+cp ./templates/secrets/mindos-secrets.properties.example ./mindos-secrets.properties
 ```
 
-Point the same command at `mindos-secrets.release.properties` or `dist/mindos-windows-server/mindos-secrets.properties` if you want the identical minimal template in those locations.
+Export any other `MINDOS_*` values first if you want the same command to write them into the generated file, including `MINDOS_LLM_ENDPOINT_*`, native provider keys like `MINDOS_OPENAI_KEY`, or full custom maps such as `MINDOS_LLM_PROVIDER_ENDPOINTS` / `MINDOS_LLM_PROVIDER_KEYS`.
 
 ## Validation and deployment helpers
 
@@ -598,7 +645,7 @@ Recommended checks:
 ./scripts/unix/export/export-mindos-windows-dist.sh "$HOME/dist/mindos-windows-server"
 ```
 
-The exported bundle now defaults to the repository `dist/mindos-windows-server` directory when no path is provided. On the target Windows machine, change `MINDOS_MODEL_PRESET` in `mindos-secrets.properties`, fill the matching key(s), and use `README-windows-server.txt` as the runtime cheat sheet.
+The exported bundle now defaults to the repository `dist/mindos-windows-server` directory when no path is provided. On the target Windows machine, change `MINDOS_MODEL_PRESET` in `mindos-secrets.properties`, fill the matching key(s), override any `MINDOS_LLM_ENDPOINT_*` value if you use a proxy/self-hosted gateway, and use `README-windows-server.txt` as the runtime cheat sheet.
 The bundle now renders `mindos-secrets.properties` through the same minimal generator script, so the standalone export command and the packaged template stay aligned.
 
 Cloud helpers:

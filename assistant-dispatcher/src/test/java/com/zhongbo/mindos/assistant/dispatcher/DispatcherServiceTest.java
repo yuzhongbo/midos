@@ -466,6 +466,77 @@ class DispatcherServiceTest {
     }
 
     @Test
+    void shouldKeepBuiltInNewsSearchRawOutputAndReportObservedSearchSource() {
+        Logger logger = Logger.getLogger(DispatcherService.class.getName());
+        CapturingHandler handler = new CapturingHandler();
+        Level previousLevel = logger.getLevel();
+        boolean previousUseParentHandlers = logger.getUseParentHandlers();
+        logger.setLevel(Level.INFO);
+        logger.addHandler(handler);
+        logger.setUseParentHandlers(false);
+        try {
+            MemoryManager memoryManager = createMemoryManager();
+            RecordingLlmClient llmClient = new RecordingLlmClient(List.of("不应被调用的 postprocess"));
+            String rawNewsOutput = """
+                    [news_search]
+                    关键词: 科技新闻
+                    主题: 科技
+                    热点关键词: AI、芯片
+                    摘要: 这是实时搜索返回的摘要。
+                    上下文总结: 当前更关注科技和产业动态。
+                    来源: Serper
+                    排序: latest
+                    
+                    1. Serper AI 观察 [Serper]
+                       https://example.com/ai
+                    """.trim();
+            DispatcherService service = createDispatcher(
+                    memoryManager,
+                    llmClient,
+                    List.of(scriptedSkill(
+                            "news_search",
+                            "Search latest news",
+                            List.of("新闻", "latest", "realtime", "科技"),
+                            context -> SkillResult.success("news_search", rawNewsOutput)
+                    )),
+                    2,
+                    "auto",
+                    0,
+                    "time",
+                    "",
+                    "",
+                    "",
+                    "",
+                    false,
+                    "",
+                    true,
+                    "news_search,mcp.*",
+                    "",
+                    ""
+            );
+
+            DispatchResult result = service.dispatch("news-user", "查看今天新闻 科技");
+
+            assertEquals("news_search", result.channel());
+            assertEquals(rawNewsOutput, result.reply());
+            assertTrue(llmClient.finalizeContexts().isEmpty(), "built-in news_search should not be dispatcher-postprocessed");
+
+            String logs = String.join("\n", handler.messages());
+            assertTrue(logs.contains("\"searchSource\":\"serper\""), logs);
+            assertTrue(logs.contains("\"actualSearchSource\":\"serper\""), logs);
+            assertTrue(logs.contains("\"searchAttempted\":true"), logs);
+            assertTrue(logs.contains("\"searchStatus\":\"success\""), logs);
+            assertTrue(logs.contains("\"selectedSkill\":\"news_search\""), logs);
+            assertTrue(logs.contains("\"postprocessSent\":false"), logs);
+            assertTrue(logs.contains("\"finalChannel\":\"news_search\""), logs);
+        } finally {
+            logger.removeHandler(handler);
+            logger.setLevel(previousLevel);
+            logger.setUseParentHandlers(previousUseParentHandlers);
+        }
+    }
+
+    @Test
     void shouldUseNewsSpecificFinalizePromptForRealtimeMcpSearch() {
         MemoryManager memoryManager = createMemoryManager();
         RecordingLlmClient llmClient = new RecordingLlmClient(List.of("整理后的新闻简报"));

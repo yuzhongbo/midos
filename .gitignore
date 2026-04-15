@@ -40,3 +40,5 @@ logs/
 env.bat
 mindos-secrets.local.properties
 mindos-secrets.release.properties
+config/secrets/mindos-secrets.local.properties
+config/secrets/mindos-secrets.release.properties

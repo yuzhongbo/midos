@@ -803,23 +803,34 @@ public class DispatcherService implements ContextCompressionMetricsReader,
                                         boolean memoryDirectBypassed) {
         RoutingDecisionDto routing = trace == null ? null : trace.routing();
         String selectedSkill = routing == null ? "" : normalizeOptional(routing.selectedSkill());
+        String tracedActualSearchSource = extractTraceValue(trace, "actualSearchSource");
         String searchSource = dispatchLlmSupport.classifyMcpSearchSource(!selectedSkill.isBlank() ? selectedSkill : finalChannel);
-        String actualSearchSource = searchSource;
-        boolean searchAttempted = !searchSource.isBlank();
+        if (searchSource.isBlank()) {
+            searchSource = tracedActualSearchSource;
+        }
+        String actualSearchSource = tracedActualSearchSource.isBlank() ? searchSource : tracedActualSearchSource;
+        boolean builtinNewsSearch = "news_search".equalsIgnoreCase(firstNonBlank(selectedSkill, finalChannel));
+        boolean searchAttempted = builtinNewsSearch || !actualSearchSource.isBlank();
         String searchStatus = resolveSearchStatus(searchAttempted, selectedSkill, finalChannel, trace, finalResultSuccess);
         boolean fallbackUsed = trace != null && trace.replanCount() > 0;
+        String loggedSearchSource = searchSource;
+        String loggedActualSearchSource = actualSearchSource;
+        boolean loggedSearchAttempted = searchAttempted;
+        String loggedSearchStatus = searchStatus;
+        String loggedSelectedSkill = selectedSkill;
+        boolean loggedFallbackUsed = fallbackUsed;
         LOGGER.info(() -> "{\"event\":\"dispatcher.final.trace\",\"userId\":\""
                 + (userId == null ? "" : userId)
                 + "\",\"searchSource\":\""
-                + searchSource
+                + loggedSearchSource
                 + "\",\"actualSearchSource\":\""
-                + actualSearchSource
+                + loggedActualSearchSource
                 + "\",\"searchAttempted\":"
-                + searchAttempted
+                + loggedSearchAttempted
                 + ",\"searchStatus\":\""
-                + searchStatus
+                + loggedSearchStatus
                 + "\",\"selectedSkill\":\""
-                + selectedSkill
+                + loggedSelectedSkill
                 + "\",\"postprocessSent\":"
                 + skillPostprocessSent
                 + ",\"realtimeLookup\":"
@@ -827,7 +838,7 @@ public class DispatcherService implements ContextCompressionMetricsReader,
                 + ",\"memoryDirectBypassed\":"
                 + memoryDirectBypassed
                 + ",\"fallbackUsed\":"
-                + fallbackUsed
+                + loggedFallbackUsed
                 + ",\"finalChannel\":\""
                 + normalizeOptional(finalChannel)
                 + "\"}");
@@ -891,7 +902,14 @@ public class DispatcherService implements ContextCompressionMetricsReader,
     }
 
     private boolean isHermesSkillPostprocessSent(DispatchResult result) {
-        if (!skillFinalizeWithLlmEnabled || result == null) {
+        if (result == null) {
+            return false;
+        }
+        String observed = extractTraceValue(result.executionTrace(), "skillPostprocessSent");
+        if (!observed.isBlank()) {
+            return Boolean.parseBoolean(observed);
+        }
+        if (!skillFinalizeWithLlmEnabled) {
             return false;
         }
         String selected = result.executionTrace() == null || result.executionTrace().routing() == null
@@ -902,19 +920,22 @@ public class DispatcherService implements ContextCompressionMetricsReader,
     }
 
     private boolean extractTraceBoolean(DispatchResult result, String key) {
-        if (result == null
-                || result.executionTrace() == null
-                || result.executionTrace().routing() == null
-                || result.executionTrace().routing().reasons() == null) {
-            return false;
+        String observed = extractTraceValue(result == null ? null : result.executionTrace(), key);
+        return !observed.isBlank() && Boolean.parseBoolean(observed);
+    }
+
+    private String extractTraceValue(ExecutionTraceDto trace, String key) {
+        if (trace == null
+                || trace.routing() == null
+                || trace.routing().reasons() == null) {
+            return "";
         }
         String prefix = key + "=";
-        return result.executionTrace().routing().reasons().stream()
+        return trace.routing().reasons().stream()
                 .filter(reason -> reason != null && reason.startsWith(prefix))
                 .map(reason -> reason.substring(prefix.length()))
                 .findFirst()
-                .map(Boolean::parseBoolean)
-                .orElse(false);
+                .orElse("");
     }
 
     private String observedFinalTraceChannel(DispatchResult result) {

@@ -81,14 +81,14 @@ fi
 mkdir -p "$OUTPUT_DIR/logs" "$OUTPUT_DIR/run"
 cp "$JAR_PATH" "$OUTPUT_DIR/$JAR_NAME"
 
-ENV_TEMPLATE="$ROOT_DIR/mindos-server.env.template.bat"
+ENV_TEMPLATE="$ROOT_DIR/templates/env/mindos-server.env.template.bat"
 if [[ ! -f "$ENV_TEMPLATE" ]]; then
   echo "[ERROR] Missing template: $ENV_TEMPLATE"
   exit 1
 fi
 cp "$ENV_TEMPLATE" "$OUTPUT_DIR/mindos-server.env.bat"
 
-"$ROOT_DIR/scripts/unix/export/export-mindos-secrets.sh" --force "$OUTPUT_DIR/mindos-secrets.properties"
+"$ROOT_DIR/scripts/unix/export/export-mindos-secrets.sh" --force --template dist "$OUTPUT_DIR/mindos-secrets.properties"
 
 cat > "$OUTPUT_DIR/mindos-server.full.env.bat" <<'BAT'
 @echo off
@@ -123,8 +123,26 @@ set "MINDOS_DOUBAO_ARK_KEY="
 set "MINDOS_DOUBAO_ENDPOINT_ID="
 set "MINDOS_LOCAL_LLM_ENDPOINT=http://localhost:11434/api/chat"
 set "MINDOS_LOCAL_LLM_MODEL=gemma3:1b-it-q4_K_M"
+set "MINDOS_LLM_ENDPOINT_OPENROUTER=https://openrouter.ai/api/v1/chat/completions"
+set "MINDOS_LLM_ENDPOINT_QWEN=https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+set "MINDOS_LLM_ENDPOINT_DOUBAO=https://ark.cn-beijing.volces.com/api/v3/chat/completions"
+set "MINDOS_LLM_ENDPOINT_OPENAI=https://api.openai.com/v1/chat/completions"
+set "MINDOS_LLM_ENDPOINT_GEMINI=https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+set "MINDOS_LLM_ENDPOINT_GROK=https://api.x.ai/v1/chat/completions"
+set "MINDOS_OPENAI_KEY="
+set "MINDOS_OPENAI_MODEL=gpt-4.1"
+set "MINDOS_GEMINI_KEY="
+set "MINDOS_GEMINI_MODEL=gemini-2.5-pro"
+set "MINDOS_GROK_KEY="
+set "MINDOS_GROK_MODEL=grok-4"
 
 REM Advanced manual maps (only when MINDOS_MODEL_PRESET=CUSTOM)
+REM Example manual local/cloud mix:
+REM set "MINDOS_LLM_PROVIDER_ENDPOINTS=local:http://localhost:11434/api/chat,qwen:https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+REM set "MINDOS_LLM_PROVIDER_KEYS=qwen:sk-xxxx"
+REM set "MINDOS_LLM_PROVIDER_MODELS=local:gemma3:1b-it-q4_K_M,qwen:qwen3.6-plus"
+REM set "MINDOS_LLM_ROUTING_STAGE_MAP=llm-dsl:local,llm-fallback:qwen"
+REM set "MINDOS_LLM_ROUTING_PRESET_MAP=cost:local,balanced:local,quality:qwen"
 REM set "MINDOS_LLM_PROVIDER_ENDPOINTS="
 REM set "MINDOS_LLM_PROVIDER_KEYS="
 REM set "MINDOS_LLM_PROVIDER_MODELS="
@@ -411,10 +429,13 @@ MindOS Windows server bundle
 
 1) Edit only mindos-secrets.properties (KEY=value, # for comment):
    - preferred path: change MINDOS_MODEL_PRESET, then fill the matching key(s)
+   - if you use a proxy / gateway / self-hosted URL, override the matching MINDOS_LLM_ENDPOINT_* value too
    - OPENROUTER_INTENT: fill MINDOS_OPENROUTER_KEY, optional MINDOS_QWEN_KEY for fallback
    - QWEN_STABLE: fill MINDOS_QWEN_KEY
    - DOUBAO_STABLE: fill MINDOS_DOUBAO_ARK_KEY + MINDOS_DOUBAO_ENDPOINT_ID
+   - OPENAI_NATIVE / GEMINI_NATIVE / GROK_NATIVE: fill the matching native-provider key, optional model override
    - LOCAL_QWEN: fill local endpoint/model if needed, optional MINDOS_QWEN_KEY for fallback
+   - CUSTOM: fill MINDOS_LLM_PROVIDER_ENDPOINTS / KEYS / MODELS / ROUTING_* yourself
    - for DingTalk stream mode, fill MINDOS_IM_DINGTALK_STREAM_CLIENT_ID, MINDOS_IM_DINGTALK_STREAM_CLIENT_SECRET, and MINDOS_IM_DINGTALK_OUTBOUND_ROBOT_CODE
 
 2) Start service:

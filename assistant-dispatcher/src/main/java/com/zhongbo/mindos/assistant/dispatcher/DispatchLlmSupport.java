@@ -129,6 +129,9 @@ final class DispatchLlmSupport {
         if (channel == null || channel.isBlank() || "llm".equals(channel) || "security.guard".equals(channel)) {
             return SkillFinalizeOutcome.notApplied(result);
         }
+        if ("news_search".equalsIgnoreCase(channel)) {
+            return SkillFinalizeOutcome.notApplied(result);
+        }
         if (!matchesConfiguredSkill(channel, skillFinalizeConfig.skills())) {
             return SkillFinalizeOutcome.notApplied(result);
         }

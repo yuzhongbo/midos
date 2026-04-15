@@ -10,6 +10,7 @@ API_MODULE="assistant-api"
 JAR_NAME="assistant-api-0.1.0-SNAPSHOT.jar"
 INSTALL_DIR="$HOME/.mindos-server"
 ENV_FILE="$INSTALL_DIR/mindos-server.env.sh"
+ENV_TEMPLATE="$REPO_DIR/templates/env/mindos-server.env.template.sh"
 SECRETS_EXPORT_SCRIPT="$REPO_DIR/scripts/unix/export/export-mindos-secrets.sh"
 
 # 构建服务端（默认跑测试，临时加速可导出 SKIP_TESTS=1）
@@ -26,14 +27,14 @@ mkdir -p "$INSTALL_DIR"
 cp "$API_MODULE/target/$JAR_NAME" "$INSTALL_DIR/"
 
 if [[ ! -f "$ENV_FILE" ]]; then
-  cp "$REPO_DIR/mindos-server.env.template.sh" "$ENV_FILE"
+  cp "$ENV_TEMPLATE" "$ENV_FILE"
   chmod +x "$ENV_FILE"
 fi
 
 # 创建 secrets 模板（若已存在则保留用户内容）
 SECRETS_FILE="$INSTALL_DIR/mindos-secrets.properties"
 if [[ ! -f "$SECRETS_FILE" ]]; then
-  "$SECRETS_EXPORT_SCRIPT" "$SECRETS_FILE"
+  "$SECRETS_EXPORT_SCRIPT" --template dist "$SECRETS_FILE"
 fi
 
 # 创建启动脚本，自动加载 secrets
@@ -72,4 +73,4 @@ echo "[MindOS] 服务端安装完成！可用 mindos-server 命令启动。"
 echo "[MindOS] 请先编辑 $SECRETS_FILE, 钉钉 stream 模式请填写 CLIENT_ID / CLIENT_SECRET / OUTBOUND_ROBOT_CODE"
 echo "[MindOS] 推荐：只改 $SECRETS_FILE 里的 MINDOS_MODEL_PRESET（例如 OPENROUTER_INTENT / LOCAL_QWEN / QWEN_STABLE）"
 echo "[MindOS] 如需按当前 export 环境重新生成，可运行："
-echo "  $SECRETS_EXPORT_SCRIPT --force \"$SECRETS_FILE\""
+echo "  $SECRETS_EXPORT_SCRIPT --force --template dist \"$SECRETS_FILE\""

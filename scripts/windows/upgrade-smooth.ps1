@@ -11,14 +11,20 @@ $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = Resolve-Path (Join-Path $scriptDir '..\..')
 $repoRootPath = $repoRoot.Path
 $distSecretsFile = Join-Path $repoRootPath 'dist\mindos-windows-server\mindos-secrets.properties'
+$defaultLocalOverrideFile = Join-Path $repoRootPath 'config\secrets\mindos-secrets.local.properties'
+$legacyLocalOverrideFile = Join-Path $repoRootPath 'mindos-secrets.local.properties'
 $localOverrideFile = if ($env:MINDOS_LOCAL_SECRETS_FILE) {
     if ([System.IO.Path]::IsPathRooted($env:MINDOS_LOCAL_SECRETS_FILE)) {
         $env:MINDOS_LOCAL_SECRETS_FILE
     } else {
         Join-Path $repoRootPath $env:MINDOS_LOCAL_SECRETS_FILE
     }
+} elseif (Test-Path $defaultLocalOverrideFile) {
+    $defaultLocalOverrideFile
+} elseif (Test-Path $legacyLocalOverrideFile) {
+    $legacyLocalOverrideFile
 } else {
-    Join-Path $repoRootPath 'mindos-secrets.local.properties'
+    $defaultLocalOverrideFile
 }
 $memoryDir = Join-Path $repoRootPath 'data\memory-sync'
 $backupDir = Join-Path $repoRootPath 'data\memory-backups'
@@ -245,4 +251,3 @@ if (-not $SkipPostRestartCheck) {
 Write-Host "[INFO] Smooth upgrade prep complete. Backup: $backupFile"
 Write-Host 'Next step: restart or replace the running process with the new version if you have not already done so.'
 exit 0
-

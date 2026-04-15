@@ -14,7 +14,9 @@ import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalysisResult;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
@@ -140,7 +142,7 @@ final class HermesAssistantRuntime {
                         true,
                         List.of(primaryStep("success", guarded.skillName(), guarded.output(), startedAt, Instant.now()))
                 );
-                result = enrichObservability(result, safeInput, SemanticAnalysisResult.empty());
+                result = enrichObservability(result, safeInput, SemanticAnalysisResult.empty(), false);
                 memoryRecorder.record(safeUserId, safeInput, guarded, safeProfileContext, SemanticAnalysisResult.empty(), null, null);
                 return result;
             }
@@ -163,7 +165,7 @@ final class HermesAssistantRuntime {
                         true,
                         List.of(primaryStep("success", clarifyResult.skillName(), clarifyResult.output(), startedAt, Instant.now()))
                 );
-                result = enrichObservability(result, safeInput, decisionContext.semanticAnalysis());
+                result = enrichObservability(result, safeInput, decisionContext.semanticAnalysis(), false);
                 memoryRecorder.record(safeUserId, safeInput, clarifyResult, decisionContext.profileContext(), decisionContext.semanticAnalysis(), null, null);
                 return result;
             }
@@ -182,7 +184,7 @@ final class HermesAssistantRuntime {
                         false,
                         List.of(primaryStep("failed", invalidDecision.skillName(), invalidDecision.output(), startedAt, Instant.now()))
                 );
-                result = enrichObservability(result, safeInput, decisionContext.semanticAnalysis());
+                result = enrichObservability(result, safeInput, decisionContext.semanticAnalysis(), false);
                 memoryRecorder.record(safeUserId, safeInput, invalidDecision, decisionContext.profileContext(), decisionContext.semanticAnalysis(), null, null);
                 return result;
             }
@@ -201,7 +203,7 @@ final class HermesAssistantRuntime {
                         memoryResult.success(),
                         List.of(primaryStep(memoryResult.success() ? "success" : "failed", memoryResult.skillName(), memoryResult.output(), startedAt, Instant.now()))
                 );
-                result = enrichObservability(result, safeInput, decisionContext.semanticAnalysis());
+                result = enrichObservability(result, safeInput, decisionContext.semanticAnalysis(), false);
                 memoryRecorder.record(safeUserId, safeInput, memoryResult, decisionContext.profileContext(), decisionContext.semanticAnalysis(), null, null);
                 return result;
             }
@@ -219,7 +221,7 @@ final class HermesAssistantRuntime {
                         llmResult.success(),
                         List.of(primaryStep(llmResult.success() ? "success" : "failed", llmResult.skillName(), llmResult.output(), startedAt, Instant.now()))
                 );
-                result = enrichObservability(result, safeInput, decisionContext.semanticAnalysis());
+                result = enrichObservability(result, safeInput, decisionContext.semanticAnalysis(), false);
                 memoryRecorder.record(safeUserId, safeInput, llmResult, decisionContext.profileContext(), decisionContext.semanticAnalysis(), null, null);
                 return result;
             }
@@ -264,7 +266,7 @@ final class HermesAssistantRuntime {
                     true,
                     List.of(primaryStep("success", blocked.skillName(), blocked.output(), startedAt, Instant.now()))
             );
-            result = enrichObservability(result, userInput, decisionContext.semanticAnalysis());
+            result = enrichObservability(result, userInput, decisionContext.semanticAnalysis(), false);
             memoryRecorder.record(userId, userInput, blocked, decisionContext.profileContext(), decisionContext.semanticAnalysis(), null, null);
             return result;
         }
@@ -285,7 +287,7 @@ final class HermesAssistantRuntime {
                     false,
                     List.of(primaryStep("failed", loopGuardResult.skillName(), loopGuardResult.output(), startedAt, Instant.now()))
             );
-            result = enrichObservability(result, userInput, decisionContext.semanticAnalysis());
+            result = enrichObservability(result, userInput, decisionContext.semanticAnalysis(), false);
             memoryRecorder.record(userId, userInput, loopGuardResult, decisionContext.profileContext(), decisionContext.semanticAnalysis(), null, null);
             return result;
         }
@@ -321,7 +323,7 @@ final class HermesAssistantRuntime {
                         true,
                         List.of(primaryStep("success", clarifyResult.skillName(), clarifyResult.output(), startedAt, Instant.now()))
                 );
-                result = enrichObservability(result, userInput, decisionContext.semanticAnalysis());
+                result = enrichObservability(result, userInput, decisionContext.semanticAnalysis(), false);
                 memoryRecorder.record(userId, userInput, clarifyResult, decisionContext.profileContext(), decisionContext.semanticAnalysis(), null, null);
                 return result;
             }
@@ -341,7 +343,7 @@ final class HermesAssistantRuntime {
                     false,
                     List.of(primaryStep("failed", validationFailure.skillName(), validationFailure.output(), startedAt, Instant.now()))
             );
-            result = enrichObservability(result, userInput, decisionContext.semanticAnalysis());
+            result = enrichObservability(result, userInput, decisionContext.semanticAnalysis(), false);
             memoryRecorder.record(userId, userInput, validationFailure, decisionContext.profileContext(), decisionContext.semanticAnalysis(), null, null);
             return result;
         }
@@ -373,7 +375,7 @@ final class HermesAssistantRuntime {
                     true,
                     List.of(primaryStep("success", resultToReturn.skillName(), resultToReturn.output(), startedAt, Instant.now()))
             );
-            result = enrichObservability(result, userInput, decisionContext.semanticAnalysis());
+            result = enrichObservability(result, userInput, decisionContext.semanticAnalysis(), finalized.applied());
             memoryRecorder.record(userId, userInput, resultToReturn, decisionContext.profileContext(), decisionContext.semanticAnalysis(), attemptedSkill, true);
             return result;
         }
@@ -397,7 +399,7 @@ final class HermesAssistantRuntime {
                 false,
                 List.of(primaryStep("failed", attemptedSkill, failedResult.output(), startedAt, Instant.now()))
         );
-        result = enrichObservability(result, userInput, decisionContext.semanticAnalysis());
+        result = enrichObservability(result, userInput, decisionContext.semanticAnalysis(), false);
         memoryRecorder.record(userId, userInput, failedResult, decisionContext.profileContext(), decisionContext.semanticAnalysis(), attemptedSkill, false);
         return result;
     }
@@ -435,7 +437,8 @@ final class HermesAssistantRuntime {
 
     private DispatchResult enrichObservability(DispatchResult result,
                                                String userInput,
-                                               SemanticAnalysisResult semanticAnalysis) {
+                                               SemanticAnalysisResult semanticAnalysis,
+                                               boolean skillPostprocessSent) {
         if (result == null || result.executionTrace() == null || result.executionTrace().routing() == null) {
             return result;
         }
@@ -443,10 +446,12 @@ final class HermesAssistantRuntime {
         List<String> reasons = new ArrayList<>(routing.reasons() == null ? List.of() : routing.reasons());
         boolean realtimeLookup = heuristicsSupport != null && heuristicsSupport.isRealtimeIntent(userInput, semanticAnalysis);
         boolean memoryDirectBypassed = realtimeLookup && !"memory.direct".equalsIgnoreCase(result.channel());
-        String actualSearchSource = llmSupport.classifyMcpSearchSource(firstNonBlank(routing.selectedSkill(), result.channel()));
+        String actualSearchSource = resolveActualSearchSource(firstNonBlank(routing.selectedSkill(), result.channel()),
+                result.reply());
         upsertReason(reasons, "realtimeLookup", String.valueOf(realtimeLookup));
         upsertReason(reasons, "memoryDirectBypassed", String.valueOf(memoryDirectBypassed));
         upsertReason(reasons, "actualSearchSource", actualSearchSource);
+        upsertReason(reasons, "skillPostprocessSent", String.valueOf(skillPostprocessSent));
         RoutingDecisionDto updatedRouting = new RoutingDecisionDto(
                 routing.route(),
                 routing.selectedSkill(),
@@ -462,6 +467,48 @@ final class HermesAssistantRuntime {
                 updatedRouting
         );
         return new DispatchResult(result.reply(), result.channel(), updatedTrace);
+    }
+
+    private String resolveActualSearchSource(String selectedSkill, String reply) {
+        String classified = llmSupport.classifyMcpSearchSource(selectedSkill);
+        if (!classified.isBlank()) {
+            return classified;
+        }
+        if (!"news_search".equalsIgnoreCase(selectedSkill)) {
+            return "";
+        }
+        return extractNewsSearchSource(reply);
+    }
+
+    private String extractNewsSearchSource(String reply) {
+        if (reply == null || reply.isBlank()) {
+            return "";
+        }
+        LinkedHashSet<String> sources = new LinkedHashSet<>();
+        for (String line : reply.split("\\R")) {
+            if (line == null) {
+                continue;
+            }
+            String trimmed = line.trim();
+            if (!trimmed.startsWith("来源:")) {
+                continue;
+            }
+            String normalized = trimmed.substring("来源:".length()).trim().toLowerCase(Locale.ROOT);
+            if (normalized.contains("serper")) {
+                sources.add("serper");
+            }
+            if (normalized.contains("36kr")) {
+                sources.add("36kr");
+            }
+            if (normalized.contains("brave")) {
+                sources.add("brave");
+            }
+            if (normalized.contains("serpapi")) {
+                sources.add("serpapi");
+            }
+            break;
+        }
+        return sources.isEmpty() ? "" : String.join("+", sources);
     }
 
     private void upsertReason(List<String> reasons, String key, String value) {
