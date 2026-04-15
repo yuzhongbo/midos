@@ -31,7 +31,7 @@ class CodeGenerateSkillTest {
     }
 
     @Test
-    void shouldUseHardModelForComplexTask() {
+    void shouldUseExplicitModelWhenProvided() {
         CapturingLlmClient llmClient = new CapturingLlmClient();
         CodeGenerateSkill skill = new CodeGenerateSkill(
                 llmClient,
@@ -42,7 +42,10 @@ class CodeGenerateSkillTest {
         );
 
         String hardTask = "请设计一个支持并发写入和事务回滚的订单服务，包含接口层、service层、repository层、异常处理和测试用例，顺便给出SQL索引优化建议";
-        SkillResult result = skill.run(new SkillContext("u2", hardTask, Map.of("task", hardTask)));
+        SkillResult result = skill.run(new SkillContext("u2", hardTask, Map.of(
+                "task", hardTask,
+                "model", "openai/gpt-5.2"
+        )));
 
         assertEquals("llm-output", result.output());
         assertEquals("openai/gpt-5.2", llmClient.lastContext.get("model"));

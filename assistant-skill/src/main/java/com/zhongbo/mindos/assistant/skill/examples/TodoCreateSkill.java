@@ -11,10 +11,7 @@ import org.springframework.stereotype.Component;
 
 import java.time.Clock;
 import java.util.List;
-import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.logging.Level;
-import java.util.logging.Logger;
 
 @Component
 public class TodoCreateSkill implements Skill, SkillDescriptorProvider {
@@ -55,11 +52,7 @@ public class TodoCreateSkill implements Skill, SkillDescriptorProvider {
 }
 
 final class TodoCreateSkillExecutor {
-    private static final Logger LOGGER = Logger.getLogger(TodoCreateSkill.class.getName());
-    private final LlmClient llmClient;
-
     TodoCreateSkillExecutor(LlmClient llmClient, Clock clock) {
-        this.llmClient = llmClient;
     }
 
     String name() {
@@ -79,32 +72,6 @@ final class TodoCreateSkillExecutor {
         if (draft.task().isBlank()) {
             return SkillResult.failure(name(), "请告诉我要记录的具体待办事项。");
         }
-        if (llmClient != null) {
-            try {
-                StringBuilder prompt = new StringBuilder("你是一个待办事项助手，请根据如下任务和截止日期生成简洁 todo 事项描述，仅输出文本。任务：")
-                        .append(draft.task())
-                        .append(", 截止日期：")
-                        .append(draft.dueDate());
-                if (!draft.priority().isBlank()) {
-                    prompt.append("。优先级：").append(draft.priority());
-                }
-                if (!draft.reminder().isBlank()) {
-                    prompt.append("。提醒：").append(draft.reminder());
-                }
-                if (!draft.style().isBlank()) {
-                    prompt.append("。执行风格偏好：").append(draft.style());
-                }
-                if (!draft.timezone().isBlank()) {
-                    prompt.append("。时区偏好：").append(draft.timezone());
-                }
-                String llmReply = llmClient.generateResponse(prompt.toString(), buildLlmContext(context));
-                if (isUsableLlmReply(llmReply)) {
-                    return SkillResult.success(name(), llmReply.trim());
-                }
-            } catch (Exception ex) {
-                LOGGER.log(Level.WARNING, "LLM call failed for todo.create skill, fallback to local output", ex);
-            }
-        }
         StringBuilder output = new StringBuilder("好的，我先帮你记下这件事：\n");
         output.append("- 待办：").append(draft.task()).append("\n");
         output.append("- 截止：").append(draft.dueDate()).append("\n");
@@ -119,13 +86,6 @@ final class TodoCreateSkillExecutor {
         }
         output.append("如果你愿意，我可以继续帮你拆成今天/本周的执行步骤。");
         return SkillResult.success(name(), output.toString());
-    }
-
-    private Map<String, Object> buildLlmContext(SkillContext context) {
-        Map<String, Object> llmContext = new LinkedHashMap<>();
-        llmContext.put("userId", context.userId() == null ? "" : context.userId());
-        llmContext.put("channel", name());
-        return llmContext;
     }
 
     private TodoDraft resolveDraft(SkillContext context) {
@@ -164,10 +124,6 @@ final class TodoCreateSkillExecutor {
         }
         String normalized = String.valueOf(value).trim();
         return normalized.isBlank() ? "" : normalized;
-    }
-
-    private boolean isUsableLlmReply(String llmReply) {
-        return llmReply != null && !llmReply.isBlank() && !llmReply.startsWith("[LLM ");
     }
 
     private record TodoDraft(String task,

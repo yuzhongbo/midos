@@ -9,7 +9,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.logging.Logger;
-import java.util.regex.Pattern;
 
 @Component
 public class McpToolExecutor {
@@ -26,16 +25,6 @@ public class McpToolExecutor {
             "news", "latest", "realtime", "real time", "current", "today", "headline",
             "新闻", "最新", "实时", "今天", "头条", "热点", "热搜", "天气", "汇率", "股价"
     );
-    private static final Pattern LEADING_SEARCH_REQUEST_PATTERN = Pattern.compile(
-            "^(?:请|请帮我|帮我|帮我看看|麻烦你|想|我想|我想看|我想看看|我想了解|想看|想了解|查看|看|看看|查|查下|查一下|搜|搜下|搜一下|搜索|了解一下|了解|告诉我)?\\s*"
-                    + "(?:一下|一下子)?\\s*(?:今天|今日|最新|实时|当前)?\\s*(?:的)?\\s*(?:新闻|资讯|消息|头条|热点|热搜)?\\s*(?:关于|有关|里|中)?\\s*",
-            Pattern.CASE_INSENSITIVE);
-    private static final Pattern TRAILING_NEWS_PATTERN = Pattern.compile("(?:的)?\\s*(?:新闻|资讯|消息|头条|热点|热搜)$", Pattern.CASE_INSENSITIVE);
-    private static final Pattern LEADING_CONNECTOR_PATTERN = Pattern.compile("^(?:关于|有关|里|中的|中|的)\\s*");
-    private static final Pattern ONLY_GENERIC_NEWS_PATTERN = Pattern.compile(
-            "^(?:今天|今日|最新|实时|当前|新闻|资讯|消息|头条|热点|热搜|看看|查看|查一下|搜索|搜一下|搜|查|看|想看|我想看|我想了解|了解一下|关于|有关|的|\\s)+$",
-            Pattern.CASE_INSENSITIVE);
-
     private final McpToolCatalog toolCatalog;
 
     public McpToolExecutor() {
@@ -63,7 +52,7 @@ public class McpToolExecutor {
                                 Map<String, Object> params) {
         try {
             Map<String, Object> arguments = new LinkedHashMap<>(params);
-            ensureSearchQuery(toolDefinition, arguments);
+            normalizeSearchArguments(toolDefinition, arguments);
             if (isSearchLikeTool(toolDefinition) && stringValue(arguments.get("query")).isBlank()) {
                 return SkillResult.success(toolDefinition.skillName(), buildMissingQueryReply(params));
             }
@@ -113,8 +102,8 @@ public class McpToolExecutor {
         return false;
     }
 
-    private void ensureSearchQuery(McpToolDefinition toolDefinition,
-                                   Map<String, Object> arguments) {
+    private void normalizeSearchArguments(McpToolDefinition toolDefinition,
+                                          Map<String, Object> arguments) {
         if (!isSearchLikeTool(toolDefinition)) {
             return;
         }
@@ -122,32 +111,13 @@ public class McpToolExecutor {
         if (!query.isBlank()) {
             return;
         }
-        String fallback = firstNonBlank(
-                stringValue(arguments.get("input")),
-                stringValue(arguments.get("originalInput"))
+        String explicitKeyword = firstNonBlank(
+                stringValue(arguments.get("keyword")),
+                stringValue(arguments.get("q"))
         );
-        fallback = deriveSearchQuery(fallback);
-        if (!fallback.isBlank()) {
-            arguments.put("query", fallback);
+        if (!explicitKeyword.isBlank()) {
+            arguments.put("query", explicitKeyword);
         }
-    }
-
-    private String deriveSearchQuery(String rawInput) {
-        String candidate = stringValue(rawInput);
-        if (candidate.isBlank()) {
-            return "";
-        }
-        candidate = LEADING_SEARCH_REQUEST_PATTERN.matcher(candidate).replaceFirst("").trim();
-        candidate = candidate.replaceFirst("^(?:看看|看下|看一下|查下|查一下|搜下|搜一下)\\s*", "").trim();
-        candidate = LEADING_CONNECTOR_PATTERN.matcher(candidate).replaceFirst("").trim();
-        candidate = TRAILING_NEWS_PATTERN.matcher(candidate).replaceFirst("").trim();
-        candidate = LEADING_CONNECTOR_PATTERN.matcher(candidate).replaceFirst("").trim();
-        candidate = candidate.replaceAll("^[，。；、,.!?！？:：\\-]+", "").trim();
-        candidate = candidate.replaceAll("[，。；、,.!?！？:：]+$", "").trim();
-        if (candidate.length() <= 1 || ONLY_GENERIC_NEWS_PATTERN.matcher(candidate).matches()) {
-            return "";
-        }
-        return candidate;
     }
 
     private boolean isSearchLikeTool(McpToolDefinition toolDefinition) {

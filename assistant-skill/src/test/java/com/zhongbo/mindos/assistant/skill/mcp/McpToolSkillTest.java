@@ -38,12 +38,12 @@ class McpToolSkillTest {
     }
 
     @Test
-    void shouldFillQueryFromInputForSearchToolWhenMissing() {
+    void shouldAcceptKeywordAliasForSearchTool() {
         CapturingMcpClient client = new CapturingMcpClient();
         McpToolDefinition tool = new McpToolDefinition("qwensearch", "http://unused.local/mcp", "bailian_web_search", "Search latest web news");
         McpToolExecutor executor = new McpToolExecutor(toolCatalogWith(tool, client));
 
-        executor.execute(tool.skillName(), Map.of("input", "查看今天新闻 股市"));
+        executor.execute(tool.skillName(), Map.of("keyword", "股市"));
 
         assertEquals("股市", client.lastArguments.get("query"));
     }
@@ -60,14 +60,16 @@ class McpToolSkillTest {
     }
 
     @Test
-    void shouldExtractTopicFromNaturalLanguageNewsRequest() {
+    void shouldReplyNaturallyWhenSearchQueryIsMissingEvenForNaturalLanguageInput() {
         CapturingMcpClient client = new CapturingMcpClient();
         McpToolDefinition tool = new McpToolDefinition("qwensearch", "http://unused.local/mcp", "bailian_web_search", "Search latest web news");
         McpToolExecutor executor = new McpToolExecutor(toolCatalogWith(tool, client));
 
-        executor.execute(tool.skillName(), Map.of("input", "帮我看看科技新闻"));
+        var result = executor.execute(tool.skillName(), Map.of("input", "帮我看看科技新闻"));
 
-        assertEquals("科技", client.lastArguments.get("query"));
+        assertTrue(result.success());
+        assertTrue(result.output().contains("抱歉"));
+        assertTrue(client.lastArguments.isEmpty());
     }
 
     @Test

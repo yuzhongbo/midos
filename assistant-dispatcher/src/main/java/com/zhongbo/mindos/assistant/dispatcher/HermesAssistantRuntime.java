@@ -34,8 +34,7 @@ final class HermesAssistantRuntime {
     private final HermesMemoryRecorder memoryRecorder;
     private final DispatchLlmSupport llmSupport;
     private final DispatcherMemoryFacade dispatcherMemoryFacade;
-    private final DispatcherRoutingCompatibilitySupport compatibilitySupport;
-    private final DispatchRuleCatalog dispatchRuleCatalog;
+    private final HermesExecutionGuard executionGuard;
     private final String promptInjectionSafeReply;
     private final AtomicBoolean acceptingRequests = new AtomicBoolean(true);
     private final AtomicLong activeDispatchCount = new AtomicLong();
@@ -48,8 +47,7 @@ final class HermesAssistantRuntime {
                            HermesMemoryRecorder memoryRecorder,
                            DispatchLlmSupport llmSupport,
                            DispatcherMemoryFacade dispatcherMemoryFacade,
-                           DispatcherRoutingCompatibilitySupport compatibilitySupport,
-                           DispatchRuleCatalog dispatchRuleCatalog,
+                           HermesExecutionGuard executionGuard,
                            String promptInjectionSafeReply) {
         this.heuristicsSupport = heuristicsSupport;
         this.contextFactory = contextFactory;
@@ -59,8 +57,7 @@ final class HermesAssistantRuntime {
         this.memoryRecorder = memoryRecorder;
         this.llmSupport = llmSupport;
         this.dispatcherMemoryFacade = dispatcherMemoryFacade;
-        this.compatibilitySupport = compatibilitySupport;
-        this.dispatchRuleCatalog = dispatchRuleCatalog;
+        this.executionGuard = executionGuard;
         this.promptInjectionSafeReply = promptInjectionSafeReply == null || promptInjectionSafeReply.isBlank()
                 ? "为了安全，我不能执行这类请求。"
                 : promptInjectionSafeReply;
@@ -83,6 +80,10 @@ final class HermesAssistantRuntime {
 
     void beginDrain() {
         acceptingRequests.set(false);
+    }
+
+    void resumeAcceptingRequests() {
+        acceptingRequests.set(true);
     }
 
     boolean isAcceptingRequests() {
@@ -144,28 +145,6 @@ final class HermesAssistantRuntime {
                 return result;
             }
 
-            Optional<SkillResult> metaReply = dispatchRuleCatalog == null
-                    ? Optional.empty()
-                    : dispatchRuleCatalog.answerMetaQuestion(safeInput);
-            if (metaReply.isPresent()) {
-                SkillResult metaResult = metaReply.get();
-                emit(deltaConsumer, metaResult.output());
-                DispatchResult result = buildDispatchResult(
-                        metaResult.output(),
-                        metaResult.skillName(),
-                        "meta-help",
-                        metaResult.skillName(),
-                        0.97d,
-                        List.of("input matched a built-in meta help question"),
-                        List.of(),
-                        true,
-                        List.of(primaryStep("success", metaResult.skillName(), metaResult.output(), startedAt, Instant.now()))
-                );
-                result = enrichObservability(result, safeInput, SemanticAnalysisResult.empty());
-                memoryRecorder.record(safeUserId, safeInput, metaResult, safeProfileContext, SemanticAnalysisResult.empty(), null, null);
-                return result;
-            }
-
             HermesDecisionContext decisionContext = contextFactory.create(safeUserId, safeInput, safeProfileContext);
             HermesDecisionEngine.DecisionPlan decisionPlan = decisionEngine.decide(decisionContext);
             Decision decision = decisionPlan.decision();
@@ -190,19 +169,6 @@ final class HermesAssistantRuntime {
             }
 
             if (decision == null || decision.target() == null || decision.target().isBlank() || "llm".equalsIgnoreCase(decision.target())) {
-                DispatchResult llmDslResult = maybeRouteWithLlmDsl(
-                        safeUserId,
-                        safeInput,
-                        safeProfileContext,
-                        decisionContext,
-                        deltaConsumer,
-                        streamMode,
-                        startedAt
-                );
-                if (llmDslResult != null) {
-                    return llmDslResult;
-                }
-
                 SkillResult llmResult = fallbackToLlm(decisionContext, safeInput, safeProfileContext, deltaConsumer, streamMode);
                 DispatchResult result = buildDispatchResult(
                         llmResult.output(),
@@ -234,101 +200,6 @@ final class HermesAssistantRuntime {
         } finally {
             activeDispatchCount.decrementAndGet();
         }
-    }
-
-    private DispatchResult maybeRouteWithLlmDsl(String userId,
-                                                String userInput,
-                                                Map<String, Object> profileContext,
-                                                HermesDecisionContext decisionContext,
-                                                Consumer<String> deltaConsumer,
-                                                boolean streamMode,
-                                                Instant startedAt) {
-        if (compatibilitySupport == null || decisionContext == null) {
-            return null;
-        }
-        LlmDetectionResult detection = compatibilitySupport.detectSkillWithLlm(
-                userId,
-                userInput,
-                decisionContext.memoryContext(),
-                decisionContext.skillContext(),
-                decisionContext.profileContext()
-        );
-        if (detection.directResult().isPresent()) {
-            SkillResult directResult = detection.directResult().get();
-            emit(deltaConsumer, directResult.output());
-            DispatchResult result = buildDispatchResult(
-                    directResult.output(),
-                    directResult.skillName(),
-                    "llm-dsl-clarify",
-                    directResult.skillName(),
-                    0.40d,
-                    List.of("LLM router requested clarification"),
-                    List.of(),
-                    directResult.success(),
-                    List.of(primaryStep("success", directResult.skillName(), directResult.output(), startedAt, Instant.now()))
-            );
-            result = enrichObservability(result, userInput, decisionContext.semanticAnalysis());
-            memoryRecorder.record(userId, userInput, directResult, decisionContext.profileContext(), decisionContext.semanticAnalysis(), null, null);
-            return result;
-        }
-        if (detection.result().isPresent()) {
-            SkillResult executed = detection.result().get();
-            if (isLoopGuardBlocked(userId, executed.skillName(), userInput)) {
-                return null;
-            }
-            SkillFinalizeOutcome finalized = llmSupport.maybeFinalizeSkillResultWithLlm(
-                    userInput,
-                    executed,
-                    new LinkedHashMap<>(decisionContext.llmContext())
-            );
-            SkillResult resultToReturn = finalized.result();
-            emit(deltaConsumer, resultToReturn.output());
-            DispatchResult result = buildDispatchResult(
-                    resultToReturn.output(),
-                    resultToReturn.skillName(),
-                    "llm-dsl",
-                    resultToReturn.skillName(),
-                    0.76d,
-                    List.of("LLM router selected one of the shortlisted candidate skills"),
-                    List.of(),
-                    resultToReturn.success(),
-                    List.of(primaryStep(resultToReturn.success() ? "success" : "failed", resultToReturn.skillName(), resultToReturn.output(), startedAt, Instant.now()))
-            );
-            result = enrichObservability(result, userInput, decisionContext.semanticAnalysis());
-            memoryRecorder.record(userId, userInput, resultToReturn, decisionContext.profileContext(), decisionContext.semanticAnalysis(), resultToReturn.skillName(), resultToReturn.success());
-            return result;
-        }
-        if (detection.skillDsl().isEmpty()) {
-            return null;
-        }
-        if (isLoopGuardBlocked(userId, detection.skillDsl().get().skill(), userInput)) {
-            return null;
-        }
-        Decision llmDecision = new Decision(
-                detection.skillDsl().get().skill(),
-                detection.skillDsl().get().skill(),
-                detection.skillDsl().get().input(),
-                0.76d,
-                false
-        );
-        HermesDecisionEngine.DecisionPlan llmDecisionPlan = new HermesDecisionEngine.DecisionPlan(
-                llmDecision,
-                "llm-dsl",
-                List.of("LLM router selected one of the shortlisted candidate skills"),
-                List.of(),
-                null
-        );
-        return executeRoutedDecision(
-                userId,
-                userInput,
-                profileContext,
-                decisionContext,
-                llmDecisionPlan,
-                llmDecision,
-                deltaConsumer,
-                streamMode,
-                startedAt
-        );
     }
 
     private DispatchResult executeRoutedDecision(String userId,
@@ -438,8 +309,8 @@ final class HermesAssistantRuntime {
         boolean attemptedSuccess = routedResult != null && routedResult.success();
 
         if (attemptedSuccess) {
-            if ("memory-habit".equals(decisionPlan.route()) && compatibilitySupport != null) {
-                routedResult = compatibilitySupport.enrichMemoryHabitResult(routedResult, attemptedSkill, decisionContext.profileContext());
+            if ("memory-habit".equals(decisionPlan.route()) && executionGuard != null) {
+                routedResult = executionGuard.decorateMemoryHabitResult(routedResult, attemptedSkill, decisionContext.profileContext());
             }
             SkillFinalizeOutcome finalized = llmSupport.maybeFinalizeSkillResultWithLlm(
                     userInput,
@@ -710,14 +581,14 @@ final class HermesAssistantRuntime {
     }
 
     private Optional<SkillResult> maybeBlockedByCapability(String skillName) {
-        return compatibilitySupport == null ? Optional.empty() : compatibilitySupport.maybeBlockByCapability(skillName);
+        return executionGuard == null ? Optional.empty() : executionGuard.maybeBlockByCapability(skillName);
     }
 
     private boolean isLoopGuardBlocked(String userId, String skillName, String userInput) {
-        return compatibilitySupport != null
+        return executionGuard != null
                 && skillName != null
                 && !skillName.isBlank()
-                && compatibilitySupport.isSkillLoopGuardBlocked(userId, skillName, userInput);
+                && executionGuard.isSkillLoopGuardBlocked(userId, skillName, userInput);
     }
 
     private SkillResult capLlmResult(SkillResult result) {

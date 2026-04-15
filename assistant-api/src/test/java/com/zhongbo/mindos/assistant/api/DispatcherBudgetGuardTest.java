@@ -49,7 +49,7 @@ class DispatcherBudgetGuardTest {
     }
 
     @Test
-    void shouldFallbackWhenRepeatedLlmDslAutoRouteHitsLoopGuard() throws Exception {
+    void shouldFallbackDirectlyForAmbiguousRequestsWithoutDslRouting() throws Exception {
         String userId = ApiTestSupport.uniqueUserId("llm-dsl-guard-user");
         String request = ApiTestSupport.chatRequest(userId, "请详细分析并帮我自动处理这个请求");
 
@@ -57,13 +57,8 @@ class DispatcherBudgetGuardTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(request))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.channel").value("echo"));
-
-        mockMvc.perform(post("/chat")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(request))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.channel").value("echo"));
+                .andExpect(jsonPath("$.channel").value("llm"))
+                .andExpect(jsonPath("$.reply").value(org.hamcrest.Matchers.containsString("fallback")));
 
         mockMvc.perform(post("/chat")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -74,7 +69,7 @@ class DispatcherBudgetGuardTest {
     }
 
     @Test
-    void shouldNotBlockDifferentInputsForSameAutoRoutedSkill() throws Exception {
+    void shouldNotTreatDifferentFallbackInputsAsSkillLoop() throws Exception {
         String userId = ApiTestSupport.uniqueUserId("llm-dsl-guard-user-2");
         String first = ApiTestSupport.chatRequest(userId, "请帮我自动处理这个请求A");
         String second = ApiTestSupport.chatRequest(userId, "请帮我自动处理这个请求B");
@@ -84,19 +79,19 @@ class DispatcherBudgetGuardTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(first))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.channel").value("echo"));
+                .andExpect(jsonPath("$.channel").value("llm"));
 
         mockMvc.perform(post("/chat")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(second))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.channel").value("echo"));
+                .andExpect(jsonPath("$.channel").value("llm"));
 
         mockMvc.perform(post("/chat")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(third))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.channel").value("echo"));
+                .andExpect(jsonPath("$.channel").value("llm"));
     }
 
     @TestConfiguration
@@ -108,14 +103,6 @@ class DispatcherBudgetGuardTest {
             return new LlmClient() {
                 @Override
                 public String generateResponse(String prompt, Map<String, Object> context) {
-                    String routeStage = context == null ? "" : String.valueOf(context.getOrDefault("routeStage", ""));
-                    if ("llm-dsl".equals(routeStage)) {
-                        String input = context == null ? "" : String.valueOf(context.getOrDefault("input", ""));
-                        if (input.contains("自动处理")) {
-                            return "{\"intent\":\"auto.route\",\"target\":\"echo\",\"params\":{\"text\":\"auto-routed by llm-dsl\"},\"confidence\":0.93,\"requireClarify\":false}";
-                        }
-                        return "NONE";
-                    }
                     return "fallback from test llm: " + "y".repeat(240);
                 }
 

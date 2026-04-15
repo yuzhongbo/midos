@@ -94,6 +94,25 @@
       "leaseUntil" : "2026-04-13T08:57:56.542146Z"
     }
   },
+  "u-long-2-1192048f-f016-40cc-8fa6-b7b268689ed2" : {
+    "06d95857-0589-42d5-833f-78ed70215040" : {
+      "taskId" : "06d95857-0589-42d5-833f-78ed70215040",
+      "userId" : "u-long-2-1192048f-f016-40cc-8fa6-b7b268689ed2",
+      "title" : "跨天任务",
+      "objective" : "",
+      "status" : "RUNNING",
+      "progressPercent" : 0,
+      "pendingSteps" : [ "step-1", "step-2" ],
+      "completedSteps" : [ ],
+      "recentNotes" : [ ],
+      "blockedReason" : "",
+      "createdAt" : "2026-04-14T14:26:50.865912Z",
+      "updatedAt" : "2026-04-14T14:26:50.871556Z",
+      "nextCheckAt" : "2026-04-14T14:26:50.871556Z",
+      "leaseOwner" : "worker-a",
+      "leaseUntil" : "2026-04-14T14:31:50.871556Z"
+    }
+  },
   "u-long-2-8ecb80ba-3946-42a1-a677-37790afbb31e" : {
     "1626b11b-23f1-4fd0-ba15-aff5a1eea383" : {
       "taskId" : "1626b11b-23f1-4fd0-ba15-aff5a1eea383",
@@ -149,6 +168,25 @@
       "nextCheckAt" : "2026-04-12T03:19:11.321085Z",
       "leaseOwner" : "worker-a",
       "leaseUntil" : "2026-04-12T03:29:11.315375Z"
+    }
+  },
+  "u-long-1-74acb21a-2ba4-46c0-9c3e-d0057c732fff" : {
+    "26ef1c0a-5f26-41ae-ae3e-c185c93d9e1b" : {
+      "taskId" : "26ef1c0a-5f26-41ae-ae3e-c185c93d9e1b",
+      "userId" : "u-long-1-74acb21a-2ba4-46c0-9c3e-d0057c732fff",
+      "title" : "发布新版本",
+      "objective" : "三天内完成发布",
+      "status" : "RUNNING",
+      "progressPercent" : 33,
+      "pendingSteps" : [ "灰度发布", "全量发布" ],
+      "completedSteps" : [ "准备 changelog" ],
+      "recentNotes" : [ "worker-a: day1 完成准备" ],
+      "blockedReason" : "",
+      "createdAt" : "2026-04-14T14:08:32.828292Z",
+      "updatedAt" : "2026-04-14T14:08:32.845464Z",
+      "nextCheckAt" : "2026-04-14T14:08:32.845464Z",
+      "leaseOwner" : "worker-a",
+      "leaseUntil" : "2026-04-14T14:18:32.839828Z"
     }
   },
   "u-long-auto-9c2564fc-59b0-4e57-965c-db14a508d5e3" : {
@@ -379,25 +417,6 @@
       "leaseUntil" : "2026-04-13T06:49:25.805047Z"
     }
   },
-  "u-long-2-85395136-fec8-412b-9e19-d15bea52aec4" : {
-    "7d02440a-052d-415b-b928-966a4f940ceb" : {
-      "taskId" : "7d02440a-052d-415b-b928-966a4f940ceb",
-      "userId" : "u-long-2-85395136-fec8-412b-9e19-d15bea52aec4",
-      "title" : "跨天任务",
-      "objective" : "",
-      "status" : "RUNNING",
-      "progressPercent" : 0,
-      "pendingSteps" : [ "step-1", "step-2" ],
-      "completedSteps" : [ ],
-      "recentNotes" : [ ],
-      "blockedReason" : "",
-      "createdAt" : "2026-04-13T07:31:06.534811Z",
-      "updatedAt" : "2026-04-13T07:31:06.538143Z",
-      "nextCheckAt" : "2026-04-13T07:31:06.538143Z",
-      "leaseOwner" : "worker-a",
-      "leaseUntil" : "2026-04-13T07:36:06.538143Z"
-    }
-  },
   "u-long-1-d6c36e4e-59da-4064-a51c-9127b258675e" : {
     "5ca63c3a-d586-41bb-a5bd-218521a9bbc8" : {
       "taskId" : "5ca63c3a-d586-41bb-a5bd-218521a9bbc8",
@@ -417,6 +436,25 @@
       "leaseUntil" : "2026-04-13T07:41:06.521144Z"
     }
   },
+  "u-long-2-85395136-fec8-412b-9e19-d15bea52aec4" : {
+    "7d02440a-052d-415b-b928-966a4f940ceb" : {
+      "taskId" : "7d02440a-052d-415b-b928-966a4f940ceb",
+      "userId" : "u-long-2-85395136-fec8-412b-9e19-d15bea52aec4",
+      "title" : "跨天任务",
+      "objective" : "",
+      "status" : "RUNNING",
+      "progressPercent" : 0,
+      "pendingSteps" : [ "step-1", "step-2" ],
+      "completedSteps" : [ ],
+      "recentNotes" : [ ],
+      "blockedReason" : "",
+      "createdAt" : "2026-04-13T07:31:06.534811Z",
+      "updatedAt" : "2026-04-13T07:31:06.538143Z",
+      "nextCheckAt" : "2026-04-13T07:31:06.538143Z",
+      "leaseOwner" : "worker-a",
+      "leaseUntil" : "2026-04-13T07:36:06.538143Z"
+    }
+  },
   "u-long-auto-5f1f6b44-73d0-4409-b1ec-94999413bcab" : {
     "78e442e6-5128-4a92-bf93-93991ae855a3" : {
       "taskId" : "78e442e6-5128-4a92-bf93-93991ae855a3",
@@ -434,25 +472,6 @@
       "nextCheckAt" : "2026-04-10T00:22:49.874190Z",
       "leaseOwner" : "auto-runner",
       "leaseUntil" : "2026-04-10T00:23:49.872046Z"
-    }
-  },
-  "u-long-1-4c97be20-a90c-4fbf-9a5e-addd1874f498" : {
-    "d542c1f5-cd8f-4bdb-afb9-020b8f00cafc" : {
-      "taskId" : "d542c1f5-cd8f-4bdb-afb9-020b8f00cafc",
-      "userId" : "u-long-1-4c97be20-a90c-4fbf-9a5e-addd1874f498",
-      "title" : "发布新版本",
-      "objective" : "三天内完成发布",
-      "status" : "RUNNING",
-      "progressPercent" : 33,
-      "pendingSteps" : [ "灰度发布", "全量发布" ],
-      "completedSteps" : [ "准备 changelog" ],
-      "recentNotes" : [ "worker-a: day1 完成准备" ],
-      "blockedReason" : "",
-      "createdAt" : "2026-04-09T01:59:28.991893Z",
-      "updatedAt" : "2026-04-09T01:59:29.005064Z",
-      "nextCheckAt" : "2026-04-09T01:59:29.005064Z",
-      "leaseOwner" : "worker-a",
-      "leaseUntil" : "2026-04-09T02:09:29.000216Z"
     }
   },
   "im:dingtalk:ding-async-user" : {
@@ -536,6 +555,22 @@
       "nextCheckAt" : "2026-04-09T13:24:02.717501Z",
       "leaseOwner" : ""
     },
+    "21639ac5-26b9-4dcc-abaf-373a3fae97cd" : {
+      "taskId" : "21639ac5-26b9-4dcc-abaf-373a3fae97cd",
+      "userId" : "im:dingtalk:ding-async-user",
+      "title" : "钉钉消息处理",
+      "objective" : "echo async hi",
+      "status" : "COMPLETED",
+      "progressPercent" : 100,
+      "pendingSteps" : [ ],
+      "completedSteps" : [ "等待后台处理", "生成回复", "回推钉钉结果" ],
+      "recentNotes" : [ "im-dingtalk-async: 已开始处理钉钉消息", "im-dingtalk-async: [ASYNC_RESULT] async hi", "im-dingtalk-async: 已将结果回推到钉钉会话" ],
+      "blockedReason" : "",
+      "createdAt" : "2026-04-14T14:08:33.499617Z",
+      "updatedAt" : "2026-04-14T14:08:33.514518Z",
+      "nextCheckAt" : "2026-04-14T14:08:33.514504Z",
+      "leaseOwner" : ""
+    },
     "aea8c857-ebe3-4834-b13d-f6a4e6fd6eba" : {
       "taskId" : "aea8c857-ebe3-4834-b13d-f6a4e6fd6eba",
       "userId" : "im:dingtalk:ding-async-user",
@@ -598,6 +633,22 @@
       "createdAt" : "2026-04-13T06:21:42.134417Z",
       "updatedAt" : "2026-04-13T06:21:42.151930Z",
       "nextCheckAt" : "2026-04-13T06:21:42.151912Z",
+      "leaseOwner" : ""
+    },
+    "de6d6bd7-fdf1-49dd-a34a-478d0a78b430" : {
+      "taskId" : "de6d6bd7-fdf1-49dd-a34a-478d0a78b430",
+      "userId" : "im:dingtalk:ding-async-user",
+      "title" : "钉钉消息处理",
+      "objective" : "echo async hi",
+      "status" : "COMPLETED",
+      "progressPercent" : 100,
+      "pendingSteps" : [ ],
+      "completedSteps" : [ "等待后台处理", "生成回复", "回推钉钉结果" ],
+      "recentNotes" : [ "im-dingtalk-async: 已开始处理钉钉消息", "im-dingtalk-async: [ASYNC_RESULT] async hi", "im-dingtalk-async: 已将结果回推到钉钉会话" ],
+      "blockedReason" : "",
+      "createdAt" : "2026-04-14T14:26:51.666647Z",
+      "updatedAt" : "2026-04-14T14:26:51.684454Z",
+      "nextCheckAt" : "2026-04-14T14:26:51.684392Z",
       "leaseOwner" : ""
     },
     "69c0e425-66c8-4d83-b94e-2b7a18082b6d" : {
@@ -806,6 +857,22 @@
       "createdAt" : "2026-04-13T06:13:09.436620Z",
       "updatedAt" : "2026-04-13T06:13:09.455401Z",
       "nextCheckAt" : "2026-04-13T06:13:09.455385Z",
+      "leaseOwner" : ""
+    },
+    "e9e445dd-6c0a-49e0-a3a7-98112ae4abd1" : {
+      "taskId" : "e9e445dd-6c0a-49e0-a3a7-98112ae4abd1",
+      "userId" : "im:dingtalk:ding-async-user",
+      "title" : "钉钉消息处理",
+      "objective" : "echo async hi",
+      "status" : "COMPLETED",
+      "progressPercent" : 100,
+      "pendingSteps" : [ ],
+      "completedSteps" : [ "等待后台处理", "生成回复", "回推钉钉结果" ],
+      "recentNotes" : [ "im-dingtalk-async: 已开始处理钉钉消息", "im-dingtalk-async: [ASYNC_RESULT] async hi", "im-dingtalk-async: 已将结果回推到钉钉会话" ],
+      "blockedReason" : "",
+      "createdAt" : "2026-04-14T14:19:59.690678Z",
+      "updatedAt" : "2026-04-14T14:19:59.711923Z",
+      "nextCheckAt" : "2026-04-14T14:19:59.711904Z",
       "leaseOwner" : ""
     },
     "2d49251a-35f6-48c2-bcd3-64b3e8137f04" : {
@@ -1112,6 +1179,22 @@
       "nextCheckAt" : "2026-04-10T11:51:11.682915Z",
       "leaseOwner" : ""
     },
+    "5b2fd3f0-5c8d-4d91-9910-673962c404b3" : {
+      "taskId" : "5b2fd3f0-5c8d-4d91-9910-673962c404b3",
+      "userId" : "im:dingtalk:ding-async-user",
+      "title" : "钉钉消息处理",
+      "objective" : "echo async hi",
+      "status" : "COMPLETED",
+      "progressPercent" : 100,
+      "pendingSteps" : [ ],
+      "completedSteps" : [ "等待后台处理", "生成回复", "回推钉钉结果" ],
+      "recentNotes" : [ "im-dingtalk-async: 已开始处理钉钉消息", "im-dingtalk-async: [ASYNC_RESULT] async hi", "im-dingtalk-async: 已将结果回推到钉钉会话" ],
+      "blockedReason" : "",
+      "createdAt" : "2026-04-14T14:04:52.397601Z",
+      "updatedAt" : "2026-04-14T14:04:52.418239Z",
+      "nextCheckAt" : "2026-04-14T14:04:52.418196Z",
+      "leaseOwner" : ""
+    },
     "ea09c6c9-79b4-4942-b38e-9343c96447fc" : {
       "taskId" : "ea09c6c9-79b4-4942-b38e-9343c96447fc",
       "userId" : "im:dingtalk:ding-async-user",
@@ -1239,6 +1322,25 @@
       "updatedAt" : "2026-04-13T07:31:07.859109Z",
       "nextCheckAt" : "2026-04-13T07:31:07.859029Z",
       "leaseOwner" : ""
+    }
+  },
+  "u-long-1-4c97be20-a90c-4fbf-9a5e-addd1874f498" : {
+    "d542c1f5-cd8f-4bdb-afb9-020b8f00cafc" : {
+      "taskId" : "d542c1f5-cd8f-4bdb-afb9-020b8f00cafc",
+      "userId" : "u-long-1-4c97be20-a90c-4fbf-9a5e-addd1874f498",
+      "title" : "发布新版本",
+      "objective" : "三天内完成发布",
+      "status" : "RUNNING",
+      "progressPercent" : 33,
+      "pendingSteps" : [ "灰度发布", "全量发布" ],
+      "completedSteps" : [ "准备 changelog" ],
+      "recentNotes" : [ "worker-a: day1 完成准备" ],
+      "blockedReason" : "",
+      "createdAt" : "2026-04-09T01:59:28.991893Z",
+      "updatedAt" : "2026-04-09T01:59:29.005064Z",
+      "nextCheckAt" : "2026-04-09T01:59:29.005064Z",
+      "leaseOwner" : "worker-a",
+      "leaseUntil" : "2026-04-09T02:09:29.000216Z"
     }
   },
   "u-long-auto-ae42e38e-8b02-469e-bb3e-3b8932c61528" : {
@@ -1467,6 +1569,25 @@
       "nextCheckAt" : "2026-04-10T11:50:22.429867Z",
       "leaseOwner" : "worker-a",
       "leaseUntil" : "2026-04-10T11:55:22.429867Z"
+    }
+  },
+  "u-long-1-f367a653-c263-4be1-8854-2080b506e91d" : {
+    "ee318e87-c356-40e7-8394-3b69c2fa7e9b" : {
+      "taskId" : "ee318e87-c356-40e7-8394-3b69c2fa7e9b",
+      "userId" : "u-long-1-f367a653-c263-4be1-8854-2080b506e91d",
+      "title" : "发布新版本",
+      "objective" : "三天内完成发布",
+      "status" : "RUNNING",
+      "progressPercent" : 33,
+      "pendingSteps" : [ "灰度发布", "全量发布" ],
+      "completedSteps" : [ "准备 changelog" ],
+      "recentNotes" : [ "worker-a: day1 完成准备" ],
+      "blockedReason" : "",
+      "createdAt" : "2026-04-14T14:19:58.776562Z",
+      "updatedAt" : "2026-04-14T14:19:58.796884Z",
+      "nextCheckAt" : "2026-04-14T14:19:58.796884Z",
+      "leaseOwner" : "worker-a",
+      "leaseUntil" : "2026-04-14T14:29:58.789023Z"
     }
   },
   "u-long-1-f9c3edaf-1213-42ea-9413-9bef1da617b7" : {
@@ -1773,6 +1894,25 @@
       "leaseUntil" : "2026-04-12T01:16:03.241075Z"
     }
   },
+  "u-long-auto-dae2a2ff-58c3-44c1-9b6e-48fd47fea763" : {
+    "a3f882fc-a412-4043-80d0-2d7b64dd4179" : {
+      "taskId" : "a3f882fc-a412-4043-80d0-2d7b64dd4179",
+      "userId" : "u-long-auto-dae2a2ff-58c3-44c1-9b6e-48fd47fea763",
+      "title" : "自动推进任务",
+      "objective" : "",
+      "status" : "RUNNING",
+      "progressPercent" : 50,
+      "pendingSteps" : [ "step-2" ],
+      "completedSteps" : [ "step-1" ],
+      "recentNotes" : [ "auto-runner: auto-run advanced step: step-1" ],
+      "blockedReason" : "",
+      "createdAt" : "2026-04-14T14:04:50.867198Z",
+      "updatedAt" : "2026-04-14T14:04:50.874321Z",
+      "nextCheckAt" : "2026-04-14T14:06:50.874297Z",
+      "leaseOwner" : "auto-runner",
+      "leaseUntil" : "2026-04-14T14:07:50.871188Z"
+    }
+  },
   "u-long-2-21ce2421-7449-40ba-8adf-d1223bb2a0ac" : {
     "ce8b0254-2e31-4768-866f-202e769e6263" : {
       "taskId" : "ce8b0254-2e31-4768-866f-202e769e6263",
@@ -1923,6 +2063,25 @@
       "nextCheckAt" : "2026-04-13T07:33:06.552080Z",
       "leaseOwner" : "auto-runner",
       "leaseUntil" : "2026-04-13T07:34:06.549147Z"
+    }
+  },
+  "u-long-auto-fbacc694-f603-421f-93e4-badeff2a75bb" : {
+    "e3c1ad34-a25e-4975-b6b4-8d6c4ef8bc5b" : {
+      "taskId" : "e3c1ad34-a25e-4975-b6b4-8d6c4ef8bc5b",
+      "userId" : "u-long-auto-fbacc694-f603-421f-93e4-badeff2a75bb",
+      "title" : "自动推进任务",
+      "objective" : "",
+      "status" : "RUNNING",
+      "progressPercent" : 50,
+      "pendingSteps" : [ "step-2" ],
+      "completedSteps" : [ "step-1" ],
+      "recentNotes" : [ "auto-runner: auto-run advanced step: step-1" ],
+      "blockedReason" : "",
+      "createdAt" : "2026-04-14T14:26:50.879082Z",
+      "updatedAt" : "2026-04-14T14:26:50.886535Z",
+      "nextCheckAt" : "2026-04-14T14:28:50.886508Z",
+      "leaseOwner" : "auto-runner",
+      "leaseUntil" : "2026-04-14T14:29:50.883389Z"
     }
   },
   "u-long-auto-3db3f9c8-c535-47a2-8795-4e02ead6247a" : {
@@ -2153,6 +2312,25 @@
       "leaseUntil" : "2026-04-12T03:24:11.330245Z"
     }
   },
+  "u-long-1-b879fda8-5321-446a-905c-930b3ebefea6" : {
+    "d83bd4ad-6624-4d89-bd31-4a12d9d94149" : {
+      "taskId" : "d83bd4ad-6624-4d89-bd31-4a12d9d94149",
+      "userId" : "u-long-1-b879fda8-5321-446a-905c-930b3ebefea6",
+      "title" : "发布新版本",
+      "objective" : "三天内完成发布",
+      "status" : "RUNNING",
+      "progressPercent" : 33,
+      "pendingSteps" : [ "灰度发布", "全量发布" ],
+      "completedSteps" : [ "准备 changelog" ],
+      "recentNotes" : [ "worker-a: day1 完成准备" ],
+      "blockedReason" : "",
+      "createdAt" : "2026-04-14T14:26:50.833260Z",
+      "updatedAt" : "2026-04-14T14:26:50.854287Z",
+      "nextCheckAt" : "2026-04-14T14:26:50.854287Z",
+      "leaseOwner" : "worker-a",
+      "leaseUntil" : "2026-04-14T14:36:50.846215Z"
+    }
+  },
   "u-long-1-8dec8017-8127-4124-a759-3274d78d4b3d" : {
     "7aabbfed-b8a7-4fc4-a2c9-2f91c7f92222" : {
       "taskId" : "7aabbfed-b8a7-4fc4-a2c9-2f91c7f92222",
@@ -2227,6 +2405,25 @@
       "nextCheckAt" : "2026-04-12T02:35:55.308342Z",
       "leaseOwner" : "auto-runner",
       "leaseUntil" : "2026-04-12T02:36:55.306441Z"
+    }
+  },
+  "u-long-auto-0d8ba82e-3d19-4165-a3a6-d2366cb32115" : {
+    "e0d303a7-e334-43d1-b0d9-c79672c0a64d" : {
+      "taskId" : "e0d303a7-e334-43d1-b0d9-c79672c0a64d",
+      "userId" : "u-long-auto-0d8ba82e-3d19-4165-a3a6-d2366cb32115",
+      "title" : "自动推进任务",
+      "objective" : "",
+      "status" : "RUNNING",
+      "progressPercent" : 50,
+      "pendingSteps" : [ "step-2" ],
+      "completedSteps" : [ "step-1" ],
+      "recentNotes" : [ "auto-runner: auto-run advanced step: step-1" ],
+      "blockedReason" : "",
+      "createdAt" : "2026-04-14T14:19:58.819060Z",
+      "updatedAt" : "2026-04-14T14:19:58.825665Z",
+      "nextCheckAt" : "2026-04-14T14:21:58.825639Z",
+      "leaseOwner" : "auto-runner",
+      "leaseUntil" : "2026-04-14T14:22:58.822820Z"
     }
   },
   "u-long-1-7a5048d4-326c-44b8-987e-7149882abf8a" : {
@@ -2419,6 +2616,25 @@
       "leaseUntil" : "2026-04-13T07:53:27.667715Z"
     }
   },
+  "u-long-2-79349242-f7bc-4bfe-a739-6b764c053bb3" : {
+    "e944a95b-64e1-4351-8db1-b82c9fa08e1b" : {
+      "taskId" : "e944a95b-64e1-4351-8db1-b82c9fa08e1b",
+      "userId" : "u-long-2-79349242-f7bc-4bfe-a739-6b764c053bb3",
+      "title" : "跨天任务",
+      "objective" : "",
+      "status" : "RUNNING",
+      "progressPercent" : 0,
+      "pendingSteps" : [ "step-1", "step-2" ],
+      "completedSteps" : [ ],
+      "recentNotes" : [ ],
+      "blockedReason" : "",
+      "createdAt" : "2026-04-14T14:04:50.854958Z",
+      "updatedAt" : "2026-04-14T14:04:50.859063Z",
+      "nextCheckAt" : "2026-04-14T14:04:50.859063Z",
+      "leaseOwner" : "worker-a",
+      "leaseUntil" : "2026-04-14T14:09:50.859063Z"
+    }
+  },
   "u-long-auto-c340ec2d-1b54-415c-92f6-f69356782fef" : {
     "d119f4b9-1275-4695-9aae-bdf86e69a8a5" : {
       "taskId" : "d119f4b9-1275-4695-9aae-bdf86e69a8a5",
@@ -2596,6 +2812,22 @@
       "createdAt" : "2026-04-09T13:24:02.727010Z",
       "updatedAt" : "2026-04-09T13:24:02.789780Z",
       "nextCheckAt" : "2026-04-09T13:24:02.789769Z",
+      "leaseOwner" : ""
+    },
+    "17862b2d-45e5-4726-9664-838aedeb2dfd" : {
+      "taskId" : "17862b2d-45e5-4726-9664-838aedeb2dfd",
+      "userId" : "im:dingtalk:ding-query-user",
+      "title" : "钉钉消息处理",
+      "objective" : "echo query result",
+      "status" : "COMPLETED",
+      "progressPercent" : 100,
+      "pendingSteps" : [ ],
+      "completedSteps" : [ "等待后台处理", "生成回复", "回推钉钉结果" ],
+      "recentNotes" : [ "im-dingtalk-async: 已开始处理钉钉消息", "im-dingtalk-async: [ASYNC_RESULT] query result", "im-dingtalk-async: 钉钉异步回推失败，请稍后重试或通过任务接口查看结果", "im-dingtalk-compensation: [COMPENSATED] next-message" ],
+      "blockedReason" : "",
+      "createdAt" : "2026-04-14T14:19:59.725948Z",
+      "updatedAt" : "2026-04-14T14:19:59.792240Z",
+      "nextCheckAt" : "2026-04-14T14:19:59.792224Z",
       "leaseOwner" : ""
     },
     "6c037e61-a124-4561-bb79-ae86ba44c03b" : {
@@ -3078,6 +3310,22 @@
       "nextCheckAt" : "2026-04-09T01:59:35.790543Z",
       "leaseOwner" : ""
     },
+    "084428ed-c78f-48db-80f2-e1e45e19cf3e" : {
+      "taskId" : "084428ed-c78f-48db-80f2-e1e45e19cf3e",
+      "userId" : "im:dingtalk:ding-query-user",
+      "title" : "钉钉消息处理",
+      "objective" : "echo query result",
+      "status" : "COMPLETED",
+      "progressPercent" : 100,
+      "pendingSteps" : [ ],
+      "completedSteps" : [ "等待后台处理", "生成回复", "回推钉钉结果" ],
+      "recentNotes" : [ "im-dingtalk-async: 已开始处理钉钉消息", "im-dingtalk-async: [ASYNC_RESULT] query result", "im-dingtalk-async: 钉钉异步回推失败，请稍后重试或通过任务接口查看结果", "im-dingtalk-compensation: [COMPENSATED] next-message" ],
+      "blockedReason" : "",
+      "createdAt" : "2026-04-14T14:26:51.697378Z",
+      "updatedAt" : "2026-04-14T14:26:51.766944Z",
+      "nextCheckAt" : "2026-04-14T14:26:51.766934Z",
+      "leaseOwner" : ""
+    },
     "1c02cadc-6806-4b00-987c-1e2891e43cf6" : {
       "taskId" : "1c02cadc-6806-4b00-987c-1e2891e43cf6",
       "userId" : "im:dingtalk:ding-query-user",
@@ -3140,6 +3388,22 @@
       "createdAt" : "2026-04-09T13:19:58.833069Z",
       "updatedAt" : "2026-04-09T13:19:58.895803Z",
       "nextCheckAt" : "2026-04-09T13:19:58.895794Z",
+      "leaseOwner" : ""
+    },
+    "a9d4b67d-6714-4a1b-aa5d-f0cffc6e6c21" : {
+      "taskId" : "a9d4b67d-6714-4a1b-aa5d-f0cffc6e6c21",
+      "userId" : "im:dingtalk:ding-query-user",
+      "title" : "钉钉消息处理",
+      "objective" : "echo query result",
+      "status" : "COMPLETED",
+      "progressPercent" : 100,
+      "pendingSteps" : [ ],
+      "completedSteps" : [ "等待后台处理", "生成回复", "回推钉钉结果" ],
+      "recentNotes" : [ "im-dingtalk-async: 已开始处理钉钉消息", "im-dingtalk-async: [ASYNC_RESULT] query result", "im-dingtalk-async: 钉钉异步回推失败，请稍后重试或通过任务接口查看结果", "im-dingtalk-compensation: [COMPENSATED] next-message" ],
+      "blockedReason" : "",
+      "createdAt" : "2026-04-14T14:04:52.435274Z",
+      "updatedAt" : "2026-04-14T14:04:52.507572Z",
+      "nextCheckAt" : "2026-04-14T14:04:52.507562Z",
       "leaseOwner" : ""
     },
     "047323e2-f80f-4272-b286-d161a6213153" : {
@@ -3236,6 +3500,22 @@
       "createdAt" : "2026-04-10T12:18:51.576876Z",
       "updatedAt" : "2026-04-10T12:18:51.635636Z",
       "nextCheckAt" : "2026-04-10T12:18:51.635622Z",
+      "leaseOwner" : ""
+    },
+    "a305c5d1-97fb-4fba-9c2d-9d451c2d32f6" : {
+      "taskId" : "a305c5d1-97fb-4fba-9c2d-9d451c2d32f6",
+      "userId" : "im:dingtalk:ding-query-user",
+      "title" : "钉钉消息处理",
+      "objective" : "echo query result",
+      "status" : "COMPLETED",
+      "progressPercent" : 100,
+      "pendingSteps" : [ ],
+      "completedSteps" : [ "等待后台处理", "生成回复", "回推钉钉结果" ],
+      "recentNotes" : [ "im-dingtalk-async: 已开始处理钉钉消息", "im-dingtalk-async: [ASYNC_RESULT] query result", "im-dingtalk-async: 钉钉异步回推失败，请稍后重试或通过任务接口查看结果", "im-dingtalk-compensation: [COMPENSATED] next-message" ],
+      "blockedReason" : "",
+      "createdAt" : "2026-04-14T14:08:33.524811Z",
+      "updatedAt" : "2026-04-14T14:08:33.587147Z",
+      "nextCheckAt" : "2026-04-14T14:08:33.587139Z",
       "leaseOwner" : ""
     },
     "fa19db8b-f0a2-48f5-a94b-7d0e2ad77d8d" : {
@@ -3633,6 +3913,22 @@
       "nextCheckAt" : "2026-04-09T13:19:58.965571Z",
       "leaseOwner" : ""
     },
+    "196d29df-f885-4ddb-867e-bd90e4386879" : {
+      "taskId" : "196d29df-f885-4ddb-867e-bd90e4386879",
+      "userId" : "im:dingtalk:ding-comp-user",
+      "title" : "钉钉消息处理",
+      "objective" : "echo compensation result",
+      "status" : "COMPLETED",
+      "progressPercent" : 100,
+      "pendingSteps" : [ ],
+      "completedSteps" : [ "等待后台处理", "生成回复", "回推钉钉结果" ],
+      "recentNotes" : [ "im-dingtalk-async: 已开始处理钉钉消息", "im-dingtalk-async: [ASYNC_RESULT] compensation result", "im-dingtalk-async: 钉钉异步回推失败，请稍后重试或通过任务接口查看结果", "im-dingtalk-compensation: [COMPENSATED] next-message" ],
+      "blockedReason" : "",
+      "createdAt" : "2026-04-14T14:08:33.596144Z",
+      "updatedAt" : "2026-04-14T14:08:33.655750Z",
+      "nextCheckAt" : "2026-04-14T14:08:33.655744Z",
+      "leaseOwner" : ""
+    },
     "6070825c-519d-4770-9416-b515a54de516" : {
       "taskId" : "6070825c-519d-4770-9416-b515a54de516",
       "userId" : "im:dingtalk:ding-comp-user",
@@ -3729,6 +4025,22 @@
       "nextCheckAt" : "2026-04-10T11:51:11.830119Z",
       "leaseOwner" : ""
     },
+    "b22cdd1f-815a-495d-800d-786196890c66" : {
+      "taskId" : "b22cdd1f-815a-495d-800d-786196890c66",
+      "userId" : "im:dingtalk:ding-comp-user",
+      "title" : "钉钉消息处理",
+      "objective" : "echo compensation result",
+      "status" : "COMPLETED",
+      "progressPercent" : 100,
+      "pendingSteps" : [ ],
+      "completedSteps" : [ "等待后台处理", "生成回复", "回推钉钉结果" ],
+      "recentNotes" : [ "im-dingtalk-async: 已开始处理钉钉消息", "im-dingtalk-async: [ASYNC_RESULT] compensation result", "im-dingtalk-async: 钉钉异步回推失败，请稍后重试或通过任务接口查看结果", "im-dingtalk-compensation: [COMPENSATED] next-message" ],
+      "blockedReason" : "",
+      "createdAt" : "2026-04-14T14:19:59.810774Z",
+      "updatedAt" : "2026-04-14T14:19:59.877697Z",
+      "nextCheckAt" : "2026-04-14T14:19:59.877686Z",
+      "leaseOwner" : ""
+    },
     "ffad6062-4b93-414a-8269-59226bad1456" : {
       "taskId" : "ffad6062-4b93-414a-8269-59226bad1456",
       "userId" : "im:dingtalk:ding-comp-user",
@@ -3743,6 +4055,22 @@
       "createdAt" : "2026-04-13T08:47:57.357136Z",
       "updatedAt" : "2026-04-13T08:47:57.424674Z",
       "nextCheckAt" : "2026-04-13T08:47:57.424662Z",
+      "leaseOwner" : ""
+    },
+    "9da43144-adac-4b67-a0f8-a86ff470599c" : {
+      "taskId" : "9da43144-adac-4b67-a0f8-a86ff470599c",
+      "userId" : "im:dingtalk:ding-comp-user",
+      "title" : "钉钉消息处理",
+      "objective" : "echo compensation result",
+      "status" : "COMPLETED",
+      "progressPercent" : 100,
+      "pendingSteps" : [ ],
+      "completedSteps" : [ "等待后台处理", "生成回复", "回推钉钉结果" ],
+      "recentNotes" : [ "im-dingtalk-async: 已开始处理钉钉消息", "im-dingtalk-async: [ASYNC_RESULT] compensation result", "im-dingtalk-async: 钉钉异步回推失败，请稍后重试或通过任务接口查看结果", "im-dingtalk-compensation: [COMPENSATED] next-message" ],
+      "blockedReason" : "",
+      "createdAt" : "2026-04-14T14:04:52.522133Z",
+      "updatedAt" : "2026-04-14T14:04:52.586402Z",
+      "nextCheckAt" : "2026-04-14T14:04:52.586390Z",
       "leaseOwner" : ""
     },
     "4943e170-5635-47a5-a811-ac8f695da4bf" : {
@@ -4047,6 +4375,22 @@
       "createdAt" : "2026-04-13T07:31:07.950702Z",
       "updatedAt" : "2026-04-13T07:31:08.016311Z",
       "nextCheckAt" : "2026-04-13T07:31:08.016300Z",
+      "leaseOwner" : ""
+    },
+    "ff918a10-4272-4571-8698-52d63831c69e" : {
+      "taskId" : "ff918a10-4272-4571-8698-52d63831c69e",
+      "userId" : "im:dingtalk:ding-comp-user",
+      "title" : "钉钉消息处理",
+      "objective" : "echo compensation result",
+      "status" : "COMPLETED",
+      "progressPercent" : 100,
+      "pendingSteps" : [ ],
+      "completedSteps" : [ "等待后台处理", "生成回复", "回推钉钉结果" ],
+      "recentNotes" : [ "im-dingtalk-async: 已开始处理钉钉消息", "im-dingtalk-async: [ASYNC_RESULT] compensation result", "im-dingtalk-async: 钉钉异步回推失败，请稍后重试或通过任务接口查看结果", "im-dingtalk-compensation: [COMPENSATED] next-message" ],
+      "blockedReason" : "",
+      "createdAt" : "2026-04-14T14:26:51.778868Z",
+      "updatedAt" : "2026-04-14T14:26:51.840125Z",
+      "nextCheckAt" : "2026-04-14T14:26:51.840116Z",
       "leaseOwner" : ""
     },
     "292d5f04-1a8d-4ca6-8c14-f9e557944149" : {
@@ -4672,6 +5016,25 @@
       "leaseUntil" : "2026-04-08T04:55:40.395339Z"
     }
   },
+  "u-long-2-ded317be-ca6c-4e2a-8e4a-f710187554ba" : {
+    "3e9da119-0a9a-4619-adbd-8319d8abe2b7" : {
+      "taskId" : "3e9da119-0a9a-4619-adbd-8319d8abe2b7",
+      "userId" : "u-long-2-ded317be-ca6c-4e2a-8e4a-f710187554ba",
+      "title" : "跨天任务",
+      "objective" : "",
+      "status" : "RUNNING",
+      "progressPercent" : 0,
+      "pendingSteps" : [ "step-1", "step-2" ],
+      "completedSteps" : [ ],
+      "recentNotes" : [ ],
+      "blockedReason" : "",
+      "createdAt" : "2026-04-14T14:19:58.806348Z",
+      "updatedAt" : "2026-04-14T14:19:58.811469Z",
+      "nextCheckAt" : "2026-04-14T14:19:58.811469Z",
+      "leaseOwner" : "worker-a",
+      "leaseUntil" : "2026-04-14T14:24:58.811469Z"
+    }
+  },
   "u-long-1-5b00a89a-6235-4f06-aff0-f68b3fdf5810" : {
     "090fda76-3e94-4264-a4ed-9a1e73768f1a" : {
       "taskId" : "090fda76-3e94-4264-a4ed-9a1e73768f1a",
@@ -4957,6 +5320,25 @@
       "leaseUntil" : "2026-04-13T08:52:56.566170Z"
     }
   },
+  "u-long-2-2169bcec-4eb9-462e-8edb-0c4f08adf8fb" : {
+    "489c77cc-d101-4828-ac6f-62ecb8e54a4a" : {
+      "taskId" : "489c77cc-d101-4828-ac6f-62ecb8e54a4a",
+      "userId" : "u-long-2-2169bcec-4eb9-462e-8edb-0c4f08adf8fb",
+      "title" : "跨天任务",
+      "objective" : "",
+      "status" : "RUNNING",
+      "progressPercent" : 0,
+      "pendingSteps" : [ "step-1", "step-2" ],
+      "completedSteps" : [ ],
+      "recentNotes" : [ ],
+      "blockedReason" : "",
+      "createdAt" : "2026-04-14T14:08:32.851663Z",
+      "updatedAt" : "2026-04-14T14:08:32.854670Z",
+      "nextCheckAt" : "2026-04-14T14:08:32.854670Z",
+      "leaseOwner" : "worker-a",
+      "leaseUntil" : "2026-04-14T14:13:32.854670Z"
+    }
+  },
   "u-long-1-1e2107a5-e586-4fad-9985-269a1d9dfd28" : {
     "dd1edf29-cd5e-4391-9df7-8998d761930e" : {
       "taskId" : "dd1edf29-cd5e-4391-9df7-8998d761930e",
@@ -4976,6 +5358,25 @@
       "leaseUntil" : "2026-04-10T10:59:08.797236Z"
     }
   },
+  "u-long-auto-4dc6cf23-f699-4b22-b111-a4d79e2811da" : {
+    "8fd843fe-0537-4f55-b86d-d3d5f9891ef8" : {
+      "taskId" : "8fd843fe-0537-4f55-b86d-d3d5f9891ef8",
+      "userId" : "u-long-auto-4dc6cf23-f699-4b22-b111-a4d79e2811da",
+      "title" : "自动推进任务",
+      "objective" : "",
+      "status" : "RUNNING",
+      "progressPercent" : 50,
+      "pendingSteps" : [ "step-2" ],
+      "completedSteps" : [ "step-1" ],
+      "recentNotes" : [ "auto-runner: auto-run advanced step: step-1" ],
+      "blockedReason" : "",
+      "createdAt" : "2026-04-14T14:08:32.859729Z",
+      "updatedAt" : "2026-04-14T14:08:32.864324Z",
+      "nextCheckAt" : "2026-04-14T14:10:32.864309Z",
+      "leaseOwner" : "auto-runner",
+      "leaseUntil" : "2026-04-14T14:11:32.862395Z"
+    }
+  },
   "u-long-1-de34b27a-a70e-4c8f-9416-2f9eafda175d" : {
     "dadcccf2-3edf-47cd-9d0a-a00992a76eb4" : {
       "taskId" : "dadcccf2-3edf-47cd-9d0a-a00992a76eb4",
@@ -4993,6 +5394,25 @@
       "nextCheckAt" : "2026-04-12T00:38:54.955224Z",
       "leaseOwner" : "worker-a",
       "leaseUntil" : "2026-04-12T00:48:54.950977Z"
+    }
+  },
+  "u-long-1-e4d73779-8d54-4dcf-a8d0-e0afd195e1bf" : {
+    "54916d48-b4ca-4670-a302-02a2c5775169" : {
+      "taskId" : "54916d48-b4ca-4670-a302-02a2c5775169",
+      "userId" : "u-long-1-e4d73779-8d54-4dcf-a8d0-e0afd195e1bf",
+      "title" : "发布新版本",
+      "objective" : "三天内完成发布",
+      "status" : "RUNNING",
+      "progressPercent" : 33,
+      "pendingSteps" : [ "灰度发布", "全量发布" ],
+      "completedSteps" : [ "准备 changelog" ],
+      "recentNotes" : [ "worker-a: day1 完成准备" ],
+      "blockedReason" : "",
+      "createdAt" : "2026-04-14T14:04:50.806153Z",
+      "updatedAt" : "2026-04-14T14:04:50.843778Z",
+      "nextCheckAt" : "2026-04-14T14:04:50.843778Z",
+      "leaseOwner" : "worker-a",
+      "leaseUntil" : "2026-04-14T14:14:50.834451Z"
     }
   },
   "u-long-2-42a28cc8-5c5b-4493-b13f-a31d09c91ad4" : {

@@ -14,8 +14,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
-import java.util.logging.Level;
-import java.util.logging.Logger;
 
 @Component
 public class FileSearchSkill implements Skill, SkillDescriptorProvider {
@@ -52,11 +50,7 @@ public class FileSearchSkill implements Skill, SkillDescriptorProvider {
 }
 
 final class FileSearchSkillExecutor {
-    private static final Logger LOGGER = Logger.getLogger(FileSearchSkill.class.getName());
-    private final LlmClient llmClient;
-
     FileSearchSkillExecutor(LlmClient llmClient) {
-        this.llmClient = llmClient;
     }
 
     String name() {
@@ -73,32 +67,7 @@ final class FileSearchSkillExecutor {
 
     SkillResult execute(SkillContext context) {
         SearchRequest request = resolveRequest(context);
-        if (llmClient != null) {
-            try {
-                String prompt = "你是一个文件搜索助手，请根据如下条件返回简洁的候选文件名与检索建议，仅输出文本。路径："
-                        + request.path()
-                        + "，关键词："
-                        + request.keyword()
-                        + "，文件类型："
-                        + request.fileType()
-                        + "，建议候选数："
-                        + request.limit();
-                String llmReply = llmClient.generateResponse(prompt, buildLlmContext(context));
-                if (isUsableLlmReply(llmReply)) {
-                    return SkillResult.success(name(), llmReply.trim());
-                }
-            } catch (Exception ex) {
-                LOGGER.log(Level.WARNING, "LLM call failed for file.search skill, fallback to local output", ex);
-            }
-        }
         return SkillResult.success(name(), buildDeterministicOutput(request));
-    }
-
-    private Map<String, Object> buildLlmContext(SkillContext context) {
-        Map<String, Object> llmContext = new java.util.LinkedHashMap<>();
-        llmContext.put("userId", context.userId() == null ? "" : context.userId());
-        llmContext.put("channel", name());
-        return llmContext;
     }
 
     private SearchRequest resolveRequest(SkillContext context) {
@@ -199,10 +168,6 @@ final class FileSearchSkillExecutor {
             return token.toUpperCase(Locale.ROOT);
         }
         return Character.toUpperCase(token.charAt(0)) + token.substring(1);
-    }
-
-    private boolean isUsableLlmReply(String llmReply) {
-        return llmReply != null && !llmReply.isBlank() && !llmReply.startsWith("[LLM ");
     }
 
     private record SearchRequest(String path, String keyword, String fileType, int limit) {

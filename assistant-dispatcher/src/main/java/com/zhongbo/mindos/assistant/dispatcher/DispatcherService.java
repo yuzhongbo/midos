@@ -45,6 +45,7 @@ import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalyzer;
 import com.zhongbo.mindos.assistant.skill.SkillExecutionGateway;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
@@ -218,12 +219,12 @@ public class DispatcherService implements ContextCompressionMetricsReader,
     public DispatcherService(SkillCatalogFacade skillEngine,
                              SkillDslParser skillDslParser,
                              ParamValidator paramValidator,
-                             DecisionOrchestrator decisionOrchestrator,
-                             IntentModelRoutingPolicy intentModelRoutingPolicy,
-                             MetaOrchestratorService metaOrchestratorService,
+                             @Lazy DecisionOrchestrator decisionOrchestrator,
+                             @Lazy IntentModelRoutingPolicy intentModelRoutingPolicy,
+                             @Lazy MetaOrchestratorService metaOrchestratorService,
                              SkillCapabilityPolicy skillCapabilityPolicy,
                               PersonaCoreService personaCoreService,
-                              DispatcherMemoryFacade dispatcherMemoryFacade,
+                               DispatcherMemoryFacade dispatcherMemoryFacade,
                               LlmClient llmClient,
                               SemanticAnalyzer semanticAnalyzer,
                               PromptBuilder promptBuilder,
@@ -535,16 +536,8 @@ public class DispatcherService implements ContextCompressionMetricsReader,
                 this.behaviorLearningWindowSize,
                 this.behaviorLearningDefaultParamThreshold
         );
-        this.dispatchRuleCatalog = new DispatchRuleCatalog(this.skillEngine);
-        DecisionPlanner compatibilityDecisionPlanner = new DefaultDecisionPlanner(this.skillEngine, this.dispatcherMemoryFacade);
-        this.skillRoutingSupport = new SkillRoutingSupport(
-                this.skillEngine,
-                compatibilityDecisionPlanner,
-                this.dispatcherMemoryFacade,
-                this.behaviorRoutingSupport,
-                this.llmRoutingShortlistMaxSkills,
-                this.dispatchRuleCatalog::inferMemoryBucket
-        );
+        this.dispatchRuleCatalog = null;
+        this.skillRoutingSupport = null;
         this.semanticRoutingSupport = new SemanticRoutingSupport(
                 this.dispatcherMemoryFacade,
                 this.memoryCommandService,
@@ -552,7 +545,7 @@ public class DispatcherService implements ContextCompressionMetricsReader,
                 this.skillCommandAssembler,
                 this.paramValidator,
                 this::isKnownSkillName,
-                this.dispatchRuleCatalog::inferMemoryBucket,
+                this::inferMemoryBucket,
                 this.semanticAnalysisRouteMinConfidence,
                 this.semanticAnalysisClarifyMinConfidence,
                 this.preferSuggestedSkillEnabled,
@@ -562,7 +555,7 @@ public class DispatcherService implements ContextCompressionMetricsReader,
                 this.dispatcherMemoryFacade,
                 this.memoryCommandService,
                 this.behaviorRoutingSupport,
-                this.dispatchRuleCatalog::inferMemoryBucket
+                this::inferMemoryBucket
         );
         this.dispatchHeuristicsSupport = new DispatchHeuristicsSupport(
                 this.dispatchMemoryLifecycle,
@@ -626,134 +619,11 @@ public class DispatcherService implements ContextCompressionMetricsReader,
                         this.escalationReasonCounters
                 )
         );
-        this.dispatcherRoutingCompatibilitySupport = new DispatcherRoutingCompatibilitySupport(
-                this.dispatcherMemoryFacade,
-                this.dispatchHeuristicsSupport,
-                this.skillRoutingSupport,
-                this.dispatchLlmSupport,
-                this.decisionParser,
-                this.decisionOrchestrator,
-                this.behaviorRoutingSupport,
-                this.dispatchRuleCatalog,
-                this.skillCapabilityPolicy,
-                this.llmRoutingConversationalBypassEnabled,
-                this.preExecuteHeavySkillLoopGuardEnabled,
-                this.preExecuteHeavySkillLoopGuardSkills,
-                this.skillGuardMaxConsecutive,
-                this.skillGuardRecentWindowSize,
-                this.skillGuardRepeatInputThreshold,
-                this.skillGuardCooldownSeconds,
-                this.habitExplainHintEnabled,
-                this.preferenceReuseEnabled,
-                this.skillPreAnalyzeConfidenceThreshold,
-                this.skillPreAnalyzeMode,
-                this.promptMaxChars,
-                this.llmDslMemoryContextMaxChars
-        );
-        this.dispatchPreparationSupport = new DispatchPreparationSupport(
-                this.dispatcherMemoryFacade,
-                this.skillEngine,
-                this.personaCoreService,
-                this.semanticAnalyzer,
-                this.semanticRoutingSupport,
-                this.behaviorRoutingSupport,
-                this.intentModelRoutingPolicy,
-                new DispatcherPreparationBridgeAdapter(
-                        this::recordContextCompressionMetrics,
-                        this.dispatchHeuristicsSupport::shouldSkipSemanticAnalysis,
-                        this.dispatchHeuristicsSupport::isRealtimeIntent,
-                        this.dispatchHeuristicsSupport::isRealtimeLikeInput,
-                        this::copyEscalationHints,
-                        this::copyInteractionContext,
-                        this.dispatchLlmSupport::applyStageLlmRoute
-                ),
-                this.memoryContextMaxChars,
-                this.realtimeIntentMemoryShrinkEnabled,
-                this.realtimeIntentMemoryShrinkIncludePersona,
-                this.realtimeIntentMemoryShrinkMaxChars
-        );
-        this.dispatchResultFinalizer = new DispatchResultFinalizer(
-                this.decisionOrchestrator,
-                this.dispatchMemoryLifecycle,
-                this.personaCoreService,
-                new DispatcherResultFinalizationBridgeAdapter(
-                        this.dispatchLlmSupport::maybeFinalizeSkillResultWithLlm,
-                        this.dispatchLlmSupport::capLlmReply,
-                        this.dispatchLlmSupport::classifyMcpSearchSource,
-                        this::enrichRoutingDecisionWithFinalObservability,
-                        this::enrichTraceWithRouting,
-                        this::recordRoutingReplaySample
-                )
-        );
-        this.dispatchRoutingPipeline = new DispatchRoutingPipeline(
-                this.skillEngine,
-                this.skillDslParser,
-                this.behaviorRoutingSupport,
-                this.dispatchRuleCatalog,
-                this.semanticRoutingSupport,
-                compatibilityDecisionPlanner,
-                this.decisionOrchestrator,
-                this.decisionParamAssembler,
-                new DispatcherRoutingBridgeAdapter(
-                        this.dispatchHeuristicsSupport,
-                        this.dispatcherRoutingCompatibilitySupport::maybeBlockByCapability,
-                        this.dispatcherRoutingCompatibilitySupport::isSkillPreExecuteGuardBlocked,
-                        this.dispatcherRoutingCompatibilitySupport::isSkillLoopGuardBlocked,
-                        this.dispatcherRoutingCompatibilitySupport::isSemanticRouteLoopGuardBlocked,
-                        this.dispatcherRoutingCompatibilitySupport::shouldRunSkillPreAnalyze,
-                        this.dispatcherRoutingCompatibilitySupport::detectSkillWithLlm,
-                        this.dispatcherRoutingCompatibilitySupport::enrichMemoryHabitResult
-                ),
-                this.braveFirstSearchRoutingEnabled,
-                this.parallelDetectedSkillRoutingEnabled,
-                this.parallelDetectedSkillRoutingMaxCandidates,
-                this.parallelDetectedSkillRoutingTimeoutMs,
-                parseCsvList(System.getProperty("mindos.dispatcher.parallel-routing.search-priority-order", "")),
-                this.semanticAnalysisRouteMinConfidence,
-                this.skillPreAnalyzeSkipSkills,
-                this.skillPreAnalyzeRequestCount,
-                this.skillPreAnalyzeExecutedCount,
-                this.skillPreAnalyzeAcceptedCount,
-                this.skillPreAnalyzeSkippedByGateCount,
-                this.skillPreAnalyzeSkippedBySkillCount,
-                this.detectedSkillLoopSkipBlockedCount
-        );
-        this.dispatchApplicationCoordinator = new DispatchApplicationCoordinator(
-                this.dispatchMemoryLifecycle,
-                this.dispatchPreparationSupport,
-                this.dispatchRoutingPipeline,
-                this.decisionOrchestrator,
-                this.metaOrchestratorService,
-                this.dispatchResultFinalizer,
-                () -> this.masterOrchestrator,
-                () -> this.routingCoordinator,
-                new DispatcherApplicationCoordinatorBridgeAdapter(
-                        this.dispatchHeuristicsSupport,
-                        this.dispatchLlmSupport,
-                () -> this.masterOrchestrator,
-                () -> this.routingCoordinator,
-                this.dispatcherRoutingCompatibilitySupport::maybeBlockByCapability,
-                this.dispatcherRoutingCompatibilitySupport::isSkillLoopGuardBlocked,
-                this.dispatcherRoutingCompatibilitySupport::enrichMemoryHabitResult,
-                this::clip,
-                this::normalize,
-                this::buildDrainingResult,
-                        this::logDispatchCompletion,
-                        this::firstNonBlank
-                ),
-                this.semanticAnalysisSkipShortSimpleEnabled,
-                this.promptInjectionSafeReply
-        );
-    }
-
-    @Autowired(required = false)
-    void setMasterOrchestrator(MasterOrchestrator masterOrchestrator) {
-        this.masterOrchestrator = masterOrchestrator;
-    }
-
-    @Autowired(required = false)
-    void setRoutingCoordinator(RoutingCoordinator routingCoordinator) {
-        this.routingCoordinator = routingCoordinator;
+        this.dispatcherRoutingCompatibilitySupport = null;
+        this.dispatchPreparationSupport = null;
+        this.dispatchResultFinalizer = null;
+        this.dispatchRoutingPipeline = null;
+        this.dispatchApplicationCoordinator = null;
     }
 
     @Autowired(required = false)
@@ -773,6 +643,42 @@ public class DispatcherService implements ContextCompressionMetricsReader,
 
     private DispatcherMemoryFacade activeDispatcherMemoryFacade() {
         return dispatcherMemoryFacade;
+    }
+
+    private String inferMemoryBucket(String input) {
+        String normalized = normalize(input);
+        if (normalized.isBlank()) {
+            return "general";
+        }
+        if (containsAny(normalized,
+                "学习计划", "教学规划", "复习计划", "备考", "课程", "学科", "数学", "英语", "物理", "化学")) {
+            return "learning";
+        }
+        if (containsAny(normalized,
+                "情商", "沟通", "同事", "关系", "冲突", "安抚", "eq", "coach")) {
+            return "eq";
+        }
+        if (containsAny(normalized,
+                "待办", "todo", "截止", "任务", "清单", "优先级", "计划")) {
+            return "task";
+        }
+        if (containsAny(normalized,
+                "代码", "编译", "java", "spring", "bug", "接口", "mcp", "sdk")) {
+            return "coding";
+        }
+        return "general";
+    }
+
+    private boolean containsAny(String value, String... phrases) {
+        if (value == null || value.isBlank() || phrases == null) {
+            return false;
+        }
+        for (String phrase : phrases) {
+            if (phrase != null && !phrase.isBlank() && value.contains(phrase)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private HermesAssistantRuntime hermesAssistantRuntime() {
@@ -826,8 +732,17 @@ public class DispatcherService implements ContextCompressionMetricsReader,
                         ),
                         this.dispatchLlmSupport,
                         this.dispatcherMemoryFacade,
-                        this.dispatcherRoutingCompatibilitySupport,
-                        this.dispatchRuleCatalog,
+                        new HermesExecutionGuard(
+                                this.dispatcherMemoryFacade,
+                                this.skillCapabilityPolicy,
+                                this.behaviorRoutingSupport,
+                                this.skillGuardMaxConsecutive,
+                                this.skillGuardRecentWindowSize,
+                                this.skillGuardRepeatInputThreshold,
+                                this.skillGuardCooldownSeconds,
+                                this.habitExplainHintEnabled,
+                                this.preferenceReuseEnabled
+                        ),
                         this.promptInjectionSafeReply
                 );
             }
@@ -1078,7 +993,7 @@ public class DispatcherService implements ContextCompressionMetricsReader,
     }
 
     public void resumeAcceptingRequests() {
-        dispatchApplicationCoordinator.resumeAcceptingRequests();
+        hermesAssistantRuntime().resumeAcceptingRequests();
     }
 
     public boolean isAcceptingRequests() {

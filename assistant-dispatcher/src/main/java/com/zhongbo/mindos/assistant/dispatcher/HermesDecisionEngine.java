@@ -80,6 +80,11 @@ final class HermesDecisionEngine {
             return explicitReservedSkill.get();
         }
 
+        Optional<DecisionPlan> builtinHelpPlan = builtinHelpPlan(safeContext);
+        if (builtinHelpPlan.isPresent()) {
+            return builtinHelpPlan.get();
+        }
+
         Optional<DecisionPlan> resolvedCommand = resolvedCommandPlan(safeContext);
         if (resolvedCommand.isPresent()) {
             return resolvedCommand.get();
@@ -156,6 +161,43 @@ final class HermesDecisionEngine {
             ));
         }
         return Optional.empty();
+    }
+
+    private Optional<DecisionPlan> builtinHelpPlan(HermesDecisionContext context) {
+        if (context == null) {
+            return Optional.empty();
+        }
+        String normalizedInput = normalize(context.userInput()).toLowerCase(Locale.ROOT);
+        if (normalizedInput.isBlank()) {
+            return Optional.empty();
+        }
+        if (isLearnableSkillsQuestion(normalizedInput)) {
+            return Optional.of(helpDecisionPlan("learnable"));
+        }
+        if (isAvailableSkillsQuestion(normalizedInput)) {
+            return Optional.of(helpDecisionPlan("available"));
+        }
+        return Optional.empty();
+    }
+
+    private DecisionPlan helpDecisionPlan(String mode) {
+        Map<String, Object> params = "learnable".equals(mode)
+                ? Map.of("mode", "learnable")
+                : Map.of("mode", "available");
+        Decision decision = new Decision(
+                "skills.help",
+                "skills.help",
+                params,
+                0.99d,
+                false
+        );
+        return new DecisionPlan(
+                decision,
+                "builtin-help",
+                List.of("built-in skills help question matched a deterministic Hermes system route"),
+                List.of(),
+                null
+        );
     }
 
     private Optional<DecisionPlan> resolvedCommandPlan(HermesDecisionContext context) {
@@ -575,6 +617,54 @@ final class HermesDecisionEngine {
 
     private boolean isRealtimeIntent(String userInput, SemanticAnalysisResult semanticAnalysis) {
         return heuristicsSupport != null && heuristicsSupport.isRealtimeIntent(userInput, semanticAnalysis);
+    }
+
+    private boolean isAvailableSkillsQuestion(String normalizedInput) {
+        return containsAny(normalizedInput,
+                "你有哪些技能",
+                "你有什么技能",
+                "你会什么",
+                "你能做什么",
+                "你可以做什么",
+                "你有什么能力",
+                "支持哪些技能",
+                "有哪些技能",
+                "skill list",
+                "list skills",
+                "show skills",
+                "available skills",
+                "what skills do you have",
+                "what can you do");
+    }
+
+    private boolean isLearnableSkillsQuestion(String normalizedInput) {
+        return containsAny(normalizedInput,
+                "可以学习哪些技能",
+                "能学习哪些技能",
+                "还能学习什么技能",
+                "还可以学习哪些技能",
+                "你能学什么",
+                "你可以学什么",
+                "怎么学习新技能",
+                "怎么添加新技能",
+                "怎么扩展技能",
+                "what skills can you learn",
+                "can you learn new skills",
+                "how can you learn new skills",
+                "add new skills",
+                "learn new skills");
+    }
+
+    private boolean containsAny(String normalizedInput, String... phrases) {
+        if (normalizedInput == null || normalizedInput.isBlank() || phrases == null) {
+            return false;
+        }
+        for (String phrase : phrases) {
+            if (phrase != null && !phrase.isBlank() && normalizedInput.contains(phrase)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private boolean isRealtimeSearchSkill(String skillName) {

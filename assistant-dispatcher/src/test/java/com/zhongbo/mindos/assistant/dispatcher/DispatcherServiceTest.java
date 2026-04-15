@@ -699,7 +699,7 @@ class DispatcherServiceTest {
     }
 
     @Test
-    void shouldKeepGenericFallbackShortlistWhenNoSkillScoresPositive() {
+    void shouldFallbackDirectlyWhenNoSkillScoresPositive() {
         MemoryManager memoryManager = createMemoryManager();
         RecordingLlmClient llmClient = new RecordingLlmClient(List.of(
                 "{\"intent\":\"general.confirm\",\"target\":\"echo\",\"params\":{\"text\":\"auto-routed by llm-dsl\"},\"confidence\":0.82,\"requireClarify\":false}"
@@ -712,18 +712,16 @@ class DispatcherServiceTest {
 
         DispatchResult result = service.dispatch("generic-route-user", "请帮我自动处理这个请求");
 
-        assertEquals("echo", result.channel());
-        assertEquals(1, llmClient.routingCallCount());
-        assertFalse(llmClient.routingPrompts().isEmpty());
-        assertTrue(llmClient.routingPrompts().get(0).contains("echo - Echo text for generic confirmation requests"));
-        assertEquals("llm-dsl", result.executionTrace().routing().route());
+        assertEquals("llm", result.channel());
+        assertEquals(0, llmClient.routingCallCount());
+        assertEquals(1, llmClient.fallbackCallCount());
+        assertTrue(llmClient.routingPrompts().isEmpty());
     }
 
     @Test
-    void shouldRejectCodeGenerateWhenLlmRoutingMatchesGeneralKnowledgeQuestion() {
+    void shouldFallbackToLlmWhenQuestionLooksLikeGeneralKnowledge() {
         MemoryManager memoryManager = createMemoryManager();
         RecordingLlmClient llmClient = new RecordingLlmClient(List.of(
-                "{\"intent\":\"general.explain\",\"target\":\"code.generate\",\"params\":{\"task\":\"用简单例子解释量子计算的基本原理\"},\"confidence\":0.81,\"requireClarify\":false}",
                 "量子计算可以理解为让信息在多个可能状态上同时演化，再通过干涉放大正确答案。"
         ));
         DispatcherService service = createDispatcher(memoryManager, llmClient, List.of(
@@ -733,7 +731,7 @@ class DispatcherServiceTest {
         DispatchResult result = service.dispatch("general-user", "用简单例子解释量子计算的基本原理");
 
         assertEquals("llm", result.channel());
-        assertEquals(1, llmClient.routingCallCount());
+        assertEquals(0, llmClient.routingCallCount());
         assertEquals(1, llmClient.fallbackCallCount());
         assertTrue(result.reply().contains("量子计算"));
     }
@@ -1471,10 +1469,9 @@ class DispatcherServiceTest {
     }
 
     @Test
-    void shouldApplyStageMaxTokensToDslFallbackAndFinalizeContexts() {
+    void shouldApplyStageMaxTokensToFallbackAndFinalizeContextsWithoutDslRouting() {
         MemoryManager memoryManager = createMemoryManager();
         RecordingLlmClient llmClient = new RecordingLlmClient(List.of(
-                "{\"intent\":\"general.confirm\",\"target\":\"echo\",\"params\":{\"text\":\"auto-routed by llm-dsl\"},\"confidence\":0.82,\"requireClarify\":false}",
                 "优化后的技能回复",
                 "普通 fallback 回复"
         ));
@@ -1511,12 +1508,12 @@ class DispatcherServiceTest {
                 77
         );
 
-        DispatchResult routed = service.dispatch("budget-user", "请帮我自动处理这个请求");
+        DispatchResult routed = service.dispatch("budget-user", "skill:echo text=auto-routed by llm-dsl");
         DispatchResult fallback = service.dispatch("budget-user", "谢谢");
 
         assertEquals("echo", routed.channel());
         assertEquals("llm", fallback.channel());
-        assertEquals(111, ((Number) llmClient.routingContexts().get(0).get("maxTokens")).intValue());
+        assertTrue(llmClient.routingContexts().isEmpty());
 
         Map<String, Object> finalizeContext = llmClient.finalizeContexts().stream()
                 .filter(ctx -> "skill-postprocess".equals(String.valueOf(ctx.get("routeStage"))))

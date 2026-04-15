@@ -51,7 +51,8 @@ final class HermesToolSchemaCatalog {
         return !normalized.isBlank()
                 && !RESERVED_AUTO_ROUTE_TARGETS.contains(normalized)
                 && !normalized.startsWith("im.")
-                && !normalized.startsWith("internal.");
+                && !normalized.startsWith("internal.")
+                && !normalized.startsWith("skills.");
     }
 
     private ParamSchema findSchema(String skillName) {
