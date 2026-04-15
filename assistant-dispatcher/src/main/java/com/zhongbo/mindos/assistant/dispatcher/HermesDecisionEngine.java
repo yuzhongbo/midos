@@ -181,18 +181,12 @@ final class HermesDecisionEngine {
             );
         }
         if (!realtimeLike && !shouldCallLlm) {
-            effectiveReasons.add("relevant memory can answer directly");
-            return new DecisionPlan(
-                    new Decision(resolveFallbackIntent(semanticAnalysis, "memory.direct"), "memory.direct", Map.of(), confidence, false),
-                    "memory-direct",
-                    List.copyOf(effectiveReasons),
-                    rejectedReasons == null ? List.of() : List.copyOf(rejectedReasons),
-                    null
-            );
+            effectiveReasons.add("relevant memory will guide the model response instead of direct memory output");
+        } else {
+            effectiveReasons.add(realtimeLike
+                    ? "realtime-like query requires fresh answer generation"
+                    : "memory is insufficient for a direct answer");
         }
-        effectiveReasons.add(realtimeLike
-                ? "realtime-like query requires fresh answer generation"
-                : "memory is insufficient for a direct answer");
         return new DecisionPlan(
                 new Decision(resolveFallbackIntent(semanticAnalysis, "llm"), "llm", Map.of(), confidence, false),
                 "llm-fallback",

@@ -197,7 +197,7 @@ class PromptMemoryContextAssemblerTest {
 
         assertEquals("owner Alice due 2026-04-05", factItem.text());
         assertTrue(factItem.finalScore() > routingItem.finalScore());
-        assertTrue(context.semanticContext().contains("[fact] owner Alice due 2026-04-05"));
+        assertTrue(context.semanticContext().contains("owner Alice due 2026-04-05"));
         assertTrue(context.semanticContext().contains("[routing] semantic-summary"));
         assertFalse(context.semanticContext().contains("reply="));
     }

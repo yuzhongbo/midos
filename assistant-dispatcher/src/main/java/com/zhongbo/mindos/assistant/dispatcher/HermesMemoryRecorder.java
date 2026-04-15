@@ -158,7 +158,7 @@ final class HermesMemoryRecorder {
         if (finalResult != null && finalResult.skillName() != null && !finalResult.skillName().isBlank()) {
             entry.append("; channel=").append(finalResult.skillName());
         }
-        entry.append("; outcome=").append(finalResult.isSuccess() ? "success" : "failed");
+        entry.append("; outcome=").append(finalResult.success() ? "success" : "failed");
         entry.append("; summary=").append(summary);
         String paramsDigest = summarizePayload(semanticAnalysis.payload());
         if (!paramsDigest.isBlank()) {

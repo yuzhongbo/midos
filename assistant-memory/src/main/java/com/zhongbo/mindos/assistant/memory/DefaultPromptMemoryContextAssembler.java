@@ -317,7 +317,7 @@ public class DefaultPromptMemoryContextAssembler implements PromptMemoryContextA
     }
 
     private boolean isConversationRollup(RankedSemanticMemory ranked) {
-        String bucket = ranked == null ? "" : normalize(ranked.bucket());
+        String bucket = ranked == null || ranked.bucket() == null ? "" : ranked.bucket().trim().toLowerCase(Locale.ROOT);
         return CONVERSATION_ROLLUP_BUCKET.equals(bucket);
     }
 
