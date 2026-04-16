@@ -8,6 +8,7 @@ import com.zhongbo.mindos.assistant.dispatcher.orchestrator.memory.MemoryWriteOp
 import com.zhongbo.mindos.assistant.memory.model.PreferenceProfile;
 import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalysisResult;
 
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -53,9 +54,31 @@ final class HermesMemoryRecorder {
                 String attemptedSkill,
                 Boolean attemptedSuccess,
                 boolean memoryEnabled) {
+        record(userId,
+                userInput,
+                finalResult,
+                profileContext,
+                semanticAnalysis,
+                attemptedSkill,
+                attemptedSuccess,
+                Map.of(),
+                memoryEnabled);
+    }
+
+    void record(String userId,
+                String userInput,
+                SkillResult finalResult,
+                Map<String, Object> profileContext,
+                SemanticAnalysisResult semanticAnalysis,
+                String attemptedSkill,
+                Boolean attemptedSuccess,
+                Map<String, Object> executionParams,
+                boolean memoryEnabled) {
         if (!memoryEnabled || userId == null || userId.isBlank() || dispatcherMemoryFacade == null) {
             return;
         }
+        Map<String, Object> effectivePayload = resolveTaskPayload(semanticAnalysis, executionParams);
+        String effectiveTaskFocus = resolveTaskFocus(semanticAnalysis, effectivePayload);
         MemoryWriteBatch batch = dispatchMemoryLifecycle == null
                 ? MemoryWriteBatch.empty()
                 : dispatchMemoryLifecycle.recordUserInput(userId, userInput == null ? "" : userInput);
@@ -81,9 +104,9 @@ final class HermesMemoryRecorder {
                 && shouldRecordSemanticSummary(finalResult.skillName())) {
             batch = batch.merge(semanticRoutingSupport.maybeStoreSemanticSummary(userId, userInput, semanticAnalysis));
         }
-        batch = batch.merge(buildTaskFactBatch(semanticAnalysis, finalResult));
-        batch = batch.merge(buildTaskStateBatch(semanticAnalysis, finalResult));
-        batch = batch.merge(buildLearningSignalBatch(userInput, semanticAnalysis, finalResult));
+        batch = batch.merge(buildTaskFactBatch(semanticAnalysis, finalResult, effectivePayload, effectiveTaskFocus));
+        batch = batch.merge(buildTaskStateBatch(semanticAnalysis, finalResult, effectiveTaskFocus));
+        batch = batch.merge(buildLearningSignalBatch(userInput, semanticAnalysis, finalResult, effectiveTaskFocus));
 
         String rollup = buildConversationRollup(userInput, semanticAnalysis, finalResult);
         if (!rollup.isBlank()) {
@@ -183,7 +206,10 @@ final class HermesMemoryRecorder {
         return cap(entry.toString(), 320);
     }
 
-    private MemoryWriteBatch buildTaskFactBatch(SemanticAnalysisResult semanticAnalysis, SkillResult finalResult) {
+    private MemoryWriteBatch buildTaskFactBatch(SemanticAnalysisResult semanticAnalysis,
+                                                SkillResult finalResult,
+                                                Map<String, Object> effectivePayload,
+                                                String effectiveTaskFocus) {
         if (semanticAnalysis == null || finalResult == null || !finalResult.success()) {
             return MemoryWriteBatch.empty();
         }
@@ -192,15 +218,17 @@ final class HermesMemoryRecorder {
                 || !"none".equals(semanticAnalysis.memoryOperation())) {
             return MemoryWriteBatch.empty();
         }
-        String entry = buildTaskFactEntry(semanticAnalysis);
+        String entry = buildTaskFactEntry(semanticAnalysis, effectivePayload, effectiveTaskFocus);
         if (entry.isBlank()) {
             return MemoryWriteBatch.empty();
         }
         return MemoryWriteBatch.of(new MemoryWriteOperation.WriteSemantic(entry, List.of(), "task"));
     }
 
-    private String buildTaskFactEntry(SemanticAnalysisResult semanticAnalysis) {
-        Map<String, Object> payload = semanticAnalysis.payload();
+    private String buildTaskFactEntry(SemanticAnalysisResult semanticAnalysis,
+                                      Map<String, Object> effectivePayload,
+                                      String effectiveTaskFocus) {
+        Map<String, Object> payload = effectivePayload == null ? Map.of() : effectivePayload;
         if (payload == null || payload.isEmpty()) {
             return "";
         }
@@ -208,6 +236,7 @@ final class HermesMemoryRecorder {
                 stringValue(payload.get("task")),
                 stringValue(payload.get("title")),
                 stringValue(payload.get("goal")),
+                effectiveTaskFocus,
                 semanticAnalysis.taskFocus()
         );
         String goal = stringValue(payload.get("goal"));
@@ -236,26 +265,30 @@ final class HermesMemoryRecorder {
         return cap(entry.toString(), 220);
     }
 
-    private MemoryWriteBatch buildTaskStateBatch(SemanticAnalysisResult semanticAnalysis, SkillResult finalResult) {
+    private MemoryWriteBatch buildTaskStateBatch(SemanticAnalysisResult semanticAnalysis,
+                                                 SkillResult finalResult,
+                                                 String effectiveTaskFocus) {
         if (semanticAnalysis == null || finalResult == null || !finalResult.success()) {
             return MemoryWriteBatch.empty();
         }
         if ("realtime".equals(semanticAnalysis.contextScope()) || "recall".equals(semanticAnalysis.memoryOperation())) {
             return MemoryWriteBatch.empty();
         }
-        String entry = buildTaskStateEntry(semanticAnalysis, finalResult);
+        String entry = buildTaskStateEntry(semanticAnalysis, finalResult, effectiveTaskFocus);
         if (entry.isBlank()) {
             return MemoryWriteBatch.empty();
         }
         return MemoryWriteBatch.of(new MemoryWriteOperation.WriteSemantic(entry, List.of(), "task"));
     }
 
-    private String buildTaskStateEntry(SemanticAnalysisResult semanticAnalysis, SkillResult finalResult) {
-        String task = semanticAnalysis == null ? "" : semanticAnalysis.taskFocus();
+    private String buildTaskStateEntry(SemanticAnalysisResult semanticAnalysis,
+                                       SkillResult finalResult,
+                                       String effectiveTaskFocus) {
+        String task = firstNonBlank(effectiveTaskFocus, semanticAnalysis == null ? "" : semanticAnalysis.taskFocus());
         if (task.isBlank()) {
             return "";
         }
-        String state = resolveTaskState(semanticAnalysis, finalResult);
+        String state = resolveTaskState(semanticAnalysis, finalResult, task);
         if (state.isBlank()) {
             return "";
         }
@@ -269,20 +302,23 @@ final class HermesMemoryRecorder {
 
     private MemoryWriteBatch buildLearningSignalBatch(String userInput,
                                                       SemanticAnalysisResult semanticAnalysis,
-                                                      SkillResult finalResult) {
+                                                      SkillResult finalResult,
+                                                      String effectiveTaskFocus) {
         if (semanticAnalysis == null || finalResult == null || !finalResult.success()) {
             return MemoryWriteBatch.empty();
         }
-        String entry = buildLearningSignalEntry(userInput, semanticAnalysis);
+        String entry = buildLearningSignalEntry(userInput, semanticAnalysis, effectiveTaskFocus);
         if (entry.isBlank()) {
             return MemoryWriteBatch.empty();
         }
-        String bucket = semanticAnalysis.taskFocus().isBlank() ? "general" : "task";
+        String bucket = effectiveTaskFocus.isBlank() ? "general" : "task";
         return MemoryWriteBatch.of(new MemoryWriteOperation.WriteSemantic(entry, List.of(), bucket));
     }
 
-    private String buildLearningSignalEntry(String userInput, SemanticAnalysisResult semanticAnalysis) {
-        String task = semanticAnalysis.taskFocus();
+    private String buildLearningSignalEntry(String userInput,
+                                            SemanticAnalysisResult semanticAnalysis,
+                                            String effectiveTaskFocus) {
+        String task = firstNonBlank(effectiveTaskFocus, semanticAnalysis.taskFocus());
         String intentState = semanticAnalysis.intentState();
         String intentPhase = semanticAnalysis.intentPhase();
         if ("blocking".equals(intentPhase) && !task.isBlank()) {
@@ -329,6 +365,28 @@ final class HermesMemoryRecorder {
         return "";
     }
 
+    private Map<String, Object> resolveTaskPayload(SemanticAnalysisResult semanticAnalysis, Map<String, Object> executionParams) {
+        LinkedHashMap<String, Object> merged = new LinkedHashMap<>();
+        if (executionParams != null && !executionParams.isEmpty()) {
+            merged.putAll(executionParams);
+        }
+        if (semanticAnalysis != null && semanticAnalysis.payload() != null && !semanticAnalysis.payload().isEmpty()) {
+            semanticAnalysis.payload().forEach(merged::putIfAbsent);
+        }
+        return merged.isEmpty() ? Map.of() : Map.copyOf(merged);
+    }
+
+    private String resolveTaskFocus(SemanticAnalysisResult semanticAnalysis, Map<String, Object> effectivePayload) {
+        Map<String, Object> payload = effectivePayload == null ? Map.of() : effectivePayload;
+        return firstNonBlank(
+                stringValue(payload.get("task")),
+                stringValue(payload.get("title")),
+                stringValue(payload.get("goal")),
+                stringValue(payload.get("topic")),
+                semanticAnalysis == null ? "" : semanticAnalysis.taskFocus()
+        );
+    }
+
     private void appendFactSegment(StringBuilder entry, String label, String value) {
         if (value == null || value.isBlank()) {
             return;
@@ -339,7 +397,9 @@ final class HermesMemoryRecorder {
         entry.append(label).append('：').append(cap(value.trim(), 80));
     }
 
-    private String resolveTaskState(SemanticAnalysisResult semanticAnalysis, SkillResult finalResult) {
+    private String resolveTaskState(SemanticAnalysisResult semanticAnalysis,
+                                    SkillResult finalResult,
+                                    String taskFocus) {
         if (semanticAnalysis == null || finalResult == null || !finalResult.success()) {
             return "";
         }
@@ -351,7 +411,7 @@ final class HermesMemoryRecorder {
             case "update" -> "已更新";
             case "continue" -> "进行中";
             case "start" -> "已开始";
-            default -> semanticAnalysis.taskFocus().isBlank() ? "" : "进行中";
+            default -> taskFocus == null || taskFocus.isBlank() ? "" : "进行中";
         };
     }
 

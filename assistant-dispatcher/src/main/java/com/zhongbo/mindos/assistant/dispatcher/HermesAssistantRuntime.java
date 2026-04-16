@@ -438,7 +438,15 @@ final class HermesAssistantRuntime {
                     List.of(primaryStep("success", resultToReturn.skillName(), resultToReturn.output(), startedAt, Instant.now()))
             );
             result = enrichObservability(result, userInput, decisionContext.semanticAnalysis(), finalized.applied());
-            memoryRecorder.record(userId, userInput, resultToReturn, decisionContext.profileContext(), decisionContext.semanticAnalysis(), attemptedSkill, true, decisionContext.memoryEnabled());
+            memoryRecorder.record(userId,
+                    userInput,
+                    resultToReturn,
+                    decisionContext.profileContext(),
+                    decisionContext.semanticAnalysis(),
+                    attemptedSkill,
+                    true,
+                    validatedDecision.params(),
+                    decisionContext.memoryEnabled());
             return result;
         }
 
@@ -462,7 +470,15 @@ final class HermesAssistantRuntime {
                 List.of(primaryStep("failed", attemptedSkill, failedResult.output(), startedAt, Instant.now()))
         );
         result = enrichObservability(result, userInput, decisionContext.semanticAnalysis(), false);
-        memoryRecorder.record(userId, userInput, failedResult, decisionContext.profileContext(), decisionContext.semanticAnalysis(), attemptedSkill, false, decisionContext.memoryEnabled());
+        memoryRecorder.record(userId,
+                userInput,
+                failedResult,
+                decisionContext.profileContext(),
+                decisionContext.semanticAnalysis(),
+                attemptedSkill,
+                false,
+                validatedDecision.params(),
+                decisionContext.memoryEnabled());
         return result;
     }
 

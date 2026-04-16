@@ -44,6 +44,31 @@ class HermesToolSchemaCatalogTest {
         assertFalse(catalog.isDecisionEligible("code.generate"));
     }
 
+    @Test
+    void shouldDetectFromCapabilitySurfaceInsteadOfHiddenExecutionKeywords() {
+        SkillRegistry registry = new SkillRegistry(List.of(new DescriptorSkill(
+                "code.generate",
+                "Generate or fix code on explicit request",
+                List.of("内部调试暗号")
+        )));
+        InMemoryParamSchemaRegistry paramSchemaRegistry = new InMemoryParamSchemaRegistry();
+        paramSchemaRegistry.registerDefaults();
+        HermesToolSchemaCatalog catalog = new HermesToolSchemaCatalog(
+                new DefaultSkillCatalog(registry, null, new SkillRoutingProperties()),
+                paramSchemaRegistry
+        );
+
+        List<String> capabilityCandidates = catalog.detectDecisionCandidates("请帮我修复代码", 3).stream()
+                .map(candidate -> candidate.skillName())
+                .toList();
+        List<String> rawExecutionCandidates = catalog.detectDecisionCandidates("内部调试暗号", 3).stream()
+                .map(candidate -> candidate.skillName())
+                .toList();
+
+        assertTrue(capabilityCandidates.contains("code.assist"));
+        assertFalse(rawExecutionCandidates.contains("code.assist"));
+    }
+
     private record DescriptorSkill(String name, String description, List<String> routingKeywords)
             implements Skill, SkillDescriptorProvider {
 

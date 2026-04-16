@@ -1045,6 +1045,40 @@ class DispatcherServiceTest {
     }
 
     @Test
+    void shouldDetectCapabilityKeywordsWithoutUsingHiddenExecutionSkillKeywords() {
+        MemoryManager memoryManager = createMemoryManager();
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of("fallback llm"));
+        SkillRegistry registry = new SkillRegistry(List.of(
+                scriptedSkill(
+                        "code.generate",
+                        "Generate or fix code on explicit request",
+                        List.of("内部调试暗号"),
+                        context -> SkillResult.success("code.generate", "代码已处理")
+                )
+        ));
+        SemanticAnalysisService semanticAnalysisService = new SemanticAnalysisService(llmClient, registry, new DefaultSkillCatalog(registry, null, new SkillRoutingProperties()), true, false, true, "", "local", "cost", 120) {
+            @Override
+            public SemanticAnalysisResult analyze(String userId,
+                                                  String userInput,
+                                                  String memoryContext,
+                                                  Map<String, Object> profileContext,
+                                                  List<String> availableSkillSummaries) {
+                return SemanticAnalysisResult.empty();
+            }
+        };
+        DispatcherService service = createDispatcherWithSemanticService(memoryManager, llmClient, registry, semanticAnalysisService, 2);
+
+        DispatchResult capabilityResult = service.dispatch("capability-user", "请帮我修复代码");
+        DispatchResult rawExecutionKeywordResult = service.dispatch("capability-user", "内部调试暗号");
+
+        assertEquals("code.generate", capabilityResult.channel());
+        assertTrue(Set.of("detected-skill", "detected-skill-parallel").contains(capabilityResult.executionTrace().routing().route()));
+        assertEquals("code.generate", capabilityResult.executionTrace().routing().selectedSkill());
+        assertEquals("llm", rawExecutionKeywordResult.channel());
+        assertFalse(Set.of("detected-skill", "detected-skill-parallel").contains(rawExecutionKeywordResult.executionTrace().routing().route()));
+    }
+
+    @Test
     void shouldSkipClarificationWhenSemanticPayloadIsCompletedByRoutingDefaults() {
         MemoryManager memoryManager = createMemoryManager();
         RecordingLlmClient llmClient = new RecordingLlmClient(List.of("stub"));
@@ -1372,6 +1406,29 @@ class DispatcherServiceTest {
         assertTrue(result.reply().contains("待办已创建"));
         assertEquals(0, llmClient.routingCallCount());
         assertEquals(0, llmClient.fallbackCallCount());
+    }
+
+    @Test
+    void shouldContinueTodoHabitAfterExplicitSkillDslHistory() {
+        MemoryManager memoryManager = createMemoryManager();
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of("不应调用 llm"));
+        DispatcherService service = createDispatcher(memoryManager, llmClient, List.of(
+                scriptedSkill(
+                        "todo.create",
+                        "Creates todo items from natural language",
+                        List.of("待办", "todo"),
+                        context -> SkillResult.success("todo.create", "待办已创建")
+                )
+        ), 2);
+
+        service.dispatch("habit-user", "{\"skill\":\"todo.create\",\"input\":{\"task\":\"准备周会汇报\",\"dueDate\":\"周五\"}}");
+        service.dispatch("habit-user", "{\"skill\":\"todo.create\",\"input\":{\"task\":\"准备技术评审\",\"dueDate\":\"周六\"}}");
+
+        DispatchResult result = service.dispatch("habit-user", "继续按之前方式，截止明天");
+
+        assertEquals("todo.create", result.channel());
+        assertTrue(Set.of("memory-habit", "semantic-analysis", "detected-skill").contains(result.executionTrace().routing().route()));
+        assertEquals("todo.create", result.executionTrace().routing().selectedSkill());
     }
 
     @Test

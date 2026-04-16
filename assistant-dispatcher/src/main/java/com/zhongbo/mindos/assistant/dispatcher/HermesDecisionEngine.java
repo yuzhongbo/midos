@@ -470,10 +470,12 @@ final class HermesDecisionEngine {
 
     private void addDetectedCandidates(Map<String, Candidate> candidates, HermesDecisionContext context) {
         String routingInput = context == null ? "" : context.routingInput();
-        if (skillCatalog == null || routingInput == null || routingInput.isBlank()) {
+        if ((toolSchemaCatalog == null && skillCatalog == null) || routingInput == null || routingInput.isBlank()) {
             return;
         }
-        List<SkillCandidate> detected = skillCatalog.detectSkillCandidates(routingInput, 5);
+        List<SkillCandidate> detected = toolSchemaCatalog == null
+                ? skillCatalog.detectSkillCandidates(routingInput, 5)
+                : toolSchemaCatalog.detectDecisionCandidates(routingInput, 5);
         String route = detected.size() > 1 ? "detected-skill-parallel" : "detected-skill";
         for (SkillCandidate candidate : detected) {
             if (candidate == null) {
@@ -539,6 +541,12 @@ final class HermesDecisionEngine {
         }
         for (Map.Entry<String, Candidate> entry : new ArrayList<>(candidates.entrySet())) {
             Double successRate = successRates.get(entry.getKey());
+            if (successRate == null && toolSchemaCatalog != null) {
+                String executionTarget = toolSchemaCatalog.executionTargetForDecision(entry.getKey());
+                if (!executionTarget.equals(entry.getKey())) {
+                    successRate = successRates.get(executionTarget);
+                }
+            }
             if (successRate == null) {
                 continue;
             }
@@ -861,12 +869,15 @@ final class HermesDecisionEngine {
         if (context == null || decisionParamAssembler == null) {
             return Map.of();
         }
-        return decisionParamAssembler.assembleParams(skillName, "detected", context.userInput(), context.skillContext());
+        String executionTarget = toolSchemaCatalog == null
+                ? normalize(skillName)
+                : toolSchemaCatalog.executionTargetForDecision(skillName);
+        return decisionParamAssembler.assembleParams(executionTarget, "detected", context.userInput(), context.skillContext());
     }
 
     private List<String> detectedReasons(HermesDecisionContext context, SkillCandidate candidate) {
         List<String> reasons = new ArrayList<>();
-        reasons.add("registered routing keywords matched the input");
+        reasons.add("decision-surface routing keywords matched the input");
         if (context != null && candidate != null && (isRealtimeIntent(context.userInput(), context.semanticAnalysis())
                 || isRealtimeSearchSkill(candidate.skillName()))) {
             reasons.add("realtime detected route");

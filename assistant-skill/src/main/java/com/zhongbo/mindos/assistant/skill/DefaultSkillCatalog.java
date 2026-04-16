@@ -3,6 +3,7 @@ package com.zhongbo.mindos.assistant.skill;
 import com.zhongbo.mindos.assistant.skill.mcp.McpToolCatalog;
 import com.zhongbo.mindos.assistant.skill.mcp.McpToolDefinition;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -39,8 +40,8 @@ public class DefaultSkillCatalog implements SkillCatalogFacade {
 
     @Autowired
     public DefaultSkillCatalog(SkillRegistry skillRegistry,
-                               McpToolCatalog mcpToolCatalog,
-                               SkillRoutingProperties routingProperties) {
+                               @Nullable McpToolCatalog mcpToolCatalog,
+                               @Nullable SkillRoutingProperties routingProperties) {
         this.skillRegistry = skillRegistry;
         this.mcpToolCatalog = mcpToolCatalog;
         this.routingProperties = routingProperties == null ? new SkillRoutingProperties() : routingProperties;

@@ -5,7 +5,9 @@ import com.zhongbo.mindos.assistant.dispatcher.orchestrator.ParamType;
 import com.zhongbo.mindos.assistant.skill.SkillDescriptor;
 
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -44,6 +46,37 @@ final class HermesToolSchema {
 
     String name() {
         return name;
+    }
+
+    int routingScore(String input) {
+        String normalizedInput = normalizeForMatch(input);
+        if (normalizedInput.isBlank()) {
+            return Integer.MIN_VALUE;
+        }
+        int bestScore = Integer.MIN_VALUE;
+        for (String phrase : detectionPhrases()) {
+            String normalizedPhrase = normalizeForMatch(phrase);
+            if (normalizedPhrase.isBlank()) {
+                continue;
+            }
+            if (normalizedInput.equals(normalizedPhrase)) {
+                bestScore = Math.max(bestScore, 900 + normalizedPhrase.length());
+                continue;
+            }
+            if (normalizedInput.startsWith(normalizedPhrase + " ")) {
+                bestScore = Math.max(bestScore, 820 + normalizedPhrase.length());
+                continue;
+            }
+            if (normalizedInput.contains(normalizedPhrase)) {
+                bestScore = Math.max(bestScore, 600 + normalizedPhrase.length());
+                continue;
+            }
+            int overlap = countMatchedWords(normalizedInput, normalizedPhrase);
+            if (overlap > 0) {
+                bestScore = Math.max(bestScore, 300 + overlap * 40);
+            }
+        }
+        return bestScore;
     }
 
     boolean matches(String target) {
@@ -93,6 +126,49 @@ final class HermesToolSchema {
 
     private static String join(Set<String> values) {
         return values == null || values.isEmpty() ? "" : String.join(",", values);
+    }
+
+    private List<String> detectionPhrases() {
+        LinkedHashSet<String> phrases = new LinkedHashSet<>();
+        phrases.add(name);
+        phrases.add(splitIdentifier(name));
+        phrases.addAll(routingKeywords);
+        return List.copyOf(phrases);
+    }
+
+    private static int countMatchedWords(String input, String keyword) {
+        int matches = 0;
+        for (String part : keyword.split(" ")) {
+            if (!isSignificant(part)) {
+                continue;
+            }
+            if (input.contains(part)) {
+                matches++;
+            }
+        }
+        return matches;
+    }
+
+    private static boolean isSignificant(String value) {
+        if (value == null || value.isBlank()) {
+            return false;
+        }
+        long count = value.codePoints().filter(Character::isLetterOrDigit).count();
+        return count >= 2;
+    }
+
+    private static String splitIdentifier(String value) {
+        return value == null ? ""
+                : value.replaceAll("([a-z])([A-Z])", "$1 $2")
+                .replaceAll("[._-]+", " ");
+    }
+
+    private static String normalizeForMatch(String value) {
+        return value == null ? "" : value.trim()
+                .toLowerCase(Locale.ROOT)
+                .replaceAll("[^\\p{L}\\p{N}]+", " ")
+                .trim()
+                .replaceAll("\\s+", " ");
     }
 
     private static String normalize(String value) {

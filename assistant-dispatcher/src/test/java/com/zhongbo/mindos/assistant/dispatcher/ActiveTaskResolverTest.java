@@ -18,14 +18,14 @@ class ActiveTaskResolverTest {
         PromptMemoryContextDto context = new PromptMemoryContextDto(
                 "",
                 """
-                - [fact] [任务事实] 当前事项：提交周报；项目：运营周报；截止时间：周五前
+                - [fact] [任务事实] 当前事项：提交周报；项目：运营周报；主题：数学；截止时间：周五前
                 - [working] [任务状态] 当前事项：提交周报；状态：进行中；下一步：同步项目风险
                 - [assistant-context] [学习信号] 当前事项：提交周报；偏好：上下文明确时直接推进，少澄清
                 """,
                 "",
                 Map.of(),
                 List.of(
-                        new RetrievedMemoryItemDto("semantic", "[任务事实] 当前事项：提交周报；项目：运营周报；截止时间：周五前", 0.9, 0.9, 0.9, 0.9, 1L)
+                        new RetrievedMemoryItemDto("semantic", "[任务事实] 当前事项：提交周报；项目：运营周报；主题：数学；截止时间：周五前", 0.9, 0.9, 0.9, 0.9, 1L)
                 )
         );
 
@@ -35,6 +35,7 @@ class ActiveTaskResolverTest {
         assertEquals("进行中", resolved.state());
         assertEquals("同步项目风险", resolved.nextAction());
         assertEquals("运营周报", resolved.project());
+        assertEquals("数学", resolved.topic());
         assertEquals("周五前", resolved.dueDate());
         assertEquals("上下文明确时直接推进，少澄清", resolved.preferenceHint());
     }
@@ -47,6 +48,7 @@ class ActiveTaskResolverTest {
                 "进行中",
                 "同步项目风险",
                 "运营周报",
+                "数学",
                 "周五前",
                 "上下文明确时直接推进，少澄清",
                 "当前事项 提交周报；状态 进行中；下一步 同步项目风险"
@@ -56,6 +58,7 @@ class ActiveTaskResolverTest {
 
         assertTrue(memoryContext.contains("Active task thread:"));
         assertTrue(memoryContext.contains("当前事项：提交周报"));
+        assertTrue(memoryContext.contains("主题：数学"));
         assertTrue(memoryContext.contains("偏好：上下文明确时直接推进，少澄清"));
     }
 }

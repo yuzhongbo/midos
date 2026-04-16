@@ -1173,6 +1173,7 @@ public class SemanticAnalysisService implements SemanticAnalyzer {
     private boolean shouldCarryExecutionSkill(String normalized) {
         return containsAny(normalized,
                 "开始吧", "开始执行", "执行吧", "就按这个", "按刚才", "按这个",
+                "按之前", "按之前方式", "继续按之前", "继续按之前方式", "按上次", "照之前",
                 "帮我推进", "推进一下", "照这个", "那就这样", "就这样", "开工", "开始做");
     }
 

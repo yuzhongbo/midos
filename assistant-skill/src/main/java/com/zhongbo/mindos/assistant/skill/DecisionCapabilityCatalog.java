@@ -46,7 +46,7 @@ public final class DecisionCapabilityCatalog {
                     "time.lookup",
                     "time",
                     "Look up the current time when the user explicitly asks for the time.",
-                    List.of("现在几点", "当前时间", "几点了", "现在时间", "what time", "current time")
+                    List.of("time", "现在几点", "当前时间", "几点了", "现在时间", "what time", "current time")
             )
     );
 

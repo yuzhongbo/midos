@@ -42,6 +42,7 @@ final class ActiveTaskResolver {
                 builder.state,
                 builder.nextAction,
                 builder.project,
+                builder.topic,
                 builder.dueDate,
                 builder.preferenceHint,
                 builder.summary()
@@ -106,6 +107,7 @@ final class ActiveTaskResolver {
             assign(builder, "状态", candidate);
             assign(builder, "下一步", candidate);
             assign(builder, "项目", candidate);
+            assign(builder, "主题", candidate);
             assign(builder, "截止时间", candidate);
             assign(builder, "偏好", candidate);
         }
@@ -143,6 +145,11 @@ final class ActiveTaskResolver {
             case "项目" -> {
                 if (builder.project.isBlank()) {
                     builder.project = value;
+                }
+            }
+            case "主题" -> {
+                if (builder.topic.isBlank()) {
+                    builder.topic = value;
                 }
             }
             case "截止时间" -> {
@@ -192,12 +199,13 @@ final class ActiveTaskResolver {
                               String state,
                               String nextAction,
                               String project,
+                              String topic,
                               String dueDate,
                               String preferenceHint,
                               String summary) {
 
         static ResolvedTaskThread empty() {
-            return new ResolvedTaskThread("", "", "", "", "", "", "");
+            return new ResolvedTaskThread("", "", "", "", "", "", "", "");
         }
 
         boolean isEmpty() {
@@ -213,6 +221,7 @@ final class ActiveTaskResolver {
             appendLine(builder, "状态", state);
             appendLine(builder, "下一步", nextAction);
             appendLine(builder, "项目", project);
+            appendLine(builder, "主题", topic);
             appendLine(builder, "截止时间", dueDate);
             appendLine(builder, "偏好", preferenceHint);
             return builder.toString().trim();
@@ -232,6 +241,9 @@ final class ActiveTaskResolver {
             }
             if (project != null && !project.isBlank()) {
                 attributes.put("activeTaskProject", project);
+            }
+            if (topic != null && !topic.isBlank()) {
+                attributes.put("activeTaskTopic", topic);
             }
             if (dueDate != null && !dueDate.isBlank()) {
                 attributes.put("activeTaskDueDate", dueDate);
@@ -258,6 +270,7 @@ final class ActiveTaskResolver {
         private String state = "";
         private String nextAction = "";
         private String project = "";
+        private String topic = "";
         private String dueDate = "";
         private String preferenceHint = "";
 
@@ -266,6 +279,7 @@ final class ActiveTaskResolver {
                     && state.isBlank()
                     && nextAction.isBlank()
                     && project.isBlank()
+                    && topic.isBlank()
                     && dueDate.isBlank()
                     && preferenceHint.isBlank();
         }
@@ -286,6 +300,12 @@ final class ActiveTaskResolver {
                     builder.append("；");
                 }
                 builder.append("下一步 ").append(nextAction);
+            }
+            if (!topic.isBlank()) {
+                if (builder.length() > 0) {
+                    builder.append("；");
+                }
+                builder.append("主题 ").append(topic);
             }
             return builder.toString();
         }

@@ -4,8 +4,11 @@ import com.zhongbo.mindos.assistant.dispatcher.orchestrator.ParamSchema;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.ParamSchemaRegistry;
 import com.zhongbo.mindos.assistant.skill.DecisionCapabilityCatalog;
 import com.zhongbo.mindos.assistant.skill.SkillCatalogFacade;
+import com.zhongbo.mindos.assistant.skill.SkillCandidate;
 import com.zhongbo.mindos.assistant.skill.SkillDescriptor;
 
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -109,6 +112,26 @@ final class HermesToolSchemaCatalog {
             return true;
         }
         return availableSkillNames().contains(normalized);
+    }
+
+    List<SkillCandidate> detectDecisionCandidates(String input, int limit) {
+        if (input == null || input.isBlank() || limit <= 0) {
+            return List.of();
+        }
+        List<SkillCandidate> candidates = new ArrayList<>();
+        for (HermesToolSchema schema : listSchemas()) {
+            if (schema == null || schema.name().isBlank()) {
+                continue;
+            }
+            int score = schema.routingScore(input);
+            if (score > 0) {
+                candidates.add(new SkillCandidate(schema.name(), score));
+            }
+        }
+        candidates.sort(Comparator.comparingInt(SkillCandidate::score).reversed()
+                .thenComparing(SkillCandidate::skillName));
+        int safeLimit = Math.min(limit, candidates.size());
+        return safeLimit <= 0 ? List.of() : List.copyOf(candidates.subList(0, safeLimit));
     }
 
     private ParamSchema findSchema(String skillName) {
