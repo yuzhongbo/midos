@@ -25,6 +25,9 @@ public class DefaultPromptMemoryContextAssembler implements PromptMemoryContextA
     private static final String SEMANTIC_SUMMARY_PREFIX = "semantic-summary ";
     private static final String INTENT_SUMMARY_MARKER = "[意图摘要]";
     private static final String ASSISTANT_CONTEXT_MARKER = "[助手上下文]";
+    private static final String TASK_FACT_MARKER = "[任务事实]";
+    private static final String TASK_STATE_MARKER = "[任务状态]";
+    private static final String LEARNING_SIGNAL_MARKER = "[学习信号]";
     private static final String CONVERSATION_SUMMARY_MARKER = "[会话摘要]";
     private static final String REVIEW_FOCUS_MARKER = "[复盘聚焦]";
     private static final int RECENT_TURNS_LIMIT = 6;
@@ -286,6 +289,9 @@ public class DefaultPromptMemoryContextAssembler implements PromptMemoryContextA
         if (isSemanticSummary(ranked)) {
             return relevance >= 0.18 || appended < 2;
         }
+        if (isLearningSignal(ranked)) {
+            return relevance >= 0.18 || appended < 2;
+        }
         return true;
     }
 
@@ -299,6 +305,9 @@ public class DefaultPromptMemoryContextAssembler implements PromptMemoryContextA
         if (isSemanticSummary(ranked)) {
             return "[summary]";
         }
+        if (isLearningSignal(ranked)) {
+            return "[assistant-context]";
+        }
         return switch (ranked.layer()) {
             case FACT -> "[fact]";
             case WORKING -> "[working]";
@@ -311,7 +320,9 @@ public class DefaultPromptMemoryContextAssembler implements PromptMemoryContextA
         if (isConversationSummary(ranked)) {
             return "semantic-summary";
         }
-        return (isConversationRollup(ranked) || isSemanticSummary(ranked)) ? "semantic-routing" : "semantic";
+        return (isConversationRollup(ranked) || isSemanticSummary(ranked) || isLearningSignal(ranked))
+                ? "semantic-routing"
+                : "semantic";
     }
 
     private double semanticReliability(RankedSemanticMemory ranked) {
@@ -323,6 +334,9 @@ public class DefaultPromptMemoryContextAssembler implements PromptMemoryContextA
         }
         if (isSemanticSummary(ranked)) {
             return 0.46;
+        }
+        if (isLearningSignal(ranked)) {
+            return 0.42;
         }
         return switch (ranked.layer()) {
             case FACT -> 0.9;
@@ -342,6 +356,9 @@ public class DefaultPromptMemoryContextAssembler implements PromptMemoryContextA
         if (isSemanticSummary(ranked)) {
             return 0.16;
         }
+        if (isLearningSignal(ranked)) {
+            return 0.14;
+        }
         return 0.6;
     }
 
@@ -360,15 +377,24 @@ public class DefaultPromptMemoryContextAssembler implements PromptMemoryContextA
         return text.contains(INTENT_SUMMARY_MARKER) || normalize(text).startsWith(normalize(SEMANTIC_SUMMARY_PREFIX));
     }
 
+    private boolean isLearningSignal(RankedSemanticMemory ranked) {
+        String text = ranked == null || ranked.entry() == null ? "" : ranked.entry().text();
+        return text.contains(LEARNING_SIGNAL_MARKER);
+    }
+
     private String humanizeSemanticText(RankedSemanticMemory ranked, String text) {
         if (text == null || text.isBlank()) {
             return "";
         }
-        if (!(isSemanticSummary(ranked) || isConversationRollup(ranked) || isConversationSummary(ranked))) {
+        if (!(isSemanticSummary(ranked) || isConversationRollup(ranked) || isConversationSummary(ranked)
+                || isLearningSignal(ranked) || text.contains(TASK_STATE_MARKER) || text.contains(TASK_FACT_MARKER))) {
             return text;
         }
         return text.replace(INTENT_SUMMARY_MARKER, "")
                 .replace(ASSISTANT_CONTEXT_MARKER, "")
+                .replace(TASK_FACT_MARKER, "")
+                .replace(TASK_STATE_MARKER, "")
+                .replace(LEARNING_SIGNAL_MARKER, "")
                 .replace(CONVERSATION_SUMMARY_MARKER, "")
                 .replace(REVIEW_FOCUS_MARKER, "")
                 .replace("semantic-summary", "")

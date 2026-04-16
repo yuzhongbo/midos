@@ -17,6 +17,8 @@ final class HermesMemoryRecorder {
 
     private static final String ASSISTANT_CONTEXT_MARKER = "[助手上下文]";
     private static final String TASK_FACT_MARKER = "[任务事实]";
+    private static final String TASK_STATE_MARKER = "[任务状态]";
+    private static final String LEARNING_SIGNAL_MARKER = "[学习信号]";
     private static final Set<String> NON_SKILL_CHANNELS = Set.of(
             "llm",
             "memory.direct",
@@ -80,6 +82,8 @@ final class HermesMemoryRecorder {
             batch = batch.merge(semanticRoutingSupport.maybeStoreSemanticSummary(userId, userInput, semanticAnalysis));
         }
         batch = batch.merge(buildTaskFactBatch(semanticAnalysis, finalResult));
+        batch = batch.merge(buildTaskStateBatch(semanticAnalysis, finalResult));
+        batch = batch.merge(buildLearningSignalBatch(userInput, semanticAnalysis, finalResult));
 
         String rollup = buildConversationRollup(userInput, semanticAnalysis, finalResult);
         if (!rollup.isBlank()) {
@@ -228,6 +232,80 @@ final class HermesMemoryRecorder {
         return cap(entry.toString(), 220);
     }
 
+    private MemoryWriteBatch buildTaskStateBatch(SemanticAnalysisResult semanticAnalysis, SkillResult finalResult) {
+        if (semanticAnalysis == null || finalResult == null || !finalResult.success()) {
+            return MemoryWriteBatch.empty();
+        }
+        if ("realtime".equals(semanticAnalysis.contextScope()) || "recall".equals(semanticAnalysis.memoryOperation())) {
+            return MemoryWriteBatch.empty();
+        }
+        String entry = buildTaskStateEntry(semanticAnalysis, finalResult);
+        if (entry.isBlank()) {
+            return MemoryWriteBatch.empty();
+        }
+        return MemoryWriteBatch.of(new MemoryWriteOperation.WriteSemantic(entry, List.of(), "task"));
+    }
+
+    private String buildTaskStateEntry(SemanticAnalysisResult semanticAnalysis, SkillResult finalResult) {
+        String task = semanticAnalysis == null ? "" : semanticAnalysis.taskFocus();
+        if (task.isBlank()) {
+            return "";
+        }
+        String state = resolveTaskState(semanticAnalysis, finalResult);
+        if (state.isBlank()) {
+            return "";
+        }
+        StringBuilder entry = new StringBuilder(TASK_STATE_MARKER).append(' ');
+        appendFactSegment(entry, "当前事项", task);
+        appendFactSegment(entry, "状态", state);
+        appendFactSegment(entry, "下一步", resolveNextAction(semanticAnalysis, finalResult, task, state));
+        appendFactSegment(entry, "执行方式", finalResult.skillName());
+        return cap(entry.toString(), 240);
+    }
+
+    private MemoryWriteBatch buildLearningSignalBatch(String userInput,
+                                                      SemanticAnalysisResult semanticAnalysis,
+                                                      SkillResult finalResult) {
+        if (semanticAnalysis == null || finalResult == null || !finalResult.success()) {
+            return MemoryWriteBatch.empty();
+        }
+        String entry = buildLearningSignalEntry(userInput, semanticAnalysis);
+        if (entry.isBlank()) {
+            return MemoryWriteBatch.empty();
+        }
+        String bucket = semanticAnalysis.taskFocus().isBlank() ? "general" : "task";
+        return MemoryWriteBatch.of(new MemoryWriteOperation.WriteSemantic(entry, List.of(), bucket));
+    }
+
+    private String buildLearningSignalEntry(String userInput, SemanticAnalysisResult semanticAnalysis) {
+        String task = semanticAnalysis.taskFocus();
+        String intentState = semanticAnalysis.intentState();
+        if ("continue".equals(intentState) && !task.isBlank()) {
+            return cap(LEARNING_SIGNAL_MARKER
+                    + " 当前事项：" + task
+                    + "；信号：用户会用简短跟进延续当前任务"
+                    + "；偏好：上下文明确时直接推进，少澄清", 220);
+        }
+        if ("update".equals(intentState) && !task.isBlank()) {
+            return cap(LEARNING_SIGNAL_MARKER
+                    + " 当前事项：" + task
+                    + "；信号：用户倾向通过补充字段来修正当前任务"
+                    + "；偏好：保留原任务线程并吸收新约束", 220);
+        }
+        if ("pause".equals(intentState) && !task.isBlank()) {
+            return cap(LEARNING_SIGNAL_MARKER
+                    + " 当前事项：" + task
+                    + "；信号：用户会自然表达暂停或搁置"
+                    + "；偏好：记录状态变化，但不要丢失当前任务上下文", 220);
+        }
+        if ("remind".equals(intentState) && userInput != null && !userInput.isBlank()) {
+            return cap(LEARNING_SIGNAL_MARKER
+                    + " 信号：用户会把提醒和推进要求混在自然表达里"
+                    + "；偏好：优先保留任务线程，再补充提醒信息", 220);
+        }
+        return "";
+    }
+
     private void appendFactSegment(StringBuilder entry, String label, String value) {
         if (value == null || value.isBlank()) {
             return;
@@ -236,6 +314,47 @@ final class HermesMemoryRecorder {
             entry.append('；');
         }
         entry.append(label).append('：').append(cap(value.trim(), 80));
+    }
+
+    private String resolveTaskState(SemanticAnalysisResult semanticAnalysis, SkillResult finalResult) {
+        if (semanticAnalysis == null || finalResult == null || !finalResult.success()) {
+            return "";
+        }
+        return switch (semanticAnalysis.intentState()) {
+            case "complete" -> "已完成";
+            case "pause" -> "已暂停";
+            case "remind" -> "待提醒";
+            case "update" -> "已更新";
+            case "continue" -> "进行中";
+            case "start" -> "已开始";
+            default -> semanticAnalysis.taskFocus().isBlank() ? "" : "进行中";
+        };
+    }
+
+    private String resolveNextAction(SemanticAnalysisResult semanticAnalysis,
+                                     SkillResult finalResult,
+                                     String task,
+                                     String state) {
+        if (semanticAnalysis == null || task == null || task.isBlank()) {
+            return "";
+        }
+        String payloadNext = firstNonBlank(
+                stringValue(semanticAnalysis.payload().get("nextAction")),
+                stringValue(semanticAnalysis.payload().get("next_step"))
+        );
+        if (!payloadNext.isBlank()) {
+            return payloadNext;
+        }
+        if ("已完成".equals(state) || "已暂停".equals(state)) {
+            return "";
+        }
+        if ("待提醒".equals(state)) {
+            return "等待提醒后继续推进";
+        }
+        if (finalResult != null && finalResult.skillName() != null && !finalResult.skillName().isBlank()) {
+            return "继续通过 " + finalResult.skillName() + " 推进 " + task;
+        }
+        return "继续推进 " + task;
     }
 
     private String summarizePayload(Map<String, Object> payload) {

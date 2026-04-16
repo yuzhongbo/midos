@@ -19,6 +19,7 @@ final class HermesDecisionContextFactory {
     private final SemanticAnalyzer semanticAnalyzer;
     private final HermesToolSchemaCatalog toolSchemaCatalog;
     private final DispatcherAnswerMode answerMode;
+    private final ActiveTaskResolver activeTaskResolver;
     private final int promptMaxChars;
     private final int memoryContextMaxChars;
     private final Consumer<DispatcherMemoryFacade.MemoryCompressionStats> compressionMetricsConsumer;
@@ -36,6 +37,7 @@ final class HermesDecisionContextFactory {
         this.semanticAnalyzer = semanticAnalyzer;
         this.toolSchemaCatalog = toolSchemaCatalog;
         this.answerMode = answerMode == null ? DispatcherAnswerMode.BALANCED : answerMode;
+        this.activeTaskResolver = new ActiveTaskResolver(dispatcherMemoryFacade);
         this.promptMaxChars = Math.max(400, promptMaxChars);
         this.memoryContextMaxChars = Math.max(400, memoryContextMaxChars);
         this.compressionMetricsConsumer = compressionMetricsConsumer;
@@ -61,7 +63,7 @@ final class HermesDecisionContextFactory {
                 resolvedProfileContext
         )
                 : new PromptMemoryContextDto("", "", "", Map.of(), List.of());
-        String memoryContext = memoryEnabled
+        String rawMemoryContext = memoryEnabled
                 ? dispatcherMemoryFacade.buildMemoryContext(
                 userId,
                 userInput,
@@ -69,6 +71,10 @@ final class HermesDecisionContextFactory {
                 compressionMetricsConsumer
         )
                 : "";
+        ActiveTaskResolver.ResolvedTaskThread activeTaskThread = memoryEnabled
+                ? activeTaskResolver.resolve(userId, userInput, promptMemoryContext)
+                : ActiveTaskResolver.ResolvedTaskThread.empty();
+        String memoryContext = activeTaskResolver.enrichMemoryContext(rawMemoryContext, activeTaskThread, memoryContextMaxChars);
         List<Map<String, Object>> chatHistory = memoryEnabled
                 ? dispatcherMemoryFacade.buildChatHistory(userId)
                 : List.of();
@@ -88,10 +94,18 @@ final class HermesDecisionContextFactory {
                 chatHistory,
                 semanticAnalysis
         );
+        if (!activeTaskThread.asAttributes().isEmpty()) {
+            Map<String, Object> attributes = new LinkedHashMap<>(skillContext.attributes());
+            attributes.putAll(activeTaskThread.asAttributes());
+            skillContext = new SkillContext(skillContext.userId(), skillContext.input(), attributes);
+        }
         Map<String, Object> llmContext = new LinkedHashMap<>(resolvedProfileContext);
         llmContext.put("userId", userId == null ? "" : userId);
         llmContext.put("input", userInput == null ? "" : userInput);
         llmContext.put("memoryContext", memoryContext);
+        if (!activeTaskThread.asAttributes().isEmpty()) {
+            llmContext.put("taskThread", activeTaskThread.asAttributes());
+        }
         if (!chatHistory.isEmpty()) {
             llmContext.put("chatHistory", chatHistory);
         }

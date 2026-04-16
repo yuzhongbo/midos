@@ -29,6 +29,7 @@ public record SemanticAnalysisResult(String source,
     public static final String ATTR_CONTEXT_SCOPE = "semanticContextScope";
     public static final String ATTR_TOOL_REQUIRED = "semanticToolRequired";
     public static final String ATTR_MEMORY_OPERATION = "semanticMemoryOperation";
+    public static final String ATTR_INTENT_STATE = "semanticIntentState";
     public static final String ATTR_TASK_FOCUS = "semanticTaskFocus";
     public static final String ATTR_FOLLOW_UP_MODE = "semanticFollowUpMode";
 
@@ -112,6 +113,7 @@ public record SemanticAnalysisResult(String source,
         attributes.put(ATTR_CONTEXT_SCOPE, contextScope());
         attributes.put(ATTR_TOOL_REQUIRED, toolRequired());
         attributes.put(ATTR_MEMORY_OPERATION, memoryOperation());
+        attributes.put(ATTR_INTENT_STATE, intentState());
         attributes.put(ATTR_FOLLOW_UP_MODE, followUpMode());
         if (hasText(summary)) {
             attributes.put(ATTR_SUMMARY, summary);
@@ -148,6 +150,9 @@ public record SemanticAnalysisResult(String source,
         }
         if (hasText(memoryOperation())) {
             prompt.append("- memoryOperation: ").append(memoryOperation()).append('\n');
+        }
+        if (hasText(intentState())) {
+            prompt.append("- intentState: ").append(intentState()).append('\n');
         }
         if (hasText(followUpMode())) {
             prompt.append("- followUpMode: ").append(followUpMode()).append('\n');
@@ -233,6 +238,29 @@ public record SemanticAnalysisResult(String source,
             return "follow-up";
         }
         return "standalone";
+    }
+
+    public String intentState() {
+        String corpus = semanticCorpus();
+        if (containsAny(corpus, "完成了", "完成啦", "搞定了", "结束了", "处理完了", "已经发了", "done")) {
+            return "complete";
+        }
+        if (containsAny(corpus, "暂停", "先这样", "先别", "晚点", "搁置", "暂时不做", "先放一放")) {
+            return "pause";
+        }
+        if (containsAny(corpus, "提醒我", "提醒一下", "记得", "明天提醒", "稍后提醒", "follow up", "follow-up")) {
+            return "remind";
+        }
+        if (containsAny(corpus, "改成", "更新", "补充", "调整", "修改", "换成", "加上", "补一下", "目标是", "截止", "优先级")) {
+            return "update";
+        }
+        if ("continuation".equals(contextScope()) || "continuation".equals(followUpMode())) {
+            return "continue";
+        }
+        if (toolRequired()) {
+            return "start";
+        }
+        return "none";
     }
 
     public boolean toolRequired() {

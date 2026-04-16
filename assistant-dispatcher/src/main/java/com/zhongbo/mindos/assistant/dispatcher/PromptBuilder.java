@@ -16,6 +16,9 @@ public class PromptBuilder {
 
     private static final String INTENT_SUMMARY_MARKER = "[意图摘要]";
     private static final String ASSISTANT_CONTEXT_MARKER = "[助手上下文]";
+    private static final String TASK_FACT_MARKER = "[任务事实]";
+    private static final String TASK_STATE_MARKER = "[任务状态]";
+    private static final String LEARNING_SIGNAL_MARKER = "[学习信号]";
     private static final String CONVERSATION_SUMMARY_MARKER = "[会话摘要]";
     private static final String REVIEW_FOCUS_MARKER = "[复盘聚焦]";
     // Keep fallback prompts comfortably below provider limits while leaving room for system/context metadata.
@@ -198,6 +201,9 @@ public class PromptBuilder {
         return normalized
                 .replace(INTENT_SUMMARY_MARKER, "")
                 .replace(ASSISTANT_CONTEXT_MARKER, "")
+                .replace(TASK_FACT_MARKER, "")
+                .replace(TASK_STATE_MARKER, "")
+                .replace(LEARNING_SIGNAL_MARKER, "")
                 .replace(CONVERSATION_SUMMARY_MARKER, "")
                 .replace(REVIEW_FOCUS_MARKER, "")
                 .replace("semantic-summary", "")

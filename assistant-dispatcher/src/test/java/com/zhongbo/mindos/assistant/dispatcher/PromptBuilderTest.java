@@ -44,6 +44,28 @@ class PromptBuilderTest {
         assertTrue(PromptBuilder.estimateTokens(prompt) <= PromptBuilder.MAX_TOKENS);
     }
 
+    @Test
+    void shouldHumanizeTaskStateAndLearningSignalMarkers() {
+        PromptBuilder builder = new PromptBuilder();
+        PromptMemoryContextDto context = new PromptMemoryContextDto(
+                "",
+                "",
+                "",
+                Map.of(),
+                List.of(
+                        item("semantic", "[任务状态] 当前事项：提交周报；状态：进行中；下一步：继续推进"),
+                        item("semantic-routing", "[学习信号] 当前事项：提交周报；偏好：上下文明确时直接推进，少澄清")
+                )
+        );
+
+        String prompt = builder.build(context, "继续");
+
+        assertFalse(prompt.contains("[任务状态]"));
+        assertFalse(prompt.contains("[学习信号]"));
+        assertTrue(prompt.contains("当前事项：提交周报"));
+        assertTrue(prompt.contains("上下文明确时直接推进"));
+    }
+
     private RetrievedMemoryItemDto item(String type, String text) {
         return new RetrievedMemoryItemDto(type, text, 0.9, 0.8, 0.9, 0.9, 1L);
     }

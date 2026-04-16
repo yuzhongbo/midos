@@ -225,6 +225,34 @@ class PromptMemoryContextAssemblerTest {
     }
 
     @Test
+    void shouldHumanizeTaskStateAndClassifyLearningSignalAsRoutingContext() {
+        EpisodicMemoryService episodicMemoryService = new EpisodicMemoryService();
+        SemanticMemoryService semanticMemoryService = new SemanticMemoryService(new MemoryConsolidationService());
+        ProceduralMemoryService proceduralMemoryService = new ProceduralMemoryService();
+        PreferenceProfileService preferenceProfileService = new PreferenceProfileService(2, true);
+        DefaultPromptMemoryContextAssembler assembler = new DefaultPromptMemoryContextAssembler(
+                episodicMemoryService,
+                semanticMemoryService,
+                proceduralMemoryService,
+                preferenceProfileService
+        );
+
+        semanticMemoryService.addEntry("u6-state",
+                new SemanticMemoryEntry("[任务状态] 当前事项：提交周报；状态：进行中；下一步：继续推进提交周报", List.of(0.1, 0.2), Instant.now()),
+                "task");
+        semanticMemoryService.addEntry("u6-state",
+                new SemanticMemoryEntry("[学习信号] 当前事项：提交周报；偏好：上下文明确时直接推进，少澄清", List.of(0.1, 0.2), Instant.now()),
+                "task");
+
+        PromptMemoryContextDto context = assembler.assemble("u6-state", "继续推进周报", 800, Map.of());
+
+        assertTrue(context.semanticContext().contains("当前事项：提交周报；状态：进行中"));
+        assertFalse(context.semanticContext().contains("[任务状态]"));
+        assertTrue(context.debugTopItems().stream().anyMatch(item ->
+                "semantic-routing".equals(item.type()) && item.text().contains("上下文明确时直接推进")));
+    }
+
+    @Test
     void shouldFilterInternalAssistantRepliesFromRecentConversationContext() {
         EpisodicMemoryService episodicMemoryService = new EpisodicMemoryService();
         SemanticMemoryService semanticMemoryService = new SemanticMemoryService(new MemoryConsolidationService());

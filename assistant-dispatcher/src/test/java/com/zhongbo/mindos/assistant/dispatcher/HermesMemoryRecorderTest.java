@@ -55,6 +55,7 @@ class HermesMemoryRecorderTest {
         assertTrue(taskFact.text().contains("当前事项：提交周报"));
         assertTrue(taskFact.text().contains("截止时间：周五前"));
         assertTrue(taskFact.text().contains("项目：运营周报"));
+        assertTrue(commandService.semanticWrites().stream().anyMatch(write -> write.text().contains("[任务状态]")));
     }
 
     @Test
@@ -87,6 +88,44 @@ class HermesMemoryRecorderTest {
 
         assertFalse(commandService.semanticWrites().stream().anyMatch(write -> "task".equals(write.bucket())));
         assertEquals(1, commandService.semanticWrites().stream().filter(write -> "conversation-rollup".equals(write.bucket())).count());
+    }
+
+    @Test
+    void shouldWriteTaskStateAndLearningSignalForContinuationSuccess() {
+        DispatcherMemoryFacade dispatcherMemoryFacade = new DispatcherMemoryFacade((MemoryGateway) null, null, null);
+        RecordingMemoryCommandService commandService = new RecordingMemoryCommandService(dispatcherMemoryFacade);
+        HermesMemoryRecorder recorder = new HermesMemoryRecorder(dispatcherMemoryFacade, commandService, null, null);
+
+        SemanticAnalysisResult semanticAnalysis = new SemanticAnalysisResult(
+                "heuristic",
+                "延续当前任务并按已有方案执行",
+                "继续推进：提交周报",
+                "todo.create",
+                Map.of("task", "提交周报"),
+                List.of("继续", "周报"),
+                "用户希望继续推进当前事项：提交周报",
+                0.84
+        );
+
+        recorder.record(
+                "u1",
+                "开始吧",
+                SkillResult.success("todo.create", "已推进"),
+                Map.of(),
+                semanticAnalysis,
+                "todo.create",
+                true,
+                true
+        );
+
+        assertTrue(commandService.semanticWrites().stream().anyMatch(write ->
+                "task".equals(write.bucket())
+                        && write.text().contains("[任务状态]")
+                        && write.text().contains("状态：进行中")));
+        assertTrue(commandService.semanticWrites().stream().anyMatch(write ->
+                "task".equals(write.bucket())
+                        && write.text().contains("[学习信号]")
+                        && write.text().contains("简短跟进延续当前任务")));
     }
 
     private record SemanticWrite(String text, String bucket) {

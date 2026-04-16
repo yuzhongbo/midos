@@ -130,6 +130,7 @@ public class LLMDecisionEngine {
         return normalized.contains("semantic-summary")
                 || normalized.contains("[意图摘要]".toLowerCase(Locale.ROOT))
                 || normalized.contains("[助手上下文]".toLowerCase(Locale.ROOT))
+                || normalized.contains("[学习信号]".toLowerCase(Locale.ROOT))
                 || normalized.contains("[会话摘要]".toLowerCase(Locale.ROOT))
                 || normalized.contains("[复盘聚焦]".toLowerCase(Locale.ROOT))
                 || normalized.contains("reply=")

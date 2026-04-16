@@ -100,6 +100,7 @@ class SemanticAnalysisResultTest {
         assertEquals("standalone", attributes.get(SemanticAnalysisResult.ATTR_CONTEXT_SCOPE));
         assertEquals(Boolean.FALSE, attributes.get(SemanticAnalysisResult.ATTR_TOOL_REQUIRED));
         assertEquals("none", attributes.get(SemanticAnalysisResult.ATTR_MEMORY_OPERATION));
+        assertEquals("none", attributes.get(SemanticAnalysisResult.ATTR_INTENT_STATE));
         assertEquals("standalone", attributes.get(SemanticAnalysisResult.ATTR_FOLLOW_UP_MODE));
         assertFalse(attributes.containsKey(SemanticAnalysisResult.ATTR_SUMMARY));
         assertFalse(attributes.containsKey(SemanticAnalysisResult.ATTR_PAYLOAD));
@@ -163,6 +164,7 @@ class SemanticAnalysisResultTest {
         assertTrue(prompt.contains("- toolRequired: true"));
         assertTrue(prompt.contains("- contextScope: standalone"));
         assertTrue(prompt.contains("- memoryOperation: none"));
+        assertTrue(prompt.contains("- intentState: start"));
         assertTrue(prompt.contains("- followUpMode: standalone"));
         assertTrue(prompt.contains("- taskFocus: 提交周报"));
         assertTrue(prompt.contains("- rewrittenInput: 请创建一个待办"));
@@ -187,9 +189,37 @@ class SemanticAnalysisResultTest {
         );
 
         assertEquals("continuation", result.contextScope());
+        assertEquals("continue", result.intentState());
         assertEquals("continuation", result.followUpMode());
         assertEquals("提交周报", result.taskFocus());
         assertEquals("提交周报", result.asAttributes().get(SemanticAnalysisResult.ATTR_TASK_FOCUS));
+    }
+
+    @Test
+    void shouldDetectPauseAndCompleteIntentStates() {
+        SemanticAnalysisResult pause = new SemanticAnalysisResult(
+                "heuristic",
+                "先这样，暂停这个任务",
+                "先这样，暂停这个任务",
+                "",
+                Map.of("task", "整理季度复盘"),
+                List.of("暂停"),
+                "用户希望先暂停当前任务",
+                0.72
+        );
+        SemanticAnalysisResult done = new SemanticAnalysisResult(
+                "heuristic",
+                "这个任务已经完成了",
+                "这个任务已经完成了",
+                "",
+                Map.of("task", "提交周报"),
+                List.of("完成"),
+                "用户表示当前任务已完成",
+                0.72
+        );
+
+        assertEquals("pause", pause.intentState());
+        assertEquals("complete", done.intentState());
     }
 
     @Test

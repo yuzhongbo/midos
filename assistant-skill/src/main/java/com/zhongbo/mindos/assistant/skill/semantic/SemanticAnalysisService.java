@@ -1035,7 +1035,10 @@ public class SemanticAnalysisService implements SemanticAnalyzer {
         if (containsAny(normalized,
                 "继续", "接着", "按刚才", "按这个", "按上面", "就按这个", "就这个",
                 "开始吧", "开始执行", "执行吧", "帮我推进", "推进一下", "往下做",
-                "照这个", "那就这样", "就这样", "按之前", "按上次")) {
+                "照这个", "那就这样", "就这样", "按之前", "按上次",
+                "暂停", "先这样", "先别", "晚点", "搁置",
+                "完成了", "搞定了", "结束了", "处理完了",
+                "提醒我", "提醒一下", "记得", "明天提醒", "稍后提醒")) {
             return true;
         }
         String trimmed = stringValue(userInput);
@@ -1239,10 +1242,20 @@ public class SemanticAnalysisService implements SemanticAnalyzer {
 
     private String buildContinuationRewrittenInput(String userInput, String focus) {
         String trimmed = stringValue(userInput);
+        String normalized = normalize(trimmed);
         if (focus == null || focus.isBlank()) {
             return trimmed;
         }
-        if (trimmed.length() <= 6 || looksLikeContinuationFollowUp(trimmed, normalize(trimmed))) {
+        if (containsAny(normalized, "暂停", "先这样", "先别", "晚点", "搁置")) {
+            return "暂停当前事项：" + focus;
+        }
+        if (containsAny(normalized, "完成了", "搞定了", "结束了", "处理完了")) {
+            return "将当前事项标记为完成：" + focus;
+        }
+        if (containsAny(normalized, "提醒我", "提醒一下", "记得", "明天提醒", "稍后提醒")) {
+            return "为当前事项设置提醒：" + focus;
+        }
+        if (trimmed.length() <= 6 || looksLikeContinuationFollowUp(trimmed, normalized)) {
             return "继续推进：" + focus;
         }
         if (trimmed.contains(focus)) {

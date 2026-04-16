@@ -500,6 +500,7 @@ class SemanticAnalysisServiceTest {
         assertEquals("提交周报", result.payload().get("task"));
         assertEquals("周五前", result.payload().get("dueDate"));
         assertEquals("continuation", result.contextScope());
+        assertEquals("continue", result.intentState());
         assertEquals("提交周报", result.taskFocus());
     }
 
@@ -521,8 +522,32 @@ class SemanticAnalysisServiceTest {
 
         assertTrue(result.suggestedSkill().isBlank());
         assertEquals("continuation", result.contextScope());
+        assertEquals("continue", result.intentState());
         assertEquals("整理季度复盘", result.taskFocus());
         assertTrue(result.rewrittenInput().contains("整理季度复盘"));
+    }
+
+    @Test
+    void shouldCarryPauseIntentForActiveTaskFromMemoryContext() {
+        SkillRegistry registry = new SkillRegistry(List.of(new FixedSkill("todo.create")));
+        SemanticAnalysisService service = new SemanticAnalysisService((prompt, context) -> "stub", registry, true, false, true, "", "local", "cost", 120);
+
+        SemanticAnalysisResult result = service.analyze(
+                "u1",
+                "先这样，暂停这个",
+                """
+                Active task thread:
+                - 当前事项：提交周报
+                - 状态：进行中
+                - 下一步：同步项目风险
+                """,
+                Map.of(),
+                List.of("todo.create - Creates todo items")
+        );
+
+        assertEquals("pause", result.intentState());
+        assertEquals("提交周报", result.taskFocus());
+        assertTrue(result.rewrittenInput().contains("暂停当前事项"));
     }
 
     @Test
