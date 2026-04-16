@@ -9,6 +9,7 @@ import com.zhongbo.mindos.assistant.dispatcher.decision.Decision;
 import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryFacade;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.DecisionOrchestrator;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.ParamValidator;
+import com.zhongbo.mindos.assistant.dispatcher.system.DevelopmentWorkflowService;
 import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalysisResult;
 
 import java.time.Instant;
@@ -301,6 +302,7 @@ final class HermesAssistantRuntime {
                                                  Instant startedAt) {
         String requestedTarget = decision == null ? "" : safeText(decision.target());
         String executionTarget = skillRouter == null ? requestedTarget : skillRouter.resolveExecutionTarget(requestedTarget);
+        boolean developmentWorkflow = skillRouter != null && skillRouter.usesDevelopmentWorkflow(executionTarget);
         Optional<SkillResult> capabilityBlocked = maybeBlockedByCapability(executionTarget);
         if (capabilityBlocked.isPresent()) {
             SkillResult blocked = capabilityBlocked.get();
@@ -406,6 +408,10 @@ final class HermesAssistantRuntime {
                 validatedDecision.confidence(),
                 validatedDecision.needClarify()
         );
+        List<String> executionReasons = appendReason(
+                decisionPlan.reasons(),
+                developmentWorkflow ? DevelopmentWorkflowService.WORKFLOW_REASON : ""
+        );
         String attemptedSkill = validatedDecision.target();
         SkillResult routedResult = skillRouter.execute(validatedDecision, decisionContext.skillContext());
         boolean attemptedSuccess = routedResult != null && routedResult.success();
@@ -432,7 +438,7 @@ final class HermesAssistantRuntime {
                     decisionPlan.route(),
                     resultToReturn.skillName(),
                     validatedDecision.confidence(),
-                    augmentReasons(decisionPlan.reasons(), proactive),
+                    augmentReasons(executionReasons, proactive),
                     decisionPlan.rejectedReasons(),
                     true,
                     List.of(primaryStep("success", resultToReturn.skillName(), resultToReturn.output(), startedAt, Instant.now()))
@@ -464,7 +470,7 @@ final class HermesAssistantRuntime {
                 decisionPlan.route(),
                 attemptedSkill,
                 validatedDecision.confidence(),
-                decisionPlan.reasons(),
+                executionReasons,
                 rejectedReasons,
                 false,
                 List.of(primaryStep("failed", attemptedSkill, failedResult.output(), startedAt, Instant.now()))
@@ -746,6 +752,17 @@ final class HermesAssistantRuntime {
         }
         List<String> updated = new ArrayList<>(reasons == null ? List.of() : reasons);
         updated.add("proactiveHint=" + proactive.hintType());
+        return List.copyOf(updated);
+    }
+
+    private List<String> appendReason(List<String> reasons, String reason) {
+        if (reason == null || reason.isBlank()) {
+            return reasons == null ? List.of() : reasons;
+        }
+        List<String> updated = new ArrayList<>(reasons == null ? List.of() : reasons);
+        if (!updated.contains(reason)) {
+            updated.add(reason);
+        }
         return List.copyOf(updated);
     }
 

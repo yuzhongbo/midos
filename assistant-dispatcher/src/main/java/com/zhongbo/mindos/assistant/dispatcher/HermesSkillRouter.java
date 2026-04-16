@@ -4,6 +4,7 @@ import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.common.SkillDsl;
 import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.dispatcher.decision.Decision;
+import com.zhongbo.mindos.assistant.dispatcher.system.DevelopmentWorkflowService;
 import com.zhongbo.mindos.assistant.skill.SkillExecutionGateway;
 
 import java.util.LinkedHashMap;
@@ -13,10 +14,18 @@ final class HermesSkillRouter {
 
     private final SkillExecutionGateway skillExecutionGateway;
     private final HermesToolSchemaCatalog toolSchemaCatalog;
+    private final DevelopmentWorkflowService developmentWorkflowService;
 
     HermesSkillRouter(SkillExecutionGateway skillExecutionGateway, HermesToolSchemaCatalog toolSchemaCatalog) {
+        this(skillExecutionGateway, toolSchemaCatalog, null);
+    }
+
+    HermesSkillRouter(SkillExecutionGateway skillExecutionGateway,
+                      HermesToolSchemaCatalog toolSchemaCatalog,
+                      DevelopmentWorkflowService developmentWorkflowService) {
         this.skillExecutionGateway = skillExecutionGateway;
         this.toolSchemaCatalog = toolSchemaCatalog;
+        this.developmentWorkflowService = developmentWorkflowService;
     }
 
     SkillResult execute(Decision decision, SkillContext baseContext) {
@@ -24,18 +33,13 @@ final class HermesSkillRouter {
             return SkillResult.failure("decision-engine", "missing routed target");
         }
         String executionTarget = resolveExecutionTarget(decision.target());
+        SkillContext executionContext = buildExecutionContext(decision, baseContext);
+        if (usesDevelopmentWorkflow(executionTarget)) {
+            return developmentWorkflowService.execute(executionTarget, decision.params(), executionContext);
+        }
         if (skillExecutionGateway == null) {
             return SkillResult.failure(executionTarget, "skill execution gateway unavailable");
         }
-        Map<String, Object> attributes = new LinkedHashMap<>(baseContext == null ? Map.of() : baseContext.attributes());
-        if (decision.params() != null && !decision.params().isEmpty()) {
-            attributes.putAll(decision.params());
-        }
-        SkillContext executionContext = new SkillContext(
-                baseContext == null ? "" : baseContext.userId(),
-                baseContext == null ? "" : baseContext.input(),
-                attributes
-        );
         try {
             return skillExecutionGateway.executeDslAsync(
                     new SkillDsl(executionTarget, decision.params()),
@@ -44,6 +48,22 @@ final class HermesSkillRouter {
         } catch (RuntimeException ex) {
             return SkillResult.failure(executionTarget, ex.getMessage() == null ? "skill execution failed" : ex.getMessage());
         }
+    }
+
+    boolean usesDevelopmentWorkflow(String executionTarget) {
+        return developmentWorkflowService != null && developmentWorkflowService.supports(executionTarget);
+    }
+
+    private SkillContext buildExecutionContext(Decision decision, SkillContext baseContext) {
+        Map<String, Object> attributes = new LinkedHashMap<>(baseContext == null ? Map.of() : baseContext.attributes());
+        if (decision.params() != null && !decision.params().isEmpty()) {
+            attributes.putAll(decision.params());
+        }
+        return new SkillContext(
+                baseContext == null ? "" : baseContext.userId(),
+                baseContext == null ? "" : baseContext.input(),
+                attributes
+        );
     }
 
     String resolveExecutionTarget(String decisionTarget) {

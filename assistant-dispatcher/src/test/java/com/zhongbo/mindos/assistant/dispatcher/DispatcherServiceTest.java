@@ -1100,6 +1100,7 @@ class DispatcherServiceTest {
         assertEquals("code.generate", result.channel());
         assertEquals("semantic-analysis", result.executionTrace().routing().route());
         assertEquals("code.generate", result.executionTrace().routing().selectedSkill());
+        assertTrue(result.executionTrace().routing().reasons().contains("systemWorkflow=development"));
         assertTrue(result.reply().contains("代码已处理"));
     }
 

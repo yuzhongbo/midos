@@ -29,6 +29,7 @@ import com.zhongbo.mindos.assistant.dispatcher.orchestrator.ParamSchemaRegistry;
 import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryCommandService;
 import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryFacade;
 import com.zhongbo.mindos.assistant.dispatcher.routing.DispatchPlan;
+import com.zhongbo.mindos.assistant.dispatcher.system.DevelopmentWorkflowService;
 import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalysisResult;
 import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalyzer;
 import com.zhongbo.mindos.assistant.skill.SkillExecutionGateway;
@@ -684,7 +685,11 @@ public class DispatcherService implements ContextCompressionMetricsReader,
                                 this.dispatchSkillDslResolvers
                         ),
                         this.paramValidator,
-                        new HermesSkillRouter(this.skillExecutionGateway, toolSchemaCatalog),
+                        new HermesSkillRouter(
+                                this.skillExecutionGateway,
+                                toolSchemaCatalog,
+                                new DevelopmentWorkflowService(this.skillExecutionGateway)
+                        ),
                         new HermesMemoryRecorder(
                                 this.dispatcherMemoryFacade,
                                 this.memoryCommandService,
