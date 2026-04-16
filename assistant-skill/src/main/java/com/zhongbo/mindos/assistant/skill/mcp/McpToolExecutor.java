@@ -38,7 +38,7 @@ public class McpToolExecutor {
     public McpToolExecutor(McpToolCatalog toolCatalog,
                            @Value("${mindos.skill.search.detail-fetch.enabled:true}") boolean detailFetchEnabled,
                            @Value("${mindos.skill.search.detail-fetch.timeout-ms:4500}") int detailFetchTimeoutMs,
-                           @Value("${mindos.skill.search.detail-fetch.max-candidates:2}") int detailFetchMaxCandidates,
+                           @Value("${mindos.skill.search.detail-fetch.max-candidates:3}") int detailFetchMaxCandidates,
                            @Value("${mindos.skill.search.detail-fetch.max-summary-chars:320}") int detailFetchMaxSummaryChars,
                            @Value("${mindos.skill.search.detail-fetch.max-page-chars:6000}") int detailFetchMaxPageChars) {
         this(toolCatalog, new SearchResultDetailAugmentor(

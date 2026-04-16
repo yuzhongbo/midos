@@ -28,13 +28,16 @@ public final class SearchResultDetailAugmentor {
     private static final Logger LOGGER = Logger.getLogger(SearchResultDetailAugmentor.class.getName());
 
     private static final int DEFAULT_TIMEOUT_MS = 4500;
-    private static final int DEFAULT_MAX_CANDIDATES = 2;
+    private static final int DEFAULT_MAX_CANDIDATES = 3;
     private static final int DEFAULT_MAX_SUMMARY_CHARS = 320;
     private static final int DEFAULT_MAX_PAGE_CHARS = 6000;
     private static final int MAX_RESPONSE_BYTES = 128 * 1024;
     private static final String DEFAULT_USER_AGENT = "MindOS/1.0 (detail-fetch)";
 
     private static final Pattern URL_PATTERN = Pattern.compile("(https?://\\S+)", Pattern.CASE_INSENSITIVE);
+    private static final Pattern MARKDOWN_LINK_PATTERN = Pattern.compile("\\[([^\\]]+)]\\((https?://[^)\\s]+)\\)");
+    private static final Pattern LABELED_URL_PATTERN = Pattern.compile("^(?:链接|网址|来源|source|url|link)\\s*[:：]\\s*(https?://\\S+)$", Pattern.CASE_INSENSITIVE);
+    private static final Pattern LEADING_MARKER_PATTERN = Pattern.compile("^\\s*(?:\\d+[.)、]|[-*•]|\\[[0-9]+])\\s*");
     private static final Pattern NUMBERED_RESULT_PATTERN = Pattern.compile("^\\s*\\d+[.)、]\\s*(.+)$");
     private static final Pattern TITLE_TAG_PATTERN = Pattern.compile("(?is)<title[^>]*>(.*?)</title>");
     private static final Pattern META_TAG_PATTERN = Pattern.compile("(?is)<meta\\s+([^>]+)>");
@@ -167,17 +170,16 @@ public final class SearchResultDetailAugmentor {
         }
         DetailPageBrief brief = detail.get();
         return """
-                最相关详情：
+                我先看了和你问题最接近的一条网页（最相关详情）：
                 - 标题: %s
-                - 页面摘要: %s
+                - 关键信息: %s
                 - 详细链接: %s
                 
-                %s
+                如果你愿意，我可以继续把这页内容展开成更完整的结论，或者再对比其他候选结果。
                 """.formatted(
                 safeText(brief.title()),
                 safeText(brief.summary()),
-                safeText(brief.link()),
-                rawOutput.trim()
+                safeText(brief.link())
         ).trim();
     }
 
@@ -230,20 +232,38 @@ public final class SearchResultDetailAugmentor {
             if (line.isBlank() || line.endsWith("结果：") || line.endsWith("结果:")) {
                 continue;
             }
+            String normalizedLine = stripLeadingMarker(line);
+            if (captureMarkdownCandidates(normalizedLine, pendingTitle, pendingSummary, dedup)) {
+                pendingTitle = "";
+                pendingSummary = "";
+                continue;
+            }
+            String labeledUrl = extractLabeledUrl(normalizedLine);
+            if (!labeledUrl.isBlank()) {
+                addCandidate(dedup, firstNonBlank(pendingTitle, guessTitle(labeledUrl)), labeledUrl, pendingSummary);
+                pendingTitle = "";
+                pendingSummary = "";
+                continue;
+            }
             Matcher numbered = NUMBERED_RESULT_PATTERN.matcher(line);
             if (numbered.matches()) {
-                String payload = safeText(numbered.group(1));
+                String payload = stripLeadingMarker(safeText(numbered.group(1)));
+                if (captureMarkdownCandidates(payload, pendingTitle, pendingSummary, dedup)) {
+                    pendingTitle = "";
+                    pendingSummary = "";
+                    continue;
+                }
                 String inlineUrl = firstUrl(payload);
                 if (!inlineUrl.isBlank()) {
                     String beforeUrl = safeText(payload.substring(0, payload.indexOf(inlineUrl)));
                     LineParts parts = splitTitleAndSummary(beforeUrl);
-                    dedup.putIfAbsent(normalizeKey(inlineUrl), new SearchResultItem(
+                    String trailing = safeText(payload.substring(payload.indexOf(inlineUrl) + inlineUrl.length()));
+                    addCandidate(
+                            dedup,
                             firstNonBlank(parts.title(), inlineUrl),
                             inlineUrl,
-                            parts.summary(),
-                            Instant.EPOCH,
-                            ""
-                    ));
+                            firstNonBlank(parts.summary(), trailing, pendingSummary)
+                    );
                     pendingTitle = "";
                     pendingSummary = "";
                     continue;
@@ -253,23 +273,25 @@ public final class SearchResultDetailAugmentor {
                 pendingSummary = parts.summary();
                 continue;
             }
-            String inlineUrl = firstUrl(line);
+            String inlineUrl = firstUrl(normalizedLine);
             if (!inlineUrl.isBlank()) {
-                dedup.putIfAbsent(normalizeKey(inlineUrl), new SearchResultItem(
-                        firstNonBlank(pendingTitle, guessTitle(inlineUrl)),
+                String beforeUrl = safeText(normalizedLine.substring(0, normalizedLine.indexOf(inlineUrl)));
+                String trailing = safeText(normalizedLine.substring(normalizedLine.indexOf(inlineUrl) + inlineUrl.length()));
+                LineParts parts = splitTitleAndSummary(beforeUrl);
+                addCandidate(
+                        dedup,
+                        firstNonBlank(parts.title(), pendingTitle, guessTitle(inlineUrl)),
                         inlineUrl,
-                        pendingSummary,
-                        Instant.EPOCH,
-                        ""
-                ));
+                        firstNonBlank(parts.summary(), trailing, pendingSummary)
+                );
                 pendingTitle = "";
                 pendingSummary = "";
                 continue;
             }
             if (pendingTitle.isBlank()) {
-                pendingTitle = line;
+                pendingTitle = normalizedLine;
             } else if (pendingSummary.isBlank()) {
-                pendingSummary = line;
+                pendingSummary = normalizedLine;
             }
         }
         return List.copyOf(dedup.values());
@@ -289,6 +311,65 @@ public final class SearchResultDetailAugmentor {
         }
         ranked.sort((left, right) -> Integer.compare(right.score(), left.score()));
         return List.copyOf(ranked);
+    }
+
+    private boolean captureMarkdownCandidates(String line,
+                                              String fallbackTitle,
+                                              String fallbackSummary,
+                                              LinkedHashMap<String, SearchResultItem> dedup) {
+        if (line == null || line.isBlank()) {
+            return false;
+        }
+        boolean captured = false;
+        Matcher matcher = MARKDOWN_LINK_PATTERN.matcher(line);
+        while (matcher.find()) {
+            String title = safeText(matcher.group(1));
+            String url = safeText(matcher.group(2));
+            String remainder = safeText((line.substring(0, matcher.start()) + " " + line.substring(matcher.end()))
+                    .replace("()", " ")
+                    .replaceAll("\\s+", " "));
+            LineParts parts = splitTitleAndSummary(remainder);
+            addCandidate(
+                    dedup,
+                    firstNonBlank(title, parts.title(), fallbackTitle, guessTitle(url)),
+                    url,
+                    firstNonBlank(parts.summary(), remainder, fallbackSummary)
+            );
+            captured = true;
+        }
+        return captured;
+    }
+
+    private void addCandidate(LinkedHashMap<String, SearchResultItem> dedup,
+                              String title,
+                              String url,
+                              String summary) {
+        String safeLink = safeUrl(url);
+        if (dedup == null || safeLink.isBlank()) {
+            return;
+        }
+        dedup.putIfAbsent(normalizeKey(safeLink), new SearchResultItem(
+                firstNonBlank(title, safeLink),
+                safeLink,
+                safeText(summary),
+                Instant.EPOCH,
+                ""
+        ));
+    }
+
+    private String extractLabeledUrl(String line) {
+        if (line == null || line.isBlank()) {
+            return "";
+        }
+        Matcher matcher = LABELED_URL_PATTERN.matcher(line);
+        return matcher.matches() ? trimTrailingPunctuation(matcher.group(1)) : "";
+    }
+
+    private String stripLeadingMarker(String line) {
+        if (line == null || line.isBlank()) {
+            return "";
+        }
+        return safeText(LEADING_MARKER_PATTERN.matcher(line).replaceFirst(""));
     }
 
     private PageExtract fetchPage(String url) {
