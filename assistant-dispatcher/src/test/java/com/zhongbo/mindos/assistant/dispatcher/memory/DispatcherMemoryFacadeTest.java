@@ -2,6 +2,7 @@ package com.zhongbo.mindos.assistant.dispatcher.memory;
 
 import com.zhongbo.mindos.assistant.common.dto.PromptMemoryContextDto;
 import com.zhongbo.mindos.assistant.common.SkillContext;
+import com.zhongbo.mindos.assistant.common.dto.TaskThreadSnapshotDto;
 import com.zhongbo.mindos.assistant.memory.MemoryFacade;
 import com.zhongbo.mindos.assistant.memory.MemoryManager;
 import com.zhongbo.mindos.assistant.memory.model.ConversationTurn;
@@ -19,6 +20,7 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -151,6 +153,63 @@ class DispatcherMemoryFacadeTest {
         assertEquals(Boolean.TRUE, llmContext.get("memory.shrinkApplied"));
         assertEquals("", llmContext.get("memoryContext"));
         assertEquals(Map.of("tone", "direct"), llmContext.get("memory.persona"));
+    }
+
+    @Test
+    void shouldBuildCompactDecisionMemoryContextAndShrinkRealtimeRequests() {
+        DispatcherMemoryFacade facade = new DispatcherMemoryFacade((MemoryFacade) null, 4, 2, 2, 2, 3);
+        PromptMemoryContextDto promptMemoryContext = new PromptMemoryContextDto(
+                "user: 继续看接口文档\nassistant: 好的，我继续整理",
+                "- [fact] Spring Boot RestClient 官方文档更适合走 docs.lookup\n"
+                        + "- [working] 当前事项：继续看接口文档；下一步：确认认证流程\n"
+                        + "- [assistant-context] 上下文明确时直接推进\n"
+                        + "- [buffer] 另一个候选事实",
+                "- skill=docs.lookup, successRate=0.91",
+                Map.of("tone", "direct"),
+                List.of(),
+                new TaskThreadSnapshotDto(
+                        "继续看接口文档",
+                        "进行中",
+                        "确认认证流程",
+                        "",
+                        "",
+                        "",
+                        "",
+                        "当前事项 继续看接口文档；下一步 确认认证流程"
+                ),
+                Map.of("clarifyStyle", "minimal")
+        );
+
+        String compact = facade.buildDecisionMemoryContext(
+                promptMemoryContext,
+                promptMemoryContext.taskThreadSnapshot().toMemoryContextSection(),
+                "继续看文档",
+                false,
+                true,
+                280,
+                420
+        );
+        String realtime = facade.buildDecisionMemoryContext(
+                promptMemoryContext,
+                promptMemoryContext.taskThreadSnapshot().toMemoryContextSection(),
+                "今天新闻",
+                true,
+                true,
+                280,
+                420
+        );
+
+        assertTrue(compact.contains("Active task:"));
+        assertTrue(compact.contains("Relevant facts:"));
+        assertTrue(compact.contains("Recent context:"));
+        assertTrue(compact.contains("docs.lookup"));
+        assertFalse(compact.contains("User skill habits"));
+        assertFalse(compact.contains("上下文明确时直接推进"));
+        assertFalse(compact.contains("当前事项：继续看接口文档；下一步：确认认证流程"));
+        assertTrue(realtime.contains("Active task:"));
+        assertFalse(realtime.contains("Relevant facts:"));
+        assertFalse(realtime.contains("Recent context:"));
+        assertTrue(realtime.length() <= 280);
     }
 
     private static final class TestMemoryManager extends MemoryManager {

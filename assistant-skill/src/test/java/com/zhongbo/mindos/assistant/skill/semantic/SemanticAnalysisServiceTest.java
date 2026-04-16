@@ -543,7 +543,9 @@ class SemanticAnalysisServiceTest {
         assertTrue(capturedPrompt.get().contains("SEARCH_PRIORITY_ORDER:"));
         assertTrue(capturedPrompt.get().contains("BASELINE_ROUTING_HINT:"));
         assertTrue(capturedPrompt.get().contains("Only use skill names listed in AVAILABLE_TOOLS."));
-        assertTrue(capturedPrompt.get().contains("docs.lookup - Search official documentation"));
+        assertTrue(capturedPrompt.get().contains("docs.lookup - Search official documentation | required=query"));
+        assertFalse(capturedPrompt.get().contains("keywords=docs/manual/guide"));
+        assertTrue(capturedPrompt.get().length() < 2200);
     }
 
     @Test

@@ -18,28 +18,37 @@ final class HermesDecisionContextFactory {
     private final PersonaCoreService personaCoreService;
     private final SemanticAnalyzer semanticAnalyzer;
     private final HermesToolSchemaCatalog toolSchemaCatalog;
+    private final DispatchHeuristicsSupport dispatchHeuristicsSupport;
     private final DispatcherAnswerMode answerMode;
     private final ActiveTaskResolver activeTaskResolver;
     private final int promptMaxChars;
     private final int memoryContextMaxChars;
+    private final boolean realtimeIntentMemoryShrinkEnabled;
+    private final int realtimeIntentMemoryShrinkMaxChars;
     private final Consumer<DispatcherMemoryFacade.MemoryCompressionStats> compressionMetricsConsumer;
 
     HermesDecisionContextFactory(DispatcherMemoryFacade dispatcherMemoryFacade,
                                  PersonaCoreService personaCoreService,
                                  SemanticAnalyzer semanticAnalyzer,
                                  HermesToolSchemaCatalog toolSchemaCatalog,
+                                 DispatchHeuristicsSupport dispatchHeuristicsSupport,
                                  DispatcherAnswerMode answerMode,
-                                   int promptMaxChars,
-                                  int memoryContextMaxChars,
-                                  Consumer<DispatcherMemoryFacade.MemoryCompressionStats> compressionMetricsConsumer) {
+                                 int promptMaxChars,
+                                 int memoryContextMaxChars,
+                                 boolean realtimeIntentMemoryShrinkEnabled,
+                                 int realtimeIntentMemoryShrinkMaxChars,
+                                 Consumer<DispatcherMemoryFacade.MemoryCompressionStats> compressionMetricsConsumer) {
         this.dispatcherMemoryFacade = dispatcherMemoryFacade;
         this.personaCoreService = personaCoreService;
         this.semanticAnalyzer = semanticAnalyzer;
         this.toolSchemaCatalog = toolSchemaCatalog;
+        this.dispatchHeuristicsSupport = dispatchHeuristicsSupport;
         this.answerMode = answerMode == null ? DispatcherAnswerMode.BALANCED : answerMode;
         this.activeTaskResolver = new ActiveTaskResolver(dispatcherMemoryFacade);
         this.promptMaxChars = Math.max(400, promptMaxChars);
         this.memoryContextMaxChars = Math.max(400, memoryContextMaxChars);
+        this.realtimeIntentMemoryShrinkEnabled = realtimeIntentMemoryShrinkEnabled;
+        this.realtimeIntentMemoryShrinkMaxChars = Math.max(120, realtimeIntentMemoryShrinkMaxChars);
         this.compressionMetricsConsumer = compressionMetricsConsumer;
     }
 
@@ -63,14 +72,6 @@ final class HermesDecisionContextFactory {
                 resolvedProfileContext
         )
                 : new PromptMemoryContextDto("", "", "", Map.of(), List.of());
-        String rawMemoryContext = memoryEnabled
-                ? dispatcherMemoryFacade.buildMemoryContext(
-                userId,
-                userInput,
-                memoryContextMaxChars,
-                compressionMetricsConsumer
-        )
-                : "";
         ActiveTaskResolver.ResolvedTaskThread activeTaskThread = memoryEnabled
                 ? activeTaskResolver.resolve(userId, userInput, promptMemoryContext)
                 : ActiveTaskResolver.ResolvedTaskThread.empty();
@@ -78,7 +79,20 @@ final class HermesDecisionContextFactory {
                 resolvedProfileContext,
                 promptMemoryContext.learnedPreferences()
         );
-        String memoryContext = activeTaskResolver.enrichMemoryContext(rawMemoryContext, activeTaskThread, memoryContextMaxChars);
+        boolean realtimeIntentInput = memoryEnabled
+                && dispatchHeuristicsSupport != null
+                && dispatchHeuristicsSupport.isRealtimeLikeInput(userInput);
+        String decisionMemoryContext = memoryEnabled
+                ? dispatcherMemoryFacade.buildDecisionMemoryContext(
+                promptMemoryContext,
+                activeTaskThread.toMemoryContextSection(),
+                userInput,
+                realtimeIntentInput,
+                realtimeIntentMemoryShrinkEnabled,
+                realtimeIntentMemoryShrinkMaxChars,
+                Math.min(memoryContextMaxChars, 900)
+        )
+                : "";
         List<Map<String, Object>> chatHistory = memoryEnabled
                 ? dispatcherMemoryFacade.buildChatHistory(userId)
                 : List.of();
@@ -87,7 +101,16 @@ final class HermesDecisionContextFactory {
                 .toList();
         SemanticAnalysisResult semanticAnalysis = semanticAnalyzer == null
                 ? SemanticAnalysisResult.empty()
-                : semanticAnalyzer.analyze(userId, userInput, memoryContext, decisionProfileContext, toolSummaries);
+                : semanticAnalyzer.analyze(userId, userInput, decisionMemoryContext, decisionProfileContext, toolSummaries);
+        String rawMemoryContext = memoryEnabled
+                ? dispatcherMemoryFacade.buildMemoryContext(
+                userId,
+                userInput,
+                memoryContextMaxChars,
+                compressionMetricsConsumer
+        )
+                : "";
+        String memoryContext = activeTaskResolver.enrichMemoryContext(rawMemoryContext, activeTaskThread, memoryContextMaxChars);
         String routingInput = semanticAnalysis.routingInput(userInput);
         SkillContext skillContext = dispatcherMemoryFacade.buildSkillContext(
                 userId,
@@ -107,6 +130,9 @@ final class HermesDecisionContextFactory {
         llmContext.put("userId", userId == null ? "" : userId);
         llmContext.put("input", userInput == null ? "" : userInput);
         llmContext.put("memoryContext", memoryContext);
+        if (!decisionMemoryContext.isBlank()) {
+            llmContext.put("decisionMemoryContext", decisionMemoryContext);
+        }
         if (promptMemoryContext.learnedPreferences() != null && !promptMemoryContext.learnedPreferences().isEmpty()) {
             llmContext.put("learnedPreferences", promptMemoryContext.learnedPreferences());
         }

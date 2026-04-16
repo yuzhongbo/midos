@@ -8,12 +8,12 @@ import java.util.Map;
 
 final class SemanticDecisionPromptBuilder {
 
-    private static final int MAX_USER_INPUT_CHARS = 400;
-    private static final int MAX_MEMORY_CONTEXT_CHARS = 1800;
-    private static final int MAX_PROFILE_LINES = 10;
-    private static final int MAX_PROFILE_VALUE_CHARS = 160;
-    private static final int MAX_TOOL_LINES = 16;
-    private static final int MAX_TOOL_LINE_CHARS = 180;
+    private static final int MAX_USER_INPUT_CHARS = 360;
+    private static final int MAX_MEMORY_CONTEXT_CHARS = 900;
+    private static final int MAX_PROFILE_LINES = 6;
+    private static final int MAX_PROFILE_VALUE_CHARS = 96;
+    private static final int MAX_TOOL_LINES = 8;
+    private static final int MAX_TOOL_LINE_CHARS = 120;
 
     String buildPrompt(String userInput,
                        String memoryContext,
@@ -26,31 +26,20 @@ final class SemanticDecisionPromptBuilder {
         prompt.append("Return strict JSON only. No markdown. No explanation. No code fences.\n");
         prompt.append("Required JSON keys: intent, rewrittenInput, suggestedSkill, summary, confidence, payload, keywords.\n");
         prompt.append("Optional JSON keys: candidate_intents, target, params.\n");
-        prompt.append("If you use target, it must mean the same thing as suggestedSkill.\n");
-        prompt.append("If you use params, it must mean the same thing as payload.\n");
-        prompt.append('\n');
-        prompt.append("Decision rules:\n");
-        prompt.append("1. Single decision only: choose at most one skill candidate as suggestedSkill.\n");
-        prompt.append("2. Strong skill bias: if a registered skill can solve the request, prefer that skill over leaving suggestedSkill empty.\n");
-        prompt.append("3. Use only confirmed information from USER_INPUT, CONFIRMED_MEMORY_AND_CONTEXT, PROFILE_CONTEXT, and BASELINE_ROUTING_HINT.\n");
-        prompt.append("4. Never invent required params. If params are missing, keep payload partial instead of fabricating values.\n");
-        prompt.append("5. Only use skill names listed in AVAILABLE_TOOLS.\n");
-        prompt.append("6. Prefer capability-level targets over raw implementation names when AVAILABLE_TOOLS exposes a capability alias.\n");
-        prompt.append("7. For docs, API, SDK, manual, guide, official documentation requests, prefer docs/search tools over generic chat.\n");
-        prompt.append("8. For realtime requests such as news, weather, market, travel, latest updates, prefer search tools over generic chat.\n");
-        prompt.append("9. For short continuation inputs like continue, 再来一次, 继续按刚才方式, rely on recent context and recent successful skills when clear.\n");
-        prompt.append("10. candidate_intents should contain at most 3 alternatives sorted by confidence descending.\n");
-        prompt.append("11. If no tool fits, leave suggestedSkill empty and payload as {}.\n");
-        prompt.append("12. Distinguish execution, planning, blocker-report, progress-report, and decision-adjustment turns when the user is working on an ongoing task.\n");
-        prompt.append("13. If the user is reporting progress or a blocker on an active task, keep suggestedSkill empty unless a tool is clearly requested.\n");
-        prompt.append("14. If the user clearly switches to another matter, do not force the previous task thread.\n");
-        prompt.append("15. A generic domain noun does not equal a tool request. Words like 时间, 接口, 路径, 沟通, 截止 should not trigger a tool unless the user clearly asks you to act.\n");
-        prompt.append("16. If the user is only describing status, pressure, blockers, or context, prefer suggestedSkill empty over a weak keyword-based tool guess.\n");
-        prompt.append("17. If two skill interpretations are close, include both in candidate_intents, lower confidence accordingly, and avoid pretending certainty.\n");
-        prompt.append('\n');
-        prompt.append("JSON shape example:\n");
-        prompt.append("{\"intent\":\"task_create\",\"rewrittenInput\":\"创建一个待办：提交周报\",\"suggestedSkill\":\"todo.create\",\"summary\":\"用户要创建待办并记录截止时间\",\"confidence\":0.92,\"payload\":{\"task\":\"提交周报\",\"dueDate\":\"周五前\"},\"keywords\":[\"待办\",\"周报\",\"周五\"],\"candidate_intents\":[{\"intent\":\"todo.create\",\"confidence\":0.92},{\"intent\":\"calendar.lookup\",\"confidence\":0.21}]}\n");
-        prompt.append("{\"intent\":\"docs_lookup\",\"target\":\"docs.lookup\",\"summary\":\"查询官方文档\",\"confidence\":0.95,\"params\":{\"query\":\"Spring Boot RestClient official docs\"},\"keywords\":[\"Spring Boot\",\"RestClient\",\"docs\"]}\n");
+        prompt.append("If you use target or params, they must mean the same thing as suggestedSkill or payload.\n");
+        prompt.append("Rules:\n");
+        prompt.append("1. Single decision only.\n");
+        prompt.append("2. Use only confirmed information from USER_INPUT, CONFIRMED_MEMORY_AND_CONTEXT, PROFILE_CONTEXT, and BASELINE_ROUTING_HINT.\n");
+        prompt.append("3. Never invent required params; partial payload is better than fabricated values.\n");
+        prompt.append("4. Only use skill names listed in AVAILABLE_TOOLS.\n");
+        prompt.append("5. Prefer capability-level targets over raw implementation names when AVAILABLE_TOOLS exposes a capability alias.\n");
+        prompt.append("6. Prefer docs/search tools for docs/manual/API requests and search tools for realtime news/weather/market/travel requests.\n");
+        prompt.append("7. For short continuations, use recent context when the thread is clear.\n");
+        prompt.append("8. Distinguish execution, planning, blocker-report, progress-report, and decision-adjustment on ongoing tasks.\n");
+        prompt.append("9. If the user only reports status, pressure, or blockers, prefer suggestedSkill empty unless a tool is clearly requested.\n");
+        prompt.append("10. If interpretations are close, lower confidence and keep candidate_intents to at most 3.\n");
+        prompt.append("Example:\n");
+        prompt.append("{\"intent\":\"task_create\",\"rewrittenInput\":\"创建一个待办：提交周报\",\"suggestedSkill\":\"todo.create\",\"summary\":\"用户要创建待办并记录截止时间\",\"confidence\":0.92,\"payload\":{\"task\":\"提交周报\",\"dueDate\":\"周五前\"},\"keywords\":[\"待办\",\"周报\",\"周五\"]}\n");
         prompt.append('\n');
 
         appendSection(prompt, "USER_INPUT", capText(userInput, MAX_USER_INPUT_CHARS));
@@ -58,7 +47,7 @@ final class SemanticDecisionPromptBuilder {
         appendSection(prompt, "PROFILE_CONTEXT", summarizeProfileContext(profileContext));
         appendSection(prompt, "BASELINE_ROUTING_HINT", summarizeBaseline(baseline));
         appendSection(prompt, "SEARCH_PRIORITY_ORDER", summarizeSearchPriority(profileContext));
-        appendSection(prompt, "AVAILABLE_TOOLS", summarizeAvailableTools(availableSkillSummaries));
+        appendSection(prompt, "AVAILABLE_TOOLS", summarizeAvailableTools(availableSkillSummaries, userInput));
 
         prompt.append("Now output JSON only.\n");
         return prompt.toString();
@@ -79,16 +68,15 @@ final class SemanticDecisionPromptBuilder {
         if (!text(baseline.intent()).isBlank()) {
             lines.add("- intent: " + text(baseline.intent()));
         }
-        lines.add("- intentType: " + baseline.intentType());
         if (!text(baseline.suggestedSkill()).isBlank()) {
             lines.add("- suggestedSkill: " + text(baseline.suggestedSkill()));
         }
-        lines.add("- toolRequired: " + baseline.toolRequired());
-        lines.add("- contextScope: " + baseline.contextScope());
-        lines.add("- intentState: " + baseline.intentState());
-        lines.add("- intentPhase: " + baseline.intentPhase());
-        lines.add("- threadRelation: " + baseline.threadRelation());
-        lines.add("- followUpMode: " + baseline.followUpMode());
+        lines.add("- stage: " + baseline.intentPhase()
+                + ", state=" + baseline.intentState()
+                + ", thread=" + baseline.threadRelation());
+        if (baseline.toolRequired()) {
+            lines.add("- toolRequired: true");
+        }
         if (!"none".equals(baseline.memoryOperation())) {
             lines.add("- memoryOperation: " + baseline.memoryOperation());
         }
@@ -96,26 +84,20 @@ final class SemanticDecisionPromptBuilder {
             lines.add("- taskFocus: " + text(baseline.taskFocus()));
         }
         if (!baseline.payload().isEmpty()) {
-            lines.add("- payload: " + summarizeMap(baseline.payload(), 220));
-        }
-        if (!text(baseline.summary()).isBlank()) {
-            lines.add("- summary: " + text(baseline.summary()));
+            lines.add("- payload: " + summarizeMap(baseline.payload(), 120));
         }
         if (baseline.effectiveConfidence() > 0.0d) {
             lines.add("- confidence: " + String.format(Locale.ROOT, "%.2f", baseline.effectiveConfidence()));
         }
-        String candidateSummary = summarizeCandidateIntents(baseline);
-        if (!candidateSummary.isBlank()) {
+        String candidateSummary = baseline.hasAmbiguousSkillChoice() ? summarizeCandidateIntents(baseline) : "";
+        if (!candidateSummary.isBlank() && baseline.effectiveConfidence() < 0.86d) {
             lines.add("- candidateIntents: " + candidateSummary);
-        }
-        if (baseline.hasAmbiguousSkillChoice()) {
-            lines.add("- ambiguityHint: top candidate intents are close; clarify if needed");
         }
         if (lines.isEmpty()) {
             return "";
         }
-        lines.add("- note: this is a weak routing hint, not a hard constraint");
-        return String.join("\n", lines);
+        lines.add("- note: weak hint only");
+        return String.join("\n", lines.stream().limit(7).toList());
     }
 
     private String summarizeProfileContext(Map<String, Object> profileContext) {
@@ -148,19 +130,72 @@ final class SemanticDecisionPromptBuilder {
         return single.isBlank() ? "" : single;
     }
 
-    private String summarizeAvailableTools(List<String> availableSkillSummaries) {
+    private String summarizeAvailableTools(List<String> availableSkillSummaries, String userInput) {
         List<String> skills = availableSkillSummaries == null ? List.of() : availableSkillSummaries;
         if (skills.isEmpty()) {
             return "(none)";
         }
-        List<String> lines = new ArrayList<>();
-        for (int index = 0; index < Math.min(MAX_TOOL_LINES, skills.size()); index++) {
-            lines.add((index + 1) + ". " + capText(text(skills.get(index)), MAX_TOOL_LINE_CHARS));
+        String normalizedInput = normalizeForMatch(userInput);
+        List<RankedToolSummary> ranked = new ArrayList<>();
+        for (int index = 0; index < skills.size(); index++) {
+            ranked.add(new RankedToolSummary(
+                    index,
+                    compactToolSummary(text(skills.get(index))),
+                    toolRelevance(normalizedInput, text(skills.get(index)))
+            ));
         }
-        if (skills.size() > MAX_TOOL_LINES) {
-            lines.add("... (+" + (skills.size() - MAX_TOOL_LINES) + " more)");
+        ranked.sort(Comparator.comparingInt(RankedToolSummary::score).reversed()
+                .thenComparingInt(RankedToolSummary::index));
+        List<String> lines = new ArrayList<>();
+        for (int index = 0; index < Math.min(MAX_TOOL_LINES, ranked.size()); index++) {
+            lines.add((index + 1) + ". " + capText(ranked.get(index).summary(), MAX_TOOL_LINE_CHARS));
+        }
+        if (ranked.size() > MAX_TOOL_LINES) {
+            lines.add("... (+" + (ranked.size() - MAX_TOOL_LINES) + " more)");
         }
         return String.join("\n", lines);
+    }
+
+    private String compactToolSummary(String summary) {
+        if (summary == null || summary.isBlank()) {
+            return "";
+        }
+        String[] segments = summary.split("\\s*\\|\\s*");
+        String headline = segments.length == 0 ? "" : text(segments[0]);
+        List<String> essentials = new ArrayList<>();
+        for (int index = 1; index < segments.length; index++) {
+            String segment = text(segments[index]);
+            if (segment.startsWith("required=") || segment.startsWith("oneOf=")) {
+                essentials.add(segment);
+            }
+        }
+        if (essentials.isEmpty()) {
+            return headline;
+        }
+        return headline + " | " + String.join(" | ", essentials);
+    }
+
+    private int toolRelevance(String normalizedInput, String summary) {
+        if (normalizedInput == null || normalizedInput.isBlank() || summary == null || summary.isBlank()) {
+            return 0;
+        }
+        String normalizedSummary = normalizeForMatch(summary);
+        if (normalizedSummary.isBlank()) {
+            return 0;
+        }
+        if (normalizedSummary.contains(normalizedInput)) {
+            return 10;
+        }
+        int score = 0;
+        for (String token : normalizedInput.split(" ")) {
+            if (token.isBlank() || token.length() < 2) {
+                continue;
+            }
+            if (normalizedSummary.contains(token)) {
+                score++;
+            }
+        }
+        return score;
     }
 
     private String summarizeCandidateIntents(SemanticAnalysisResult baseline) {
@@ -223,5 +258,16 @@ final class SemanticDecisionPromptBuilder {
 
     private String text(Object value) {
         return value == null ? "" : String.valueOf(value).trim();
+    }
+
+    private String normalizeForMatch(String value) {
+        return text(value)
+                .toLowerCase(Locale.ROOT)
+                .replaceAll("[^\\p{L}\\p{N}]+", " ")
+                .trim()
+                .replaceAll("\\s+", " ");
+    }
+
+    private record RankedToolSummary(int index, String summary, int score) {
     }
 }

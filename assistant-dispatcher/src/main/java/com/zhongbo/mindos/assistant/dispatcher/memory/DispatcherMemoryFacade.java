@@ -270,6 +270,43 @@ public class DispatcherMemoryFacade {
         return finalContext;
     }
 
+    public String buildDecisionMemoryContext(PromptMemoryContextDto promptMemoryContext,
+                                             String activeTaskContext,
+                                             String userInput,
+                                             boolean realtimeIntentInput,
+                                             boolean realtimeIntentMemoryShrinkEnabled,
+                                             int realtimeIntentMemoryShrinkMaxChars,
+                                             int maxChars) {
+        int safeMaxChars = Math.max(160, maxChars);
+        String activeTask = compactActiveTaskContext(activeTaskContext, Math.max(80, safeMaxChars / 3));
+        if (shouldApplyRealtimeMemoryShrink(realtimeIntentInput, realtimeIntentMemoryShrinkEnabled)) {
+            if (activeTask.isBlank()) {
+                return "";
+            }
+            StringBuilder realtime = new StringBuilder();
+            appendDecisionSection(realtime, "Active task", activeTask, Math.max(80, safeMaxChars));
+            return capText(realtime.toString().trim(),
+                    Math.min(safeMaxChars, Math.max(120, realtimeIntentMemoryShrinkMaxChars)));
+        }
+
+        String semantic = compactSemanticDecisionContext(
+                promptMemoryContext == null ? "" : promptMemoryContext.semanticContext(),
+                Math.max(140, safeMaxChars / 2)
+        );
+        String recent = shouldIncludeRecentDecisionContext(userInput, activeTask)
+                ? compactRecentDecisionContext(
+                promptMemoryContext == null ? "" : promptMemoryContext.recentConversation(),
+                Math.max(100, safeMaxChars / 4)
+        )
+                : "";
+
+        StringBuilder builder = new StringBuilder();
+        appendDecisionSection(builder, "Active task", activeTask, Math.max(80, safeMaxChars / 3));
+        appendDecisionSection(builder, "Relevant facts", semantic, Math.max(120, safeMaxChars / 2));
+        appendDecisionSection(builder, "Recent context", recent, Math.max(80, safeMaxChars / 4));
+        return capText(builder.toString().trim(), safeMaxChars);
+    }
+
     public String enrichMemoryContextWithSemanticAnalysis(String memoryContext,
                                                           SemanticAnalysisResult semanticAnalysis,
                                                           double minConfidence,
@@ -717,6 +754,17 @@ public class DispatcherMemoryFacade {
         }
     }
 
+    private void appendDecisionSection(StringBuilder builder, String title, String content, int budget) {
+        if (content == null || content.isBlank()) {
+            return;
+        }
+        builder.append(title).append(":\n");
+        builder.append(capText(content, budget));
+        if (builder.length() == 0 || builder.charAt(builder.length() - 1) != '\n') {
+            builder.append('\n');
+        }
+    }
+
     private String inferMemoryBucket(String userInput) {
         String normalized = normalize(userInput);
         if (normalized.isBlank()) {
@@ -747,6 +795,107 @@ public class DispatcherMemoryFacade {
             }
         }
         return false;
+    }
+
+    private String compactActiveTaskContext(String activeTaskContext, int budget) {
+        if (activeTaskContext == null || activeTaskContext.isBlank()) {
+            return "";
+        }
+        List<String> lines = new ArrayList<>();
+        for (String rawLine : activeTaskContext.split("\\R")) {
+            String line = rawLine == null ? "" : rawLine.trim();
+            if (line.isBlank() || "Active task thread:".equalsIgnoreCase(line)) {
+                continue;
+            }
+            lines.add(line);
+            if (lines.size() >= 4) {
+                break;
+            }
+        }
+        return capText(String.join("\n", lines), budget);
+    }
+
+    private String compactSemanticDecisionContext(String semanticContext, int budget) {
+        if (semanticContext == null || semanticContext.isBlank()) {
+            return "";
+        }
+        List<String> primary = new ArrayList<>();
+        List<String> secondary = new ArrayList<>();
+        for (String rawLine : semanticContext.split("\\R")) {
+            String line = rawLine == null ? "" : rawLine.trim();
+            if (line.isBlank() || shouldSkipDecisionSemanticLine(line)) {
+                continue;
+            }
+            if (line.startsWith("- [fact]") || line.startsWith("- [working]")) {
+                primary.add(line);
+                continue;
+            }
+            if (line.startsWith("- [buffer]")) {
+                secondary.add(line);
+                continue;
+            }
+            if (line.startsWith("- [assistant-context]") || line.startsWith("- [summary]")) {
+                secondary.add(line);
+                continue;
+            }
+            primary.add(line);
+        }
+        List<String> selected = new ArrayList<>();
+        for (String line : primary) {
+            if (selected.size() >= 3) {
+                break;
+            }
+            selected.add(line);
+        }
+        for (String line : secondary) {
+            if (selected.size() >= 3) {
+                break;
+            }
+            selected.add(line);
+        }
+        return capText(String.join("\n", selected), budget);
+    }
+
+    private boolean shouldSkipDecisionSemanticLine(String line) {
+        String normalized = normalize(line);
+        return normalized.contains("当前事项")
+                || normalized.contains("下一步")
+                || normalized.contains("截止时间")
+                || normalized.contains("状态")
+                || normalized.contains("偏好");
+    }
+
+    private String compactRecentDecisionContext(String recentConversation, int budget) {
+        if (recentConversation == null || recentConversation.isBlank()) {
+            return "";
+        }
+        List<String> lines = new ArrayList<>();
+        for (String rawLine : recentConversation.split("\\R")) {
+            String line = rawLine == null ? "" : rawLine.trim();
+            if (line.isBlank()) {
+                continue;
+            }
+            lines.add(line);
+        }
+        if (lines.size() > 2) {
+            lines = new ArrayList<>(lines.subList(lines.size() - 2, lines.size()));
+        }
+        return capText(String.join("\n", lines), budget);
+    }
+
+    private boolean shouldIncludeRecentDecisionContext(String userInput, String activeTaskContext) {
+        String normalized = normalize(userInput);
+        if (normalized.isBlank()) {
+            return false;
+        }
+        if (!activeTaskContext.isBlank()) {
+            return true;
+        }
+        if (normalized.length() <= 24) {
+            return true;
+        }
+        return containsAny(normalized,
+                "继续", "再来", "刚才", "之前", "按之前", "这个", "那个", "上一个", "上次", "照刚才");
     }
 
     private String normalize(String value) {
