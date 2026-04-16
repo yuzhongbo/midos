@@ -220,6 +220,7 @@ public class SemanticAnalysisService implements SemanticAnalyzer {
             return SemanticAnalysisResult.empty();
         }
         SemanticAnalysisResult best = heuristicAnalysis(userInput);
+        best = preferHigherConfidence(best, heuristicContinuationAnalysis(userInput, memoryContext));
         best = preferHigherConfidence(best, analyzeWithLlm(userId, userInput, memoryContext, profileContext, availableSkillSummaries, best));
         return sanitize(best, userInput);
     }
@@ -566,6 +567,50 @@ public class SemanticAnalysisService implements SemanticAnalyzer {
                 capText(userInput, 80),
                 0.35
         );
+    }
+
+    private Optional<SemanticAnalysisResult> heuristicContinuationAnalysis(String userInput, String memoryContext) {
+        String normalized = normalize(userInput);
+        if (!looksLikeContinuationFollowUp(userInput, normalized) || memoryContext == null || memoryContext.isBlank()) {
+            return Optional.empty();
+        }
+        ContinuationContext continuation = resolveContinuationContext(memoryContext);
+        if (continuation.isEmpty()) {
+            return Optional.empty();
+        }
+        SemanticAnalysisResult inherited = continuation.focus().isBlank()
+                ? SemanticAnalysisResult.empty()
+                : heuristicAnalysis(continuation.focus());
+        String inheritedSkill = firstNonBlankString(continuation.skillName(), inherited.suggestedSkill());
+        String suggestedSkill = shouldCarryExecutionSkill(normalized) ? inheritedSkill : "";
+        Map<String, Object> payload = buildContinuationPayload(suggestedSkill, continuation.payload(), inherited, continuation.focus());
+        String focus = firstNonBlankString(continuation.focus(), resolveContinuationFocus(payload), inherited.taskFocus());
+        if (focus.isBlank()) {
+            return Optional.empty();
+        }
+        String rewrittenInput = buildContinuationRewrittenInput(userInput, focus);
+        String intent = suggestedSkill.isBlank()
+                ? "延续当前上下文并继续推进"
+                : "延续当前任务并按已有方案执行";
+        String summary = "用户希望继续推进当前事项：" + capText(focus, 60);
+        double confidence = suggestedSkill.isBlank() ? 0.76 : 0.84;
+        List<String> keywords = suggestedSkill.isBlank()
+                ? extractKeywords(rewrittenInput, "继续", "推进", "刚才", "按这个")
+                : routingKeywordHints(rewrittenInput, suggestedSkill, "继续", "推进", "刚才", "按这个");
+        List<SemanticAnalysisResult.CandidateIntent> candidateIntents = suggestedSkill.isBlank()
+                ? List.of()
+                : List.of(new SemanticAnalysisResult.CandidateIntent(suggestedSkill, 0.88));
+        return Optional.of(new SemanticAnalysisResult(
+                "heuristic",
+                intent,
+                rewrittenInput,
+                suggestedSkill,
+                payload,
+                keywords,
+                summary,
+                confidence,
+                candidateIntents
+        ));
     }
 
     private SemanticAnalysisResult heuristicRealtimeAnalysis(String userInput, String normalized) {
@@ -983,11 +1028,246 @@ public class SemanticAnalysisService implements SemanticAnalyzer {
         return keywords.isEmpty() ? List.of() : List.copyOf(keywords);
     }
 
+    private boolean looksLikeContinuationFollowUp(String userInput, String normalized) {
+        if (normalized.isBlank()) {
+            return false;
+        }
+        if (containsAny(normalized,
+                "继续", "接着", "按刚才", "按这个", "按上面", "就按这个", "就这个",
+                "开始吧", "开始执行", "执行吧", "帮我推进", "推进一下", "往下做",
+                "照这个", "那就这样", "就这样", "按之前", "按上次")) {
+            return true;
+        }
+        String trimmed = stringValue(userInput);
+        return trimmed.length() <= 4 && containsAny(normalized, "可以", "好的", "行", "好", "嗯");
+    }
+
+    private boolean shouldCarryExecutionSkill(String normalized) {
+        return containsAny(normalized,
+                "开始吧", "开始执行", "执行吧", "就按这个", "按刚才", "按这个",
+                "帮我推进", "推进一下", "照这个", "那就这样", "就这样", "开工", "开始做");
+    }
+
+    private ContinuationContext resolveContinuationContext(String memoryContext) {
+        if (memoryContext == null || memoryContext.isBlank()) {
+            return ContinuationContext.empty();
+        }
+        String focus = "";
+        String skillName = "";
+        Map<String, Object> payload = new LinkedHashMap<>();
+        for (String rawLine : memoryContext.split("\\R")) {
+            String line = normalizeContextLine(rawLine);
+            if (line.isBlank()
+                    || "none".equalsIgnoreCase(line)
+                    || line.endsWith(":")
+                    || line.startsWith("Recent conversation")
+                    || line.startsWith("Relevant knowledge")
+                    || line.startsWith("User skill habits")) {
+                continue;
+            }
+            skillName = firstNonBlankString(skillName,
+                    extractValueAfterAny(line, "可用执行方式：", "执行方式："));
+            extractContinuationPayload(line, payload);
+            focus = firstNonBlankString(
+                    focus,
+                    normalizeContinuationFocus(extractValueAfterAny(line,
+                            "当前事项：", "任务：", "事项：", "事项标题：", "目标：",
+                            "用户当前想要：", "用户刚才在处理：", "主题："))
+            );
+        }
+        focus = firstNonBlankString(focus, resolveContinuationFocus(payload));
+        if (focus.isBlank() && skillName.isBlank()) {
+            return ContinuationContext.empty();
+        }
+        return new ContinuationContext(focus, skillName, payload.isEmpty() ? Map.of() : Map.copyOf(payload));
+    }
+
+    private String normalizeContextLine(String rawLine) {
+        String line = stringValue(rawLine);
+        if (line.startsWith("- ")) {
+            line = line.substring(2).trim();
+        }
+        if (line.startsWith("persisted rollup:")) {
+            line = line.substring("persisted rollup:".length()).trim();
+        }
+        if (line.startsWith("earlier summary:")) {
+            line = line.substring("earlier summary:".length()).trim();
+        }
+        return line;
+    }
+
+    private void extractContinuationPayload(String line, Map<String, Object> payload) {
+        putContinuationValue(payload, "task", line, "当前事项：", "任务：", "事项：");
+        putContinuationValue(payload, "title", line, "事项标题：");
+        putContinuationValue(payload, "goal", line, "目标：");
+        putContinuationValue(payload, "project", line, "项目：");
+        putContinuationValue(payload, "topic", line, "主题：");
+        putContinuationValue(payload, "dueDate", line, "截止时间：", "截止：", "到期时间：", "到期：");
+        putContinuationValue(payload, "owner", line, "负责人：");
+        putContinuationValue(payload, "location", line, "地点：", "位置：");
+        putContinuationValue(payload, "query", line, "查询：", "关键词：");
+
+        String kvSource = firstNonBlankString(
+                extractValueAfterAny(line, "已确认信息：", "关键信息："),
+                line.contains("=") ? line : ""
+        );
+        if (!kvSource.isBlank()) {
+            parseKeyValueFragments(kvSource, payload);
+        }
+    }
+
+    private void putContinuationValue(Map<String, Object> payload,
+                                      String key,
+                                      String line,
+                                      String... prefixes) {
+        if (payload.containsKey(key)) {
+            return;
+        }
+        String value = extractValueAfterAny(line, prefixes);
+        if (!value.isBlank()) {
+            payload.put(key, value);
+        }
+    }
+
+    private void parseKeyValueFragments(String text, Map<String, Object> payload) {
+        if (text == null || text.isBlank()) {
+            return;
+        }
+        for (String fragment : text.split("[,，;；|]")) {
+            String candidate = stringValue(fragment);
+            if (candidate.isBlank() || !candidate.contains("=")) {
+                continue;
+            }
+            String[] pair = candidate.split("=", 2);
+            if (pair.length != 2) {
+                continue;
+            }
+            String key = stringValue(pair[0]);
+            String value = stringValue(pair[1]);
+            if (!key.isBlank() && !value.isBlank() && !payload.containsKey(key)) {
+                payload.put(key, value);
+            }
+        }
+    }
+
+    private String extractValueAfterAny(String line, String... prefixes) {
+        if (line == null || line.isBlank() || prefixes == null) {
+            return "";
+        }
+        for (String prefix : prefixes) {
+            if (prefix == null || prefix.isBlank()) {
+                continue;
+            }
+            int index = line.indexOf(prefix);
+            if (index < 0) {
+                continue;
+            }
+            String candidate = line.substring(index + prefix.length()).trim();
+            for (String separator : List.of("；", ";", "|")) {
+                int separatorIndex = candidate.indexOf(separator);
+                if (separatorIndex >= 0) {
+                    candidate = candidate.substring(0, separatorIndex).trim();
+                }
+            }
+            if (!candidate.isBlank()) {
+                return candidate;
+            }
+        }
+        return "";
+    }
+
+    private String normalizeContinuationFocus(String focus) {
+        String candidate = stringValue(focus);
+        if (candidate.isBlank()) {
+            return "";
+        }
+        String normalized = normalize(candidate);
+        if (containsAny(normalized,
+                "用户希望", "用户请求", "用户要",
+                "生成学习/教学规划", "创建待办或提醒事项", "生成或整理代码实现方案",
+                "搜索文件或目录中的目标内容", "分析沟通场景并生成情商沟通建议",
+                "获取最新新闻资讯", "查询实时天气信息", "查询实时出行信息", "查询实时行情信息")) {
+            return "";
+        }
+        return candidate;
+    }
+
+    private Map<String, Object> buildContinuationPayload(String suggestedSkill,
+                                                         Map<String, Object> inheritedPayload,
+                                                         SemanticAnalysisResult inherited,
+                                                         String focus) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        if (inherited != null && inherited.payload() != null && !inherited.payload().isEmpty()) {
+            payload.putAll(inherited.payload());
+        }
+        if (inheritedPayload != null && !inheritedPayload.isEmpty()) {
+            payload.putAll(inheritedPayload);
+        }
+        if (focus != null && !focus.isBlank()) {
+            payload.putIfAbsent("taskFocus", focus);
+        }
+        payload.putIfAbsent("continuation", true);
+        if (suggestedSkill == null || suggestedSkill.isBlank() || focus == null || focus.isBlank()) {
+            return payload.isEmpty() ? Map.of() : Map.copyOf(payload);
+        }
+        switch (suggestedSkill) {
+            case "todo.create", "code.generate" -> payload.putIfAbsent("task", focus);
+            case "file.search" -> {
+                payload.putIfAbsent("keyword", focus);
+                payload.putIfAbsent("path", "./");
+            }
+            default -> {
+                if (suggestedSkill.contains("search") || suggestedSkill.contains("Search")) {
+                    payload.putIfAbsent("query", focus);
+                }
+            }
+        }
+        return payload.isEmpty() ? Map.of() : Map.copyOf(payload);
+    }
+
+    private String resolveContinuationFocus(Map<String, Object> payload) {
+        return firstNonBlankString(
+                payload == null ? null : payload.get("task"),
+                payload == null ? null : payload.get("title"),
+                payload == null ? null : payload.get("goal"),
+                payload == null ? null : payload.get("project"),
+                payload == null ? null : payload.get("topic"),
+                payload == null ? null : payload.get("query"),
+                payload == null ? null : payload.get("taskFocus")
+        );
+    }
+
+    private String buildContinuationRewrittenInput(String userInput, String focus) {
+        String trimmed = stringValue(userInput);
+        if (focus == null || focus.isBlank()) {
+            return trimmed;
+        }
+        if (trimmed.length() <= 6 || looksLikeContinuationFollowUp(trimmed, normalize(trimmed))) {
+            return "继续推进：" + focus;
+        }
+        if (trimmed.contains(focus)) {
+            return trimmed;
+        }
+        return trimmed + "，继续围绕：" + focus;
+    }
+
     private String extractByPattern(String input, Pattern pattern) {
         if (input == null || pattern == null) {
             return null;
         }
         Matcher matcher = pattern.matcher(input);
         return matcher.find() ? matcher.group(1).trim() : null;
+    }
+
+    private record ContinuationContext(String focus, String skillName, Map<String, Object> payload) {
+        private static ContinuationContext empty() {
+            return new ContinuationContext("", "", Map.of());
+        }
+
+        private boolean isEmpty() {
+            return (focus == null || focus.isBlank())
+                    && (skillName == null || skillName.isBlank())
+                    && (payload == null || payload.isEmpty());
+        }
     }
 }

@@ -100,6 +100,7 @@ class SemanticAnalysisResultTest {
         assertEquals("standalone", attributes.get(SemanticAnalysisResult.ATTR_CONTEXT_SCOPE));
         assertEquals(Boolean.FALSE, attributes.get(SemanticAnalysisResult.ATTR_TOOL_REQUIRED));
         assertEquals("none", attributes.get(SemanticAnalysisResult.ATTR_MEMORY_OPERATION));
+        assertEquals("standalone", attributes.get(SemanticAnalysisResult.ATTR_FOLLOW_UP_MODE));
         assertFalse(attributes.containsKey(SemanticAnalysisResult.ATTR_SUMMARY));
         assertFalse(attributes.containsKey(SemanticAnalysisResult.ATTR_PAYLOAD));
         assertFalse(attributes.containsKey(SemanticAnalysisResult.ATTR_KEYWORDS));
@@ -162,12 +163,33 @@ class SemanticAnalysisResultTest {
         assertTrue(prompt.contains("- toolRequired: true"));
         assertTrue(prompt.contains("- contextScope: standalone"));
         assertTrue(prompt.contains("- memoryOperation: none"));
+        assertTrue(prompt.contains("- followUpMode: standalone"));
+        assertTrue(prompt.contains("- taskFocus: 提交周报"));
         assertTrue(prompt.contains("- rewrittenInput: 请创建一个待办"));
         assertTrue(prompt.contains("- keywords: 待办, 周报"));
         assertTrue(prompt.contains("- summary: 提取了关键任务"));
         assertTrue(prompt.contains("- payload: {task=提交周报}"));
         assertTrue(prompt.contains("- source: unknown"));
         assertTrue(prompt.contains("- confidence: 0.93"));
+    }
+
+    @Test
+    void shouldDeriveContinuationMetadataFromFollowUpInputs() {
+        SemanticAnalysisResult result = new SemanticAnalysisResult(
+                "heuristic",
+                "延续当前任务并按已有方案执行",
+                "继续推进：提交周报",
+                "todo.create",
+                Map.of("task", "提交周报", "dueDate", "周五前"),
+                List.of("继续", "周报"),
+                "用户希望继续推进当前事项：提交周报",
+                0.84
+        );
+
+        assertEquals("continuation", result.contextScope());
+        assertEquals("continuation", result.followUpMode());
+        assertEquals("提交周报", result.taskFocus());
+        assertEquals("提交周报", result.asAttributes().get(SemanticAnalysisResult.ATTR_TASK_FOCUS));
     }
 
     @Test

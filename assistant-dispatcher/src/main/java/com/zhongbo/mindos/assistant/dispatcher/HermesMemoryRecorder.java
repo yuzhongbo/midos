@@ -16,6 +16,7 @@ import java.util.Set;
 final class HermesMemoryRecorder {
 
     private static final String ASSISTANT_CONTEXT_MARKER = "[助手上下文]";
+    private static final String TASK_FACT_MARKER = "[任务事实]";
     private static final Set<String> NON_SKILL_CHANNELS = Set.of(
             "llm",
             "memory.direct",
@@ -78,6 +79,7 @@ final class HermesMemoryRecorder {
                 && shouldRecordSemanticSummary(finalResult.skillName())) {
             batch = batch.merge(semanticRoutingSupport.maybeStoreSemanticSummary(userId, userInput, semanticAnalysis));
         }
+        batch = batch.merge(buildTaskFactBatch(semanticAnalysis, finalResult));
 
         String rollup = buildConversationRollup(userInput, semanticAnalysis, finalResult);
         if (!rollup.isBlank()) {
@@ -173,6 +175,69 @@ final class HermesMemoryRecorder {
         return cap(entry.toString(), 320);
     }
 
+    private MemoryWriteBatch buildTaskFactBatch(SemanticAnalysisResult semanticAnalysis, SkillResult finalResult) {
+        if (semanticAnalysis == null || finalResult == null || !finalResult.success()) {
+            return MemoryWriteBatch.empty();
+        }
+        if (!shouldRecordSemanticSummary(finalResult.skillName())
+                || "realtime".equals(semanticAnalysis.contextScope())
+                || !"none".equals(semanticAnalysis.memoryOperation())) {
+            return MemoryWriteBatch.empty();
+        }
+        String entry = buildTaskFactEntry(semanticAnalysis);
+        if (entry.isBlank()) {
+            return MemoryWriteBatch.empty();
+        }
+        return MemoryWriteBatch.of(new MemoryWriteOperation.WriteSemantic(entry, List.of(), "task"));
+    }
+
+    private String buildTaskFactEntry(SemanticAnalysisResult semanticAnalysis) {
+        Map<String, Object> payload = semanticAnalysis.payload();
+        if (payload == null || payload.isEmpty()) {
+            return "";
+        }
+        String task = firstNonBlank(
+                stringValue(payload.get("task")),
+                stringValue(payload.get("title")),
+                stringValue(payload.get("goal")),
+                semanticAnalysis.taskFocus()
+        );
+        String goal = stringValue(payload.get("goal"));
+        String dueDate = firstNonBlank(
+                stringValue(payload.get("dueDate")),
+                stringValue(payload.get("deadline")),
+                stringValue(payload.get("date")),
+                stringValue(payload.get("time")),
+                stringValue(payload.get("scheduleTime"))
+        );
+        String project = stringValue(payload.get("project"));
+        String owner = firstNonBlank(stringValue(payload.get("owner")), stringValue(payload.get("assignee")));
+        String location = firstNonBlank(stringValue(payload.get("location")), stringValue(payload.get("place")));
+        String topic = stringValue(payload.get("topic"));
+        if (task.isBlank() && dueDate.isBlank() && project.isBlank() && owner.isBlank() && location.isBlank() && topic.isBlank()) {
+            return "";
+        }
+        StringBuilder entry = new StringBuilder(TASK_FACT_MARKER).append(' ');
+        appendFactSegment(entry, "当前事项", task);
+        appendFactSegment(entry, "项目", project);
+        appendFactSegment(entry, "目标", goal.equals(task) ? "" : goal);
+        appendFactSegment(entry, "主题", topic.equals(task) ? "" : topic);
+        appendFactSegment(entry, "截止时间", dueDate);
+        appendFactSegment(entry, "负责人", owner);
+        appendFactSegment(entry, "地点", location);
+        return cap(entry.toString(), 220);
+    }
+
+    private void appendFactSegment(StringBuilder entry, String label, String value) {
+        if (value == null || value.isBlank()) {
+            return;
+        }
+        if (entry.length() > TASK_FACT_MARKER.length() + 1) {
+            entry.append('；');
+        }
+        entry.append(label).append('：').append(cap(value.trim(), 80));
+    }
+
     private String summarizePayload(Map<String, Object> payload) {
         if (payload == null || payload.isEmpty()) {
             return "";
@@ -231,6 +296,10 @@ final class HermesMemoryRecorder {
 
     private String normalize(String value) {
         return value == null ? "" : value.trim().toLowerCase(Locale.ROOT);
+    }
+
+    private String stringValue(Object value) {
+        return value == null ? "" : String.valueOf(value).trim();
     }
 
     private String cap(String value, int maxLength) {

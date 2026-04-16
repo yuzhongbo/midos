@@ -481,6 +481,51 @@ class SemanticAnalysisServiceTest {
     }
 
     @Test
+    void shouldInheritTaskAndSkillFromMemoryContextForExecutionFollowUp() {
+        SkillRegistry registry = new SkillRegistry(List.of(new FixedSkill("todo.create")));
+        SemanticAnalysisService service = new SemanticAnalysisService((prompt, context) -> "stub", registry, true, false, true, "", "local", "cost", 120);
+
+        SemanticAnalysisResult result = service.analyze(
+                "u1",
+                "开始吧",
+                """
+                Relevant knowledge:
+                - [意图摘要] 用户当前想要：提交周报；可用执行方式：todo.create；已确认信息：task=提交周报, dueDate=周五前
+                """,
+                Map.of(),
+                List.of("todo.create - Creates todo items")
+        );
+
+        assertEquals("todo.create", result.suggestedSkill());
+        assertEquals("提交周报", result.payload().get("task"));
+        assertEquals("周五前", result.payload().get("dueDate"));
+        assertEquals("continuation", result.contextScope());
+        assertEquals("提交周报", result.taskFocus());
+    }
+
+    @Test
+    void shouldCarryContextForGenericContinuationWithoutForcingSkill() {
+        SkillRegistry registry = new SkillRegistry(List.of(new FixedSkill("todo.create")));
+        SemanticAnalysisService service = new SemanticAnalysisService((prompt, context) -> "stub", registry, true, false, true, "", "local", "cost", 120);
+
+        SemanticAnalysisResult result = service.analyze(
+                "u1",
+                "继续",
+                """
+                Relevant knowledge:
+                - [任务事实] 当前事项：整理季度复盘；截止时间：周四下午
+                """,
+                Map.of(),
+                List.of("todo.create - Creates todo items")
+        );
+
+        assertTrue(result.suggestedSkill().isBlank());
+        assertEquals("continuation", result.contextScope());
+        assertEquals("整理季度复盘", result.taskFocus());
+        assertTrue(result.rewrittenInput().contains("整理季度复盘"));
+    }
+
+    @Test
     void shouldParseParamsAliasIntoPayload() {
         SkillRegistry registry = new SkillRegistry(List.of(new FixedSkill("todo.create")));
         LlmClient llmClient = (prompt, context) ->

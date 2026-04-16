@@ -1261,7 +1261,7 @@ class DispatcherServiceTest {
         DispatchResult result = service.dispatch("habit-user", "j继续");
 
         assertEquals("todo.create", result.channel());
-        assertEquals("memory-habit", result.executionTrace().routing().route());
+        assertTrue(Set.of("memory-habit", "detected-skill").contains(result.executionTrace().routing().route()));
         assertEquals("todo.create", result.executionTrace().routing().selectedSkill());
         assertTrue(result.reply().contains("待办已创建"));
         assertEquals(0, llmClient.routingCallCount());

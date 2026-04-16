@@ -29,6 +29,8 @@ public record SemanticAnalysisResult(String source,
     public static final String ATTR_CONTEXT_SCOPE = "semanticContextScope";
     public static final String ATTR_TOOL_REQUIRED = "semanticToolRequired";
     public static final String ATTR_MEMORY_OPERATION = "semanticMemoryOperation";
+    public static final String ATTR_TASK_FOCUS = "semanticTaskFocus";
+    public static final String ATTR_FOLLOW_UP_MODE = "semanticFollowUpMode";
 
     private static final SemanticAnalysisResult EMPTY =
             new SemanticAnalysisResult("disabled", "", "", "", Map.of(), List.of(), "", 0.0, List.of());
@@ -100,7 +102,7 @@ public record SemanticAnalysisResult(String source,
     }
 
     public Map<String, Object> asAttributes() {
-        Map<String, Object> attributes = new LinkedHashMap<>(12);
+        Map<String, Object> attributes = new LinkedHashMap<>(14);
         attributes.put(ATTR_ANALYSIS_SOURCE, emptyIfNull(source));
         attributes.put(ATTR_INTENT, emptyIfNull(intent));
         attributes.put(ATTR_REWRITTEN_INPUT, emptyIfNull(rewrittenInput));
@@ -110,8 +112,12 @@ public record SemanticAnalysisResult(String source,
         attributes.put(ATTR_CONTEXT_SCOPE, contextScope());
         attributes.put(ATTR_TOOL_REQUIRED, toolRequired());
         attributes.put(ATTR_MEMORY_OPERATION, memoryOperation());
+        attributes.put(ATTR_FOLLOW_UP_MODE, followUpMode());
         if (hasText(summary)) {
             attributes.put(ATTR_SUMMARY, summary);
+        }
+        if (hasText(taskFocus())) {
+            attributes.put(ATTR_TASK_FOCUS, taskFocus());
         }
         if (!payload.isEmpty()) {
             attributes.put(ATTR_PAYLOAD, payload);
@@ -142,6 +148,12 @@ public record SemanticAnalysisResult(String source,
         }
         if (hasText(memoryOperation())) {
             prompt.append("- memoryOperation: ").append(memoryOperation()).append('\n');
+        }
+        if (hasText(followUpMode())) {
+            prompt.append("- followUpMode: ").append(followUpMode()).append('\n');
+        }
+        if (hasText(taskFocus())) {
+            prompt.append("- taskFocus: ").append(taskFocus()).append('\n');
         }
         if (hasText(rewrittenInput)) {
             prompt.append("- rewrittenInput: ").append(rewrittenInput).append('\n');
@@ -183,7 +195,10 @@ public record SemanticAnalysisResult(String source,
 
     public String contextScope() {
         String corpus = semanticCorpus();
-        if (containsAny(corpus, "继续", "按之前", "按上次", "沿用", "再来一次", "同样方式", "继续按")) {
+        if (containsAny(corpus,
+                "继续", "按之前", "按上次", "沿用", "再来一次", "同样方式", "继续按",
+                "按刚才", "按这个", "按上面", "开始吧", "开始执行", "执行吧", "帮我推进",
+                "推进一下", "照这个", "那就这样", "就这样")) {
             return "continuation";
         }
         if (containsAny(corpus, "domain=news", "domain=weather", "domain=market", "domain=travel",
@@ -192,6 +207,30 @@ public record SemanticAnalysisResult(String source,
         }
         if (!"none".equals(memoryOperation())) {
             return "memory";
+        }
+        return "standalone";
+    }
+
+    public String taskFocus() {
+        String payloadFocus = firstNonBlankPayloadValue("task", "title", "goal", "project", "topic", "query");
+        if (hasText(payloadFocus)) {
+            return payloadFocus;
+        }
+        if (toolRequired() && hasText(summary)) {
+            return summary;
+        }
+        if ("continuation".equals(contextScope()) && hasText(rewrittenInput)) {
+            return rewrittenInput;
+        }
+        return "";
+    }
+
+    public String followUpMode() {
+        if ("continuation".equals(contextScope())) {
+            return "continuation";
+        }
+        if (containsAny(semanticCorpus(), "开始吧", "就按这个", "帮我推进", "按刚才", "按这个", "照这个", "可以", "好的", "行")) {
+            return "follow-up";
         }
         return "standalone";
     }
@@ -317,8 +356,28 @@ public record SemanticAnalysisResult(String source,
         return value == null ? "" : value;
     }
 
+    private String firstNonBlankPayloadValue(String... keys) {
+        if (payload == null || payload.isEmpty() || keys == null) {
+            return "";
+        }
+        for (String key : keys) {
+            if (key == null || key.isBlank()) {
+                continue;
+            }
+            String value = stringValue(payload.get(key));
+            if (hasText(value)) {
+                return value;
+            }
+        }
+        return "";
+    }
+
     private static String normalizedText(String value) {
         return value == null ? "" : value.trim();
+    }
+
+    private static String stringValue(Object value) {
+        return value == null ? "" : String.valueOf(value).trim();
     }
 
     private static double normalizedConfidence(double value) {
