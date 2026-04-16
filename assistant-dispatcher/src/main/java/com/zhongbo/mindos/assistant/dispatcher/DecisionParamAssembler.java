@@ -62,6 +62,9 @@ final class DecisionParamAssembler {
         if ("news_search".equals(executionTarget) && !enriched.containsKey("query") && effectiveInput != null && !effectiveInput.isBlank()) {
             enriched.put("query", effectiveInput);
         }
+        if ("web.lookup".equals(executionTarget) && !enriched.containsKey("query") && effectiveInput != null && !effectiveInput.isBlank()) {
+            enriched.put("query", effectiveInput);
+        }
         if ("file.search".equals(executionTarget)) {
             enriched.putIfAbsent("path", "./");
             if (!enriched.containsKey("keyword") && effectiveInput != null && !effectiveInput.isBlank()) {
@@ -136,7 +139,7 @@ final class DecisionParamAssembler {
             return false;
         }
         return switch (skillName) {
-            case "teaching.plan", "todo.create", "eq.coach", "file.search", "news_search", "code.generate", "semantic.analyze", "echo", "time" -> true;
+            case "teaching.plan", "todo.create", "eq.coach", "file.search", "news_search", "web.lookup", "code.generate", "semantic.analyze", "echo", "time" -> true;
             default -> false;
         };
     }

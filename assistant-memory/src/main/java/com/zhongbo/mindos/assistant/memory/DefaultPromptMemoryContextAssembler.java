@@ -2,6 +2,7 @@ package com.zhongbo.mindos.assistant.memory;
 
 import com.zhongbo.mindos.assistant.common.dto.PromptMemoryContextDto;
 import com.zhongbo.mindos.assistant.common.dto.RetrievedMemoryItemDto;
+import com.zhongbo.mindos.assistant.common.dto.TaskThreadSnapshotDto;
 import com.zhongbo.mindos.assistant.memory.model.ConversationTurn;
 import com.zhongbo.mindos.assistant.memory.model.PreferenceProfile;
 import com.zhongbo.mindos.assistant.memory.model.ProceduralMemoryEntry;
@@ -70,6 +71,8 @@ public class DefaultPromptMemoryContextAssembler implements PromptMemoryContextA
                 : buildProceduralHints(proceduralHistory, usageStats, safeMaxChars * 20 / 100, normalizedQuery, candidates);
 
         Map<String, Object> personaSnapshot = buildPersonaSnapshot(userId, profileContext);
+        TaskThreadSnapshotDto taskThreadSnapshot = buildTaskThreadSnapshot(semanticEntries);
+        Map<String, Object> learnedPreferences = buildLearnedPreferences(taskThreadSnapshot, semanticEntries);
 
         List<RetrievedMemoryItemDto> debugTopItems = candidates.stream()
                 .sorted(Comparator.comparingDouble(RetrievedMemoryItemDto::finalScore).reversed())
@@ -81,7 +84,9 @@ public class DefaultPromptMemoryContextAssembler implements PromptMemoryContextA
                 semanticContext,
                 proceduralHints,
                 personaSnapshot,
-                debugTopItems
+                debugTopItems,
+                taskThreadSnapshot,
+                learnedPreferences
         );
     }
 
@@ -403,6 +408,153 @@ public class DefaultPromptMemoryContextAssembler implements PromptMemoryContextA
                 .trim();
     }
 
+    private TaskThreadSnapshotDto buildTaskThreadSnapshot(List<RankedSemanticMemory> entries) {
+        if (entries == null || entries.isEmpty()) {
+            return TaskThreadSnapshotDto.empty();
+        }
+        TaskThreadBuilder builder = new TaskThreadBuilder();
+        for (RankedSemanticMemory ranked : entries) {
+            if (!isTaskThreadSource(ranked)) {
+                continue;
+            }
+            ingestTaskThreadText(ranked.entry().text(), builder);
+        }
+        return builder.toSnapshot();
+    }
+
+    private Map<String, Object> buildLearnedPreferences(TaskThreadSnapshotDto snapshot,
+                                                        List<RankedSemanticMemory> entries) {
+        Map<String, Object> preferences = new LinkedHashMap<>();
+        if (snapshot != null && !snapshot.preferenceHint().isBlank()) {
+            deriveStablePreferences(snapshot.preferenceHint(), preferences);
+        }
+        if (entries != null) {
+            for (RankedSemanticMemory ranked : entries) {
+                if (ranked == null || ranked.entry() == null || ranked.entry().text() == null) {
+                    continue;
+                }
+                if (isLearningSignal(ranked)) {
+                    deriveStablePreferences(ranked.entry().text(), preferences);
+                }
+            }
+        }
+        return preferences.isEmpty() ? Map.of() : Map.copyOf(preferences);
+    }
+
+    private boolean isTaskThreadSource(RankedSemanticMemory ranked) {
+        if (ranked == null || ranked.entry() == null || ranked.entry().text() == null) {
+            return false;
+        }
+        String text = ranked.entry().text();
+        return text.contains(TASK_FACT_MARKER)
+                || text.contains(TASK_STATE_MARKER)
+                || text.contains(LEARNING_SIGNAL_MARKER);
+    }
+
+    private void ingestTaskThreadText(String rawText, TaskThreadBuilder builder) {
+        if (rawText == null || rawText.isBlank()) {
+            return;
+        }
+        for (String rawLine : rawText.trim().split("\\R")) {
+            String line = stripTaskMarkers(rawLine);
+            if (line.isBlank() || line.endsWith(":") || "none".equalsIgnoreCase(line)) {
+                continue;
+            }
+            for (String fragment : line.split("[；;]")) {
+                String candidate = stripTaskMarkers(fragment);
+                if (candidate.isBlank()) {
+                    continue;
+                }
+                assignTaskValue(builder, "当前事项", candidate);
+                assignTaskValue(builder, "任务", candidate);
+                assignTaskValue(builder, "事项", candidate);
+                assignTaskValue(builder, "状态", candidate);
+                assignTaskValue(builder, "下一步", candidate);
+                assignTaskValue(builder, "项目", candidate);
+                assignTaskValue(builder, "主题", candidate);
+                assignTaskValue(builder, "截止时间", candidate);
+                assignTaskValue(builder, "偏好", candidate);
+            }
+        }
+    }
+
+    private void assignTaskValue(TaskThreadBuilder builder, String label, String fragment) {
+        if (builder == null || fragment == null || fragment.isBlank()) {
+            return;
+        }
+        String prefix = label + "：";
+        int index = fragment.indexOf(prefix);
+        if (index < 0) {
+            return;
+        }
+        String value = fragment.substring(index + prefix.length()).trim();
+        if (value.isBlank()) {
+            return;
+        }
+        switch (label) {
+            case "当前事项", "任务", "事项" -> builder.focus = firstNonBlank(builder.focus, value);
+            case "状态" -> builder.state = firstNonBlank(builder.state, value);
+            case "下一步" -> builder.nextAction = firstNonBlank(builder.nextAction, value);
+            case "项目" -> builder.project = firstNonBlank(builder.project, value);
+            case "主题" -> builder.topic = firstNonBlank(builder.topic, value);
+            case "截止时间" -> builder.dueDate = firstNonBlank(builder.dueDate, value);
+            case "偏好" -> builder.preferenceHint = firstNonBlank(builder.preferenceHint, value);
+            default -> {
+            }
+        }
+    }
+
+    private void deriveStablePreferences(String rawText, Map<String, Object> preferences) {
+        String normalized = normalize(rawText);
+        if (normalized.isBlank()) {
+            return;
+        }
+        if (!preferences.containsKey("clarifyStyle")
+                && (normalized.contains("少澄清") || (normalized.contains("直接推进") && normalized.contains("上下文明确")))) {
+            preferences.put("clarifyStyle", "minimal");
+        }
+        if (!preferences.containsKey("planningStyle")
+                && (normalized.contains("先给结构化推进方案") || normalized.contains("先给结构化") || normalized.contains("先给方案"))) {
+            preferences.put("planningStyle", "plan-first");
+        }
+        if (!preferences.containsKey("blockerStyle")
+                && (normalized.contains("先定位卡点") || normalized.contains("定位卡点"))) {
+            preferences.put("blockerStyle", "locate-blocker-first");
+        }
+        if (!preferences.containsKey("threadStyle")
+                && (normalized.contains("围绕同一事项推进") || normalized.contains("继续围绕同一事项"))) {
+            preferences.put("threadStyle", "continue");
+        }
+        if (!preferences.containsKey("executionStyle")
+                && (normalized.contains("直接推进") || normalized.contains("继续推进"))) {
+            preferences.put("executionStyle", "direct-progress");
+        }
+    }
+
+    private String stripTaskMarkers(String rawText) {
+        if (rawText == null) {
+            return "";
+        }
+        return rawText.trim()
+                .replace(TASK_FACT_MARKER, "")
+                .replace(TASK_STATE_MARKER, "")
+                .replace(LEARNING_SIGNAL_MARKER, "")
+                .replace("[fact]", "")
+                .replace("[working]", "")
+                .replace("[assistant-context]", "")
+                .replace("[summary]", "")
+                .replaceAll("\\s+", " ")
+                .replaceAll("^[：:;；,，\\-\\s]+", "")
+                .trim();
+    }
+
+    private String firstNonBlank(String current, String candidate) {
+        if (current != null && !current.isBlank()) {
+            return current;
+        }
+        return candidate == null ? "" : candidate.trim();
+    }
+
     private boolean shouldIncludeConversationTurn(ConversationTurn turn) {
         if (turn == null || turn.content() == null || turn.content().isBlank()) {
             return false;
@@ -486,5 +638,52 @@ public class DefaultPromptMemoryContextAssembler implements PromptMemoryContextA
             return;
         }
         target.put(key, trimmed);
+    }
+
+    private static final class TaskThreadBuilder {
+        private String focus = "";
+        private String state = "";
+        private String nextAction = "";
+        private String project = "";
+        private String topic = "";
+        private String dueDate = "";
+        private String preferenceHint = "";
+
+        private TaskThreadSnapshotDto toSnapshot() {
+            String summary = summary();
+            if (focus.isBlank() && state.isBlank() && nextAction.isBlank() && project.isBlank()
+                    && topic.isBlank() && dueDate.isBlank() && preferenceHint.isBlank()) {
+                return TaskThreadSnapshotDto.empty();
+            }
+            return new TaskThreadSnapshotDto(
+                    focus,
+                    state,
+                    nextAction,
+                    project,
+                    topic,
+                    dueDate,
+                    preferenceHint,
+                    summary
+            );
+        }
+
+        private String summary() {
+            StringBuilder builder = new StringBuilder();
+            appendSummary(builder, "当前事项", focus);
+            appendSummary(builder, "状态", state);
+            appendSummary(builder, "下一步", nextAction);
+            appendSummary(builder, "主题", topic);
+            return builder.toString();
+        }
+
+        private void appendSummary(StringBuilder builder, String label, String value) {
+            if (value == null || value.isBlank()) {
+                return;
+            }
+            if (builder.length() > 0) {
+                builder.append("；");
+            }
+            builder.append(label).append(" ").append(value.trim());
+        }
     }
 }

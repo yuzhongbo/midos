@@ -260,9 +260,7 @@ public class SemanticMemoryService implements MemoryWriteGateMetricsReader, Memo
         if (generated == null || generated.isEmpty()) {
             return consolidated;
         }
-        return memoryConsolidationService.consolidateSemanticEntry(
-                new SemanticMemoryEntry(consolidated.text(), generated, consolidated.createdAt())
-        );
+        return new SemanticMemoryEntry(consolidated.text(), generated, consolidated.createdAt());
     }
 
     private final class UserSemanticStore {

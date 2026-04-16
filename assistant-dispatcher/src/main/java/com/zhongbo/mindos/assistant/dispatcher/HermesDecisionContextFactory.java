@@ -74,6 +74,10 @@ final class HermesDecisionContextFactory {
         ActiveTaskResolver.ResolvedTaskThread activeTaskThread = memoryEnabled
                 ? activeTaskResolver.resolve(userId, userInput, promptMemoryContext)
                 : ActiveTaskResolver.ResolvedTaskThread.empty();
+        Map<String, Object> decisionProfileContext = mergeLearnedPreferences(
+                resolvedProfileContext,
+                promptMemoryContext.learnedPreferences()
+        );
         String memoryContext = activeTaskResolver.enrichMemoryContext(rawMemoryContext, activeTaskThread, memoryContextMaxChars);
         List<Map<String, Object>> chatHistory = memoryEnabled
                 ? dispatcherMemoryFacade.buildChatHistory(userId)
@@ -83,13 +87,13 @@ final class HermesDecisionContextFactory {
                 .toList();
         SemanticAnalysisResult semanticAnalysis = semanticAnalyzer == null
                 ? SemanticAnalysisResult.empty()
-                : semanticAnalyzer.analyze(userId, userInput, memoryContext, resolvedProfileContext, toolSummaries);
+                : semanticAnalyzer.analyze(userId, userInput, memoryContext, decisionProfileContext, toolSummaries);
         String routingInput = semanticAnalysis.routingInput(userInput);
         SkillContext skillContext = dispatcherMemoryFacade.buildSkillContext(
                 userId,
                 routingInput,
                 userInput,
-                resolvedProfileContext,
+                decisionProfileContext,
                 memoryContext,
                 chatHistory,
                 semanticAnalysis
@@ -99,10 +103,13 @@ final class HermesDecisionContextFactory {
             attributes.putAll(activeTaskThread.asAttributes());
             skillContext = new SkillContext(skillContext.userId(), skillContext.input(), attributes);
         }
-        Map<String, Object> llmContext = new LinkedHashMap<>(resolvedProfileContext);
+        Map<String, Object> llmContext = new LinkedHashMap<>(decisionProfileContext);
         llmContext.put("userId", userId == null ? "" : userId);
         llmContext.put("input", userInput == null ? "" : userInput);
         llmContext.put("memoryContext", memoryContext);
+        if (promptMemoryContext.learnedPreferences() != null && !promptMemoryContext.learnedPreferences().isEmpty()) {
+            llmContext.put("learnedPreferences", promptMemoryContext.learnedPreferences());
+        }
         if (!activeTaskThread.asAttributes().isEmpty()) {
             llmContext.put("taskThread", activeTaskThread.asAttributes());
         }
@@ -114,7 +121,7 @@ final class HermesDecisionContextFactory {
                 userId == null ? "" : userId,
                 userInput == null ? "" : userInput,
                 routingInput == null ? "" : routingInput,
-                resolvedProfileContext,
+                decisionProfileContext,
                 memoryEnabled,
                 answerMode,
                 promptMemoryContext,
@@ -144,5 +151,16 @@ final class HermesDecisionContextFactory {
 
     private Map<String, Object> safeMap(Map<String, Object> value) {
         return value == null || value.isEmpty() ? Map.of() : Map.copyOf(value);
+    }
+
+    private Map<String, Object> mergeLearnedPreferences(Map<String, Object> resolvedProfileContext,
+                                                        Map<String, Object> learnedPreferences) {
+        Map<String, Object> safeProfileContext = safeMap(resolvedProfileContext);
+        if (learnedPreferences == null || learnedPreferences.isEmpty()) {
+            return safeProfileContext;
+        }
+        Map<String, Object> merged = new LinkedHashMap<>(safeProfileContext);
+        merged.put("learnedPreferences", Map.copyOf(learnedPreferences));
+        return Map.copyOf(merged);
     }
 }

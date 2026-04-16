@@ -299,9 +299,11 @@ final class HermesAssistantRuntime {
                                                  Decision decision,
                                                  Consumer<String> deltaConsumer,
                                                  boolean streamMode,
-                                                 Instant startedAt) {
+        Instant startedAt) {
         String requestedTarget = decision == null ? "" : safeText(decision.target());
-        String executionTarget = skillRouter == null ? requestedTarget : skillRouter.resolveExecutionTarget(requestedTarget);
+        String executionTarget = skillRouter == null
+                ? requestedTarget
+                : skillRouter.resolveExecutionTarget(requestedTarget, decisionContext.skillContext());
         boolean developmentWorkflow = skillRouter != null && skillRouter.usesDevelopmentWorkflow(executionTarget);
         Optional<SkillResult> capabilityBlocked = maybeBlockedByCapability(executionTarget);
         if (capabilityBlocked.isPresent()) {

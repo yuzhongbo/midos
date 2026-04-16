@@ -610,10 +610,11 @@ final class HermesDecisionEngine {
         if (candidates.isEmpty() || context == null || isExplicitMcpToolRequest(context.userInput())) {
             return;
         }
-        boostBuiltinNewsSearchOverGenericMcp(candidates);
+        boostBuiltinNewsSearchOverGenericMcp(candidates, context);
     }
 
-    private void boostBuiltinNewsSearchOverGenericMcp(Map<String, Candidate> candidates) {
+    private void boostBuiltinNewsSearchOverGenericMcp(Map<String, Candidate> candidates,
+                                                      HermesDecisionContext context) {
         String builtinNewsTarget = toolSchemaCatalog == null
                 ? "news_search"
                 : toolSchemaCatalog.decisionTargetForSkill("news_search");
@@ -621,27 +622,59 @@ final class HermesDecisionEngine {
         if (builtinNewsSearch == null) {
             return;
         }
+        Candidate webLookup = candidates.get("web.lookup");
         double topGenericMcpScore = candidates.values().stream()
                 .filter(candidate -> candidate != null && isGenericMcpSearchSkill(candidate.skillName()))
                 .mapToDouble(Candidate::score)
                 .max()
                 .orElse(Double.NaN);
-        if (Double.isNaN(topGenericMcpScore)) {
+        if (Double.isNaN(topGenericMcpScore) && webLookup == null) {
             return;
         }
-        if (builtinNewsSearch.score() >= topGenericMcpScore + 0.02d) {
+        double preferredFloor = newsSearchShouldLead(context)
+                ? Math.max(topGenericMcpScore, webLookup == null ? Double.NaN : webLookup.score())
+                : topGenericMcpScore;
+        if (Double.isNaN(preferredFloor)) {
+            preferredFloor = webLookup == null ? builtinNewsSearch.score() : webLookup.score();
+        }
+        if (builtinNewsSearch.score() >= preferredFloor + 0.02d) {
             return;
         }
         List<String> reasons = new ArrayList<>(builtinNewsSearch.reasons());
         reasons.add("builtin-news-search-preferred-over-generic-mcp-search");
         candidates.put(builtinNewsTarget, new Candidate(
                 builtinNewsSearch.skillName(),
-                clamp(Math.max(builtinNewsSearch.score(), topGenericMcpScore + 0.03d)),
+                clamp(Math.max(builtinNewsSearch.score(), preferredFloor + 0.03d)),
                 builtinNewsSearch.route(),
                 builtinNewsSearch.params(),
                 List.copyOf(reasons),
                 builtinNewsSearch.needClarify(),
                 builtinNewsSearch.clarifyReply()
+        ));
+    }
+
+    private boolean newsSearchShouldLead(HermesDecisionContext context) {
+        if (context == null) {
+            return false;
+        }
+        String normalizedInput = normalize(context.userInput()).toLowerCase(Locale.ROOT);
+        if (containsAny(normalizedInput, "新闻", "news", "头条", "热点", "headline")) {
+            return true;
+        }
+        SemanticAnalysisResult semanticAnalysis = context.semanticAnalysis();
+        if (semanticAnalysis == null) {
+            return false;
+        }
+        String suggestedSkill = normalize(semanticAnalysis.suggestedSkill()).toLowerCase(Locale.ROOT);
+        String intent = normalize(semanticAnalysis.intent()).toLowerCase(Locale.ROOT);
+        return "news.lookup".equals(suggestedSkill)
+                || intent.contains("news")
+                || semanticAnalysis.keywords().stream().anyMatch(keyword -> containsAny(
+                normalize(keyword).toLowerCase(Locale.ROOT),
+                "新闻",
+                "news",
+                "头条",
+                "热点"
         ));
     }
 
@@ -954,14 +987,17 @@ final class HermesDecisionEngine {
 
     private boolean isRealtimeSearchSkill(String skillName) {
         String normalized = normalize(skillName).toLowerCase(Locale.ROOT);
-        return normalized.startsWith("mcp.") && normalized.contains("search");
+        return "web.lookup".equals(normalized)
+                || "news.lookup".equals(normalized)
+                || (normalized.startsWith("mcp.") && normalized.contains("search"));
     }
 
     private boolean isGenericMcpSearchSkill(String skillName) {
         String normalized = normalize(skillName).toLowerCase(Locale.ROOT);
-        return normalized.startsWith("mcp.")
+        return "web.lookup".equals(normalized)
+                || (normalized.startsWith("mcp.")
                 && normalized.contains("search")
-                && !normalized.contains("docs");
+                && !normalized.contains("docs"));
     }
 
     private boolean isExplicitMcpToolRequest(String userInput) {

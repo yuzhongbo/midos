@@ -82,13 +82,9 @@ final class SemanticRoutingSupport {
         }
         String paramsDigest = semanticPayloadCompleter.summarizeSemanticParams(semanticAnalysis.payload());
         String memoryText = buildHumanizedSemanticSummary(semanticAnalysis, summary, paramsDigest);
-        List<Double> embedding = List.of(
-                (double) memoryText.length(),
-                Math.abs(memoryText.hashCode() % 1000) / 1000.0
-        );
         return MemoryWriteBatch.of(new MemoryWriteOperation.WriteSemantic(
                 memoryText,
-                embedding,
+                List.of(),
                 semanticPayloadCompleter.resolveMemoryBucket(userInput)
         ));
     }

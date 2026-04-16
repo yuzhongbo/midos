@@ -66,12 +66,12 @@ class RealtimeIntentHeuristicsTest {
                 "llm",
                 "查询天气信息",
                 "帮我看下",
-                "mcp.bravesearch.webSearch",
+                "web.lookup",
                 Map.of("query", "成都明天怎么样"),
                 List.of("天气", "成都"),
                 "用户要查询最新天气信息",
                 0.91,
-                List.of(new SemanticAnalysisResult.CandidateIntent("mcp.bravesearch.webSearch", 0.95))
+                List.of(new SemanticAnalysisResult.CandidateIntent("web.lookup", 0.95))
         );
 
         RealtimeIntentHeuristics.RealtimeIntentSignal signal = RealtimeIntentHeuristics.analyze(
@@ -91,12 +91,12 @@ class RealtimeIntentHeuristicsTest {
                 "llm",
                 "获取新闻",
                 "帮我看下",
-                "news_search",
+                "news.lookup",
                 Map.of("query", "最近的国际新闻"),
                 List.of("新闻", "国际新闻"),
                 "用户请求获取最新新闻",
                 0.93,
-                List.of(new SemanticAnalysisResult.CandidateIntent("news_search", 0.96))
+                List.of(new SemanticAnalysisResult.CandidateIntent("news.lookup", 0.96))
         );
 
         RealtimeIntentHeuristics.RealtimeIntentSignal signal = RealtimeIntentHeuristics.analyze(
@@ -116,12 +116,12 @@ class RealtimeIntentHeuristicsTest {
                 "llm",
                 "查询行情",
                 "帮我看下",
-                "mcp.bravesearch.webSearch",
+                "web.lookup",
                 Map.of("query", "A股最新行情"),
                 List.of("行情", "股票"),
                 "用户请求查询最新行情",
                 0.91,
-                List.of(new SemanticAnalysisResult.CandidateIntent("mcp.bravesearch.webSearch", 0.95))
+                List.of(new SemanticAnalysisResult.CandidateIntent("web.lookup", 0.95))
         );
 
         RealtimeIntentHeuristics.RealtimeIntentSignal signal = RealtimeIntentHeuristics.analyze(
@@ -141,12 +141,12 @@ class RealtimeIntentHeuristicsTest {
                 "llm",
                 "查询出行",
                 "帮我看下",
-                "mcp.bravesearch.webSearch",
+                "web.lookup",
                 Map.of("query", "上海到北京的高铁情况"),
                 List.of("出行", "高铁"),
                 "用户请求查询实时出行信息",
                 0.9,
-                List.of(new SemanticAnalysisResult.CandidateIntent("mcp.bravesearch.webSearch", 0.94))
+                List.of(new SemanticAnalysisResult.CandidateIntent("web.lookup", 0.94))
         );
 
         RealtimeIntentHeuristics.RealtimeIntentSignal signal = RealtimeIntentHeuristics.analyze(
@@ -160,4 +160,3 @@ class RealtimeIntentHeuristicsTest {
         assertEquals(RealtimeIntentHeuristics.MatchKind.SEMANTIC_TRAVEL, signal.kind());
     }
 }
-

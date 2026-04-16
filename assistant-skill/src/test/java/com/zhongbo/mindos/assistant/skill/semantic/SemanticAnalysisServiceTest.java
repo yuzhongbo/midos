@@ -53,10 +53,10 @@ class SemanticAnalysisServiceTest {
                 "帮我看看成都今天的天气和空气质量",
                 "",
                 Map.of(),
-                List.of("mcp.bravesearch.webSearch - search latest web info")
+                List.of("web.lookup - search latest web info")
         );
 
-        assertEquals("mcp.bravesearch.webSearch", result.suggestedSkill());
+        assertEquals("web.lookup", result.suggestedSkill());
         assertEquals("weather", result.payload().get("domain"));
         assertTrue(result.keywords().contains("天气"));
         assertTrue(result.confidence() >= 0.88);
@@ -89,10 +89,10 @@ class SemanticAnalysisServiceTest {
                 "帮我查一下今天的A股行情",
                 "",
                 Map.of(),
-                List.of("mcp.bravesearch.webSearch - search latest web info")
+                List.of("web.lookup - search latest web info")
         );
 
-        assertEquals("mcp.bravesearch.webSearch", result.suggestedSkill());
+        assertEquals("web.lookup", result.suggestedSkill());
         assertEquals("market", result.payload().get("domain"));
         assertTrue(result.keywords().contains("行情"));
         assertTrue(result.confidence() >= 0.87);
@@ -107,10 +107,10 @@ class SemanticAnalysisServiceTest {
                 "帮我看看上海到北京的高铁出行情况",
                 "",
                 Map.of(),
-                List.of("mcp.bravesearch.webSearch - search latest web info")
+                List.of("web.lookup - search latest web info")
         );
 
-        assertEquals("mcp.bravesearch.webSearch", result.suggestedSkill());
+        assertEquals("web.lookup", result.suggestedSkill());
         assertEquals("travel", result.payload().get("domain"));
         assertTrue(result.keywords().contains("高铁"));
         assertTrue(result.confidence() >= 0.86);
@@ -874,7 +874,7 @@ class SemanticAnalysisServiceTest {
                 new FixedSkill("mcp.bravesearch.webSearch")
         ));
         LlmClient llmClient = (prompt, context) ->
-                "{\"intent\":\"weather_query\",\"rewrittenInput\":\"查询成都今天的天气\",\"suggestedSkill\":\"semantic.analyze\",\"payload\":{\"location\":\"成都\"},\"confidence\":0.52,\"candidate_intents\":[{\"intent\":\"semantic.analyze\",\"confidence\":0.95},{\"intent\":\"mcp.bravesearch.webSearch\",\"confidence\":0.88}]}";
+                "{\"intent\":\"weather_query\",\"rewrittenInput\":\"查询成都今天的天气\",\"suggestedSkill\":\"semantic.analyze\",\"payload\":{\"location\":\"成都\"},\"confidence\":0.52,\"candidate_intents\":[{\"intent\":\"semantic.analyze\",\"confidence\":0.95},{\"intent\":\"web.lookup\",\"confidence\":0.88}]}";
         SemanticAnalysisService service = new SemanticAnalysisService(llmClient, registry, true, true, true, "", "local", "cost", 120);
 
         SemanticAnalysisResult result = service.analyze(
@@ -882,12 +882,12 @@ class SemanticAnalysisServiceTest {
                 "请帮我查询今天成都天气并给出结构化路由",
                 "history",
                 Map.of(),
-                List.of("semantic.analyze - internal semantic analyzer", "mcp.bravesearch.webSearch - search latest web info")
+                List.of("semantic.analyze - internal semantic analyzer", "web.lookup - search latest web info")
         );
 
         assertTrue(result.suggestedSkill().isBlank());
         assertEquals(1, result.candidateIntents().size());
-        assertEquals("mcp.bravesearch.webSearch", result.candidateIntents().get(0).intent());
+        assertEquals("web.lookup", result.candidateIntents().get(0).intent());
     }
 
     private record FixedSkill(String name) implements Skill {

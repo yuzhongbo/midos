@@ -32,7 +32,7 @@ final class HermesSkillRouter {
         if (decision == null || decision.target() == null || decision.target().isBlank()) {
             return SkillResult.failure("decision-engine", "missing routed target");
         }
-        String executionTarget = resolveExecutionTarget(decision.target());
+        String executionTarget = resolveExecutionTarget(decision.target(), baseContext);
         SkillContext executionContext = buildExecutionContext(decision, baseContext);
         if (usesDevelopmentWorkflow(executionTarget)) {
             return developmentWorkflowService.execute(executionTarget, decision.params(), executionContext);
@@ -67,13 +67,20 @@ final class HermesSkillRouter {
     }
 
     String resolveExecutionTarget(String decisionTarget) {
+        return resolveExecutionTarget(decisionTarget, null);
+    }
+
+    String resolveExecutionTarget(String decisionTarget, SkillContext baseContext) {
         if (decisionTarget == null || decisionTarget.isBlank()) {
             return "";
         }
         if (toolSchemaCatalog == null) {
             return decisionTarget;
         }
-        String resolved = toolSchemaCatalog.executionTargetForDecision(decisionTarget);
+        String resolved = toolSchemaCatalog.executionTargetForDecision(
+                decisionTarget,
+                baseContext == null || baseContext.attributes() == null ? Map.of() : baseContext.attributes()
+        );
         return resolved.isBlank() ? decisionTarget : resolved;
     }
 }

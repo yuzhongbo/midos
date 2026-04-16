@@ -4,6 +4,7 @@ import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalysisResult;
 
+import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
@@ -112,7 +113,7 @@ final class HermesProactiveAssistant {
                 stringValue(attributes.get("activeTaskDueDate"))
         );
         String preferenceHint = stringValue(attributes.get("activeTaskPreferenceHint"));
-        return new TaskThread(task, nextAction, dueDate, preferenceHint);
+        return new TaskThread(task, nextAction, dueDate, preferenceHint, mapValue(attributes.get("learnedPreferences")));
     }
 
     private String continuationTask(SemanticAnalysisResult semanticAnalysis) {
@@ -143,6 +144,12 @@ final class HermesProactiveAssistant {
             return new Guidance(
                     "next-action",
                     "下一步建议：先" + ensureSentence(nextAction) + " 需要的话我可以直接继续做这一步。"
+            );
+        }
+        if ("plan-first".equals(preferenceValue(taskThread.learnedPreferences(), "planningStyle"))) {
+            return new Guidance(
+                    "plan-first",
+                    "下一步建议：先把「" + task + "」整理成一个结构化推进方案，再选最先执行的一步。需要的话我可以直接帮你列出来。"
             );
         }
         if (!dueDate.isBlank()) {
@@ -213,6 +220,26 @@ final class HermesProactiveAssistant {
         return value == null ? "" : String.valueOf(value).trim();
     }
 
+    private Map<String, Object> mapValue(Object value) {
+        if (!(value instanceof Map<?, ?> rawMap) || rawMap.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, Object> mapped = new LinkedHashMap<>();
+        rawMap.forEach((key, item) -> {
+            if (key != null) {
+                mapped.put(String.valueOf(key), item);
+            }
+        });
+        return mapped.isEmpty() ? Map.of() : Map.copyOf(mapped);
+    }
+
+    private String preferenceValue(Map<String, Object> preferences, String key) {
+        if (preferences == null || preferences.isEmpty() || key == null || key.isBlank()) {
+            return "";
+        }
+        return normalize(stringValue(preferences.get(key)));
+    }
+
     private String firstNonBlank(String... values) {
         if (values == null) {
             return "";
@@ -240,7 +267,11 @@ final class HermesProactiveAssistant {
         }
     }
 
-    private record TaskThread(String task, String nextAction, String dueDate, String preferenceHint) {
+    private record TaskThread(String task,
+                              String nextAction,
+                              String dueDate,
+                              String preferenceHint,
+                              Map<String, Object> learnedPreferences) {
     }
 
     private record Guidance(String type, String text) {

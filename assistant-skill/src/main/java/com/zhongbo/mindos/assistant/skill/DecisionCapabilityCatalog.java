@@ -11,6 +11,8 @@ import java.util.stream.Collectors;
 
 public final class DecisionCapabilityCatalog {
 
+    public static final String WEB_LOOKUP_DECISION_TARGET = "web.lookup";
+
     private static final List<CapabilityDefinition> DEFINITIONS = List.of(
             new CapabilityDefinition(
                     "task.manage",
@@ -62,6 +64,22 @@ public final class DecisionCapabilityCatalog {
             )
     );
 
+    private static final CapabilityDefinition WEB_LOOKUP_CAPABILITY = new CapabilityDefinition(
+            WEB_LOOKUP_DECISION_TARGET,
+            WEB_LOOKUP_DECISION_TARGET,
+            "Search current web information such as weather, traffic, market, travel, realtime news, and other web lookup needs.",
+            List.of(
+                    "查天气", "天气", "weather",
+                    "查路况", "路况", "traffic",
+                    "查航班", "航班", "travel", "出行",
+                    "查股价", "股价", "行情", "market",
+                    "实时搜索", "实时", "最新情况", "最新",
+                    "web search", "search web",
+                    "今天新闻", "最新新闻", "新闻", "news", "头条", "热点",
+                    "bravesearch", "qwensearch", "serper", "serpapi"
+            )
+    );
+
     private static final Map<String, CapabilityDefinition> BY_DECISION_TARGET = DEFINITIONS.stream()
             .collect(Collectors.collectingAndThen(
                     Collectors.toMap(
@@ -96,6 +114,9 @@ public final class DecisionCapabilityCatalog {
         if (normalized.isBlank()) {
             return Optional.empty();
         }
+        if (WEB_LOOKUP_DECISION_TARGET.equals(normalized)) {
+            return Optional.of(WEB_LOOKUP_CAPABILITY);
+        }
         return Optional.ofNullable(BY_DECISION_TARGET.get(normalized));
     }
 
@@ -103,6 +124,9 @@ public final class DecisionCapabilityCatalog {
         String normalized = normalize(skillName);
         if (normalized.isBlank()) {
             return Optional.empty();
+        }
+        if (WEB_LOOKUP_DECISION_TARGET.equals(normalized) || isGenericWebSearchExecutionSkill(normalized)) {
+            return Optional.of(WEB_LOOKUP_CAPABILITY);
         }
         return Optional.ofNullable(BY_EXECUTION_SKILL.get(normalized));
     }
@@ -114,9 +138,13 @@ public final class DecisionCapabilityCatalog {
     }
 
     public static String executionTarget(String target) {
-        return findByDecisionTarget(target)
+        String normalized = normalize(target);
+        if (WEB_LOOKUP_DECISION_TARGET.equals(normalized)) {
+            return WEB_LOOKUP_DECISION_TARGET;
+        }
+        return findByDecisionTarget(normalized)
                 .map(CapabilityDefinition::executionSkill)
-                .orElse(normalize(target));
+                .orElse(normalized);
     }
 
     public static boolean hidesExecutionSkill(String skillName) {
@@ -128,9 +156,32 @@ public final class DecisionCapabilityCatalog {
                 .map(DecisionCapabilityCatalog::normalize)
                 .filter(value -> !value.isBlank())
                 .collect(Collectors.toUnmodifiableSet());
-        return DEFINITIONS.stream()
+        List<CapabilityDefinition> definitions = DEFINITIONS.stream()
                 .filter(definition -> available.contains(normalize(definition.executionSkill())))
                 .toList();
+        if (!containsGenericWebSearchSkill(available)) {
+            return definitions;
+        }
+        List<CapabilityDefinition> all = new java.util.ArrayList<>(definitions);
+        all.add(WEB_LOOKUP_CAPABILITY);
+        return List.copyOf(all);
+    }
+
+    public static boolean isGenericWebSearchExecutionSkill(String skillName) {
+        String normalized = normalize(skillName);
+        return normalized.startsWith("mcp.") && normalized.endsWith(".websearch");
+    }
+
+    private static boolean containsGenericWebSearchSkill(Collection<String> availableSkillNames) {
+        if (availableSkillNames == null || availableSkillNames.isEmpty()) {
+            return false;
+        }
+        for (String availableSkillName : availableSkillNames) {
+            if (isGenericWebSearchExecutionSkill(availableSkillName)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static String normalize(String value) {

@@ -721,52 +721,52 @@ public class SemanticAnalysisService implements SemanticAnalyzer {
                     0.89,
                     Map.of("query", userInput.trim(), "domain", "news"),
                     routingKeywordHints(userInput, "news.lookup", "新闻", "资讯", "头条", "快讯", "热搜"),
-                    List.of(new SemanticAnalysisResult.CandidateIntent("news.lookup", 0.94), new SemanticAnalysisResult.CandidateIntent("mcp.bravesearch.webSearch", 0.80))
+                    List.of(new SemanticAnalysisResult.CandidateIntent("news.lookup", 0.94), new SemanticAnalysisResult.CandidateIntent("web.lookup", 0.80))
             );
         }
         boolean explicitWeatherIntent = containsAny(normalized,
                 "天气", "气温", "空气质量", "pm2.5", "天气预报", "weather", "forecast");
         if (explicitWeatherIntent
-                && matchesSkill(userInput, normalized, "mcp.bravesearch.webSearch", "天气", "气温", "空气质量", "pm2.5", "天气预报", "weather", "forecast")) {
+                && matchesSkill(userInput, normalized, "web.lookup", "天气", "气温", "空气质量", "pm2.5", "天气预报", "weather", "forecast")) {
             return buildRealtimeSemanticAnalysis(
                     userInput,
                     "查询实时天气信息",
-                    "mcp.bravesearch.webSearch",
+                    "web.lookup",
                     "用户请求查询最新天气或空气质量信息",
                     0.88,
                     Map.of("query", userInput.trim(), "domain", "weather"),
-                    routingKeywordHints(userInput, "mcp.bravesearch.webSearch", "天气", "气温", "空气质量", "天气预报"),
-                    List.of(new SemanticAnalysisResult.CandidateIntent("mcp.bravesearch.webSearch", 0.93))
+                    routingKeywordHints(userInput, "web.lookup", "天气", "气温", "空气质量", "天气预报"),
+                    List.of(new SemanticAnalysisResult.CandidateIntent("web.lookup", 0.93))
             );
         }
         boolean explicitTravelIntent = containsAny(normalized,
                 "航班", "列车", "高铁", "火车", "机票", "车票", "延误", "出发", "到达", "路况", "交通", "出行", "旅行", "行程", "flight", "train", "traffic", "travel");
         if (explicitTravelIntent
-                && matchesSkill(userInput, normalized, "mcp.bravesearch.webSearch", "航班", "列车", "高铁", "火车", "机票", "车票", "延误", "出发", "到达", "路况", "交通", "出行", "旅行", "行程", "flight", "train", "traffic", "travel")) {
+                && matchesSkill(userInput, normalized, "web.lookup", "航班", "列车", "高铁", "火车", "机票", "车票", "延误", "出发", "到达", "路况", "交通", "出行", "旅行", "行程", "flight", "train", "traffic", "travel")) {
             return buildRealtimeSemanticAnalysis(
                     userInput,
                     "查询实时出行信息",
-                    "mcp.bravesearch.webSearch",
+                    "web.lookup",
                     "用户请求查询实时出行或路况信息",
                     0.86,
                     Map.of("query", userInput.trim(), "domain", "travel"),
-                    routingKeywordHints(userInput, "mcp.bravesearch.webSearch", "航班", "列车", "高铁", "火车", "路况", "交通", "出行"),
-                    List.of(new SemanticAnalysisResult.CandidateIntent("mcp.bravesearch.webSearch", 0.91))
+                    routingKeywordHints(userInput, "web.lookup", "航班", "列车", "高铁", "火车", "路况", "交通", "出行"),
+                    List.of(new SemanticAnalysisResult.CandidateIntent("web.lookup", 0.91))
             );
         }
         boolean explicitMarketIntent = containsAny(normalized,
                 "股价", "股票", "基金", "汇率", "行情", "指数", "大盘", "市场", "stock", "market", "exchange");
         if (explicitMarketIntent
-                && matchesSkill(userInput, normalized, "mcp.bravesearch.webSearch", "股价", "股票", "基金", "汇率", "行情", "指数", "大盘", "市场", "stock", "market", "exchange")) {
+                && matchesSkill(userInput, normalized, "web.lookup", "股价", "股票", "基金", "汇率", "行情", "指数", "大盘", "市场", "stock", "market", "exchange")) {
             return buildRealtimeSemanticAnalysis(
                     userInput,
                     "查询实时行情信息",
-                    "mcp.bravesearch.webSearch",
+                    "web.lookup",
                     "用户请求查询最新行情或汇率信息",
                     0.87,
                     Map.of("query", userInput.trim(), "domain", "market"),
-                    routingKeywordHints(userInput, "mcp.bravesearch.webSearch", "股价", "股票", "基金", "汇率", "行情", "指数"),
-                    List.of(new SemanticAnalysisResult.CandidateIntent("mcp.bravesearch.webSearch", 0.92))
+                    routingKeywordHints(userInput, "web.lookup", "股价", "股票", "基金", "汇率", "行情", "指数"),
+                    List.of(new SemanticAnalysisResult.CandidateIntent("web.lookup", 0.92))
             );
         }
         return null;

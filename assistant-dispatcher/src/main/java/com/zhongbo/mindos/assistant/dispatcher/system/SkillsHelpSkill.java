@@ -171,6 +171,7 @@ public class SkillsHelpSkill implements Skill, SkillDescriptorProvider {
             case "learning.plan" -> "生成学习、教学和复习计划";
             case "workspace.search" -> "在当前工作区搜索文件、目录和内容";
             case "news.lookup" -> "查看最新新闻、热点和头条";
+            case "web.lookup" -> "联网查询天气、路况、航班、行情等实时信息";
             case "docs.lookup" -> "搜索官方文档、指南和开发手册";
             case "time.lookup" -> "查询当前时间";
             case "echo" -> "回显输入，适合调试连通性";

@@ -68,14 +68,7 @@ final class DispatchMemoryLifecycle {
             return null;
         }
         String memoryBucket = explicitBucket == null ? resolveMemoryBucket(knowledge) : explicitBucket;
-        Map<String, Object> embeddingSeed = new LinkedHashMap<>();
-        embeddingSeed.put("length", knowledge.length());
-        embeddingSeed.put("hash", Math.abs(knowledge.hashCode() % 1000));
-        List<Double> embedding = List.of(
-                (double) ((Integer) embeddingSeed.get("length")),
-                ((Integer) embeddingSeed.get("hash")) / 1000.0
-        );
-        return new MemoryWriteOperation.WriteSemantic(knowledge, embedding, memoryBucket);
+        return new MemoryWriteOperation.WriteSemantic(knowledge, List.of(), memoryBucket);
     }
 
     private String resolveMemoryBucket(String knowledge) {

@@ -250,6 +250,10 @@ class PromptMemoryContextAssemblerTest {
         assertFalse(context.semanticContext().contains("[任务状态]"));
         assertTrue(context.debugTopItems().stream().anyMatch(item ->
                 "semantic-routing".equals(item.type()) && item.text().contains("上下文明确时直接推进")));
+        assertEquals("提交周报", context.taskThreadSnapshot().focus());
+        assertEquals("继续推进提交周报", context.taskThreadSnapshot().nextAction());
+        assertEquals("minimal", context.learnedPreferences().get("clarifyStyle"));
+        assertEquals("direct-progress", context.learnedPreferences().get("executionStyle"));
     }
 
     @Test

@@ -72,6 +72,8 @@ final class SkillCommandAssembler {
                 return Optional.of(new SkillDsl(skillName, buildFileSearchPayload(userInput)));
             case "news_search":
                 return Optional.of(new SkillDsl(skillName, buildNewsSearchPayload(userInput)));
+            case "web.lookup":
+                return Optional.of(new SkillDsl(skillName, buildWebLookupPayload(userInput)));
             case "echo", "time":
                 return Optional.of(SkillDsl.of(skillName));
             default:
@@ -94,6 +96,7 @@ final class SkillCommandAssembler {
             case "eq.coach" -> Optional.of(new SkillDsl(skillName, mergeInto(seed, eqCoachCommandSupport.resolveAttributes(context))));
             case "file.search" -> Optional.of(new SkillDsl(skillName, mergeInto(seed, fileSearchCommandSupport.resolveAttributes(context))));
             case "news_search" -> Optional.of(new SkillDsl(skillName, mergeInto(seed, newsSearchCommandSupport.resolveAttributes(context))));
+            case "web.lookup" -> Optional.of(new SkillDsl(skillName, mergeInto(seed, buildWebLookupPayload(userInput))));
             case "semantic.analyze" -> Optional.of(new SkillDsl(skillName, buildSemanticAnalyzePayload(userInput, seed)));
             case "echo", "time" -> Optional.of(SkillDsl.of(skillName));
             default -> Optional.empty();
@@ -133,6 +136,7 @@ final class SkillCommandAssembler {
                 mergeMissing(payload, newsSearchCommandSupport.resolveAttributes(new SkillContext("", originalInput, payload)));
                 putIfBlank(payload, "query", firstNonBlank(asString(payload.get("query")), asString(payload.get("keyword")), summary, routingInput, originalInput));
             }
+            case "web.lookup" -> putIfBlank(payload, "query", firstNonBlank(asString(payload.get("query")), asString(payload.get("keyword")), summary, memoryHint, routingInput, originalInput));
             default -> {
             }
         }
@@ -204,6 +208,15 @@ final class SkillCommandAssembler {
 
     private Map<String, Object> buildNewsSearchPayload(String userInput) {
         return new LinkedHashMap<>(newsSearchCommandSupport.resolveAttributes(new SkillContext("", userInput, Map.of())));
+    }
+
+    private Map<String, Object> buildWebLookupPayload(String userInput) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        String query = firstNonBlank(userInput);
+        if (query != null && !query.isBlank()) {
+            payload.put("query", query.trim());
+        }
+        return payload;
     }
 
     private Map<String, Object> buildSemanticAnalyzePayload(String userInput, Map<String, Object> existingAttributes) {

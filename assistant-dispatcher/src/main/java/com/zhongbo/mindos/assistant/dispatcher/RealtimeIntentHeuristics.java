@@ -19,7 +19,7 @@ final class RealtimeIntentHeuristics {
     );
 
     private static final List<String> SEMANTIC_REALTIME_SKILL_HINTS = List.of(
-            "news_search", "bravesearch", "qwensearch", "weather", "weather_query", "weather.query",
+            "news_search", "news.lookup", "web.lookup", "bravesearch", "qwensearch", "weather", "weather_query", "weather.query",
             "flight", "flight_status", "train", "train_status", "traffic", "traffic_query",
             "stock", "stock_price", "exchange", "exchange_rate", "market", "travel", "travel_query"
     );
@@ -318,4 +318,3 @@ final class RealtimeIntentHeuristics {
     record RealtimeIntentSignal(boolean realtime, MatchKind kind, String reason) {
     }
 }
-

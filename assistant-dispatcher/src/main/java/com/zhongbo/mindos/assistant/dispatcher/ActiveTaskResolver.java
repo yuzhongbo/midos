@@ -2,6 +2,7 @@ package com.zhongbo.mindos.assistant.dispatcher;
 
 import com.zhongbo.mindos.assistant.common.dto.PromptMemoryContextDto;
 import com.zhongbo.mindos.assistant.common.dto.RetrievedMemoryItemDto;
+import com.zhongbo.mindos.assistant.common.dto.TaskThreadSnapshotDto;
 import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryFacade;
 import com.zhongbo.mindos.assistant.memory.model.SemanticMemoryEntry;
 
@@ -25,6 +26,11 @@ final class ActiveTaskResolver {
     }
 
     ResolvedTaskThread resolve(String userId, String userInput, PromptMemoryContextDto promptMemoryContext) {
+        if (promptMemoryContext != null
+                && promptMemoryContext.taskThreadSnapshot() != null
+                && !promptMemoryContext.taskThreadSnapshot().isEmpty()) {
+            return ResolvedTaskThread.fromSnapshot(promptMemoryContext.taskThreadSnapshot());
+        }
         Builder builder = new Builder();
         harvestPromptMemory(promptMemoryContext, builder);
         if (builder.isEmpty() && dispatcherMemoryFacade != null && userId != null && !userId.isBlank()) {
@@ -208,60 +214,45 @@ final class ActiveTaskResolver {
             return new ResolvedTaskThread("", "", "", "", "", "", "", "");
         }
 
+        static ResolvedTaskThread fromSnapshot(TaskThreadSnapshotDto snapshot) {
+            if (snapshot == null || snapshot.isEmpty()) {
+                return empty();
+            }
+            return new ResolvedTaskThread(
+                    snapshot.focus(),
+                    snapshot.state(),
+                    snapshot.nextAction(),
+                    snapshot.project(),
+                    snapshot.topic(),
+                    snapshot.dueDate(),
+                    snapshot.preferenceHint(),
+                    snapshot.summary()
+            );
+        }
+
         boolean isEmpty() {
             return focus == null || focus.isBlank();
         }
 
         String toMemoryContextSection() {
-            if (isEmpty()) {
-                return "";
-            }
-            StringBuilder builder = new StringBuilder("Active task thread:\n");
-            builder.append("- 当前事项：").append(focus).append('\n');
-            appendLine(builder, "状态", state);
-            appendLine(builder, "下一步", nextAction);
-            appendLine(builder, "项目", project);
-            appendLine(builder, "主题", topic);
-            appendLine(builder, "截止时间", dueDate);
-            appendLine(builder, "偏好", preferenceHint);
-            return builder.toString().trim();
+            return toSnapshot().toMemoryContextSection();
         }
 
         Map<String, Object> asAttributes() {
-            if (isEmpty()) {
-                return Map.of();
-            }
-            Map<String, Object> attributes = new LinkedHashMap<>();
-            attributes.put("activeTask", focus);
-            if (state != null && !state.isBlank()) {
-                attributes.put("activeTaskState", state);
-            }
-            if (nextAction != null && !nextAction.isBlank()) {
-                attributes.put("activeTaskNextAction", nextAction);
-            }
-            if (project != null && !project.isBlank()) {
-                attributes.put("activeTaskProject", project);
-            }
-            if (topic != null && !topic.isBlank()) {
-                attributes.put("activeTaskTopic", topic);
-            }
-            if (dueDate != null && !dueDate.isBlank()) {
-                attributes.put("activeTaskDueDate", dueDate);
-            }
-            if (preferenceHint != null && !preferenceHint.isBlank()) {
-                attributes.put("activeTaskPreferenceHint", preferenceHint);
-            }
-            if (summary != null && !summary.isBlank()) {
-                attributes.put("activeTaskSummary", summary);
-            }
-            return Map.copyOf(attributes);
+            return toSnapshot().asAttributes();
         }
 
-        private static void appendLine(StringBuilder builder, String label, String value) {
-            if (value == null || value.isBlank()) {
-                return;
-            }
-            builder.append("- ").append(label).append("：").append(value.trim()).append('\n');
+        TaskThreadSnapshotDto toSnapshot() {
+            return new TaskThreadSnapshotDto(
+                    focus,
+                    state,
+                    nextAction,
+                    project,
+                    topic,
+                    dueDate,
+                    preferenceHint,
+                    summary
+            );
         }
     }
 

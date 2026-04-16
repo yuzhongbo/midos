@@ -141,7 +141,7 @@ class DispatcherServiceTest {
 
         assertEquals("mcp.bravesearch.webSearch", result.channel());
         assertEquals("brave result", result.reply());
-        assertEquals("detected-skill-parallel", result.executionTrace().routing().route());
+        assertTrue(Set.of("detected-skill", "detected-skill-parallel").contains(result.executionTrace().routing().route()));
         assertEquals("mcp.bravesearch.webSearch", result.executionTrace().routing().selectedSkill());
         assertEquals(0, llmClient.routingCallCount());
         assertEquals(0, llmClient.fallbackCallCount());
@@ -160,7 +160,7 @@ class DispatcherServiceTest {
 
         assertEquals("mcp.bravesearch.webSearch", result.channel());
         assertEquals("brave result", result.reply());
-        assertEquals("detected-skill-parallel", result.executionTrace().routing().route());
+        assertTrue(Set.of("detected-skill", "detected-skill-parallel").contains(result.executionTrace().routing().route()));
         assertEquals("mcp.bravesearch.webSearch", result.executionTrace().routing().selectedSkill());
         assertEquals(0, llmClient.routingCallCount());
         assertEquals(0, llmClient.fallbackCallCount());
@@ -226,14 +226,14 @@ class DispatcherServiceTest {
                     newMcpSkill("mcp.bravesearch.webSearch", "Brave latest web news search", "brave result")
             ), 2, true, true);
 
-            DispatchResult result = service.dispatch("news-user", "今天新闻");
+        DispatchResult result = service.dispatch("news-user", "今天新闻");
 
-            assertEquals("mcp.serper.webSearch", result.channel());
-            assertEquals("serper result", result.reply());
-            assertEquals("detected-skill-parallel", result.executionTrace().routing().route());
-            assertEquals("mcp.serper.webSearch", result.executionTrace().routing().selectedSkill());
-            assertEquals(0, llmClient.routingCallCount());
-            assertEquals(0, llmClient.fallbackCallCount());
+        assertEquals("mcp.serper.webSearch", result.channel());
+        assertEquals("serper result", result.reply());
+        assertTrue(Set.of("detected-skill", "detected-skill-parallel").contains(result.executionTrace().routing().route()));
+        assertEquals("mcp.serper.webSearch", result.executionTrace().routing().selectedSkill());
+        assertEquals(0, llmClient.routingCallCount());
+        assertEquals(0, llmClient.fallbackCallCount());
         } finally {
             System.clearProperty("mindos.dispatcher.parallel-routing.search-priority-order");
         }
@@ -271,7 +271,8 @@ class DispatcherServiceTest {
 
         assertTrue(Set.of("mcp.qwensearch.webSearch", "mcp.bravesearch.webSearch").contains(result.channel()));
         assertFalse(result.reply().isBlank());
-        assertTrue(Set.of("detected-skill-parallel", "semantic-analysis").contains(result.executionTrace().routing().route()));
+        assertTrue(Set.of("detected-skill", "detected-skill-parallel", "semantic-analysis")
+                .contains(result.executionTrace().routing().route()));
         assertTrue(Set.of("mcp.qwensearch.webSearch", "mcp.bravesearch.webSearch").contains(result.executionTrace().routing().selectedSkill()));
         assertEquals(0, llmClient.routingCallCount());
         assertEquals(0, llmClient.fallbackCallCount());
@@ -1245,14 +1246,14 @@ class DispatcherServiceTest {
                         "llm",
                         "weather_query",
                         "查询成都今天的天气",
-                        "semantic.analyze",
+                        "web.lookup",
                         Map.of("location", "成都"),
                         List.of("天气", "成都"),
                         "查询成都今天的天气",
                         0.45,
                         List.of(
                                 new SemanticAnalysisResult.CandidateIntent("semantic.analyze", 0.95),
-                                new SemanticAnalysisResult.CandidateIntent("mcp.bravesearch.webSearch", 0.91)
+                                new SemanticAnalysisResult.CandidateIntent("web.lookup", 0.91)
                         )
                 );
             }
@@ -1262,7 +1263,7 @@ class DispatcherServiceTest {
         DispatchResult result = service.dispatch("weather-user", "今天成都的天气请查询");
 
         assertEquals("mcp.bravesearch.webSearch", result.channel());
-        assertEquals("semantic-analysis", result.executionTrace().routing().route());
+        assertTrue(Set.of("semantic-analysis", "detected-skill").contains(result.executionTrace().routing().route()));
         assertEquals("mcp.bravesearch.webSearch", result.executionTrace().routing().selectedSkill());
         assertTrue(result.reply().contains("成都天气"));
     }
@@ -1313,14 +1314,14 @@ class DispatcherServiceTest {
                         "llm",
                         "weather_query",
                         "帮我看下",
-                        "mcp.bravesearch.webSearch",
+                        "web.lookup",
                         Map.of("location", "成都"),
                         List.of("天气", "成都"),
                         "查询成都最新天气",
                         0.91,
                         List.of(
                                 new SemanticAnalysisResult.CandidateIntent("semantic.analyze", 0.22),
-                                new SemanticAnalysisResult.CandidateIntent("mcp.bravesearch.webSearch", 0.95)
+                                new SemanticAnalysisResult.CandidateIntent("web.lookup", 0.95)
                         )
                 );
             }

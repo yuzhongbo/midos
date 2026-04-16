@@ -242,6 +242,34 @@ class SemanticMemoryServiceTest {
     }
 
     @Test
+    void shouldGenerateLocalEmbeddingsWhenMissingOnWrite() {
+        MemoryConsolidationService consolidationService = new MemoryConsolidationService();
+        MemoryRuntimeProperties properties = MemoryRuntimeProperties.fromSystemProperties();
+        properties.getEmbedding().getLocal().setEnabled(true);
+        properties.getEmbedding().getLocal().setDimensions(24);
+        properties.getSearch().getHybrid().setEnabled(true);
+
+        SemanticMemoryService service = new SemanticMemoryService(
+                consolidationService,
+                properties,
+                new Bm25LexicalSearchScorer(),
+                new DefaultMemoryLayerPolicy(),
+                new HashingLocalEmbeddingService(consolidationService, properties),
+                new KeywordContentFilter(properties, consolidationService)
+        );
+
+        service.addEntry("embed-user",
+                new SemanticMemoryEntry("project alpha owner Alice due Friday", List.of(), java.time.Instant.now()),
+                "task");
+
+        List<SemanticMemoryEntry> results = service.search("embed-user", "alpha owner", 1, "task");
+
+        assertFalse(results.isEmpty());
+        assertFalse(results.get(0).embedding().isEmpty());
+        assertEquals(24, results.get(0).embedding().size());
+    }
+
+    @Test
     void shouldKeepTopKStableWithCoarseCandidateCap() {
         String oldMin = System.getProperty("mindos.memory.search.coarse.min-candidates");
         String oldMultiplier = System.getProperty("mindos.memory.search.coarse.multiplier");

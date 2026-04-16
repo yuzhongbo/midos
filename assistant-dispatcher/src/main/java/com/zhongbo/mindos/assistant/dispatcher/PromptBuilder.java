@@ -2,10 +2,12 @@ package com.zhongbo.mindos.assistant.dispatcher;
 
 import com.zhongbo.mindos.assistant.common.dto.PromptMemoryContextDto;
 import com.zhongbo.mindos.assistant.common.dto.RetrievedMemoryItemDto;
+import com.zhongbo.mindos.assistant.common.dto.TaskThreadSnapshotDto;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -29,21 +31,19 @@ public class PromptBuilder {
     private static final int MAX_SECTION_TOKENS = 320;
 
     public String build(PromptMemoryContextDto promptMemoryContext, String userQuery) {
-        return build(promptMemoryContext, deriveCurrentTask(userQuery, topMemoryItems(promptMemoryContext)), userQuery);
+        return build(promptMemoryContext, deriveCurrentTask(promptMemoryContext, userQuery, topMemoryItems(promptMemoryContext)), userQuery);
     }
 
     public String build(PromptMemoryContextDto promptMemoryContext, String currentTask, String userQuery) {
-        Map<String, Object> userProfile = promptMemoryContext == null || promptMemoryContext.personaSnapshot() == null
-                ? Map.of()
-                : promptMemoryContext.personaSnapshot();
+        Map<String, Object> userProfile = buildUserProfile(promptMemoryContext);
         List<String> relevantMemory = topMemoryItems(promptMemoryContext);
         String normalizedTask = normalize(currentTask);
         String normalizedQuery = normalize(userQuery);
 
-        String prompt = assemble(userProfile, normalizedTask, relevantMemory, normalizedQuery);
+        String prompt = assemble(userProfile, normalizedTask, relevantMemory, normalizedQuery, promptMemoryContext);
         while (estimateTokens(prompt) > MAX_TOKENS && relevantMemory.size() > 1) {
             relevantMemory = new ArrayList<>(relevantMemory.subList(0, relevantMemory.size() - 1));
-            prompt = assemble(userProfile, normalizedTask, relevantMemory, normalizedQuery);
+            prompt = assemble(userProfile, normalizedTask, relevantMemory, normalizedQuery, promptMemoryContext);
         }
         if (estimateTokens(prompt) > MAX_TOKENS) {
             normalizedTask = capByTokens(normalizedTask, MAX_SECTION_TOKENS);
@@ -51,7 +51,7 @@ public class PromptBuilder {
             relevantMemory = relevantMemory.stream()
                     .map(item -> capByTokens(item, MAX_SECTION_TOKENS / 2))
                     .toList();
-            prompt = assemble(userProfile, normalizedTask, relevantMemory, normalizedQuery);
+            prompt = assemble(userProfile, normalizedTask, relevantMemory, normalizedQuery, promptMemoryContext);
         }
         if (estimateTokens(prompt) > MAX_TOKENS) {
             prompt = capByTokens(prompt, MAX_TOKENS);
@@ -62,9 +62,10 @@ public class PromptBuilder {
     private String assemble(Map<String, Object> userProfile,
                             String currentTask,
                             List<String> relevantMemory,
-                            String userQuery) {
+                            String userQuery,
+                            PromptMemoryContextDto promptMemoryContext) {
         StringBuilder builder = new StringBuilder();
-        appendSection(builder, "Assistant Role", assistantRoleInstructions(userQuery, currentTask, relevantMemory));
+        appendSection(builder, "Assistant Role", assistantRoleInstructions(userQuery, currentTask, relevantMemory, promptMemoryContext));
         appendSection(builder, "User Profile", formatUserProfile(userProfile));
         appendSection(builder, "Current Task", currentTask);
         appendSection(builder, "Relevant Memory", formatMemoryItems(relevantMemory));
@@ -86,6 +87,18 @@ public class PromptBuilder {
                 .map(entry -> "- " + entry.getKey() + ": " + normalize(Objects.toString(entry.getValue(), "")))
                 .reduce((left, right) -> left + "\n" + right)
                 .orElse("(none)");
+    }
+
+    private Map<String, Object> buildUserProfile(PromptMemoryContextDto promptMemoryContext) {
+        Map<String, Object> profile = new LinkedHashMap<>();
+        if (promptMemoryContext != null && promptMemoryContext.personaSnapshot() != null) {
+            profile.putAll(promptMemoryContext.personaSnapshot());
+        }
+        if (promptMemoryContext != null && promptMemoryContext.learnedPreferences() != null
+                && !promptMemoryContext.learnedPreferences().isEmpty()) {
+            profile.put("learnedPreferences", promptMemoryContext.learnedPreferences());
+        }
+        return profile.isEmpty() ? Map.of() : Map.copyOf(profile);
     }
 
     private String formatMemoryItems(List<String> relevantMemory) {
@@ -137,7 +150,18 @@ public class PromptBuilder {
         return "[" + label + "] " + capByTokens(text, 120);
     }
 
-    private String deriveCurrentTask(String userQuery, List<String> relevantMemory) {
+    private String deriveCurrentTask(PromptMemoryContextDto promptMemoryContext, String userQuery, List<String> relevantMemory) {
+        TaskThreadSnapshotDto taskThread = promptMemoryContext == null ? null : promptMemoryContext.taskThreadSnapshot();
+        if (taskThread != null && !taskThread.isEmpty()) {
+            String summary = normalize(taskThread.summary());
+            if (!summary.isBlank()) {
+                return capByTokens(summary, 120);
+            }
+            String focus = normalize(taskThread.focus());
+            if (!focus.isBlank()) {
+                return capByTokens("Continue the active task naturally: " + focus, 120);
+            }
+        }
         String normalized = normalize(userQuery);
         if (normalized.isBlank()) {
             return "(none)";
@@ -162,11 +186,17 @@ public class PromptBuilder {
         return capByTokens("Answer the user's current request directly: " + normalized, 120);
     }
 
-    private String assistantRoleInstructions(String userQuery, String currentTask, List<String> relevantMemory) {
+    private String assistantRoleInstructions(String userQuery,
+                                             String currentTask,
+                                             List<String> relevantMemory,
+                                             PromptMemoryContextDto promptMemoryContext) {
         String normalizedQuery = normalize(userQuery);
         boolean conversational = isConversational(normalizedQuery);
         boolean continuation = isShortContinuation(normalizedQuery);
         boolean hasMemory = relevantMemory != null && !relevantMemory.isEmpty();
+        Map<String, Object> learnedPreferences = promptMemoryContext == null || promptMemoryContext.learnedPreferences() == null
+                ? Map.of()
+                : promptMemoryContext.learnedPreferences();
         StringBuilder builder = new StringBuilder();
         builder.append("You are MindOS, the user's private assistant. ")
                 .append("Reply like a capable human assistant: natural, discreet, reliable, and action-oriented.\n")
@@ -187,10 +217,32 @@ public class PromptBuilder {
         if (hasMemory) {
             builder.append("Memory guidance: use relevant facts quietly to improve continuity, but keep the final reply natural and self-contained.\n");
         }
+        appendLearnedPreferenceGuidance(builder, learnedPreferences);
         if (currentTask != null && !currentTask.isBlank() && !"(none)".equals(currentTask)) {
             builder.append("Active task hint: ").append(currentTask).append('\n');
         }
         return builder.toString().trim();
+    }
+
+    private void appendLearnedPreferenceGuidance(StringBuilder builder, Map<String, Object> learnedPreferences) {
+        if (builder == null || learnedPreferences == null || learnedPreferences.isEmpty()) {
+            return;
+        }
+        if ("minimal".equals(normalize(Objects.toString(learnedPreferences.get("clarifyStyle"), "")))) {
+            builder.append("Preference hint: ask fewer clarifying questions when useful progress is already possible.\n");
+        }
+        if ("plan-first".equals(normalize(Objects.toString(learnedPreferences.get("planningStyle"), "")))) {
+            builder.append("Preference hint: when the user is planning, offer a short structured plan before jumping into execution.\n");
+        }
+        if ("locate-blocker-first".equals(normalize(Objects.toString(learnedPreferences.get("blockerStyle"), "")))) {
+            builder.append("Preference hint: for blockers, identify the stuck point first and then give the next actionable step.\n");
+        }
+        if ("continue".equals(normalize(Objects.toString(learnedPreferences.get("threadStyle"), "")))) {
+            builder.append("Preference hint: preserve the current task thread by default unless the user clearly switches topics.\n");
+        }
+        if ("direct-progress".equals(normalize(Objects.toString(learnedPreferences.get("executionStyle"), "")))) {
+            builder.append("Preference hint: prefer direct progress and concrete next steps when the context is already clear.\n");
+        }
     }
 
     private String humanizeMemoryText(String text) {

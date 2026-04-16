@@ -82,7 +82,7 @@ public class GoalDecomposer {
             return "file.search";
         }
         if (containsAny(normalized, "新闻", "实时", "最新", "热点", "头条", "today news", "latest news")) {
-            return "mcp.qwensearch.webSearch";
+            return "web.lookup";
         }
         if (containsAny(normalized, "情绪", "安抚", "沟通", "焦虑", "关系")) {
             return "eq.coach";

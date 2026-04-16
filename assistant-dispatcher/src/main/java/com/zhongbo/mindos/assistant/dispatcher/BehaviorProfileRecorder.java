@@ -83,8 +83,7 @@ final class BehaviorProfileRecorder {
             return MemoryWriteBatch.empty();
         }
         LOGGER.info(() -> "behavior-learning.store userId=" + userId + ", bucket=" + bucket + ", profileSummary=" + capText(profile, 200));
-        List<Double> embedding = List.of((double) profile.length(), Math.abs(profile.hashCode() % 1000) / 1000.0);
-        return MemoryWriteBatch.of(new MemoryWriteOperation.WriteSemantic(profile, embedding, bucket));
+        return MemoryWriteBatch.of(new MemoryWriteOperation.WriteSemantic(profile, List.of(), bucket));
     }
 
     private Map<String, String> inferDefaultParamsFromHistory(String userId, String skillName) {

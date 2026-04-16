@@ -3,6 +3,7 @@ package com.zhongbo.mindos.assistant.dispatcher;
 import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.common.dto.PromptMemoryContextDto;
+import com.zhongbo.mindos.assistant.common.dto.TaskThreadSnapshotDto;
 import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalysisResult;
 import org.junit.jupiter.api.Test;
 
@@ -126,6 +127,36 @@ class HermesProactiveAssistantTest {
         assertFalse(augmentation.applied());
     }
 
+    @Test
+    void shouldPreferPlanFirstGuidanceWhenLearnedPreferenceSaysSo() {
+        HermesProactiveAssistant assistant = new HermesProactiveAssistant();
+        HermesDecisionContext context = decisionContext(
+                new SemanticAnalysisResult(
+                        "heuristic",
+                        "继续当前任务",
+                        "继续推进：提交周报",
+                        "todo.create",
+                        Map.of("task", "提交周报"),
+                        List.of("继续", "周报"),
+                        "继续推进周报",
+                        0.86
+                ),
+                Map.of(
+                        "activeTask", "提交周报",
+                        "learnedPreferences", Map.of("planningStyle", "plan-first")
+                )
+        );
+
+        HermesProactiveAssistant.Augmentation augmentation = assistant.maybeAugment(
+                "继续",
+                context,
+                SkillResult.success("todo.create", "好的，已经接上这个任务。")
+        );
+
+        assertTrue(augmentation.applied());
+        assertTrue(augmentation.result().output().contains("结构化推进方案"));
+    }
+
     private HermesDecisionContext decisionContext(SemanticAnalysisResult semanticAnalysis, Map<String, Object> attributes) {
         SkillContext skillContext = new SkillContext("u1", "继续", attributes);
         return new HermesDecisionContext(
@@ -135,7 +166,7 @@ class HermesProactiveAssistantTest {
                 Map.of(),
                 true,
                 DispatcherAnswerMode.BALANCED,
-                new PromptMemoryContextDto("", "", "", Map.of(), List.of()),
+                new PromptMemoryContextDto("", "", "", Map.of(), List.of(), TaskThreadSnapshotDto.empty(), Map.of()),
                 "",
                 List.of(),
                 List.of(),

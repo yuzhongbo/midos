@@ -2,6 +2,7 @@ package com.zhongbo.mindos.assistant.dispatcher;
 
 import com.zhongbo.mindos.assistant.common.dto.PromptMemoryContextDto;
 import com.zhongbo.mindos.assistant.common.dto.RetrievedMemoryItemDto;
+import com.zhongbo.mindos.assistant.common.dto.TaskThreadSnapshotDto;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -60,5 +61,34 @@ class ActiveTaskResolverTest {
         assertTrue(memoryContext.contains("当前事项：提交周报"));
         assertTrue(memoryContext.contains("主题：数学"));
         assertTrue(memoryContext.contains("偏好：上下文明确时直接推进，少澄清"));
+    }
+
+    @Test
+    void shouldPreferStructuredTaskThreadSnapshotWhenAvailable() {
+        ActiveTaskResolver resolver = new ActiveTaskResolver(null);
+        PromptMemoryContextDto context = new PromptMemoryContextDto(
+                "",
+                "",
+                "",
+                Map.of(),
+                List.of(),
+                new TaskThreadSnapshotDto(
+                        "提交周报",
+                        "进行中",
+                        "同步项目风险",
+                        "运营周报",
+                        "数学",
+                        "周五前",
+                        "上下文明确时直接推进，少澄清",
+                        "当前事项 提交周报；状态 进行中；下一步 同步项目风险"
+                ),
+                Map.of("clarifyStyle", "minimal")
+        );
+
+        ActiveTaskResolver.ResolvedTaskThread resolved = resolver.resolve("u1", "继续", context);
+
+        assertEquals("提交周报", resolved.focus());
+        assertEquals("同步项目风险", resolved.nextAction());
+        assertEquals("上下文明确时直接推进，少澄清", resolved.preferenceHint());
     }
 }

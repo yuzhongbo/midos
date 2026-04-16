@@ -2,6 +2,7 @@ package com.zhongbo.mindos.assistant.dispatcher;
 
 import com.zhongbo.mindos.assistant.common.dto.PromptMemoryContextDto;
 import com.zhongbo.mindos.assistant.common.dto.RetrievedMemoryItemDto;
+import com.zhongbo.mindos.assistant.common.dto.TaskThreadSnapshotDto;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -68,5 +69,25 @@ class PromptBuilderTest {
 
     private RetrievedMemoryItemDto item(String type, String text) {
         return new RetrievedMemoryItemDto(type, text, 0.9, 0.8, 0.9, 0.9, 1L);
+    }
+
+    @Test
+    void shouldIncludeLearnedPreferenceHintsWhenPresent() {
+        PromptBuilder builder = new PromptBuilder();
+        PromptMemoryContextDto context = new PromptMemoryContextDto(
+                "",
+                "",
+                "",
+                Map.of(),
+                List.of(item("semantic", "当前事项：提交周报")),
+                new TaskThreadSnapshotDto("提交周报", "", "", "", "", "", "", "当前事项 提交周报"),
+                Map.of("clarifyStyle", "minimal", "planningStyle", "plan-first")
+        );
+
+        String prompt = builder.build(context, "继续");
+
+        assertTrue(prompt.contains("ask fewer clarifying questions"));
+        assertTrue(prompt.contains("offer a short structured plan"));
+        assertTrue(prompt.contains("Current Task"));
     }
 }

@@ -12,6 +12,7 @@ import com.zhongbo.mindos.assistant.skill.SkillRoutingProperties;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -108,6 +109,43 @@ class HermesToolSchemaCatalogTest {
         assertTrue(docsCandidates.contains("docs.lookup"));
         assertEquals("news_search", catalog.executionTargetForDecision("news.lookup"));
         assertEquals("mcp.docs.searchDocs", catalog.executionTargetForDecision("docs.lookup"));
+    }
+
+    @Test
+    void shouldHideGenericWebSearchProvidersBehindWebLookupCapability() {
+        SkillRegistry registry = new SkillRegistry(List.of(
+                new DescriptorSkill(
+                        "mcp.qwensearch.webSearch",
+                        "Qwen web search",
+                        List.of("天气", "行情")
+                ),
+                new DescriptorSkill(
+                        "mcp.bravesearch.webSearch",
+                        "Brave web search",
+                        List.of("天气", "行情")
+                )
+        ));
+        InMemoryParamSchemaRegistry paramSchemaRegistry = new InMemoryParamSchemaRegistry();
+        paramSchemaRegistry.registerDefaults();
+        HermesToolSchemaCatalog catalog = new HermesToolSchemaCatalog(
+                new DefaultSkillCatalog(registry, null, new SkillRoutingProperties()),
+                paramSchemaRegistry
+        );
+
+        List<String> schemaNames = catalog.listSchemas().stream()
+                .map(HermesToolSchema::name)
+                .toList();
+        List<String> candidates = catalog.detectDecisionCandidates("帮我查一下今天成都天气", 3).stream()
+                .map(candidate -> candidate.skillName())
+                .toList();
+
+        assertTrue(schemaNames.contains("web.lookup"));
+        assertFalse(schemaNames.contains("mcp.qwensearch.webSearch"));
+        assertFalse(schemaNames.contains("mcp.bravesearch.webSearch"));
+        assertTrue(candidates.contains("web.lookup"));
+        assertEquals("mcp.bravesearch.webSearch", catalog.executionTargetForDecision("web.lookup", Map.of(
+                "searchPriorityOrder", List.of("mcp.bravesearch.webSearch", "mcp.qwensearch.webSearch")
+        )));
     }
 
     private record DescriptorSkill(String name, String description, List<String> routingKeywords)
