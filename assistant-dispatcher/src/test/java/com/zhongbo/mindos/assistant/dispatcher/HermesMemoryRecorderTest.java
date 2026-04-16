@@ -128,6 +128,44 @@ class HermesMemoryRecorderTest {
                         && write.text().contains("简短跟进延续当前任务")));
     }
 
+    @Test
+    void shouldWriteBlockedTaskStateAndLearningSignalForBlockingFollowUp() {
+        DispatcherMemoryFacade dispatcherMemoryFacade = new DispatcherMemoryFacade((MemoryGateway) null, null, null);
+        RecordingMemoryCommandService commandService = new RecordingMemoryCommandService(dispatcherMemoryFacade);
+        HermesMemoryRecorder recorder = new HermesMemoryRecorder(dispatcherMemoryFacade, commandService, null, null);
+
+        SemanticAnalysisResult semanticAnalysis = new SemanticAnalysisResult(
+                "heuristic",
+                "围绕当前任务说明阻塞并寻求推进",
+                "当前事项遇到阻塞：提交周报",
+                "",
+                Map.of("task", "提交周报"),
+                List.of("卡住", "报错"),
+                "用户表示当前事项遇到阻塞",
+                0.81
+        );
+
+        recorder.record(
+                "u1",
+                "卡住了，接口一直报错",
+                SkillResult.success("llm", "我先帮你定位阻塞点。"),
+                Map.of(),
+                semanticAnalysis,
+                null,
+                null,
+                true
+        );
+
+        assertTrue(commandService.semanticWrites().stream().anyMatch(write ->
+                "task".equals(write.bucket())
+                        && write.text().contains("[任务状态]")
+                        && write.text().contains("状态：受阻")));
+        assertTrue(commandService.semanticWrites().stream().anyMatch(write ->
+                "task".equals(write.bucket())
+                        && write.text().contains("[学习信号]")
+                        && write.text().contains("先定位卡点")));
+    }
+
     private record SemanticWrite(String text, String bucket) {
     }
 

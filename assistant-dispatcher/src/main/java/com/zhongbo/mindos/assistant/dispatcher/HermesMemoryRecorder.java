@@ -169,6 +169,10 @@ final class HermesMemoryRecorder {
         if (!scope.isBlank()) {
             entry.append("；上下文：").append(scope);
         }
+        String phase = humanizedIntentPhase(semanticAnalysis.intentPhase());
+        if (!phase.isBlank()) {
+            entry.append("；阶段：").append(phase);
+        }
         String paramsDigest = summarizePayload(semanticAnalysis.payload());
         if (!paramsDigest.isBlank()) {
             entry.append("；关键信息：").append(paramsDigest);
@@ -280,6 +284,25 @@ final class HermesMemoryRecorder {
     private String buildLearningSignalEntry(String userInput, SemanticAnalysisResult semanticAnalysis) {
         String task = semanticAnalysis.taskFocus();
         String intentState = semanticAnalysis.intentState();
+        String intentPhase = semanticAnalysis.intentPhase();
+        if ("blocking".equals(intentPhase) && !task.isBlank()) {
+            return cap(LEARNING_SIGNAL_MARKER
+                    + " 当前事项：" + task
+                    + "；信号：用户会直接描述阻塞点而不是抽象求助"
+                    + "；偏好：先定位卡点，再给能继续推进的下一步", 220);
+        }
+        if ("planning".equals(intentPhase) && !task.isBlank()) {
+            return cap(LEARNING_SIGNAL_MARKER
+                    + " 当前事项：" + task
+                    + "；信号：用户常先要方案或步骤，再决定是否执行"
+                    + "；偏好：先给结构化推进方案，再进入执行", 220);
+        }
+        if ("reporting".equals(intentPhase) && !task.isBlank()) {
+            return cap(LEARNING_SIGNAL_MARKER
+                    + " 当前事项：" + task
+                    + "；信号：用户会用自然语言同步任务进展"
+                    + "；偏好：接收进展后继续围绕同一事项推进", 220);
+        }
         if ("continue".equals(intentState) && !task.isBlank()) {
             return cap(LEARNING_SIGNAL_MARKER
                     + " 当前事项：" + task
@@ -324,6 +347,7 @@ final class HermesMemoryRecorder {
             case "complete" -> "已完成";
             case "pause" -> "已暂停";
             case "remind" -> "待提醒";
+            case "blocked" -> "受阻";
             case "update" -> "已更新";
             case "continue" -> "进行中";
             case "start" -> "已开始";
@@ -347,6 +371,9 @@ final class HermesMemoryRecorder {
         }
         if ("已完成".equals(state) || "已暂停".equals(state)) {
             return "";
+        }
+        if ("受阻".equals(state)) {
+            return "先处理阻塞点后继续推进";
         }
         if ("待提醒".equals(state)) {
             return "等待提醒后继续推进";
@@ -382,6 +409,21 @@ final class HermesMemoryRecorder {
             case "realtime" -> "需要最新信息";
             case "memory" -> "围绕历史内容";
             case "standalone" -> "独立请求";
+            default -> "";
+        };
+    }
+
+    private String humanizedIntentPhase(String intentPhase) {
+        if (intentPhase == null || intentPhase.isBlank()) {
+            return "";
+        }
+        return switch (intentPhase) {
+            case "execution" -> "正在执行";
+            case "planning" -> "先要方案";
+            case "reporting" -> "同步进展";
+            case "blocking" -> "说明阻塞";
+            case "decision" -> "调整方向";
+            case "memory" -> "围绕记忆";
             default -> "";
         };
     }

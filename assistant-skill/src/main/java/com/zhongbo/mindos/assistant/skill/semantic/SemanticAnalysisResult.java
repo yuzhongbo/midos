@@ -5,6 +5,7 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 public record SemanticAnalysisResult(String source,
                                      String intent,
@@ -32,6 +33,8 @@ public record SemanticAnalysisResult(String source,
     public static final String ATTR_INTENT_STATE = "semanticIntentState";
     public static final String ATTR_TASK_FOCUS = "semanticTaskFocus";
     public static final String ATTR_FOLLOW_UP_MODE = "semanticFollowUpMode";
+    public static final String ATTR_INTENT_PHASE = "semanticIntentPhase";
+    public static final String ATTR_THREAD_RELATION = "semanticThreadRelation";
 
     private static final SemanticAnalysisResult EMPTY =
             new SemanticAnalysisResult("disabled", "", "", "", Map.of(), List.of(), "", 0.0, List.of());
@@ -103,7 +106,7 @@ public record SemanticAnalysisResult(String source,
     }
 
     public Map<String, Object> asAttributes() {
-        Map<String, Object> attributes = new LinkedHashMap<>(14);
+        Map<String, Object> attributes = new LinkedHashMap<>(16);
         attributes.put(ATTR_ANALYSIS_SOURCE, emptyIfNull(source));
         attributes.put(ATTR_INTENT, emptyIfNull(intent));
         attributes.put(ATTR_REWRITTEN_INPUT, emptyIfNull(rewrittenInput));
@@ -115,6 +118,8 @@ public record SemanticAnalysisResult(String source,
         attributes.put(ATTR_MEMORY_OPERATION, memoryOperation());
         attributes.put(ATTR_INTENT_STATE, intentState());
         attributes.put(ATTR_FOLLOW_UP_MODE, followUpMode());
+        attributes.put(ATTR_INTENT_PHASE, intentPhase());
+        attributes.put(ATTR_THREAD_RELATION, threadRelation());
         if (hasText(summary)) {
             attributes.put(ATTR_SUMMARY, summary);
         }
@@ -153,6 +158,12 @@ public record SemanticAnalysisResult(String source,
         }
         if (hasText(intentState())) {
             prompt.append("- intentState: ").append(intentState()).append('\n');
+        }
+        if (hasText(intentPhase())) {
+            prompt.append("- intentPhase: ").append(intentPhase()).append('\n');
+        }
+        if (hasText(threadRelation())) {
+            prompt.append("- threadRelation: ").append(threadRelation()).append('\n');
         }
         if (hasText(followUpMode())) {
             prompt.append("- followUpMode: ").append(followUpMode()).append('\n');
@@ -203,7 +214,8 @@ public record SemanticAnalysisResult(String source,
         if (containsAny(corpus,
                 "继续", "按之前", "按上次", "沿用", "再来一次", "同样方式", "继续按",
                 "按刚才", "按这个", "按上面", "开始吧", "开始执行", "执行吧", "帮我推进",
-                "推进一下", "照这个", "那就这样", "就这样")) {
+                "推进一下", "照这个", "那就这样", "就这样",
+                "当前事项遇到阻塞：", "为当前事项制定下一步方案：", "更新当前事项进展：", "当前事项：")) {
             return "continuation";
         }
         if (containsAny(corpus, "domain=news", "domain=weather", "domain=market", "domain=travel",
@@ -217,7 +229,7 @@ public record SemanticAnalysisResult(String source,
     }
 
     public String taskFocus() {
-        String payloadFocus = firstNonBlankPayloadValue("task", "title", "goal", "project", "topic", "query");
+        String payloadFocus = firstNonBlankPayloadValue("task", "title", "goal", "project", "topic", "query", "taskFocus");
         if (hasText(payloadFocus)) {
             return payloadFocus;
         }
@@ -251,16 +263,64 @@ public record SemanticAnalysisResult(String source,
         if (containsAny(corpus, "提醒我", "提醒一下", "记得", "明天提醒", "稍后提醒", "follow up", "follow-up")) {
             return "remind";
         }
+        if (isBlockingSignal(corpus)) {
+            return "blocked";
+        }
         if (containsAny(corpus, "改成", "更新", "补充", "调整", "修改", "换成", "加上", "补一下", "目标是", "截止", "优先级")) {
             return "update";
         }
-        if ("continuation".equals(contextScope()) || "continuation".equals(followUpMode())) {
+        if ("continuation".equals(contextScope())
+                || "continuation".equals(followUpMode())
+                || "resume".equals(threadRelation())) {
             return "continue";
         }
         if (toolRequired()) {
             return "start";
         }
         return "none";
+    }
+
+    public String intentPhase() {
+        String corpus = semanticCorpus();
+        if (!"none".equals(memoryOperation())) {
+            return "memory";
+        }
+        if (isBlockingSignal(corpus)) {
+            return "blocking";
+        }
+        if (isPlanningSignal(corpus)) {
+            return "planning";
+        }
+        if (isProgressReportSignal(corpus) || "complete".equals(intentState())) {
+            return "reporting";
+        }
+        if (isDecisionSignal(corpus) || Set.of("pause", "update").contains(intentState())) {
+            return "decision";
+        }
+        if (toolRequired() || Set.of("start", "continue", "remind", "blocked").contains(intentState())) {
+            return "execution";
+        }
+        return "chat";
+    }
+
+    public String threadRelation() {
+        String corpus = semanticCorpus();
+        if (!"none".equals(memoryOperation())) {
+            return "memory";
+        }
+        if (isResumeSignal(corpus)) {
+            return "resume";
+        }
+        if (isSwitchSignal(corpus)) {
+            return "switch";
+        }
+        if ("continuation".equals(contextScope()) || "continuation".equals(followUpMode())) {
+            return "continue";
+        }
+        if (toolRequired() && hasText(taskFocus())) {
+            return "new";
+        }
+        return "standalone";
     }
 
     public boolean toolRequired() {
@@ -290,6 +350,44 @@ public record SemanticAnalysisResult(String source,
 
     private boolean isPrivacyModeIntent() {
         return containsAny(semanticCorpus(), "不要记忆", "关闭记忆", "暂停记忆", "隐私模式", "恢复记忆", "开启记忆");
+    }
+
+    private boolean isBlockingSignal(String corpus) {
+        return containsAny(corpus,
+                "卡住", "受阻", "阻塞", "报错", "失败了", "失败啦", "不通",
+                "没权限", "无权限", "无法", "做不了", "遇到问题", "出问题", "异常",
+                "blocked", "error", "failed");
+    }
+
+    private boolean isPlanningSignal(String corpus) {
+        return containsAny(corpus,
+                "先给方案", "给个方案", "方案呢", "下一步方案",
+                "步骤", "拆解", "拆一下", "怎么做",
+                "下一步怎么", "给我个思路", "先出个提纲", "排期", "框架", "计划一下");
+    }
+
+    private boolean isProgressReportSignal(String corpus) {
+        return containsAny(corpus,
+                "进展", "状态", "目前", "处理到", "做到", "同步一下", "汇报",
+                "已经发", "已经提交", "已经同步", "刚发", "刚提交", "刚同步",
+                "更新一下进展", "现在到");
+    }
+
+    private boolean isDecisionSignal(String corpus) {
+        return containsAny(corpus,
+                "改成", "换成", "加上", "补一下", "优先", "目标是",
+                "截止改到", "改到", "调整为", "就按这个", "就这样", "先这样");
+    }
+
+    private boolean isSwitchSignal(String corpus) {
+        return containsAny(corpus,
+                "另外一个", "另一个", "换个", "换一个", "另一件",
+                "别的事", "新任务", "新事项", "先看别的", "先处理别的", "换到");
+    }
+
+    private boolean isResumeSignal(String corpus) {
+        return containsAny(corpus,
+                "回到", "回头继续", "还是说回", "刚才那个", "上一个", "之前那个", "再说回");
     }
 
     private String semanticCorpus() {

@@ -97,6 +97,35 @@ class HermesProactiveAssistantTest {
         assertFalse(augmentation.applied());
     }
 
+    @Test
+    void shouldSkipBlockingRepliesEvenWithActiveTaskThread() {
+        HermesProactiveAssistant assistant = new HermesProactiveAssistant();
+        HermesDecisionContext context = decisionContext(
+                new SemanticAnalysisResult(
+                        "heuristic",
+                        "围绕当前任务说明阻塞并寻求推进",
+                        "当前事项遇到阻塞：提交周报",
+                        "",
+                        Map.of("task", "提交周报"),
+                        List.of("卡住", "报错"),
+                        "用户表示当前事项遇到阻塞",
+                        0.81
+                ),
+                Map.of(
+                        "activeTask", "提交周报",
+                        "activeTaskNextAction", "同步项目风险"
+                )
+        );
+
+        HermesProactiveAssistant.Augmentation augmentation = assistant.maybeAugment(
+                "卡住了，接口一直报错",
+                context,
+                SkillResult.success("llm", "我先帮你定位问题。")
+        );
+
+        assertFalse(augmentation.applied());
+    }
+
     private HermesDecisionContext decisionContext(SemanticAnalysisResult semanticAnalysis, Map<String, Object> attributes) {
         SkillContext skillContext = new SkillContext("u1", "继续", attributes);
         return new HermesDecisionContext(

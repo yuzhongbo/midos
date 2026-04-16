@@ -101,6 +101,8 @@ class SemanticAnalysisResultTest {
         assertEquals(Boolean.FALSE, attributes.get(SemanticAnalysisResult.ATTR_TOOL_REQUIRED));
         assertEquals("none", attributes.get(SemanticAnalysisResult.ATTR_MEMORY_OPERATION));
         assertEquals("none", attributes.get(SemanticAnalysisResult.ATTR_INTENT_STATE));
+        assertEquals("chat", attributes.get(SemanticAnalysisResult.ATTR_INTENT_PHASE));
+        assertEquals("standalone", attributes.get(SemanticAnalysisResult.ATTR_THREAD_RELATION));
         assertEquals("standalone", attributes.get(SemanticAnalysisResult.ATTR_FOLLOW_UP_MODE));
         assertFalse(attributes.containsKey(SemanticAnalysisResult.ATTR_SUMMARY));
         assertFalse(attributes.containsKey(SemanticAnalysisResult.ATTR_PAYLOAD));
@@ -165,6 +167,8 @@ class SemanticAnalysisResultTest {
         assertTrue(prompt.contains("- contextScope: standalone"));
         assertTrue(prompt.contains("- memoryOperation: none"));
         assertTrue(prompt.contains("- intentState: start"));
+        assertTrue(prompt.contains("- intentPhase: execution"));
+        assertTrue(prompt.contains("- threadRelation: new"));
         assertTrue(prompt.contains("- followUpMode: standalone"));
         assertTrue(prompt.contains("- taskFocus: 提交周报"));
         assertTrue(prompt.contains("- rewrittenInput: 请创建一个待办"));
@@ -190,6 +194,8 @@ class SemanticAnalysisResultTest {
 
         assertEquals("continuation", result.contextScope());
         assertEquals("continue", result.intentState());
+        assertEquals("execution", result.intentPhase());
+        assertEquals("continue", result.threadRelation());
         assertEquals("continuation", result.followUpMode());
         assertEquals("提交周报", result.taskFocus());
         assertEquals("提交周报", result.asAttributes().get(SemanticAnalysisResult.ATTR_TASK_FOCUS));
@@ -220,6 +226,48 @@ class SemanticAnalysisResultTest {
 
         assertEquals("pause", pause.intentState());
         assertEquals("complete", done.intentState());
+        assertEquals("decision", pause.intentPhase());
+        assertEquals("reporting", done.intentPhase());
+    }
+
+    @Test
+    void shouldDeriveBlockingPlanningAndThreadRelationMetadata() {
+        SemanticAnalysisResult blocked = new SemanticAnalysisResult(
+                "heuristic",
+                "围绕当前任务说明阻塞并寻求推进",
+                "当前事项遇到阻塞：提交周报",
+                "",
+                Map.of("task", "提交周报"),
+                List.of("卡住", "报错"),
+                "用户表示当前事项遇到阻塞",
+                0.79
+        );
+        SemanticAnalysisResult planning = new SemanticAnalysisResult(
+                "heuristic",
+                "围绕当前任务整理方案或步骤",
+                "为当前事项制定下一步方案：提交周报",
+                "",
+                Map.of("taskFocus", "提交周报"),
+                List.of("方案", "步骤"),
+                "用户想先明确方案",
+                0.77
+        );
+        SemanticAnalysisResult resume = new SemanticAnalysisResult(
+                "heuristic",
+                "回到刚才那个任务继续处理",
+                "回到刚才那个周报",
+                "",
+                Map.of("task", "提交周报"),
+                List.of("回到", "刚才"),
+                "回到上一个任务",
+                0.75
+        );
+
+        assertEquals("blocked", blocked.intentState());
+        assertEquals("blocking", blocked.intentPhase());
+        assertEquals("planning", planning.intentPhase());
+        assertEquals("提交周报", planning.taskFocus());
+        assertEquals("resume", resume.threadRelation());
     }
 
     @Test

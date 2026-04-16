@@ -551,6 +551,81 @@ class SemanticAnalysisServiceTest {
     }
 
     @Test
+    void shouldCarryUpdateConstraintFromActiveTaskThread() {
+        SkillRegistry registry = new SkillRegistry(List.of(new FixedSkill("todo.create")));
+        SemanticAnalysisService service = new SemanticAnalysisService((prompt, context) -> "stub", registry, true, false, true, "", "local", "cost", 120);
+
+        SemanticAnalysisResult result = service.analyze(
+                "u1",
+                "改成周三发",
+                """
+                Active task thread:
+                - 当前事项：提交周报
+                - 状态：进行中
+                - 下一步：同步项目风险
+                """,
+                Map.of(),
+                List.of("todo.create - Creates todo items")
+        );
+
+        assertEquals("continuation", result.contextScope());
+        assertEquals("update", result.intentState());
+        assertEquals("decision", result.intentPhase());
+        assertEquals("continue", result.threadRelation());
+        assertEquals("提交周报", result.taskFocus());
+        assertTrue(result.rewrittenInput().contains("当前事项：提交周报"));
+    }
+
+    @Test
+    void shouldCarryBlockingIntentFromActiveTaskThread() {
+        SkillRegistry registry = new SkillRegistry(List.of(new FixedSkill("todo.create")));
+        SemanticAnalysisService service = new SemanticAnalysisService((prompt, context) -> "stub", registry, true, false, true, "", "local", "cost", 120);
+
+        SemanticAnalysisResult result = service.analyze(
+                "u1",
+                "卡住了，接口一直报错",
+                """
+                Active task thread:
+                - 当前事项：提交周报
+                - 状态：进行中
+                - 下一步：同步项目风险
+                """,
+                Map.of(),
+                List.of("todo.create - Creates todo items")
+        );
+
+        assertEquals("blocked", result.intentState());
+        assertEquals("blocking", result.intentPhase());
+        assertEquals("提交周报", result.taskFocus());
+        assertTrue(result.rewrittenInput().contains("当前事项遇到阻塞"));
+    }
+
+    @Test
+    void shouldCarryPlanningIntentForCurrentTaskWithoutForcingSkill() {
+        SkillRegistry registry = new SkillRegistry(List.of(new FixedSkill("todo.create")));
+        SemanticAnalysisService service = new SemanticAnalysisService((prompt, context) -> "stub", registry, true, false, true, "", "local", "cost", 120);
+
+        SemanticAnalysisResult result = service.analyze(
+                "u1",
+                "先给我一个方案",
+                """
+                Active task thread:
+                - 当前事项：提交周报
+                - 状态：进行中
+                - 下一步：同步项目风险
+                """,
+                Map.of(),
+                List.of("todo.create - Creates todo items")
+        );
+
+        assertTrue(result.suggestedSkill().isBlank());
+        assertEquals("planning", result.intentPhase());
+        assertEquals("continue", result.threadRelation());
+        assertEquals("提交周报", result.taskFocus());
+        assertTrue(result.rewrittenInput().contains("为当前事项制定下一步方案"));
+    }
+
+    @Test
     void shouldParseParamsAliasIntoPayload() {
         SkillRegistry registry = new SkillRegistry(List.of(new FixedSkill("todo.create")));
         LlmClient llmClient = (prompt, context) ->

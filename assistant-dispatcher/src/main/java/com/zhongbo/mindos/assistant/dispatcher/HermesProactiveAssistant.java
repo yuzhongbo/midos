@@ -42,6 +42,12 @@ final class HermesProactiveAssistant {
         SemanticAnalysisResult semanticAnalysis = context.semanticAnalysis() == null
                 ? SemanticAnalysisResult.empty()
                 : context.semanticAnalysis();
+        if (!"execution".equals(semanticAnalysis.intentPhase())) {
+            return Augmentation.unchanged(result);
+        }
+        if ("switch".equals(semanticAnalysis.threadRelation())) {
+            return Augmentation.unchanged(result);
+        }
         if (!ELIGIBLE_INTENT_STATES.contains(semanticAnalysis.intentState())) {
             return Augmentation.unchanged(result);
         }

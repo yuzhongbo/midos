@@ -589,11 +589,9 @@ public class SemanticAnalysisService implements SemanticAnalyzer {
             return Optional.empty();
         }
         String rewrittenInput = buildContinuationRewrittenInput(userInput, focus);
-        String intent = suggestedSkill.isBlank()
-                ? "延续当前上下文并继续推进"
-                : "延续当前任务并按已有方案执行";
-        String summary = "用户希望继续推进当前事项：" + capText(focus, 60);
-        double confidence = suggestedSkill.isBlank() ? 0.76 : 0.84;
+        String intent = buildContinuationIntent(normalized, suggestedSkill);
+        String summary = buildContinuationSummary(normalized, focus);
+        double confidence = resolveContinuationConfidence(normalized, suggestedSkill);
         List<String> keywords = suggestedSkill.isBlank()
                 ? extractKeywords(rewrittenInput, "继续", "推进", "刚才", "按这个")
                 : routingKeywordHints(rewrittenInput, suggestedSkill, "继续", "推进", "刚才", "按这个");
@@ -1032,6 +1030,12 @@ public class SemanticAnalysisService implements SemanticAnalyzer {
         if (normalized.isBlank()) {
             return false;
         }
+        if (looksLikeBlockingFollowUp(normalized)
+                || looksLikePlanningFollowUp(normalized)
+                || looksLikeProgressReportFollowUp(normalized)
+                || looksLikeDecisionFollowUp(normalized)) {
+            return true;
+        }
         if (containsAny(normalized,
                 "继续", "接着", "按刚才", "按这个", "按上面", "就按这个", "就这个",
                 "开始吧", "开始执行", "执行吧", "帮我推进", "推进一下", "往下做",
@@ -1043,6 +1047,31 @@ public class SemanticAnalysisService implements SemanticAnalyzer {
         }
         String trimmed = stringValue(userInput);
         return trimmed.length() <= 4 && containsAny(normalized, "可以", "好的", "行", "好", "嗯");
+    }
+
+    private boolean looksLikeBlockingFollowUp(String normalized) {
+        return containsAny(normalized,
+                "卡住", "受阻", "阻塞", "报错", "失败了", "不通",
+                "没权限", "无权限", "无法", "做不了", "遇到问题", "出问题", "异常");
+    }
+
+    private boolean looksLikePlanningFollowUp(String normalized) {
+        return containsAny(normalized,
+                "方案", "计划", "步骤", "拆解", "拆一下", "怎么做",
+                "下一步怎么", "给我个思路", "先给方案", "先出个提纲", "排期", "框架");
+    }
+
+    private boolean looksLikeProgressReportFollowUp(String normalized) {
+        return containsAny(normalized,
+                "进展", "状态", "目前", "处理到", "做到", "同步一下", "汇报",
+                "已经发", "已经提交", "已经同步", "刚发", "刚提交", "刚同步",
+                "更新一下进展", "现在到");
+    }
+
+    private boolean looksLikeDecisionFollowUp(String normalized) {
+        return containsAny(normalized,
+                "改成", "换成", "加上", "补一下", "优先", "目标是",
+                "截止改到", "改到", "调整为");
     }
 
     private boolean shouldCarryExecutionSkill(String normalized) {
@@ -1255,6 +1284,18 @@ public class SemanticAnalysisService implements SemanticAnalyzer {
         if (containsAny(normalized, "提醒我", "提醒一下", "记得", "明天提醒", "稍后提醒")) {
             return "为当前事项设置提醒：" + focus;
         }
+        if (looksLikeBlockingFollowUp(normalized)) {
+            return "当前事项遇到阻塞：" + focus;
+        }
+        if (looksLikePlanningFollowUp(normalized)) {
+            return "为当前事项制定下一步方案：" + focus;
+        }
+        if (looksLikeProgressReportFollowUp(normalized)) {
+            return "更新当前事项进展：" + focus;
+        }
+        if (looksLikeDecisionFollowUp(normalized) && !trimmed.contains(focus)) {
+            return trimmed + "，当前事项：" + focus;
+        }
         if (trimmed.length() <= 6 || looksLikeContinuationFollowUp(trimmed, normalized)) {
             return "继续推进：" + focus;
         }
@@ -1262,6 +1303,51 @@ public class SemanticAnalysisService implements SemanticAnalyzer {
             return trimmed;
         }
         return trimmed + "，继续围绕：" + focus;
+    }
+
+    private String buildContinuationIntent(String normalized, String suggestedSkill) {
+        if (looksLikePlanningFollowUp(normalized)) {
+            return "围绕当前任务整理方案或步骤";
+        }
+        if (looksLikeBlockingFollowUp(normalized)) {
+            return "围绕当前任务说明阻塞并寻求推进";
+        }
+        if (looksLikeProgressReportFollowUp(normalized)) {
+            return "同步当前任务进展或状态";
+        }
+        if (looksLikeDecisionFollowUp(normalized)) {
+            return "调整当前任务约束或执行方向";
+        }
+        return suggestedSkill.isBlank()
+                ? "延续当前上下文并继续推进"
+                : "延续当前任务并按已有方案执行";
+    }
+
+    private String buildContinuationSummary(String normalized, String focus) {
+        String clippedFocus = capText(focus, 60);
+        if (looksLikePlanningFollowUp(normalized)) {
+            return "用户想先明确当前事项的方案或步骤：" + clippedFocus;
+        }
+        if (looksLikeBlockingFollowUp(normalized)) {
+            return "用户表示当前事项遇到阻塞：" + clippedFocus;
+        }
+        if (looksLikeProgressReportFollowUp(normalized)) {
+            return "用户在同步当前事项进展：" + clippedFocus;
+        }
+        if (looksLikeDecisionFollowUp(normalized)) {
+            return "用户在调整当前事项要求：" + clippedFocus;
+        }
+        return "用户希望继续推进当前事项：" + clippedFocus;
+    }
+
+    private double resolveContinuationConfidence(String normalized, String suggestedSkill) {
+        if (looksLikeBlockingFollowUp(normalized)
+                || looksLikePlanningFollowUp(normalized)
+                || looksLikeProgressReportFollowUp(normalized)
+                || looksLikeDecisionFollowUp(normalized)) {
+            return suggestedSkill.isBlank() ? 0.82 : 0.87;
+        }
+        return suggestedSkill.isBlank() ? 0.76 : 0.84;
     }
 
     private String extractByPattern(String input, Pattern pattern) {

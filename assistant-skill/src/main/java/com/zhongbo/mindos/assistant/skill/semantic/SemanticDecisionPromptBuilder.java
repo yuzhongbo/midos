@@ -40,6 +40,9 @@ final class SemanticDecisionPromptBuilder {
         prompt.append("8. For short continuation inputs like continue, 再来一次, 继续按刚才方式, rely on recent context and recent successful skills when clear.\n");
         prompt.append("9. candidate_intents should contain at most 3 alternatives sorted by confidence descending.\n");
         prompt.append("10. If no tool fits, leave suggestedSkill empty and payload as {}.\n");
+        prompt.append("11. Distinguish execution, planning, blocker-report, progress-report, and decision-adjustment turns when the user is working on an ongoing task.\n");
+        prompt.append("12. If the user is reporting progress or a blocker on an active task, keep suggestedSkill empty unless a tool is clearly requested.\n");
+        prompt.append("13. If the user clearly switches to another matter, do not force the previous task thread.\n");
         prompt.append('\n');
         prompt.append("JSON shape example:\n");
         prompt.append("{\"intent\":\"task_create\",\"rewrittenInput\":\"创建一个待办：提交周报\",\"suggestedSkill\":\"todo.create\",\"summary\":\"用户要创建待办并记录截止时间\",\"confidence\":0.92,\"payload\":{\"task\":\"提交周报\",\"dueDate\":\"周五前\"},\"keywords\":[\"待办\",\"周报\",\"周五\"],\"candidate_intents\":[{\"intent\":\"todo.create\",\"confidence\":0.92},{\"intent\":\"calendar.lookup\",\"confidence\":0.21}]}\n");
@@ -78,8 +81,15 @@ final class SemanticDecisionPromptBuilder {
         }
         lines.add("- toolRequired: " + baseline.toolRequired());
         lines.add("- contextScope: " + baseline.contextScope());
+        lines.add("- intentState: " + baseline.intentState());
+        lines.add("- intentPhase: " + baseline.intentPhase());
+        lines.add("- threadRelation: " + baseline.threadRelation());
+        lines.add("- followUpMode: " + baseline.followUpMode());
         if (!"none".equals(baseline.memoryOperation())) {
             lines.add("- memoryOperation: " + baseline.memoryOperation());
+        }
+        if (!text(baseline.taskFocus()).isBlank()) {
+            lines.add("- taskFocus: " + text(baseline.taskFocus()));
         }
         if (!baseline.payload().isEmpty()) {
             lines.add("- payload: " + summarizeMap(baseline.payload(), 220));
