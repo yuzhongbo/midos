@@ -1475,6 +1475,83 @@ class DispatcherServiceTest {
     }
 
     @Test
+    void shouldAppendProactiveHintForStructuredTaskExecution() {
+        MemoryManager memoryManager = createMemoryManager();
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of("不应调用 llm"));
+        SkillRegistry registry = new SkillRegistry(List.of(
+                new FixedSkill("todo.create", "Creates todo items from natural language", "待办已创建")
+        ));
+        SemanticAnalysisService semanticAnalysisService = new SemanticAnalysisService(llmClient, registry, new DefaultSkillCatalog(registry, null, new SkillRoutingProperties()), true, false, true, "", "local", "cost", 120) {
+            @Override
+            public SemanticAnalysisResult analyze(String userId,
+                                                  String userInput,
+                                                  String memoryContext,
+                                                  Map<String, Object> profileContext,
+                                                  List<String> availableSkillSummaries) {
+                return new SemanticAnalysisResult(
+                        "llm",
+                        "创建待办",
+                        userInput,
+                        "todo.create",
+                        Map.of("task", "提交周报", "dueDate", "周五前", "nextAction", "同步项目风险"),
+                        List.of("待办", "周报"),
+                        "用户要创建待办事项",
+                        0.93
+                );
+            }
+        };
+        DispatcherService service = createDispatcherWithSemanticService(memoryManager, llmClient, registry, semanticAnalysisService, 2);
+
+        DispatchResult result = service.dispatch("proactive-skill-user", "帮我创建待办：周五前提交周报");
+
+        assertEquals("todo.create", result.channel());
+        assertTrue(result.reply().contains("待办已创建"));
+        assertTrue(result.reply().contains("下一步建议：先同步项目风险。"));
+        assertTrue(result.reply().contains("需要的话我可以直接继续做这一步"));
+        assertTrue(result.executionTrace().routing().reasons().stream().anyMatch(reason -> reason.startsWith("proactiveHint=")));
+    }
+
+    @Test
+    void shouldAppendProactiveHintForShortLlmContinuationReplies() {
+        MemoryManager memoryManager = createMemoryManager();
+        memoryManager.storeKnowledge(
+                "proactive-llm-user",
+                "[任务状态] 当前事项：提交周报；状态：进行中；下一步：同步项目风险",
+                List.of(0.2, 0.3),
+                "task"
+        );
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of("好的，我继续跟进。"));
+        SkillRegistry registry = new SkillRegistry(List.of());
+        SemanticAnalysisService semanticAnalysisService = new SemanticAnalysisService(llmClient, registry, new DefaultSkillCatalog(registry, null, new SkillRoutingProperties()), true, false, true, "", "local", "cost", 120) {
+            @Override
+            public SemanticAnalysisResult analyze(String userId,
+                                                  String userInput,
+                                                  String memoryContext,
+                                                  Map<String, Object> profileContext,
+                                                  List<String> availableSkillSummaries) {
+                return new SemanticAnalysisResult(
+                        "llm",
+                        "继续当前任务",
+                        "继续推进：提交周报",
+                        "",
+                        Map.of(),
+                        List.of("继续", "周报"),
+                        "继续推进当前事项",
+                        0.81
+                );
+            }
+        };
+        DispatcherService service = createDispatcherWithSemanticService(memoryManager, llmClient, registry, semanticAnalysisService, 2);
+
+        DispatchResult result = service.dispatch("proactive-llm-user", "继续");
+
+        assertEquals("llm", result.channel());
+        assertTrue(result.reply().contains("好的，我继续跟进。"));
+        assertTrue(result.reply().contains("下一步建议：先同步项目风险。"));
+        assertTrue(result.executionTrace().routing().reasons().stream().anyMatch(reason -> reason.startsWith("proactiveHint=")));
+    }
+
+    @Test
     void shouldApplyBehaviorLearnedDefaultParamsToSemanticPayload() {
         MemoryManager memoryManager = createMemoryManager();
         RecordingLlmClient llmClient = new RecordingLlmClient(List.of("stub"));

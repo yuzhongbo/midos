@@ -37,6 +37,7 @@ final class HermesAssistantRuntime {
     private final DispatchLlmSupport llmSupport;
     private final DispatcherMemoryFacade dispatcherMemoryFacade;
     private final HermesExecutionGuard executionGuard;
+    private final HermesProactiveAssistant proactiveAssistant;
     private final String promptInjectionSafeReply;
     private final ConversationMemoryModeService conversationMemoryModeService;
     private final AtomicBoolean acceptingRequests = new AtomicBoolean(true);
@@ -62,6 +63,7 @@ final class HermesAssistantRuntime {
         this.llmSupport = llmSupport;
         this.dispatcherMemoryFacade = dispatcherMemoryFacade;
         this.executionGuard = executionGuard;
+        this.proactiveAssistant = new HermesProactiveAssistant();
         this.promptInjectionSafeReply = promptInjectionSafeReply == null || promptInjectionSafeReply.isBlank()
                 ? "为了安全，我不能执行这类请求。"
                 : promptInjectionSafeReply;
@@ -251,19 +253,24 @@ final class HermesAssistantRuntime {
 
             if ("llm".equalsIgnoreCase(decision.target())) {
                 SkillResult llmResult = executeLlmDecision(decisionContext, safeInput, safeProfileContext, deltaConsumer, streamMode);
+                HermesProactiveAssistant.Augmentation proactive = maybeApplyProactiveAssistant(safeInput, decisionContext, llmResult);
+                SkillResult resultToReturn = proactive.result();
+                if (streamMode && proactive.applied()) {
+                    emit(deltaConsumer, proactive.appendedSuffix());
+                }
                 DispatchResult result = buildDispatchResult(
-                        llmResult.output(),
-                        llmResult.skillName(),
+                        resultToReturn.output(),
+                        resultToReturn.skillName(),
                         decisionPlan.route(),
-                        llmResult.skillName(),
+                        resultToReturn.skillName(),
                         decision == null ? 0.0d : decision.confidence(),
-                        decisionPlan.reasons(),
+                        augmentReasons(decisionPlan.reasons(), proactive),
                         decisionPlan.rejectedReasons(),
-                        llmResult.success(),
-                        List.of(primaryStep(llmResult.success() ? "success" : "failed", llmResult.skillName(), llmResult.output(), startedAt, Instant.now()))
+                        resultToReturn.success(),
+                        List.of(primaryStep(resultToReturn.success() ? "success" : "failed", resultToReturn.skillName(), resultToReturn.output(), startedAt, Instant.now()))
                 );
                 result = enrichObservability(result, safeInput, decisionContext.semanticAnalysis(), false);
-                memoryRecorder.record(safeUserId, safeInput, llmResult, decisionContext.profileContext(), decisionContext.semanticAnalysis(), null, null, decisionContext.memoryEnabled());
+                memoryRecorder.record(safeUserId, safeInput, resultToReturn, decisionContext.profileContext(), decisionContext.semanticAnalysis(), null, null, decisionContext.memoryEnabled());
                 return result;
             }
 
@@ -403,7 +410,12 @@ final class HermesAssistantRuntime {
                     routedResult,
                     new LinkedHashMap<>(decisionContext.llmContext())
             );
-            SkillResult resultToReturn = finalized.result();
+            HermesProactiveAssistant.Augmentation proactive = maybeApplyProactiveAssistant(
+                    userInput,
+                    decisionContext,
+                    finalized.result()
+            );
+            SkillResult resultToReturn = proactive.result();
             emit(deltaConsumer, resultToReturn.output());
             DispatchResult result = buildDispatchResult(
                     resultToReturn.output(),
@@ -411,7 +423,7 @@ final class HermesAssistantRuntime {
                     decisionPlan.route(),
                     resultToReturn.skillName(),
                     validatedDecision.confidence(),
-                    decisionPlan.reasons(),
+                    augmentReasons(decisionPlan.reasons(), proactive),
                     decisionPlan.rejectedReasons(),
                     true,
                     List.of(primaryStep("success", resultToReturn.skillName(), resultToReturn.output(), startedAt, Instant.now()))
@@ -693,6 +705,23 @@ final class HermesAssistantRuntime {
             }
         }
         return "";
+    }
+
+    private HermesProactiveAssistant.Augmentation maybeApplyProactiveAssistant(String userInput,
+                                                                               HermesDecisionContext decisionContext,
+                                                                               SkillResult result) {
+        return proactiveAssistant == null
+                ? HermesProactiveAssistant.Augmentation.unchanged(result)
+                : proactiveAssistant.maybeAugment(userInput, decisionContext, result);
+    }
+
+    private List<String> augmentReasons(List<String> reasons, HermesProactiveAssistant.Augmentation proactive) {
+        if (proactive == null || !proactive.applied()) {
+            return reasons;
+        }
+        List<String> updated = new ArrayList<>(reasons == null ? List.of() : reasons);
+        updated.add("proactiveHint=" + proactive.hintType());
+        return List.copyOf(updated);
     }
 
     private Optional<SkillResult> maybeBlockedByCapability(String skillName) {
