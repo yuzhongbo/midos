@@ -82,7 +82,7 @@ public class NewsSearchSkill implements Skill, SkillDescriptorProvider {
                            @Value("${mindos.skill.news-search.serper.api-key:}") String serperApiKey,
                            @Value("${mindos.skill.search.detail-fetch.enabled:true}") boolean detailFetchEnabled,
                            @Value("${mindos.skill.search.detail-fetch.timeout-ms:4500}") int detailFetchTimeoutMs,
-                           @Value("${mindos.skill.search.detail-fetch.max-candidates:2}") int detailFetchMaxCandidates,
+                           @Value("${mindos.skill.search.detail-fetch.max-candidates:3}") int detailFetchMaxCandidates,
                            @Value("${mindos.skill.search.detail-fetch.max-summary-chars:320}") int detailFetchMaxSummaryChars,
                            @Value("${mindos.skill.search.detail-fetch.max-page-chars:6000}") int detailFetchMaxPageChars) {
         this.executor = new NewsSearchSkillExecutor(

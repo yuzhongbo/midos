@@ -127,4 +127,41 @@ class SearchResultDetailAugmentorTest {
         assertEquals(base + "/news/o3-latest", result.get().link());
         assertTrue(result.get().summary().contains("最新消息") || result.get().summary().contains("最新更新"), result.get().summary());
     }
+
+    @Test
+    void shouldParseMarkdownSearchOutputAndReadDetailPage() throws Exception {
+        server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/detail", exchange -> {
+            byte[] payload = """
+                    <html>
+                      <head>
+                        <title>MindOS 详情页</title>
+                        <meta name="description" content="这页解释了为什么要先点开最贴题的结果。">
+                      </head>
+                      <body>
+                        <article>
+                          <p>正文说明应先从候选里找到最接近问题的一条，再根据详情页内容输出结论。</p>
+                        </article>
+                      </body>
+                    </html>
+                    """.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "text/html; charset=utf-8");
+            exchange.sendResponseHeaders(200, payload.length);
+            exchange.getResponseBody().write(payload);
+            exchange.close();
+        });
+        server.start();
+
+        SearchResultDetailAugmentor augmentor = new SearchResultDetailAugmentor(true, 3000, 3, 240, 3000);
+        String url = "http://127.0.0.1:" + server.getAddress().getPort() + "/detail";
+
+        String output = augmentor.augmentRenderedSearchOutput("MindOS 详情", """
+                这是搜索结果：
+                1. [MindOS 详情页](%s) - 解释如何先点开最贴题的链接
+                """.formatted(url));
+
+        assertTrue(output.contains("最相关详情"), output);
+        assertTrue(output.contains(url), output);
+        assertTrue(output.contains("先点开最贴题的结果") || output.contains("详情页内容输出结论"), output);
+    }
 }
