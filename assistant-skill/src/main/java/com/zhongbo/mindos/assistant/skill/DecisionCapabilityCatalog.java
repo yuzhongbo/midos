@@ -48,7 +48,7 @@ public final class DecisionCapabilityCatalog {
                     "news.lookup",
                     "news_search",
                     "Look up the latest news, headlines, and hot topics when the user explicitly asks for current news.",
-                    List.of("今天新闻", "今日新闻", "最新新闻", "国际新闻", "查看新闻", "看新闻", "新闻搜索", "news")
+                    List.of("今天新闻", "今日新闻", "最新新闻", "国际新闻", "最新消息", "最新动态", "查看新闻", "看新闻", "新闻搜索", "news")
             ),
             new CapabilityDefinition(
                     "docs.lookup",

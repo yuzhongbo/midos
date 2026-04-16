@@ -191,6 +191,30 @@ class DispatcherServiceTest {
     }
 
     @Test
+    void shouldPreferBuiltInNewsSearchForLatestMessageSummaryRequest() {
+        MemoryManager memoryManager = createMemoryManager();
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of("不应走到 llm"));
+        DispatcherService service = createDispatcher(memoryManager, llmClient, List.of(
+                scriptedSkill(
+                        "news_search",
+                        "Built-in latest news aggregation",
+                        List.of("新闻", "最新", "最新消息", "最新动态", "头条", "热点", "realtime", "latest"),
+                        context -> SkillResult.success("news_search", "[news_search]\n关键词: 伊朗\n摘要: top 5 summary")
+                ),
+                newMcpSkill("mcp.serper.webSearch", "Search latest web news", "serper result")
+        ), 2, false, false);
+
+        DispatchResult result = service.dispatch("news-user", "伊朗最新消息给我总结前5条");
+
+        assertEquals("news_search", result.channel());
+        assertEquals("[news_search]\n关键词: 伊朗\n摘要: top 5 summary", result.reply());
+        assertTrue(Set.of("detected-skill", "detected-skill-parallel", "semantic-analysis").contains(result.executionTrace().routing().route()));
+        assertEquals("news_search", result.executionTrace().routing().selectedSkill());
+        assertEquals(0, llmClient.routingCallCount());
+        assertEquals(0, llmClient.fallbackCallCount());
+    }
+
+    @Test
     void shouldKeepExplicitMcpSearchSelectionWhenProviderAliasIsRequested() {
         MemoryManager memoryManager = createMemoryManager();
         RecordingLlmClient llmClient = new RecordingLlmClient(List.of("不应走到 llm"));

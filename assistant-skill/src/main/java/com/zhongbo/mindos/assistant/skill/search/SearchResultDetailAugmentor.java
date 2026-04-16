@@ -37,6 +37,7 @@ public final class SearchResultDetailAugmentor {
     private static final Pattern URL_PATTERN = Pattern.compile("(https?://\\S+)", Pattern.CASE_INSENSITIVE);
     private static final Pattern MARKDOWN_LINK_PATTERN = Pattern.compile("\\[([^\\]]+)]\\((https?://[^)\\s]+)\\)");
     private static final Pattern LABELED_URL_PATTERN = Pattern.compile("^(?:链接|网址|来源|source|url|link)\\s*[:：]\\s*(https?://\\S+)$", Pattern.CASE_INSENSITIVE);
+    private static final Pattern MULTI_RESULT_REQUEST_PATTERN = Pattern.compile("(?i)(?:top\\s*\\d+|前\\s*[0-9一二三四五六七八九十两几]+\\s*(?:条|篇|个|则|项))");
     private static final Pattern LEADING_MARKER_PATTERN = Pattern.compile("^\\s*(?:\\d+[.)、]|[-*•]|\\[[0-9]+])\\s*");
     private static final Pattern NUMBERED_RESULT_PATTERN = Pattern.compile("^\\s*\\d+[.)、]\\s*(.+)$");
     private static final Pattern TITLE_TAG_PATTERN = Pattern.compile("(?is)<title[^>]*>(.*?)</title>");
@@ -161,7 +162,11 @@ public final class SearchResultDetailAugmentor {
     }
 
     public String augmentRenderedSearchOutput(String query, String rawOutput) {
-        if (!enabled || rawOutput == null || rawOutput.isBlank() || rawOutput.contains("最相关详情：")) {
+        if (!enabled
+                || rawOutput == null
+                || rawOutput.isBlank()
+                || rawOutput.contains("最相关详情：")
+                || requestsMultiResultSummary(query)) {
             return rawOutput;
         }
         Optional<DetailPageBrief> detail = buildDetailBrief(query, parseRenderedItems(rawOutput));
@@ -174,13 +179,16 @@ public final class SearchResultDetailAugmentor {
                 - 标题: %s
                 - 关键信息: %s
                 - 详细链接: %s
-                
-                如果你愿意，我可以继续把这页内容展开成更完整的结论，或者再对比其他候选结果。
                 """.formatted(
                 safeText(brief.title()),
                 safeText(brief.summary()),
                 safeText(brief.link())
         ).trim();
+    }
+
+    private boolean requestsMultiResultSummary(String query) {
+        String normalized = normalizeText(query);
+        return !normalized.isBlank() && MULTI_RESULT_REQUEST_PATTERN.matcher(normalized).find();
     }
 
     public Optional<DetailPageBrief> buildDetailBrief(String query, List<SearchResultItem> items) {

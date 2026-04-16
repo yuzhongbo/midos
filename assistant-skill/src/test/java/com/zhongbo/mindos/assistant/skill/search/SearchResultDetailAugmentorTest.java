@@ -164,4 +164,36 @@ class SearchResultDetailAugmentorTest {
         assertTrue(output.contains(url), output);
         assertTrue(output.contains("先点开最贴题的结果") || output.contains("详情页内容输出结论"), output);
     }
+
+    @Test
+    void shouldKeepMultiResultSummaryQueryAsListInsteadOfCollapsingToSingleDetail() throws Exception {
+        server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/detail", exchange -> {
+            byte[] payload = """
+                    <html>
+                      <head><title>单条详情页</title></head>
+                      <body><article><p>这里是一篇会被单页读取命中的详情内容。</p></article></body>
+                    </html>
+                    """.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "text/html; charset=utf-8");
+            exchange.sendResponseHeaders(200, payload.length);
+            exchange.getResponseBody().write(payload);
+            exchange.close();
+        });
+        server.start();
+
+        SearchResultDetailAugmentor augmentor = new SearchResultDetailAugmentor(true, 3000, 3, 240, 3000);
+        String url = "http://127.0.0.1:" + server.getAddress().getPort() + "/detail";
+        String rawOutput = """
+                1. 伊朗局势最新消息
+                %s
+                2. 美国与伊朗谈判进展
+                %s
+                """.formatted(url, url);
+
+        String output = augmentor.augmentRenderedSearchOutput("伊朗最新消息给我总结前5条", rawOutput);
+
+        assertEquals(rawOutput, output);
+        assertTrue(!output.contains("最相关详情"), output);
+    }
 }

@@ -556,7 +556,7 @@ final class NewsSearchSkillExecutor {
         return new SkillDescriptor(
                 name(),
                 description(),
-                List.of("news_search", "news search", "36kr", "serper", "serpapi", "新闻检索", "新闻搜索", "查看新闻", "看新闻", "新闻", "资讯", "头条", "热点", "热搜")
+                List.of("news_search", "news search", "36kr", "serper", "serpapi", "新闻检索", "新闻搜索", "查看新闻", "看新闻", "新闻", "资讯", "头条", "热点", "热搜", "最新消息", "最新动态")
         );
     }
 

@@ -81,6 +81,24 @@ class SemanticAnalysisServiceTest {
     }
 
     @Test
+    void shouldInferNewsRealtimeSkillForLatestMessageSummaryRequest() {
+        SemanticAnalysisService service = new SemanticAnalysisService((prompt, context) -> "stub", realtimeRegistry(), true, false, true, "", "local", "cost", 120);
+
+        SemanticAnalysisResult result = service.analyze(
+                "u1",
+                "伊朗最新消息给我总结前5条",
+                "",
+                Map.of(),
+                List.of("news.lookup - latest news lookup")
+        );
+
+        assertEquals("news.lookup", result.suggestedSkill());
+        assertEquals("news", result.payload().get("domain"));
+        assertEquals("伊朗最新消息给我总结前5条", result.payload().get("query"));
+        assertTrue(result.keywords().contains("最新消息") || result.keywords().contains("新闻"), result.keywords().toString());
+    }
+
+    @Test
     void shouldInferMarketRealtimeSkillWithHeuristics() {
         SemanticAnalysisService service = new SemanticAnalysisService((prompt, context) -> "stub", realtimeRegistry(), true, false, true, "", "local", "cost", 120);
 
@@ -610,6 +628,32 @@ class SemanticAnalysisServiceTest {
         assertEquals("continue", result.intentState());
         assertEquals("整理季度复盘", result.taskFocus());
         assertTrue(result.rewrittenInput().contains("整理季度复盘"));
+    }
+
+    @Test
+    void shouldTreatMissingSummaryQuestionAsNewsContinuation() {
+        SkillRegistry registry = new SkillRegistry(List.of(new FixedSkill("news_search")));
+        SemanticAnalysisService service = new SemanticAnalysisService((prompt, context) -> "stub", registry, true, false, true, "", "local", "cost", 120);
+
+        SemanticAnalysisResult result = service.analyze(
+                "u1",
+                "没有总结吗",
+                """
+                Relevant knowledge:
+                - [意图摘要] 用户当前想要：获取最新新闻资讯；可用执行方式：news.lookup；已确认信息：query=伊朗, limit=5, domain=news
+                """,
+                Map.of(),
+                List.of("news.lookup - latest news lookup")
+        );
+
+        assertEquals("news.lookup", result.suggestedSkill());
+        assertEquals("continuation", result.contextScope());
+        assertEquals("continue", result.intentState());
+        assertEquals("伊朗", result.taskFocus());
+        assertEquals("伊朗", result.payload().get("query"));
+        assertEquals("5", String.valueOf(result.payload().get("limit")));
+        assertTrue(result.rewrittenInput().contains("补充总结当前事项"));
+        assertTrue(result.summary().contains("补充总结"));
     }
 
     @Test

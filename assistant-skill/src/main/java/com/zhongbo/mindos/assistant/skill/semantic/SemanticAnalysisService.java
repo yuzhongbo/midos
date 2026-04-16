@@ -675,7 +675,7 @@ public class SemanticAnalysisService implements SemanticAnalyzer {
                 ? SemanticAnalysisResult.empty()
                 : heuristicAnalysis(continuation.focus());
         String inheritedSkill = firstNonBlankString(continuation.skillName(), inherited.suggestedSkill());
-        String suggestedSkill = shouldCarryExecutionSkill(normalized) ? inheritedSkill : "";
+        String suggestedSkill = shouldCarryExecutionSkill(normalized, inheritedSkill) ? inheritedSkill : "";
         Map<String, Object> payload = buildContinuationPayload(suggestedSkill, continuation.payload(), inherited, continuation.focus());
         String focus = firstNonBlankString(continuation.focus(), resolveContinuationFocus(payload), inherited.taskFocus());
         if (focus.isBlank()) {
@@ -709,10 +709,11 @@ public class SemanticAnalysisService implements SemanticAnalyzer {
         if (containsAny(normalized, SEMANTIC_META_HINTS.toArray(String[]::new))) {
             return null;
         }
-        boolean explicitNewsIntent = containsAny(normalized,
-                "新闻", "资讯", "快讯", "头条", "热搜", "最新新闻", "今日新闻", "国际新闻", "news");
+        boolean explicitNewsIntent = looksLikeNewsRealtimeIntent(normalized);
         if (explicitNewsIntent
-                && matchesSkill(userInput, normalized, "news.lookup", "新闻", "资讯", "快讯", "头条", "热搜", "最新新闻", "今日新闻", "国际新闻", "news")) {
+                && matchesSkill(userInput, normalized, "news.lookup",
+                "新闻", "资讯", "快讯", "头条", "热搜", "最新新闻", "今日新闻", "国际新闻",
+                "最新消息", "最近消息", "最新动态", "最近动态", "news")) {
             return buildRealtimeSemanticAnalysis(
                     userInput,
                     "获取最新新闻资讯",
@@ -720,7 +721,8 @@ public class SemanticAnalysisService implements SemanticAnalyzer {
                     "用户请求获取实时新闻资讯",
                     0.89,
                     Map.of("query", userInput.trim(), "domain", "news"),
-                    routingKeywordHints(userInput, "news.lookup", "新闻", "资讯", "头条", "快讯", "热搜"),
+                    routingKeywordHints(userInput, "news.lookup",
+                            "新闻", "资讯", "头条", "快讯", "热搜", "最新消息", "最新动态"),
                     List.of(new SemanticAnalysisResult.CandidateIntent("news.lookup", 0.94), new SemanticAnalysisResult.CandidateIntent("web.lookup", 0.80))
             );
         }
@@ -1128,7 +1130,8 @@ public class SemanticAnalysisService implements SemanticAnalyzer {
                 || looksLikePlanningFollowUp(normalized)
                 || looksLikeProgressReportFollowUp(normalized)
                 || looksLikeChoiceSelectionFollowUp(normalized)
-                || looksLikeDecisionFollowUp(normalized)) {
+                || looksLikeDecisionFollowUp(normalized)
+                || looksLikeSummaryFollowUp(normalized)) {
             return true;
         }
         if (containsAny(normalized,
@@ -1179,11 +1182,34 @@ public class SemanticAnalysisService implements SemanticAnalyzer {
                 "前面那个", "后面那个", "上一个方案", "下一个方案");
     }
 
-    private boolean shouldCarryExecutionSkill(String normalized) {
+    private boolean looksLikeSummaryFollowUp(String normalized) {
         return containsAny(normalized,
+                "没有总结", "没总结", "总结吗", "没有概括", "没概括",
+                "总结一下", "帮我总结", "给我总结", "再总结", "顺手总结",
+                "汇总一下", "梳理一下", "概括一下", "提炼一下", "归纳一下");
+    }
+
+    private boolean shouldCarryExecutionSkill(String normalized, String inheritedSkill) {
+        if (containsAny(normalized,
                 "开始吧", "开始执行", "执行吧", "就按这个", "按刚才", "按这个",
                 "按之前", "按之前方式", "继续按之前", "继续按之前方式", "按上次", "照之前",
-                "帮我推进", "推进一下", "照这个", "那就这样", "就这样", "开工", "开始做");
+                "帮我推进", "推进一下", "照这个", "那就这样", "就这样", "开工", "开始做")) {
+            return true;
+        }
+        return looksLikeSummaryFollowUp(normalized) && isSearchLikeContinuationSkill(inheritedSkill);
+    }
+
+    private boolean isSearchLikeContinuationSkill(String skillName) {
+        String normalizedSkill = normalize(skillName);
+        String executionTarget = normalize(DecisionCapabilityCatalog.executionTarget(skillName));
+        return containsAny(normalizedSkill, "search", "lookup", "news_search")
+                || containsAny(executionTarget, "search", "lookup", "news_search");
+    }
+
+    private boolean looksLikeNewsRealtimeIntent(String normalized) {
+        return containsAny(normalized,
+                "新闻", "资讯", "快讯", "头条", "热搜", "最新新闻", "今日新闻", "国际新闻",
+                "最新消息", "最近消息", "最新动态", "最近动态", "news");
     }
 
     private ContinuationContext resolveContinuationContext(String memoryContext) {
@@ -1391,6 +1417,9 @@ public class SemanticAnalysisService implements SemanticAnalyzer {
         if (containsAny(normalized, "提醒我", "提醒一下", "记得", "明天提醒", "稍后提醒")) {
             return "为当前事项设置提醒：" + focus;
         }
+        if (looksLikeSummaryFollowUp(normalized)) {
+            return "补充总结当前事项：" + focus;
+        }
         if (looksLikeBlockingFollowUp(normalized)) {
             return "当前事项遇到阻塞：" + focus;
         }
@@ -1416,6 +1445,9 @@ public class SemanticAnalysisService implements SemanticAnalyzer {
     }
 
     private String buildContinuationIntent(String normalized, String suggestedSkill) {
+        if (looksLikeSummaryFollowUp(normalized)) {
+            return "围绕当前事项补充总结关键信息";
+        }
         if (looksLikePlanningFollowUp(normalized)) {
             return "围绕当前任务整理方案或步骤";
         }
@@ -1438,6 +1470,9 @@ public class SemanticAnalysisService implements SemanticAnalyzer {
 
     private String buildContinuationSummary(String normalized, String focus) {
         String clippedFocus = capText(focus, 60);
+        if (looksLikeSummaryFollowUp(normalized)) {
+            return "用户希望补充总结当前事项：" + clippedFocus;
+        }
         if (looksLikePlanningFollowUp(normalized)) {
             return "用户想先明确当前事项的方案或步骤：" + clippedFocus;
         }
@@ -1457,6 +1492,9 @@ public class SemanticAnalysisService implements SemanticAnalyzer {
     }
 
     private double resolveContinuationConfidence(String normalized, String suggestedSkill) {
+        if (looksLikeSummaryFollowUp(normalized)) {
+            return suggestedSkill.isBlank() ? 0.80 : 0.86;
+        }
         if (looksLikeBlockingFollowUp(normalized)
                 || looksLikePlanningFollowUp(normalized)
                 || looksLikeProgressReportFollowUp(normalized)
@@ -1471,6 +1509,12 @@ public class SemanticAnalysisService implements SemanticAnalyzer {
                                                      String rewrittenInput,
                                                      String normalized,
                                                      String suggestedSkill) {
+        if (looksLikeSummaryFollowUp(normalized)) {
+            if (suggestedSkill != null && !suggestedSkill.isBlank()) {
+                return routingKeywordHints(rewrittenInput, suggestedSkill, "总结", "汇总", "梳理", "概括", "提炼");
+            }
+            return extractKeywords(userInput, "总结", "汇总", "梳理", "概括", "提炼");
+        }
         if (suggestedSkill != null && !suggestedSkill.isBlank()) {
             return routingKeywordHints(rewrittenInput, suggestedSkill, "继续", "推进", "刚才", "按这个");
         }

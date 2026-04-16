@@ -10,7 +10,7 @@ final class RealtimeIntentHeuristics {
 
     private static final List<String> REALTIME_DOMAIN_TERMS = List.of(
             "天气", "气温", "空气质量", "pm2.5", "aqi",
-            "新闻", "资讯", "快讯", "头条", "热搜", "热闻",
+            "新闻", "资讯", "快讯", "头条", "热搜", "热闻", "最新消息", "最近消息", "最新动态", "最近动态",
             "汇率", "股价", "行情", "油价", "路况", "拥堵",
             "航班", "列车", "高铁", "火车", "机票", "车票", "延误", "到达", "出发",
             "比赛", "比分", "赛事", "赛程", "直播",
@@ -50,7 +50,9 @@ final class RealtimeIntentHeuristics {
     );
 
     private static final List<String> NEWS_HINTS = List.of(
-            "新闻", "资讯", "快讯", "头条", "热搜", "热闻", "news"
+            "新闻", "资讯", "快讯", "头条", "热搜", "热闻",
+            "最新消息", "最近消息", "最新动态", "最近动态",
+            "news"
     );
 
     private static final List<String> MARKET_HINTS = List.of(

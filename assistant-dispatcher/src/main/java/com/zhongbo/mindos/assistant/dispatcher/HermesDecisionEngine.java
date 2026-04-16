@@ -658,7 +658,7 @@ final class HermesDecisionEngine {
             return false;
         }
         String normalizedInput = normalize(context.userInput()).toLowerCase(Locale.ROOT);
-        if (containsAny(normalizedInput, "新闻", "news", "头条", "热点", "headline")) {
+        if (looksLikeNewsLeadInput(normalizedInput)) {
             return true;
         }
         SemanticAnalysisResult semanticAnalysis = context.semanticAnalysis();
@@ -669,13 +669,15 @@ final class HermesDecisionEngine {
         String intent = normalize(semanticAnalysis.intent()).toLowerCase(Locale.ROOT);
         return "news.lookup".equals(suggestedSkill)
                 || intent.contains("news")
-                || semanticAnalysis.keywords().stream().anyMatch(keyword -> containsAny(
-                normalize(keyword).toLowerCase(Locale.ROOT),
-                "新闻",
-                "news",
-                "头条",
-                "热点"
-        ));
+                || semanticAnalysis.keywords().stream()
+                .map(keyword -> normalize(keyword).toLowerCase(Locale.ROOT))
+                .anyMatch(this::looksLikeNewsLeadInput);
+    }
+
+    private boolean looksLikeNewsLeadInput(String normalizedInput) {
+        return containsAny(normalizedInput,
+                "新闻", "news", "头条", "热点", "headline",
+                "最新消息", "最近消息", "最新动态", "最近动态");
     }
 
     private void addCandidate(Map<String, Candidate> candidates,
