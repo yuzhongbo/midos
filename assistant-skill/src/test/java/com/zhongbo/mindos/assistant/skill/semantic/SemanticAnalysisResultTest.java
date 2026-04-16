@@ -202,6 +202,38 @@ class SemanticAnalysisResultTest {
     }
 
     @Test
+    void shouldClassifySelectionFollowUpsAndDetectAmbiguousChoices() {
+        SemanticAnalysisResult result = new SemanticAnalysisResult(
+                "llm",
+                "在当前事项中选择候选方案或执行方向",
+                "第二种吧，当前事项：提交周报",
+                "task.manage",
+                Map.of("task", "提交周报"),
+                List.of("第二种", "周报"),
+                "用户在为当前事项选择执行方案：提交周报",
+                0.68,
+                List.of(
+                        new SemanticAnalysisResult.CandidateIntent("task.manage", 0.74),
+                        new SemanticAnalysisResult.CandidateIntent("learning.plan", 0.71),
+                        new SemanticAnalysisResult.CandidateIntent("docs.lookup", 0.34)
+                )
+        );
+
+        assertEquals("selection", result.followUpMode());
+        assertEquals("update", result.intentState());
+        assertEquals("decision", result.intentPhase());
+        assertEquals("continue", result.threadRelation());
+        assertTrue(result.hasAmbiguousSkillChoice());
+        assertEquals(
+                List.of("task.manage", "learning.plan"),
+                result.ambiguousCandidateIntents().stream()
+                        .limit(2)
+                        .map(SemanticAnalysisResult.CandidateIntent::intent)
+                        .toList()
+        );
+    }
+
+    @Test
     void shouldDetectPauseAndCompleteIntentStates() {
         SemanticAnalysisResult pause = new SemanticAnalysisResult(
                 "heuristic",

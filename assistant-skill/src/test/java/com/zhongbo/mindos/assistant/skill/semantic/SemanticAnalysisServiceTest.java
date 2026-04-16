@@ -660,6 +660,35 @@ class SemanticAnalysisServiceTest {
     }
 
     @Test
+    void shouldCarryChoiceSelectionFromActiveTaskThread() {
+        SkillRegistry registry = new SkillRegistry(List.of(new FixedSkill("todo.create")));
+        SemanticAnalysisService service = new SemanticAnalysisService((prompt, context) -> "stub", registry, true, false, true, "", "local", "cost", 120);
+
+        SemanticAnalysisResult result = service.analyze(
+                "u1",
+                "第二种吧",
+                """
+                Active task thread:
+                - 当前事项：提交周报
+                - 状态：规划中
+                - 下一步：确定发送方案
+                """,
+                Map.of(),
+                List.of("todo.create - Creates todo items")
+        );
+
+        assertTrue(result.suggestedSkill().isBlank());
+        assertEquals("continuation", result.contextScope());
+        assertEquals("selection", result.followUpMode());
+        assertEquals("update", result.intentState());
+        assertEquals("decision", result.intentPhase());
+        assertEquals("continue", result.threadRelation());
+        assertEquals("提交周报", result.taskFocus());
+        assertTrue(result.rewrittenInput().contains("当前事项：提交周报"));
+        assertTrue(result.summary().contains("选择执行方案"));
+    }
+
+    @Test
     void shouldCarryBlockingIntentFromActiveTaskThread() {
         SkillRegistry registry = new SkillRegistry(List.of(new FixedSkill("todo.create")));
         SemanticAnalysisService service = new SemanticAnalysisService((prompt, context) -> "stub", registry, true, false, true, "", "local", "cost", 120);

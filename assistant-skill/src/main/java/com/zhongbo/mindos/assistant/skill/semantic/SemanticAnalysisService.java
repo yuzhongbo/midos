@@ -685,9 +685,7 @@ public class SemanticAnalysisService implements SemanticAnalyzer {
         String intent = buildContinuationIntent(normalized, suggestedSkill);
         String summary = buildContinuationSummary(normalized, focus);
         double confidence = resolveContinuationConfidence(normalized, suggestedSkill);
-        List<String> keywords = suggestedSkill.isBlank()
-                ? extractKeywords(rewrittenInput, "继续", "推进", "刚才", "按这个")
-                : routingKeywordHints(rewrittenInput, suggestedSkill, "继续", "推进", "刚才", "按这个");
+        List<String> keywords = resolveContinuationKeywords(userInput, rewrittenInput, normalized, suggestedSkill);
         List<SemanticAnalysisResult.CandidateIntent> candidateIntents = suggestedSkill.isBlank()
                 ? List.of()
                 : List.of(new SemanticAnalysisResult.CandidateIntent(suggestedSkill, 0.88));
@@ -1129,6 +1127,7 @@ public class SemanticAnalysisService implements SemanticAnalyzer {
         if (looksLikeBlockingFollowUp(normalized)
                 || looksLikePlanningFollowUp(normalized)
                 || looksLikeProgressReportFollowUp(normalized)
+                || looksLikeChoiceSelectionFollowUp(normalized)
                 || looksLikeDecisionFollowUp(normalized)) {
             return true;
         }
@@ -1168,6 +1167,16 @@ public class SemanticAnalysisService implements SemanticAnalyzer {
         return containsAny(normalized,
                 "改成", "换成", "加上", "补一下", "优先", "目标是",
                 "截止改到", "改到", "调整为");
+    }
+
+    private boolean looksLikeChoiceSelectionFollowUp(String normalized) {
+        return containsAny(normalized,
+                "第一个", "第二个", "第三个",
+                "第一种", "第二种", "第三种",
+                "第一版", "第二版", "第三版",
+                "第一套", "第二套", "第三套",
+                "前一个", "后一个", "前一种", "后一种",
+                "前面那个", "后面那个", "上一个方案", "下一个方案");
     }
 
     private boolean shouldCarryExecutionSkill(String normalized) {
@@ -1391,6 +1400,9 @@ public class SemanticAnalysisService implements SemanticAnalyzer {
         if (looksLikeProgressReportFollowUp(normalized)) {
             return "更新当前事项进展：" + focus;
         }
+        if (looksLikeChoiceSelectionFollowUp(normalized) && !trimmed.contains(focus)) {
+            return trimmed + "，当前事项：" + focus;
+        }
         if (looksLikeDecisionFollowUp(normalized) && !trimmed.contains(focus)) {
             return trimmed + "，当前事项：" + focus;
         }
@@ -1413,6 +1425,9 @@ public class SemanticAnalysisService implements SemanticAnalyzer {
         if (looksLikeProgressReportFollowUp(normalized)) {
             return "同步当前任务进展或状态";
         }
+        if (looksLikeChoiceSelectionFollowUp(normalized)) {
+            return "在当前事项中选择候选方案或执行方向";
+        }
         if (looksLikeDecisionFollowUp(normalized)) {
             return "调整当前任务约束或执行方向";
         }
@@ -1432,6 +1447,9 @@ public class SemanticAnalysisService implements SemanticAnalyzer {
         if (looksLikeProgressReportFollowUp(normalized)) {
             return "用户在同步当前事项进展：" + clippedFocus;
         }
+        if (looksLikeChoiceSelectionFollowUp(normalized)) {
+            return "用户在为当前事项选择执行方案：" + clippedFocus;
+        }
         if (looksLikeDecisionFollowUp(normalized)) {
             return "用户在调整当前事项要求：" + clippedFocus;
         }
@@ -1442,10 +1460,36 @@ public class SemanticAnalysisService implements SemanticAnalyzer {
         if (looksLikeBlockingFollowUp(normalized)
                 || looksLikePlanningFollowUp(normalized)
                 || looksLikeProgressReportFollowUp(normalized)
+                || looksLikeChoiceSelectionFollowUp(normalized)
                 || looksLikeDecisionFollowUp(normalized)) {
             return suggestedSkill.isBlank() ? 0.82 : 0.87;
         }
         return suggestedSkill.isBlank() ? 0.76 : 0.84;
+    }
+
+    private List<String> resolveContinuationKeywords(String userInput,
+                                                     String rewrittenInput,
+                                                     String normalized,
+                                                     String suggestedSkill) {
+        if (suggestedSkill != null && !suggestedSkill.isBlank()) {
+            return routingKeywordHints(rewrittenInput, suggestedSkill, "继续", "推进", "刚才", "按这个");
+        }
+        if (looksLikeChoiceSelectionFollowUp(normalized)) {
+            return extractKeywords(userInput, "第一种", "第二种", "第三种", "第一个", "第二个", "第三个");
+        }
+        if (looksLikeDecisionFollowUp(normalized)) {
+            return extractKeywords(userInput, "改成", "换成", "调整", "目标", "优先");
+        }
+        if (looksLikePlanningFollowUp(normalized)) {
+            return extractKeywords(userInput, "方案", "步骤", "计划");
+        }
+        if (looksLikeBlockingFollowUp(normalized)) {
+            return extractKeywords(userInput, "卡住", "报错", "阻塞");
+        }
+        if (looksLikeProgressReportFollowUp(normalized)) {
+            return extractKeywords(userInput, "进展", "状态", "同步");
+        }
+        return extractKeywords(rewrittenInput, "继续", "推进", "刚才", "按这个");
     }
 
     private String extractByPattern(String input, Pattern pattern) {

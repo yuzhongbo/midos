@@ -1,5 +1,7 @@
 package com.zhongbo.mindos.assistant.skill.semantic;
 
+import com.zhongbo.mindos.assistant.skill.DecisionCapabilityCatalog;
+
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -38,6 +40,9 @@ public record SemanticAnalysisResult(String source,
 
     private static final SemanticAnalysisResult EMPTY =
             new SemanticAnalysisResult("disabled", "", "", "", Map.of(), List.of(), "", 0.0, List.of());
+    private static final double AMBIGUOUS_CHOICE_MAX_TOP_CONFIDENCE = 0.82d;
+    private static final double AMBIGUOUS_CHOICE_MIN_SECOND_CONFIDENCE = 0.55d;
+    private static final double AMBIGUOUS_CHOICE_MAX_GAP = 0.08d;
 
     public SemanticAnalysisResult(String source,
                                   String intent,
@@ -103,6 +108,25 @@ public record SemanticAnalysisResult(String source,
                 .mapToDouble(CandidateIntent::confidence)
                 .max()
                 .orElse(0.0);
+    }
+
+    public boolean hasAmbiguousSkillChoice() {
+        return ambiguousCandidateIntents().size() >= 2;
+    }
+
+    public List<CandidateIntent> ambiguousCandidateIntents() {
+        List<CandidateIntent> ranked = rankedDistinctCandidateIntents();
+        if (ranked.size() < 2) {
+            return List.of();
+        }
+        CandidateIntent first = ranked.get(0);
+        CandidateIntent second = ranked.get(1);
+        if (first.confidence() > AMBIGUOUS_CHOICE_MAX_TOP_CONFIDENCE
+                || second.confidence() < AMBIGUOUS_CHOICE_MIN_SECOND_CONFIDENCE
+                || first.confidence() - second.confidence() > AMBIGUOUS_CHOICE_MAX_GAP) {
+            return List.of();
+        }
+        return ranked.subList(0, Math.min(3, ranked.size()));
     }
 
     public Map<String, Object> asAttributes() {
@@ -183,6 +207,12 @@ public record SemanticAnalysisResult(String source,
         if (!payload.isEmpty()) {
             prompt.append("- payload: ").append(toStablePayloadString(payload)).append('\n');
         }
+        if (!candidateIntents.isEmpty()) {
+            prompt.append("- candidateIntents: ").append(summarizeCandidateIntents(3)).append('\n');
+        }
+        if (hasAmbiguousSkillChoice()) {
+            prompt.append("- ambiguousSkillChoice: true\n");
+        }
         if (prompt.length() == 0) {
             return "";
         }
@@ -243,11 +273,18 @@ public record SemanticAnalysisResult(String source,
     }
 
     public String followUpMode() {
+        String corpus = semanticCorpus();
         if ("continuation".equals(contextScope())) {
+            if (isSelectionSignal(corpus)) {
+                return "selection";
+            }
+            if (isRevisionSignal(corpus)) {
+                return "revision";
+            }
+            if (isConfirmationSignal(corpus)) {
+                return "confirmation";
+            }
             return "continuation";
-        }
-        if (containsAny(semanticCorpus(), "开始吧", "就按这个", "帮我推进", "按刚才", "按这个", "照这个", "可以", "好的", "行")) {
-            return "follow-up";
         }
         return "standalone";
     }
@@ -266,11 +303,12 @@ public record SemanticAnalysisResult(String source,
         if (isBlockingSignal(corpus)) {
             return "blocked";
         }
-        if (containsAny(corpus, "改成", "更新", "补充", "调整", "修改", "换成", "加上", "补一下", "目标是", "截止", "优先级")) {
+        if (isRevisionSignal(corpus) || isSelectionSignal(corpus)) {
             return "update";
         }
         if ("continuation".equals(contextScope())
                 || "continuation".equals(followUpMode())
+                || "confirmation".equals(followUpMode())
                 || "resume".equals(threadRelation())) {
             return "continue";
         }
@@ -314,7 +352,7 @@ public record SemanticAnalysisResult(String source,
         if (isSwitchSignal(corpus)) {
             return "switch";
         }
-        if ("continuation".equals(contextScope()) || "continuation".equals(followUpMode())) {
+        if ("continuation".equals(contextScope()) || isContinuationLikeFollowUpMode(followUpMode())) {
             return "continue";
         }
         if (toolRequired() && hasText(taskFocus())) {
@@ -374,9 +412,9 @@ public record SemanticAnalysisResult(String source,
     }
 
     private boolean isDecisionSignal(String corpus) {
-        return containsAny(corpus,
-                "改成", "换成", "加上", "补一下", "优先", "目标是",
-                "截止改到", "改到", "调整为", "就按这个", "就这样", "先这样");
+        return isRevisionSignal(corpus)
+                || isSelectionSignal(corpus)
+                || containsAny(corpus, "就按这个", "就这样", "先这样");
     }
 
     private boolean isSwitchSignal(String corpus) {
@@ -405,6 +443,32 @@ public record SemanticAnalysisResult(String source,
             appendCorpus(builder, toStablePayloadString(payload));
         }
         return builder.toString().toLowerCase(java.util.Locale.ROOT);
+    }
+
+    private boolean isContinuationLikeFollowUpMode(String followUpMode) {
+        return Set.of("continuation", "selection", "revision", "confirmation").contains(followUpMode);
+    }
+
+    private boolean isRevisionSignal(String corpus) {
+        return containsAny(corpus,
+                "改成", "更新", "补充", "调整", "修改", "换成", "加上", "补一下",
+                "目标是", "截止", "优先级", "截止改到", "改到", "调整为");
+    }
+
+    private boolean isSelectionSignal(String corpus) {
+        return containsAny(corpus,
+                "第一个", "第二个", "第三个",
+                "第一种", "第二种", "第三种",
+                "第一版", "第二版", "第三版",
+                "第一套", "第二套", "第三套",
+                "前一个", "后一个", "前一种", "后一种",
+                "前面那个", "后面那个", "上一个方案", "下一个方案");
+    }
+
+    private boolean isConfirmationSignal(String corpus) {
+        return containsAny(corpus,
+                "开始吧", "开始执行", "执行吧", "就按这个", "按刚才", "按这个",
+                "照这个", "帮我推进", "推进一下", "可以", "好的", "没问题", "开工");
     }
 
     private void appendCorpus(StringBuilder builder, String value) {
@@ -480,6 +544,42 @@ public record SemanticAnalysisResult(String source,
 
     private static String emptyIfNull(String value) {
         return value == null ? "" : value;
+    }
+
+    private List<CandidateIntent> rankedDistinctCandidateIntents() {
+        Map<String, CandidateIntent> distinct = new LinkedHashMap<>();
+        if (hasText(suggestedSkill)) {
+            double suggestedConfidence = Math.max(confidence, confidenceForSkill(suggestedSkill));
+            distinct.put(ambiguityDedupKey(suggestedSkill), new CandidateIntent(suggestedSkill.trim(), suggestedConfidence));
+        }
+        for (CandidateIntent candidate : candidateIntents.stream()
+                .sorted(Comparator.comparingDouble(CandidateIntent::confidence).reversed())
+                .toList()) {
+            String key = ambiguityDedupKey(candidate.intent());
+            if (!distinct.containsKey(key)) {
+                distinct.put(key, candidate);
+            }
+        }
+        return distinct.values().stream()
+                .sorted(Comparator.comparingDouble(CandidateIntent::confidence).reversed())
+                .toList();
+    }
+
+    private String ambiguityDedupKey(String intentName) {
+        String normalized = stringValue(intentName);
+        if (normalized.isBlank()) {
+            return "";
+        }
+        return DecisionCapabilityCatalog.executionTarget(normalized);
+    }
+
+    private String summarizeCandidateIntents(int maxCount) {
+        return rankedDistinctCandidateIntents().stream()
+                .limit(Math.max(1, maxCount))
+                .map(candidate -> candidate.intent() + "="
+                        + String.format(java.util.Locale.ROOT, "%.2f", candidate.confidence()))
+                .reduce((left, right) -> left + ", " + right)
+                .orElse("");
     }
 
     private String firstNonBlankPayloadValue(String... keys) {

@@ -39,12 +39,26 @@ final class SemanticClarifyPolicy {
                 semanticPlan.skillName(),
                 semanticPlan.effectivePayload()
         ).isEmpty();
-        return lowConfidence || missingRequiredParams;
+        boolean ambiguousSkillChoice = !ambiguousCandidateChoices(semanticAnalysis, semanticPlan.skillName()).isEmpty();
+        return lowConfidence || missingRequiredParams || ambiguousSkillChoice;
     }
 
     String buildSemanticClarifyReply(SemanticAnalysisResult semanticAnalysis,
                                      SemanticRoutingSupport.SemanticRoutingPlan semanticPlan) {
         String skill = semanticPlan == null ? "" : normalizeOptional(semanticPlan.skillName());
+        List<String> ambiguousChoices = ambiguousCandidateChoices(semanticAnalysis, skill);
+        if (ambiguousChoices.size() >= 2) {
+            StringBuilder reply = new StringBuilder("我现在有两个接近的理解");
+            if (semanticAnalysis != null && semanticAnalysis.summary() != null && !semanticAnalysis.summary().isBlank()) {
+                reply.append("（").append(capText(semanticAnalysis.summary(), 80)).append("）");
+            }
+            reply.append("：`")
+                    .append(ambiguousChoices.get(0))
+                    .append("` 和 `")
+                    .append(ambiguousChoices.get(1))
+                    .append("`。你现在更想执行哪一个？");
+            return reply.toString();
+        }
         List<String> missing = semanticPlan == null ? List.of() : missingRequiredParamsForSkill(skill, semanticPlan.effectivePayload());
         StringBuilder reply = new StringBuilder("我理解你想执行");
         reply.append(skill.isBlank() ? "相关操作" : " `" + skill + "`");
@@ -70,6 +84,24 @@ final class SemanticClarifyPolicy {
             return List.of();
         }
         return validation.missingParams();
+    }
+
+    private List<String> ambiguousCandidateChoices(SemanticAnalysisResult semanticAnalysis, String skillName) {
+        if (semanticAnalysis == null || skillName == null || skillName.isBlank()) {
+            return List.of();
+        }
+        String executionTarget = DecisionCapabilityCatalog.executionTarget(skillName);
+        List<String> choices = semanticAnalysis.ambiguousCandidateIntents().stream()
+                .map(SemanticAnalysisResult.CandidateIntent::intent)
+                .filter(intent -> skillName.equals(intent)
+                        || executionTarget.equals(DecisionCapabilityCatalog.executionTarget(intent)))
+                .findFirst()
+                .map(ignored -> semanticAnalysis.ambiguousCandidateIntents().stream()
+                        .map(SemanticAnalysisResult.CandidateIntent::intent)
+                        .limit(3)
+                        .toList())
+                .orElse(List.of());
+        return choices.size() >= 2 ? choices : List.of();
     }
 
     private String normalizeOptional(String value) {

@@ -988,6 +988,47 @@ class DispatcherServiceTest {
     }
 
     @Test
+    void shouldAskClarificationWhenSemanticCandidateChoicesAreAmbiguous() {
+        MemoryManager memoryManager = createMemoryManager();
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of("stub"));
+        SkillRegistry registry = new SkillRegistry(List.of(
+                new FixedSkill("todo.create", "Creates todo items from natural language", "待办已创建"),
+                new FixedSkill("teaching.plan", "Generate study plans and teaching plans", "学习计划已生成")
+        ));
+        SemanticAnalysisService semanticAnalysisService = new SemanticAnalysisService(llmClient, registry, new DefaultSkillCatalog(registry, null, new SkillRoutingProperties()), true, false, true, "", "local", "cost", 120) {
+            @Override
+            public SemanticAnalysisResult analyze(String userId,
+                                                  String userInput,
+                                                  String memoryContext,
+                                                  Map<String, Object> profileContext,
+                                                  List<String> availableSkillSummaries) {
+                return new SemanticAnalysisResult(
+                        "llm",
+                        "安排一个后续动作",
+                        userInput,
+                        "task.manage",
+                        Map.of("task", "提交周报"),
+                        List.of("安排", "周报"),
+                        "用户想让我继续安排这件事",
+                        0.69,
+                        List.of(
+                                new SemanticAnalysisResult.CandidateIntent("task.manage", 0.74),
+                                new SemanticAnalysisResult.CandidateIntent("learning.plan", 0.71)
+                        )
+                );
+            }
+        };
+        DispatcherService service = createDispatcherWithSemanticService(memoryManager, llmClient, registry, semanticAnalysisService, 2);
+
+        DispatchResult result = service.dispatch("ambiguous-clarify-user", "这个你帮我安排一下");
+
+        assertEquals("semantic.clarify", result.channel());
+        assertEquals("semantic-clarify", result.executionTrace().routing().route());
+        assertTrue(result.reply().contains("task.manage"));
+        assertTrue(result.reply().contains("learning.plan"));
+    }
+
+    @Test
     void shouldSkipClarificationWhenCandidateIntentConfidenceForSuggestedSkillIsHigh() {
         MemoryManager memoryManager = createMemoryManager();
         RecordingLlmClient llmClient = new RecordingLlmClient(List.of("stub"));

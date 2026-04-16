@@ -46,6 +46,7 @@ final class SemanticDecisionPromptBuilder {
         prompt.append("14. If the user clearly switches to another matter, do not force the previous task thread.\n");
         prompt.append("15. A generic domain noun does not equal a tool request. Words like 时间, 接口, 路径, 沟通, 截止 should not trigger a tool unless the user clearly asks you to act.\n");
         prompt.append("16. If the user is only describing status, pressure, blockers, or context, prefer suggestedSkill empty over a weak keyword-based tool guess.\n");
+        prompt.append("17. If two skill interpretations are close, include both in candidate_intents, lower confidence accordingly, and avoid pretending certainty.\n");
         prompt.append('\n');
         prompt.append("JSON shape example:\n");
         prompt.append("{\"intent\":\"task_create\",\"rewrittenInput\":\"创建一个待办：提交周报\",\"suggestedSkill\":\"todo.create\",\"summary\":\"用户要创建待办并记录截止时间\",\"confidence\":0.92,\"payload\":{\"task\":\"提交周报\",\"dueDate\":\"周五前\"},\"keywords\":[\"待办\",\"周报\",\"周五\"],\"candidate_intents\":[{\"intent\":\"todo.create\",\"confidence\":0.92},{\"intent\":\"calendar.lookup\",\"confidence\":0.21}]}\n");
@@ -103,6 +104,13 @@ final class SemanticDecisionPromptBuilder {
         if (baseline.effectiveConfidence() > 0.0d) {
             lines.add("- confidence: " + String.format(Locale.ROOT, "%.2f", baseline.effectiveConfidence()));
         }
+        String candidateSummary = summarizeCandidateIntents(baseline);
+        if (!candidateSummary.isBlank()) {
+            lines.add("- candidateIntents: " + candidateSummary);
+        }
+        if (baseline.hasAmbiguousSkillChoice()) {
+            lines.add("- ambiguityHint: top candidate intents are close; clarify if needed");
+        }
         if (lines.isEmpty()) {
             return "";
         }
@@ -153,6 +161,18 @@ final class SemanticDecisionPromptBuilder {
             lines.add("... (+" + (skills.size() - MAX_TOOL_LINES) + " more)");
         }
         return String.join("\n", lines);
+    }
+
+    private String summarizeCandidateIntents(SemanticAnalysisResult baseline) {
+        if (baseline == null || baseline.candidateIntents().isEmpty()) {
+            return "";
+        }
+        return baseline.candidateIntents().stream()
+                .limit(3)
+                .map(candidate -> text(candidate.intent()) + "="
+                        + String.format(Locale.ROOT, "%.2f", candidate.confidence()))
+                .reduce((left, right) -> left + ", " + right)
+                .orElse("");
     }
 
     private String summarizeValue(Object value) {
