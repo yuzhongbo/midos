@@ -820,7 +820,8 @@ public class DispatcherMemoryFacade {
             return "";
         }
         List<String> primary = new ArrayList<>();
-        List<String> secondary = new ArrayList<>();
+        List<String> buffer = new ArrayList<>();
+        List<String> fallback = new ArrayList<>();
         for (String rawLine : semanticContext.split("\\R")) {
             String line = rawLine == null ? "" : rawLine.trim();
             if (line.isBlank() || shouldSkipDecisionSemanticLine(line)) {
@@ -831,11 +832,11 @@ public class DispatcherMemoryFacade {
                 continue;
             }
             if (line.startsWith("- [buffer]")) {
-                secondary.add(line);
+                buffer.add(line);
                 continue;
             }
             if (line.startsWith("- [assistant-context]") || line.startsWith("- [summary]")) {
-                secondary.add(line);
+                fallback.add(line);
                 continue;
             }
             primary.add(line);
@@ -847,11 +848,19 @@ public class DispatcherMemoryFacade {
             }
             selected.add(line);
         }
-        for (String line : secondary) {
+        for (String line : buffer) {
             if (selected.size() >= 3) {
                 break;
             }
             selected.add(line);
+        }
+        if (selected.isEmpty()) {
+            for (String line : fallback) {
+                if (selected.size() >= 2) {
+                    break;
+                }
+                selected.add(line);
+            }
         }
         return capText(String.join("\n", selected), budget);
     }
