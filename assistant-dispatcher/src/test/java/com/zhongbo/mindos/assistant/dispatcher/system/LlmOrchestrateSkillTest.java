@@ -1,4 +1,4 @@
-package com.zhongbo.mindos.assistant.skill.examples;
+package com.zhongbo.mindos.assistant.dispatcher.system;
 
 import com.zhongbo.mindos.assistant.common.LlmClient;
 import com.zhongbo.mindos.assistant.common.SkillContext;

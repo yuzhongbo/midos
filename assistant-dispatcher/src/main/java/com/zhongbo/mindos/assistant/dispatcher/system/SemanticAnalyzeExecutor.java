@@ -1,4 +1,4 @@
-package com.zhongbo.mindos.assistant.skill.examples;
+package com.zhongbo.mindos.assistant.dispatcher.system;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;

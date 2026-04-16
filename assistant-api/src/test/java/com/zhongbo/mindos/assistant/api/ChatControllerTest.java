@@ -143,10 +143,12 @@ class ChatControllerTest {
                         .content("{\"userId\":\"test-user\",\"message\":\"你有哪些技能？\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.channel").value("skills.help"))
-                .andExpect(jsonPath("$.reply").value(org.hamcrest.Matchers.containsString("echo")))
-                .andExpect(jsonPath("$.reply").value(org.hamcrest.Matchers.containsString("time")))
+                .andExpect(jsonPath("$.reply").value(org.hamcrest.Matchers.containsString("time.lookup")))
+                .andExpect(jsonPath("$.reply").value(org.hamcrest.Matchers.containsString("learning.plan")))
                 .andExpect(jsonPath("$.reply").value(org.hamcrest.Matchers.containsString("现在几点了")))
-                .andExpect(jsonPath("$.reply").value(org.hamcrest.Matchers.containsString("六周数学学习计划")));
+                .andExpect(jsonPath("$.reply").value(org.hamcrest.Matchers.containsString("六周数学学习计划")))
+                .andExpect(jsonPath("$.reply").value(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("semantic.analyze"))))
+                .andExpect(jsonPath("$.reply").value(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("llm.orchestrate"))));
     }
 
     @Test
