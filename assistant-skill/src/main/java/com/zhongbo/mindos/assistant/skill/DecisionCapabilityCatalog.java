@@ -43,6 +43,18 @@ public final class DecisionCapabilityCatalog {
                     List.of("找文件", "查文件", "搜索目录", "搜索路径", "workspace search", "grep 文件")
             ),
             new CapabilityDefinition(
+                    "news.lookup",
+                    "news_search",
+                    "Look up the latest news, headlines, and hot topics when the user explicitly asks for current news.",
+                    List.of("今天新闻", "今日新闻", "最新新闻", "国际新闻", "查看新闻", "看新闻", "新闻搜索", "news")
+            ),
+            new CapabilityDefinition(
+                    "docs.lookup",
+                    "mcp.docs.searchDocs",
+                    "Search official documentation, guides, SDK manuals, and product docs.",
+                    List.of("search docs", "docs", "documentation", "official docs", "查文档", "搜索文档", "官方文档", "文档查询")
+            ),
+            new CapabilityDefinition(
                     "time.lookup",
                     "time",
                     "Look up the current time when the user explicitly asks for the time.",

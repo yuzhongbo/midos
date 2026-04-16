@@ -69,6 +69,47 @@ class HermesToolSchemaCatalogTest {
         assertFalse(rawExecutionCandidates.contains("code.assist"));
     }
 
+    @Test
+    void shouldHideNewsAndDocsExecutionTargetsBehindCapabilityAliases() {
+        SkillRegistry registry = new SkillRegistry(List.of(
+                new DescriptorSkill(
+                        "news_search",
+                        "Built-in latest news aggregation",
+                        List.of("今天新闻", "最新新闻")
+                ),
+                new DescriptorSkill(
+                        "mcp.docs.searchDocs",
+                        "Search product documentation",
+                        List.of("search docs", "官方文档")
+                )
+        ));
+        InMemoryParamSchemaRegistry paramSchemaRegistry = new InMemoryParamSchemaRegistry();
+        paramSchemaRegistry.registerDefaults();
+        HermesToolSchemaCatalog catalog = new HermesToolSchemaCatalog(
+                new DefaultSkillCatalog(registry, null, new SkillRoutingProperties()),
+                paramSchemaRegistry
+        );
+
+        List<String> schemaNames = catalog.listSchemas().stream()
+                .map(HermesToolSchema::name)
+                .toList();
+        List<String> newsCandidates = catalog.detectDecisionCandidates("今天新闻", 3).stream()
+                .map(candidate -> candidate.skillName())
+                .toList();
+        List<String> docsCandidates = catalog.detectDecisionCandidates("search docs for auth guide", 3).stream()
+                .map(candidate -> candidate.skillName())
+                .toList();
+
+        assertTrue(schemaNames.contains("news.lookup"));
+        assertTrue(schemaNames.contains("docs.lookup"));
+        assertFalse(schemaNames.contains("news_search"));
+        assertFalse(schemaNames.contains("mcp.docs.searchDocs"));
+        assertTrue(newsCandidates.contains("news.lookup"));
+        assertTrue(docsCandidates.contains("docs.lookup"));
+        assertEquals("news_search", catalog.executionTargetForDecision("news.lookup"));
+        assertEquals("mcp.docs.searchDocs", catalog.executionTargetForDecision("docs.lookup"));
+    }
+
     private record DescriptorSkill(String name, String description, List<String> routingKeywords)
             implements Skill, SkillDescriptorProvider {
 

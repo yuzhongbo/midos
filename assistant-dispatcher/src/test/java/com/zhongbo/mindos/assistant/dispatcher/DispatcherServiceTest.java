@@ -772,6 +772,24 @@ class DispatcherServiceTest {
     }
 
     @Test
+    void shouldRouteDocsLookupCapabilityToDocsMcpExecutionSkill() {
+        MemoryManager memoryManager = createMemoryManager();
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of("整理后的文档答复"));
+        DispatcherService service = createDispatcher(
+                memoryManager,
+                llmClient,
+                List.of(newMcpSkill("mcp.docs.searchDocs", "Search product documentation", "Auth guide result")),
+                2
+        );
+
+        DispatchResult result = service.dispatch("docs-user", "search docs for auth guide");
+
+        assertEquals("mcp.docs.searchDocs", result.channel());
+        assertTrue(Set.of("detected-skill", "detected-skill-parallel").contains(result.executionTrace().routing().route()));
+        assertEquals("mcp.docs.searchDocs", result.executionTrace().routing().selectedSkill());
+    }
+
+    @Test
     void shouldBypassLlmSkillSelectionForSmallTalk() {
         MemoryManager memoryManager = createMemoryManager();
         RecordingLlmClient llmClient = new RecordingLlmClient(List.of("已收到"));

@@ -71,10 +71,10 @@ class SemanticAnalysisServiceTest {
                 "帮我看今天有哪些最新新闻",
                 "",
                 Map.of(),
-                List.of("news_search - news summary")
+                List.of("news.lookup - latest news lookup")
         );
 
-        assertEquals("news_search", result.suggestedSkill());
+        assertEquals("news.lookup", result.suggestedSkill());
         assertEquals("news", result.payload().get("domain"));
         assertTrue(result.keywords().contains("新闻"));
         assertTrue(result.confidence() >= 0.89);
@@ -517,7 +517,7 @@ class SemanticAnalysisServiceTest {
         AtomicReference<String> capturedPrompt = new AtomicReference<>("");
         LlmClient llmClient = (prompt, context) -> {
             capturedPrompt.set(prompt);
-            return "{\"intent\":\"docs_lookup\",\"target\":\"mcp.docs.searchDocs\",\"params\":{\"query\":\"Spring Boot RestClient 官方文档\"},\"confidence\":0.93}";
+            return "{\"intent\":\"docs_lookup\",\"target\":\"docs.lookup\",\"params\":{\"query\":\"Spring Boot RestClient 官方文档\"},\"confidence\":0.93}";
         };
         SemanticAnalysisService service = new SemanticAnalysisService(llmClient, registry, true, true, true, "", "local", "cost", 120);
 
@@ -530,12 +530,12 @@ class SemanticAnalysisServiceTest {
                         "searchPriorityOrder", List.of("mcp.docs.searchDocs", "mcp.bravesearch.webSearch")
                 ),
                 List.of(
-                        "mcp.docs.searchDocs - Search official documentation | required=query | keywords=docs/manual/guide",
+                        "docs.lookup - Search official documentation | required=query | keywords=docs/manual/guide",
                         "mcp.bravesearch.webSearch - Search latest web info | required=query | keywords=search/news/weather"
                 )
         );
 
-        assertEquals("mcp.docs.searchDocs", result.suggestedSkill());
+        assertEquals("docs.lookup", result.suggestedSkill());
         assertEquals("Spring Boot RestClient 官方文档", result.payload().get("query"));
         assertTrue(capturedPrompt.get().contains("Return strict JSON only"));
         assertTrue(capturedPrompt.get().contains("CONFIRMED_MEMORY_AND_CONTEXT:"));
@@ -543,7 +543,7 @@ class SemanticAnalysisServiceTest {
         assertTrue(capturedPrompt.get().contains("SEARCH_PRIORITY_ORDER:"));
         assertTrue(capturedPrompt.get().contains("BASELINE_ROUTING_HINT:"));
         assertTrue(capturedPrompt.get().contains("Only use skill names listed in AVAILABLE_TOOLS."));
-        assertTrue(capturedPrompt.get().contains("mcp.docs.searchDocs - Search official documentation"));
+        assertTrue(capturedPrompt.get().contains("docs.lookup - Search official documentation"));
     }
 
     @Test

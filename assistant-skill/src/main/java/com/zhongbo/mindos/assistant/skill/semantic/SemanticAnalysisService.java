@@ -714,16 +714,16 @@ public class SemanticAnalysisService implements SemanticAnalyzer {
         boolean explicitNewsIntent = containsAny(normalized,
                 "新闻", "资讯", "快讯", "头条", "热搜", "最新新闻", "今日新闻", "国际新闻", "news");
         if (explicitNewsIntent
-                && matchesSkill(userInput, normalized, "news_search", "新闻", "资讯", "快讯", "头条", "热搜", "最新新闻", "今日新闻", "国际新闻", "news")) {
+                && matchesSkill(userInput, normalized, "news.lookup", "新闻", "资讯", "快讯", "头条", "热搜", "最新新闻", "今日新闻", "国际新闻", "news")) {
             return buildRealtimeSemanticAnalysis(
                     userInput,
                     "获取最新新闻资讯",
-                    "news_search",
+                    "news.lookup",
                     "用户请求获取实时新闻资讯",
                     0.89,
                     Map.of("query", userInput.trim(), "domain", "news"),
-                    routingKeywordHints(userInput, "news_search", "新闻", "资讯", "头条", "快讯", "热搜"),
-                    List.of(new SemanticAnalysisResult.CandidateIntent("news_search", 0.94), new SemanticAnalysisResult.CandidateIntent("mcp.bravesearch.webSearch", 0.80))
+                    routingKeywordHints(userInput, "news.lookup", "新闻", "资讯", "头条", "快讯", "热搜"),
+                    List.of(new SemanticAnalysisResult.CandidateIntent("news.lookup", 0.94), new SemanticAnalysisResult.CandidateIntent("mcp.bravesearch.webSearch", 0.80))
             );
         }
         boolean explicitWeatherIntent = containsAny(normalized,

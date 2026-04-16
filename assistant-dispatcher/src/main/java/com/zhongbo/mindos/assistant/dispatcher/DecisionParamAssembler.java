@@ -5,6 +5,7 @@ import com.zhongbo.mindos.assistant.common.SkillDsl;
 import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.dispatcher.decision.Decision;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.DecisionOrchestrator;
+import com.zhongbo.mindos.assistant.skill.DecisionCapabilityCatalog;
 import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalysisResult;
 
 import java.util.LinkedHashMap;
@@ -29,12 +30,13 @@ final class DecisionParamAssembler {
                                        String signalSource,
                                        String userInput,
                                        SkillContext context) {
+        String executionTarget = DecisionCapabilityCatalog.executionTarget(skillName);
         Map<String, Object> params = decisionParamsFromInput(
-                skillName,
+                executionTarget,
                 effectiveInput(userInput, context),
                 context == null || context.attributes() == null ? Map.of() : context.attributes()
         );
-        if (skillName == null || skillName.isBlank()) {
+        if (executionTarget.isBlank()) {
             return params;
         }
         Map<String, Object> enriched = new LinkedHashMap<>(params);
@@ -42,25 +44,25 @@ final class DecisionParamAssembler {
         if ("explicit".equals(signalSource)) {
             enriched.putAll(explicitSkillParams(effectiveInput));
         }
-        if ("echo".equals(skillName) && !enriched.containsKey("text")) {
+        if ("echo".equals(executionTarget) && !enriched.containsKey("text")) {
             String echoText = extractEchoText(effectiveInput);
             if (echoText != null && !echoText.isBlank()) {
                 enriched.put("text", echoText);
             }
         }
-        if ("todo.create".equals(skillName) && !enriched.containsKey("task") && effectiveInput != null && !effectiveInput.isBlank()) {
+        if ("todo.create".equals(executionTarget) && !enriched.containsKey("task") && effectiveInput != null && !effectiveInput.isBlank()) {
             enriched.put("task", effectiveInput);
         }
-        if ("eq.coach".equals(skillName) && !enriched.containsKey("query") && effectiveInput != null && !effectiveInput.isBlank()) {
+        if ("eq.coach".equals(executionTarget) && !enriched.containsKey("query") && effectiveInput != null && !effectiveInput.isBlank()) {
             enriched.put("query", effectiveInput);
         }
-        if ("code.generate".equals(skillName) && !enriched.containsKey("task") && effectiveInput != null && !effectiveInput.isBlank()) {
+        if ("code.generate".equals(executionTarget) && !enriched.containsKey("task") && effectiveInput != null && !effectiveInput.isBlank()) {
             enriched.put("task", effectiveInput);
         }
-        if ("news_search".equals(skillName) && !enriched.containsKey("query") && effectiveInput != null && !effectiveInput.isBlank()) {
+        if ("news_search".equals(executionTarget) && !enriched.containsKey("query") && effectiveInput != null && !effectiveInput.isBlank()) {
             enriched.put("query", effectiveInput);
         }
-        if ("file.search".equals(skillName)) {
+        if ("file.search".equals(executionTarget)) {
             enriched.putIfAbsent("path", "./");
             if (!enriched.containsKey("keyword") && effectiveInput != null && !effectiveInput.isBlank()) {
                 enriched.put("keyword", effectiveInput);
@@ -86,6 +88,7 @@ final class DecisionParamAssembler {
     Map<String, Object> decisionParamsFromInput(String skillName,
                                                 String userInput,
                                                 Map<String, Object> attributes) {
+        String executionTarget = DecisionCapabilityCatalog.executionTarget(skillName);
         Map<String, Object> params = new LinkedHashMap<>(attributes == null ? Map.of() : attributes);
         if (hasSemanticPayload(params)) {
             Object semanticPayload = params.get(SemanticAnalysisResult.ATTR_PAYLOAD);
@@ -93,10 +96,10 @@ final class DecisionParamAssembler {
                 payload.forEach((key, value) -> params.putIfAbsent(String.valueOf(key), value));
             }
         }
-        if (usesCanonicalCommands(skillName)) {
+        if (usesCanonicalCommands(executionTarget)) {
             params.remove("input");
             if (skillCommandAssembler != null) {
-                return skillCommandAssembler.buildDetectedSkillDsl(skillName, userInput, params)
+                return skillCommandAssembler.buildDetectedSkillDsl(executionTarget, userInput, params)
                         .map(SkillDsl::input)
                         .map(input -> (Map<String, Object>) new LinkedHashMap<>(input))
                         .orElse(params);

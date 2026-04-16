@@ -614,7 +614,10 @@ final class HermesDecisionEngine {
     }
 
     private void boostBuiltinNewsSearchOverGenericMcp(Map<String, Candidate> candidates) {
-        Candidate builtinNewsSearch = candidates.get("news_search");
+        String builtinNewsTarget = toolSchemaCatalog == null
+                ? "news_search"
+                : toolSchemaCatalog.decisionTargetForSkill("news_search");
+        Candidate builtinNewsSearch = candidates.get(builtinNewsTarget);
         if (builtinNewsSearch == null) {
             return;
         }
@@ -631,7 +634,7 @@ final class HermesDecisionEngine {
         }
         List<String> reasons = new ArrayList<>(builtinNewsSearch.reasons());
         reasons.add("builtin-news-search-preferred-over-generic-mcp-search");
-        candidates.put("news_search", new Candidate(
+        candidates.put(builtinNewsTarget, new Candidate(
                 builtinNewsSearch.skillName(),
                 clamp(Math.max(builtinNewsSearch.score(), topGenericMcpScore + 0.03d)),
                 builtinNewsSearch.route(),
@@ -740,7 +743,10 @@ final class HermesDecisionEngine {
         score = applySemanticGuardrailsToDetectedScore(context, candidate, rawScore, score);
         score += priorityBoost;
         String normalizedInput = context == null ? "" : normalize(context.userInput()).toLowerCase(Locale.ROOT);
-        if ("mcp.docs.searchDocs".equals(candidate.skillName())
+        String executionTarget = toolSchemaCatalog == null
+                ? normalize(candidate.skillName())
+                : toolSchemaCatalog.executionTargetForDecision(candidate.skillName());
+        if ("mcp.docs.searchDocs".equals(executionTarget)
                 && (normalizedInput.contains("searchdocs") || normalizedInput.contains("docs"))) {
             score += 0.08d;
         }
