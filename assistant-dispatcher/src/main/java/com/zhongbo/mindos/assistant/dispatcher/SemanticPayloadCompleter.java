@@ -2,6 +2,7 @@ package com.zhongbo.mindos.assistant.dispatcher;
 
 import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryFacade;
 import com.zhongbo.mindos.assistant.memory.model.SemanticMemoryEntry;
+import com.zhongbo.mindos.assistant.skill.DecisionCapabilityCatalog;
 import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalysisResult;
 
 import java.util.ArrayList;
@@ -39,15 +40,16 @@ final class SemanticPayloadCompleter {
         if (semanticAnalysis == null || targetSkill == null || targetSkill.isBlank()) {
             return Map.of();
         }
+        String executionTarget = DecisionCapabilityCatalog.executionTarget(targetSkill);
         Map<String, Object> payload = new LinkedHashMap<>(skillCommandAssembler.buildSemanticPayload(
-                targetSkill,
+                executionTarget,
                 semanticAnalysis.payload(),
                 originalInput,
                 semanticAnalysis.summary(),
                 semanticAnalysis.routingInput(originalInput),
                 ""
         ));
-        completeFromMemory(userId, targetSkill, semanticAnalysis, payload, originalInput);
+        completeFromMemory(userId, executionTarget, semanticAnalysis, payload, originalInput);
         return payload;
     }
 

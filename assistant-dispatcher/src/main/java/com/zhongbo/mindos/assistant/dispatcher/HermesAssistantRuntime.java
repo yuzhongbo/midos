@@ -299,7 +299,9 @@ final class HermesAssistantRuntime {
                                                  Consumer<String> deltaConsumer,
                                                  boolean streamMode,
                                                  Instant startedAt) {
-        Optional<SkillResult> capabilityBlocked = maybeBlockedByCapability(decision == null ? null : decision.target());
+        String requestedTarget = decision == null ? "" : safeText(decision.target());
+        String executionTarget = skillRouter == null ? requestedTarget : skillRouter.resolveExecutionTarget(requestedTarget);
+        Optional<SkillResult> capabilityBlocked = maybeBlockedByCapability(executionTarget);
         if (capabilityBlocked.isPresent()) {
             SkillResult blocked = capabilityBlocked.get();
             emit(deltaConsumer, blocked.output());
@@ -307,7 +309,7 @@ final class HermesAssistantRuntime {
                     blocked.output(),
                     blocked.skillName(),
                     "security.guard",
-                    decision == null ? blocked.skillName() : decision.target(),
+                    executionTarget.isBlank() ? blocked.skillName() : executionTarget,
                     decision == null ? 0.0d : decision.confidence(),
                     List.of("capability guard blocked skill execution"),
                     List.of(),
@@ -318,17 +320,17 @@ final class HermesAssistantRuntime {
             memoryRecorder.record(userId, userInput, blocked, decisionContext.profileContext(), decisionContext.semanticAnalysis(), null, null, decisionContext.memoryEnabled());
             return result;
         }
-        if (isLoopGuardBlocked(userId, decision == null ? null : decision.target(), userInput)) {
+        if (isLoopGuardBlocked(userId, executionTarget, userInput)) {
             SkillResult loopGuardResult = SkillResult.failure(
                     "loop.guard",
-                    "检测到重复执行风险，已阻止继续调用 " + (decision == null ? "" : decision.target()) + "。请补充新的输入或换个目标。"
+                    "检测到重复执行风险，已阻止继续调用 " + executionTarget + "。请补充新的输入或换个目标。"
             );
             emit(deltaConsumer, loopGuardResult.output());
             DispatchResult result = buildDispatchResult(
                     loopGuardResult.output(),
                     loopGuardResult.skillName(),
                     "loop-guard",
-                    decision == null ? loopGuardResult.skillName() : decision.target(),
+                    executionTarget.isBlank() ? loopGuardResult.skillName() : executionTarget,
                     decision == null ? 0.0d : decision.confidence(),
                     decisionPlan.reasons(),
                     List.of("skill blocked by loop guard"),
@@ -341,7 +343,7 @@ final class HermesAssistantRuntime {
         }
 
         ParamValidator.ValidationResult validation = paramValidator.validate(
-                decision.target(),
+                executionTarget,
                 decision.params(),
                 new DecisionOrchestrator.OrchestrationRequest(
                         userId,
@@ -397,6 +399,13 @@ final class HermesAssistantRuntime {
         }
 
         Decision validatedDecision = validation.applyTo(decision);
+        validatedDecision = new Decision(
+                validatedDecision.intent(),
+                executionTarget,
+                validatedDecision.params(),
+                validatedDecision.confidence(),
+                validatedDecision.needClarify()
+        );
         String attemptedSkill = validatedDecision.target();
         SkillResult routedResult = skillRouter.execute(validatedDecision, decisionContext.skillContext());
         boolean attemptedSuccess = routedResult != null && routedResult.success();

@@ -643,7 +643,9 @@ final class HermesDecisionEngine {
                               boolean needClarify,
                               String clarifyReply,
                               boolean allowReservedTarget) {
-        String normalizedSkill = normalize(skillName);
+        String normalizedSkill = toolSchemaCatalog == null
+                ? normalize(skillName)
+                : toolSchemaCatalog.decisionTargetForSkill(skillName);
         if (normalizedSkill.isBlank()
                 || (!allowReservedTarget && !toolSchemaCatalog.isDecisionEligible(normalizedSkill))
                 || !isKnownSkill(normalizedSkill)) {
@@ -773,6 +775,22 @@ final class HermesDecisionEngine {
         if (semanticAnalysis == null || candidateSkill == null || candidateSkill.isBlank()) {
             return false;
         }
+        String normalizedCandidate = normalize(candidateSkill);
+        String decisionTarget = toolSchemaCatalog == null
+                ? normalizedCandidate
+                : toolSchemaCatalog.decisionTargetForSkill(normalizedCandidate);
+        String executionTarget = toolSchemaCatalog == null
+                ? normalizedCandidate
+                : toolSchemaCatalog.executionTargetForDecision(normalizedCandidate);
+        return semanticMatchesSkillVariant(semanticAnalysis, normalizedCandidate)
+                || semanticMatchesSkillVariant(semanticAnalysis, decisionTarget)
+                || semanticMatchesSkillVariant(semanticAnalysis, executionTarget);
+    }
+
+    private boolean semanticMatchesSkillVariant(SemanticAnalysisResult semanticAnalysis, String candidateSkill) {
+        if (semanticAnalysis == null || candidateSkill == null || candidateSkill.isBlank()) {
+            return false;
+        }
         if (candidateSkill.equals(normalize(semanticAnalysis.suggestedSkill()))
                 || candidateSkill.equals(normalize(semanticAnalysis.intent()))) {
             return true;
@@ -812,6 +830,9 @@ final class HermesDecisionEngine {
         if (skillName == null || skillName.isBlank()) {
             return Map.of();
         }
+        String executionTarget = toolSchemaCatalog == null
+                ? skillName
+                : toolSchemaCatalog.executionTargetForDecision(skillName);
         if (context == null) {
             return safeMap(semanticAnalysis == null ? Map.of() : semanticAnalysis.payload());
         }
@@ -820,7 +841,7 @@ final class HermesDecisionEngine {
                     context.userId(),
                     semanticAnalysis,
                     context.userInput(),
-                    skillName
+                    executionTarget
             );
             if (!completed.isEmpty()) {
                 return safeMap(completed);
@@ -830,7 +851,7 @@ final class HermesDecisionEngine {
             return safeMap(semanticAnalysis == null ? Map.of() : semanticAnalysis.payload());
         }
         return decisionParamAssembler.decisionParamsFromInput(
-                skillName,
+                executionTarget,
                 context.userInput(),
                 context.skillContext() == null ? Map.of() : context.skillContext().attributes()
         );
@@ -946,6 +967,9 @@ final class HermesDecisionEngine {
             return false;
         }
         String normalized = normalize(skillName);
+        if (toolSchemaCatalog != null && toolSchemaCatalog.isKnownDecisionTarget(normalized)) {
+            return true;
+        }
         return skillCatalog.listSkillDescriptors().stream()
                 .filter(descriptor -> descriptor != null && descriptor.name() != null)
                 .map(descriptor -> normalize(descriptor.name()))

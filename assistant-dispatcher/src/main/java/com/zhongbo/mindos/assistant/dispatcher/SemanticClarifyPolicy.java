@@ -1,6 +1,7 @@
 package com.zhongbo.mindos.assistant.dispatcher;
 
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.ParamValidator;
+import com.zhongbo.mindos.assistant.skill.DecisionCapabilityCatalog;
 import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalysisResult;
 
 import java.util.List;
@@ -63,7 +64,8 @@ final class SemanticClarifyPolicy {
         if (skillName == null || skillName.isBlank()) {
             return List.of();
         }
-        ParamValidator.ValidationResult validation = paramValidator.validate(skillName, payload == null ? java.util.Map.of() : payload);
+        String executionTarget = DecisionCapabilityCatalog.executionTarget(skillName);
+        ParamValidator.ValidationResult validation = paramValidator.validate(executionTarget, payload == null ? java.util.Map.of() : payload);
         if (validation.valid() || validation.missingParams().isEmpty()) {
             return List.of();
         }

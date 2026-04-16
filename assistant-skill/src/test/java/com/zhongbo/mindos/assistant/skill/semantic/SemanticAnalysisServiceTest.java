@@ -171,6 +171,35 @@ class SemanticAnalysisServiceTest {
     }
 
     @Test
+    void shouldAcceptCapabilityAliasFromSemanticLlm() {
+        SkillRegistry registry = new SkillRegistry(List.of(new FixedSkill("code.generate")));
+        LlmClient llmClient = (prompt, context) -> """
+                {
+                  "intent":"修复代码",
+                  "rewrittenInput":"帮我处理接口问题",
+                  "suggestedSkill":"code.assist",
+                  "payload":{"task":"处理接口问题"},
+                  "keywords":["接口","修复"],
+                  "summary":"用户明确要求代码协助",
+                  "confidence":0.91
+                }
+                """;
+        SemanticAnalysisService service = new SemanticAnalysisService(llmClient, registry, true, true, true, "", "local", "cost", 10);
+
+        SemanticAnalysisResult result = service.analyze(
+                "u1",
+                "这个接口问题需要处理",
+                "",
+                Map.of(),
+                List.of("code.assist - Fix, generate, or refactor code when the user explicitly asks for implementation help")
+        );
+
+        assertEquals("code.assist", result.suggestedSkill());
+        assertEquals("处理接口问题", result.payload().get("task"));
+        assertTrue(result.confidence() >= 0.9);
+    }
+
+    @Test
     void shouldIgnoreDelegateSkillExecutionPath() {
         Skill delegateSkill = new Skill() {
             @Override

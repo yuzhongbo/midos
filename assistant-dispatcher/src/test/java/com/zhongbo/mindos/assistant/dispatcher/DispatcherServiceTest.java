@@ -1009,6 +1009,42 @@ class DispatcherServiceTest {
     }
 
     @Test
+    void shouldRouteCapabilityAliasToExecutionSkill() {
+        MemoryManager memoryManager = createMemoryManager();
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of("stub"));
+        SkillRegistry registry = new SkillRegistry(List.of(
+                new FixedSkill("code.generate", "Generate or fix code on explicit request", "代码已处理")
+        ));
+        SemanticAnalysisService semanticAnalysisService = new SemanticAnalysisService(llmClient, registry, new DefaultSkillCatalog(registry, null, new SkillRoutingProperties()), true, false, true, "", "local", "cost", 120) {
+            @Override
+            public SemanticAnalysisResult analyze(String userId,
+                                                  String userInput,
+                                                  String memoryContext,
+                                                  Map<String, Object> profileContext,
+                                                  List<String> availableSkillSummaries) {
+                return new SemanticAnalysisResult(
+                        "llm",
+                        "修复代码",
+                        userInput,
+                        "code.assist",
+                        Map.of("task", "修复登录接口空指针"),
+                        List.of("修复", "接口"),
+                        "用户明确要求代码协助",
+                        0.92
+                );
+            }
+        };
+        DispatcherService service = createDispatcherWithSemanticService(memoryManager, llmClient, registry, semanticAnalysisService, 2);
+
+        DispatchResult result = service.dispatch("alias-user", "帮我修复登录接口空指针");
+
+        assertEquals("code.generate", result.channel());
+        assertEquals("semantic-analysis", result.executionTrace().routing().route());
+        assertEquals("code.generate", result.executionTrace().routing().selectedSkill());
+        assertTrue(result.reply().contains("代码已处理"));
+    }
+
+    @Test
     void shouldSkipClarificationWhenSemanticPayloadIsCompletedByRoutingDefaults() {
         MemoryManager memoryManager = createMemoryManager();
         RecordingLlmClient llmClient = new RecordingLlmClient(List.of("stub"));

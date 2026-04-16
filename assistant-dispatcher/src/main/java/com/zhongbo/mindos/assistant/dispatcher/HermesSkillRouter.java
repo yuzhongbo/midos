@@ -12,17 +12,20 @@ import java.util.Map;
 final class HermesSkillRouter {
 
     private final SkillExecutionGateway skillExecutionGateway;
+    private final HermesToolSchemaCatalog toolSchemaCatalog;
 
-    HermesSkillRouter(SkillExecutionGateway skillExecutionGateway) {
+    HermesSkillRouter(SkillExecutionGateway skillExecutionGateway, HermesToolSchemaCatalog toolSchemaCatalog) {
         this.skillExecutionGateway = skillExecutionGateway;
+        this.toolSchemaCatalog = toolSchemaCatalog;
     }
 
     SkillResult execute(Decision decision, SkillContext baseContext) {
         if (decision == null || decision.target() == null || decision.target().isBlank()) {
             return SkillResult.failure("decision-engine", "missing routed target");
         }
+        String executionTarget = resolveExecutionTarget(decision.target());
         if (skillExecutionGateway == null) {
-            return SkillResult.failure(decision.target(), "skill execution gateway unavailable");
+            return SkillResult.failure(executionTarget, "skill execution gateway unavailable");
         }
         Map<String, Object> attributes = new LinkedHashMap<>(baseContext == null ? Map.of() : baseContext.attributes());
         if (decision.params() != null && !decision.params().isEmpty()) {
@@ -35,11 +38,22 @@ final class HermesSkillRouter {
         );
         try {
             return skillExecutionGateway.executeDslAsync(
-                    new SkillDsl(decision.target(), decision.params()),
+                    new SkillDsl(executionTarget, decision.params()),
                     executionContext
             ).join();
         } catch (RuntimeException ex) {
-            return SkillResult.failure(decision.target(), ex.getMessage() == null ? "skill execution failed" : ex.getMessage());
+            return SkillResult.failure(executionTarget, ex.getMessage() == null ? "skill execution failed" : ex.getMessage());
         }
+    }
+
+    String resolveExecutionTarget(String decisionTarget) {
+        if (decisionTarget == null || decisionTarget.isBlank()) {
+            return "";
+        }
+        if (toolSchemaCatalog == null) {
+            return decisionTarget;
+        }
+        String resolved = toolSchemaCatalog.executionTargetForDecision(decisionTarget);
+        return resolved.isBlank() ? decisionTarget : resolved;
     }
 }

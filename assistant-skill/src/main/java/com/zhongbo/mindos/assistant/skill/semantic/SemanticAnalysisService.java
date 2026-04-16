@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.zhongbo.mindos.assistant.common.LlmClient;
+import com.zhongbo.mindos.assistant.skill.DecisionCapabilityCatalog;
 import com.zhongbo.mindos.assistant.skill.DefaultSkillCatalog;
 import com.zhongbo.mindos.assistant.skill.SkillRegistry;
 import org.springframework.context.annotation.Lazy;
@@ -911,6 +912,9 @@ public class SemanticAnalysisService implements SemanticAnalyzer {
         if (suggestedSkill.startsWith("im.") || suggestedSkill.startsWith("internal.")) {
             return "";
         }
+        if (DecisionCapabilityCatalog.isDecisionCapability(suggestedSkill)) {
+            return suggestedSkill;
+        }
         if (!suggestedSkill.isBlank() && skillRegistry.getSkill(suggestedSkill).isEmpty()) {
             return "";
         }
@@ -1334,7 +1338,8 @@ public class SemanticAnalysisService implements SemanticAnalyzer {
         if (suggestedSkill == null || suggestedSkill.isBlank() || focus == null || focus.isBlank()) {
             return payload.isEmpty() ? Map.of() : Map.copyOf(payload);
         }
-        switch (suggestedSkill) {
+        String executionTarget = DecisionCapabilityCatalog.executionTarget(suggestedSkill);
+        switch (executionTarget) {
             case "todo.create", "code.generate" -> payload.putIfAbsent("task", focus);
             case "file.search" -> {
                 payload.putIfAbsent("keyword", focus);

@@ -20,6 +20,7 @@ import com.zhongbo.mindos.assistant.common.dto.SkillPreAnalyzeMetricsDto;
 import com.zhongbo.mindos.assistant.memory.model.ProceduralMemoryEntry;
 import com.zhongbo.mindos.assistant.memory.model.SemanticMemoryEntry;
 import com.zhongbo.mindos.assistant.memory.model.SkillUsageStats;
+import com.zhongbo.mindos.assistant.skill.DecisionCapabilityCatalog;
 import com.zhongbo.mindos.assistant.skill.SkillCatalogFacade;
 import com.zhongbo.mindos.assistant.dispatcher.decision.Decision;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.InMemoryParamSchemaRegistry;
@@ -683,7 +684,7 @@ public class DispatcherService implements ContextCompressionMetricsReader,
                                 this.dispatchSkillDslResolvers
                         ),
                         this.paramValidator,
-                        new HermesSkillRouter(this.skillExecutionGateway),
+                        new HermesSkillRouter(this.skillExecutionGateway, toolSchemaCatalog),
                         new HermesMemoryRecorder(
                                 this.dispatcherMemoryFacade,
                                 this.memoryCommandService,
@@ -1471,6 +1472,16 @@ public class DispatcherService implements ContextCompressionMetricsReader,
         if (skillName == null || skillName.isBlank()) {
             return false;
         }
+        if (DecisionCapabilityCatalog.findByDecisionTarget(skillName)
+                .map(DecisionCapabilityCatalog.CapabilityDefinition::executionSkill)
+                .filter(this::isKnownExecutionSkillName)
+                .isPresent()) {
+            return true;
+        }
+        return isKnownExecutionSkillName(skillName);
+    }
+
+    private boolean isKnownExecutionSkillName(String skillName) {
         return skillEngine.listAvailableSkillSummaries().stream()
                 .map(summary -> {
                     int separator = summary.indexOf(" - ");
