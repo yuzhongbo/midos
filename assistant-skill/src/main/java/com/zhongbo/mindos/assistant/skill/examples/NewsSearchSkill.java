@@ -11,6 +11,7 @@ import com.zhongbo.mindos.assistant.skill.SkillDescriptorProvider;
 import com.zhongbo.mindos.assistant.skill.search.SearchProviderChain;
 import com.zhongbo.mindos.assistant.skill.search.SearchProviderRegistry;
 import com.zhongbo.mindos.assistant.skill.search.SearchRequest;
+import com.zhongbo.mindos.assistant.skill.search.SearchResultDetailAugmentor;
 import com.zhongbo.mindos.assistant.skill.search.SearchResultItem;
 import com.zhongbo.mindos.assistant.skill.search.SearchSourceConfig;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -45,6 +46,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Level;
@@ -77,7 +79,12 @@ public class NewsSearchSkill implements Skill, SkillDescriptorProvider {
                            @Value("${mindos.skill.news-search.serper.enabled:false}") boolean serperEnabled,
                            @Value("${mindos.skill.news-search.serper.news-url:https://google.serper.dev/news}") String serperNewsUrl,
                            @Value("${mindos.skill.news-search.serper.search-url:https://google.serper.dev/search}") String serperSearchUrl,
-                           @Value("${mindos.skill.news-search.serper.api-key:}") String serperApiKey) {
+                           @Value("${mindos.skill.news-search.serper.api-key:}") String serperApiKey,
+                           @Value("${mindos.skill.search.detail-fetch.enabled:true}") boolean detailFetchEnabled,
+                           @Value("${mindos.skill.search.detail-fetch.timeout-ms:4500}") int detailFetchTimeoutMs,
+                           @Value("${mindos.skill.search.detail-fetch.max-candidates:2}") int detailFetchMaxCandidates,
+                           @Value("${mindos.skill.search.detail-fetch.max-summary-chars:320}") int detailFetchMaxSummaryChars,
+                           @Value("${mindos.skill.search.detail-fetch.max-page-chars:6000}") int detailFetchMaxPageChars) {
         this.executor = new NewsSearchSkillExecutor(
                 llmClient,
                 enabled,
@@ -95,7 +102,14 @@ public class NewsSearchSkill implements Skill, SkillDescriptorProvider {
                 serperEnabled,
                 serperNewsUrl,
                 serperSearchUrl,
-                serperApiKey
+                serperApiKey,
+                new SearchResultDetailAugmentor(
+                        detailFetchEnabled,
+                        detailFetchTimeoutMs,
+                        detailFetchMaxCandidates,
+                        detailFetchMaxSummaryChars,
+                        detailFetchMaxPageChars
+                )
         );
     }
 
@@ -185,6 +199,46 @@ public class NewsSearchSkill implements Skill, SkillDescriptorProvider {
                     String serperNewsUrl,
                     String serperSearchUrl,
                     String serperApiKey) {
+        this(llmClient,
+                newsFeedFetcher,
+                enabled,
+                krFeedUrl,
+                httpTimeoutMs,
+                cacheTtlSeconds,
+                cacheMaxEntries,
+                maxItems,
+                summaryEnabled,
+                summaryProvider,
+                summaryPreset,
+                summaryModel,
+                summaryMaxTokens,
+                searchSources,
+                serperEnabled,
+                serperNewsUrl,
+                serperSearchUrl,
+                serperApiKey,
+                SearchResultDetailAugmentor.disabled());
+    }
+
+    NewsSearchSkill(LlmClient llmClient,
+                    NewsFeedFetcher newsFeedFetcher,
+                    boolean enabled,
+                    String krFeedUrl,
+                    int httpTimeoutMs,
+                    int cacheTtlSeconds,
+                    int cacheMaxEntries,
+                    int maxItems,
+                    boolean summaryEnabled,
+                    String summaryProvider,
+                    String summaryPreset,
+                    String summaryModel,
+                    int summaryMaxTokens,
+                    String searchSources,
+                    boolean serperEnabled,
+                    String serperNewsUrl,
+                    String serperSearchUrl,
+                    String serperApiKey,
+                    SearchResultDetailAugmentor detailAugmentor) {
         this.executor = new NewsSearchSkillExecutor(
                 llmClient,
                 newsFeedFetcher,
@@ -203,7 +257,8 @@ public class NewsSearchSkill implements Skill, SkillDescriptorProvider {
                 serperEnabled,
                 serperNewsUrl,
                 serperSearchUrl,
-                serperApiKey
+                serperApiKey,
+                detailAugmentor
         );
     }
 
@@ -259,6 +314,7 @@ final class NewsSearchSkillExecutor {
     private final String serperNewsUrl;
     private final String serperSearchUrl;
     private final String serperApiKey;
+    private final SearchResultDetailAugmentor detailAugmentor;
     private final ConcurrentHashMap<String, CacheEntry> cache = new ConcurrentHashMap<>();
 
     NewsSearchSkillExecutor(LlmClient llmClient,
@@ -279,6 +335,44 @@ final class NewsSearchSkillExecutor {
                             String serperSearchUrl,
                             String serperApiKey) {
         this(llmClient,
+                enabled,
+                krFeedUrl,
+                httpTimeoutMs,
+                cacheTtlSeconds,
+                cacheMaxEntries,
+                maxItems,
+                summaryEnabled,
+                summaryProvider,
+                summaryPreset,
+                summaryModel,
+                summaryMaxTokens,
+                searchSources,
+                serperEnabled,
+                serperNewsUrl,
+                serperSearchUrl,
+                serperApiKey,
+                SearchResultDetailAugmentor.disabled());
+    }
+
+    NewsSearchSkillExecutor(LlmClient llmClient,
+                            boolean enabled,
+                            String krFeedUrl,
+                            int httpTimeoutMs,
+                            int cacheTtlSeconds,
+                            int cacheMaxEntries,
+                            int maxItems,
+                            boolean summaryEnabled,
+                            String summaryProvider,
+                            String summaryPreset,
+                            String summaryModel,
+                            int summaryMaxTokens,
+                            String searchSources,
+                            boolean serperEnabled,
+                            String serperNewsUrl,
+                            String serperSearchUrl,
+                            String serperApiKey,
+                            SearchResultDetailAugmentor detailAugmentor) {
+        this(llmClient,
                 new DefaultNewsFeedFetcher(),
                 enabled,
                 krFeedUrl,
@@ -295,7 +389,8 @@ final class NewsSearchSkillExecutor {
                 serperEnabled,
                 serperNewsUrl,
                 serperSearchUrl,
-                serperApiKey);
+                serperApiKey,
+                detailAugmentor);
     }
 
     NewsSearchSkillExecutor(LlmClient llmClient,
@@ -386,6 +481,46 @@ final class NewsSearchSkillExecutor {
                             String serperNewsUrl,
                             String serperSearchUrl,
                             String serperApiKey) {
+        this(llmClient,
+                newsFeedFetcher,
+                enabled,
+                krFeedUrl,
+                httpTimeoutMs,
+                cacheTtlSeconds,
+                cacheMaxEntries,
+                maxItems,
+                summaryEnabled,
+                summaryProvider,
+                summaryPreset,
+                summaryModel,
+                summaryMaxTokens,
+                searchSources,
+                serperEnabled,
+                serperNewsUrl,
+                serperSearchUrl,
+                serperApiKey,
+                SearchResultDetailAugmentor.disabled());
+    }
+
+    NewsSearchSkillExecutor(LlmClient llmClient,
+                            NewsFeedFetcher newsFeedFetcher,
+                            boolean enabled,
+                            String krFeedUrl,
+                            int httpTimeoutMs,
+                            int cacheTtlSeconds,
+                            int cacheMaxEntries,
+                            int maxItems,
+                            boolean summaryEnabled,
+                            String summaryProvider,
+                            String summaryPreset,
+                            String summaryModel,
+                            int summaryMaxTokens,
+                            String searchSources,
+                            boolean serperEnabled,
+                            String serperNewsUrl,
+                            String serperSearchUrl,
+                            String serperApiKey,
+                            SearchResultDetailAugmentor detailAugmentor) {
         this.llmClient = llmClient;
         this.newsFeedFetcher = newsFeedFetcher;
         this.enabled = enabled;
@@ -406,6 +541,7 @@ final class NewsSearchSkillExecutor {
         this.serperNewsUrl = serperNewsUrl == null ? "" : serperNewsUrl.trim();
         this.serperSearchUrl = serperSearchUrl == null ? "" : serperSearchUrl.trim();
         this.serperApiKey = serperApiKey == null ? "" : serperApiKey.trim();
+        this.detailAugmentor = detailAugmentor == null ? SearchResultDetailAugmentor.disabled() : detailAugmentor;
     }
 
     String name() {
@@ -493,13 +629,35 @@ final class NewsSearchSkillExecutor {
                                 List<NewsItem> items,
                                 SummaryBundle summaryBundle,
                                 SkillContext context) {
+        SearchResultDetailAugmentor.DetailPageBrief detailBrief = primaryDetailBrief(query, items).orElse(null);
         StringBuilder output = new StringBuilder();
         output.append("[news_search]\n关键词: ").append(query).append("\n");
         appendOutputLine(output, "摘要", summaryBundle.summary());
+        if (detailBrief != null) {
+            appendOutputLine(output, "最相关详情", detailBrief.summary());
+            appendOutputLine(output, "详情标题", detailBrief.title());
+            appendOutputLine(output, "详情链接", detailBrief.link());
+        }
         output.append("来源: ").append(describeSource(sourceSelection, items)).append("\n");
         output.append("排序: ").append(sortMode.displayName()).append("\n\n");
         appendOutputItems(output, items, context);
         return output.toString().trim();
+    }
+
+    private Optional<SearchResultDetailAugmentor.DetailPageBrief> primaryDetailBrief(String query, List<NewsItem> items) {
+        if (items == null || items.isEmpty()) {
+            return Optional.empty();
+        }
+        List<SearchResultItem> searchItems = items.stream()
+                .map(item -> new SearchResultItem(
+                        item.title(),
+                        item.link(),
+                        item.summary(),
+                        item.publishedAt(),
+                        item.source()
+                ))
+                .toList();
+        return detailAugmentor.buildDetailBrief(query, searchItems);
     }
 
     private void appendOutputLine(StringBuilder output, String label, String value) {

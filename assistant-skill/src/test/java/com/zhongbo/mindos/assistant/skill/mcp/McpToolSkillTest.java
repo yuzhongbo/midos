@@ -1,10 +1,13 @@
 package com.zhongbo.mindos.assistant.skill.mcp;
 
+import com.sun.net.httpserver.HttpServer;
+import com.zhongbo.mindos.assistant.skill.search.SearchResultDetailAugmentor;
 import com.zhongbo.mindos.assistant.skill.DefaultSkillCatalog;
 import com.zhongbo.mindos.assistant.skill.SkillRegistry;
 import com.zhongbo.mindos.assistant.skill.SkillRoutingProperties;
 import org.junit.jupiter.api.Test;
 
+import java.net.InetSocketAddress;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.ArrayList;
@@ -143,6 +146,55 @@ class McpToolSkillTest {
         assertTrue(!result.output().contains("MCP tool call failed: Connection reset"));
     }
 
+    @Test
+    void shouldReadTopResultDetailPageForSearchLikeOutput() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/detail", exchange -> {
+            byte[] payload = """
+                    <html>
+                      <head>
+                        <title>MindOS 架构说明</title>
+                        <meta name="description" content="MindOS 采用单一决策入口和纯执行 skill。">
+                      </head>
+                      <body>
+                        <main>
+                          <p>MindOS 采用单一决策入口，先做能力级 decision，再把能力映射到具体 skill。</p>
+                          <p>执行层只负责读取最相关页面并总结关键细节，不再停留在标题级结果。</p>
+                        </main>
+                      </body>
+                    </html>
+                    """.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "text/html; charset=utf-8");
+            exchange.sendResponseHeaders(200, payload.length);
+            exchange.getResponseBody().write(payload);
+            exchange.close();
+        });
+        server.start();
+        try {
+            String url = "http://127.0.0.1:" + server.getAddress().getPort() + "/detail";
+            McpToolDefinition tool = new McpToolDefinition("bravesearch", "http://unused.local/res/v1/web/search", "webSearch", "Search latest web news");
+            McpToolExecutor executor = new McpToolExecutor(
+                    toolCatalogWith(tool, new FixedSearchResultMcpClient("""
+                            Brave 搜索（MindOS 架构）结果：
+                            1. MindOS 架构说明 - 单一决策和纯执行链路
+                            %s
+                            """.formatted(url))),
+                    new SearchResultDetailAugmentor(true, 3000, 1, 240, 3000)
+            );
+
+            var result = executor.execute(tool.skillName(), Map.of("query", "MindOS 架构", "input", "帮我查 MindOS 架构"));
+
+            assertTrue(result.success());
+            assertTrue(result.output().contains("最相关详情"));
+            assertTrue(result.output().contains("MindOS 采用单一决策入口")
+                    || result.output().contains("先做能力级 decision"),
+                    result.output());
+            assertTrue(result.output().contains(url));
+        } finally {
+            server.stop(0);
+        }
+    }
+
     private static final class CapturingMcpClient extends McpJsonRpcClient {
         private Map<String, Object> lastArguments = Map.of();
 
@@ -150,6 +202,19 @@ class McpToolSkillTest {
         public String callTool(String serverUrl, String toolName, Map<String, Object> arguments, Map<String, String> headers) {
             this.lastArguments = new LinkedHashMap<>(arguments);
             return "ok";
+        }
+    }
+
+    private static final class FixedSearchResultMcpClient extends McpJsonRpcClient {
+        private final String output;
+
+        private FixedSearchResultMcpClient(String output) {
+            this.output = output;
+        }
+
+        @Override
+        public String callTool(String serverUrl, String toolName, Map<String, Object> arguments, Map<String, String> headers) {
+            return output;
         }
     }
 

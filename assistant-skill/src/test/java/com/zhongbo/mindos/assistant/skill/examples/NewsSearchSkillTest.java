@@ -5,6 +5,7 @@ import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.common.command.NewsSearchCommandSupport;
 import com.zhongbo.mindos.assistant.skill.DefaultSkillCatalog;
 import com.zhongbo.mindos.assistant.skill.SkillRegistry;
+import com.zhongbo.mindos.assistant.skill.search.SearchResultDetailAugmentor;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.Test;
@@ -417,6 +418,110 @@ class NewsSearchSkillTest {
             assertTrue(result.output().contains("Serper AI 观察"));
             assertEquals(1, searchRequestCount.get(), "配置了统一搜索源后默认应优先请求搜索源");
             assertEquals(0, feedFetchCount.get(), "统一搜索源成功时不应再先拉取36kr");
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void shouldReadMostRelevantDetailPageFromConfiguredSearchResult() throws Exception {
+        AtomicInteger searchRequestCount = new AtomicInteger();
+        HttpServer server = HttpServer.create(new InetSocketAddress(0), 0);
+        server.createContext("/search", exchange -> {
+            searchRequestCount.incrementAndGet();
+            byte[] payload = """
+                    {
+                      "news": [
+                        {
+                          "title": "MindOS 架构演进观察",
+                          "link": "http://localhost:%d/detail",
+                          "snippet": "先给出结果页摘要",
+                          "source": "serper",
+                          "publishedAt": "2026-04-03T11:00:00Z"
+                        }
+                      ]
+                    }
+                    """.formatted(server.getAddress().getPort()).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json; charset=utf-8");
+            exchange.sendResponseHeaders(200, payload.length);
+            exchange.getResponseBody().write(payload);
+            exchange.close();
+        });
+        server.createContext("/news", exchange -> {
+            searchRequestCount.incrementAndGet();
+            byte[] payload = """
+                    {
+                      "news": [
+                        {
+                          "title": "MindOS 架构演进观察",
+                          "link": "http://localhost:%d/detail",
+                          "snippet": "先给出结果页摘要",
+                          "source": "serper",
+                          "publishedAt": "2026-04-03T11:00:00Z"
+                        }
+                      ]
+                    }
+                    """.formatted(server.getAddress().getPort()).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json; charset=utf-8");
+            exchange.sendResponseHeaders(200, payload.length);
+            exchange.getResponseBody().write(payload);
+            exchange.close();
+        });
+        server.createContext("/detail", exchange -> {
+            byte[] payload = """
+                    <html>
+                      <head>
+                        <title>MindOS 架构演进观察</title>
+                        <meta name="description" content="这篇文章解释了 capability decision 和纯执行 skill 的边界。">
+                      </head>
+                      <body>
+                        <article>
+                          <p>文章重点说明了 Hermes 模式下先做能力意图 decision，再由 router 映射到真实 skill。</p>
+                          <p>执行阶段会读取最相关页面并总结细节，而不是只停留在标题和链接。</p>
+                        </article>
+                      </body>
+                    </html>
+                    """.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "text/html; charset=utf-8");
+            exchange.sendResponseHeaders(200, payload.length);
+            exchange.getResponseBody().write(payload);
+            exchange.close();
+        });
+        server.start();
+        try {
+            String searchSources = "serper:http://localhost:" + server.getAddress().getPort() + "/search;news-url=http://localhost:"
+                    + server.getAddress().getPort() + "/news;api-key=test-key";
+            NewsSearchSkill skill = new NewsSearchSkill(
+                    (prompt, context) -> "{\"theme\":\"MindOS\",\"summary\":\"摘要\",\"contextBrief\":\"上下文\",\"hotKeywords\":[\"MindOS\"]}",
+                    (url, timeoutMs) -> krFeed(),
+                    true,
+                    "https://36kr.com/feed",
+                    3000,
+                    300,
+                    64,
+                    8,
+                    true,
+                    "local",
+                    "cost",
+                    "gemma3:1b-it-q4_K_M",
+                    220,
+                    searchSources,
+                    false,
+                    "",
+                    "",
+                    "",
+                    new SearchResultDetailAugmentor(true, 3000, 1, 240, 3000)
+            );
+
+            SkillResult result = skill.run(newsContext("u1", "news_search MindOS 架构"));
+
+            assertTrue(result.success());
+            assertTrue(result.output().contains("最相关详情"));
+            assertTrue(result.output().contains("capability decision 和纯执行 skill 的边界")
+                    || result.output().contains("先做能力意图 decision"),
+                    result.output());
+            assertTrue(result.output().contains("详情链接: http://localhost:" + server.getAddress().getPort() + "/detail"));
+            assertEquals(1, searchRequestCount.get());
         } finally {
             server.stop(0);
         }

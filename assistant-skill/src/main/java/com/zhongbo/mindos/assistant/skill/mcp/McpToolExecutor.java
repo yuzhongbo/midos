@@ -1,7 +1,9 @@
 package com.zhongbo.mindos.assistant.skill.mcp;
 
 import com.zhongbo.mindos.assistant.common.SkillResult;
+import com.zhongbo.mindos.assistant.skill.search.SearchResultDetailAugmentor;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.util.LinkedHashMap;
@@ -26,14 +28,35 @@ public class McpToolExecutor {
             "新闻", "最新", "实时", "今天", "头条", "热点", "热搜", "天气", "汇率", "股价"
     );
     private final McpToolCatalog toolCatalog;
+    private final SearchResultDetailAugmentor detailAugmentor;
 
     public McpToolExecutor() {
-        this(null);
+        this(null, SearchResultDetailAugmentor.disabled());
     }
 
     @Autowired
+    public McpToolExecutor(McpToolCatalog toolCatalog,
+                           @Value("${mindos.skill.search.detail-fetch.enabled:true}") boolean detailFetchEnabled,
+                           @Value("${mindos.skill.search.detail-fetch.timeout-ms:4500}") int detailFetchTimeoutMs,
+                           @Value("${mindos.skill.search.detail-fetch.max-candidates:2}") int detailFetchMaxCandidates,
+                           @Value("${mindos.skill.search.detail-fetch.max-summary-chars:320}") int detailFetchMaxSummaryChars,
+                           @Value("${mindos.skill.search.detail-fetch.max-page-chars:6000}") int detailFetchMaxPageChars) {
+        this(toolCatalog, new SearchResultDetailAugmentor(
+                detailFetchEnabled,
+                detailFetchTimeoutMs,
+                detailFetchMaxCandidates,
+                detailFetchMaxSummaryChars,
+                detailFetchMaxPageChars
+        ));
+    }
+
     public McpToolExecutor(McpToolCatalog toolCatalog) {
+        this(toolCatalog, SearchResultDetailAugmentor.disabled());
+    }
+
+    McpToolExecutor(McpToolCatalog toolCatalog, SearchResultDetailAugmentor detailAugmentor) {
         this.toolCatalog = toolCatalog;
+        this.detailAugmentor = detailAugmentor == null ? SearchResultDetailAugmentor.disabled() : detailAugmentor;
     }
 
     public SkillResult execute(String target, Map<String, Object> params) {
@@ -62,7 +85,12 @@ public class McpToolExecutor {
                     arguments,
                     toolDefinition.headers()
             );
-            return SkillResult.success(toolDefinition.skillName(), output);
+            String enrichedOutput = maybeAugmentSearchOutput(
+                    toolDefinition,
+                    stringValue(arguments.get("query")),
+                    output
+            );
+            return SkillResult.success(toolDefinition.skillName(), enrichedOutput);
         } catch (RuntimeException ex) {
             if (isMissingQueryError(ex)) {
                 return SkillResult.success(toolDefinition.skillName(), buildMissingQueryReply(params));
@@ -128,6 +156,17 @@ public class McpToolExecutor {
                 || text.contains("web search")
                 || text.contains("searchdocs")
                 || text.contains("search docs");
+    }
+
+    private String maybeAugmentSearchOutput(McpToolDefinition toolDefinition, String query, String output) {
+        if (detailAugmentor == null
+                || toolDefinition == null
+                || output == null
+                || output.isBlank()
+                || !isSearchLikeTool(toolDefinition)) {
+            return output;
+        }
+        return detailAugmentor.augmentRenderedSearchOutput(query, output);
     }
 
     private boolean isMissingQueryError(RuntimeException ex) {
