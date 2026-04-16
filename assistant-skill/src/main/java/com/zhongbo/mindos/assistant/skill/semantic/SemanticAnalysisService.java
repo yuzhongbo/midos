@@ -491,7 +491,9 @@ public class SemanticAnalysisService implements SemanticAnalyzer {
         if (realtimeAnalysis != null) {
             return realtimeAnalysis;
         }
-        if (matchesSkill(userInput, normalized, "teaching.plan", "学习计划", "教学规划", "复习计划", "课程规划", "study plan", "teaching plan")) {
+        if ((isExplicitTeachingPlanRequest(normalized)
+                || hasRequestedSpecificRoutingKeyword(userInput, normalized, "teaching.plan"))
+                && matchesSkill(userInput, normalized, "teaching.plan", "学习计划", "教学规划", "复习计划", "课程规划", "study plan", "teaching plan")) {
             return new SemanticAnalysisResult(
                     "heuristic",
                     "为用户生成学习/教学规划",
@@ -503,7 +505,9 @@ public class SemanticAnalysisService implements SemanticAnalyzer {
                     0.88
             );
         }
-        if (matchesSkill(userInput, normalized, "eq.coach", "情商", "沟通", "高情商", "心理分析", "怎么说", "安慰", "道歉", "冲突")) {
+        if ((isExplicitCoachRequest(normalized)
+                || hasRequestedSpecificRoutingKeyword(userInput, normalized, "eq.coach"))
+                && matchesSkill(userInput, normalized, "eq.coach", "情商", "沟通", "高情商", "心理分析", "怎么说", "安慰", "道歉", "冲突")) {
             return new SemanticAnalysisResult(
                     "heuristic",
                     "分析沟通场景并生成情商沟通建议",
@@ -515,7 +519,9 @@ public class SemanticAnalysisService implements SemanticAnalyzer {
                     0.84
             );
         }
-        if (matchesSkill(userInput, normalized, "todo.create", "待办", "todo", "提醒", "记得", "安排任务", "创建任务", "截止")) {
+        if ((isExplicitTodoRequest(normalized)
+                || hasRequestedSpecificRoutingKeyword(userInput, normalized, "todo.create"))
+                && matchesSkill(userInput, normalized, "todo.create", "待办", "todo", "提醒", "记得", "安排任务", "创建任务", "截止")) {
             Map<String, Object> payload = new LinkedHashMap<>();
             payload.put("task", userInput.trim());
             String dueDate = extractByPattern(userInput, DUE_DATE_PATTERN);
@@ -533,7 +539,9 @@ public class SemanticAnalysisService implements SemanticAnalyzer {
                     0.80
             );
         }
-        if (matchesSkill(userInput, normalized, "code.generate", "代码", "接口", "api", "dto", "controller", "bug", "修复", "生成代码", "sql")) {
+        if ((isExplicitCodeRequest(normalized)
+                || hasRequestedSpecificRoutingKeyword(userInput, normalized, "code.generate"))
+                && matchesSkill(userInput, normalized, "code.generate", "代码", "接口", "api", "dto", "controller", "bug", "修复", "生成代码", "sql")) {
             return new SemanticAnalysisResult(
                     "heuristic",
                     "生成或整理代码实现方案",
@@ -545,7 +553,9 @@ public class SemanticAnalysisService implements SemanticAnalyzer {
                     0.78
             );
         }
-        if (matchesSkill(userInput, normalized, "file.search", "找文件", "查文件", "搜索文件", "search file", "grep", "目录", "路径")) {
+        if ((isExplicitFileSearchRequest(normalized)
+                || hasRequestedSpecificRoutingKeyword(userInput, normalized, "file.search"))
+                && matchesSkill(userInput, normalized, "file.search", "找文件", "查文件", "搜索文件", "search file", "grep", "目录", "路径")) {
             return new SemanticAnalysisResult(
                     "heuristic",
                     "搜索文件或目录中的目标内容",
@@ -567,6 +577,88 @@ public class SemanticAnalysisService implements SemanticAnalyzer {
                 capText(userInput, 80),
                 0.35
         );
+    }
+
+    private boolean isExplicitTeachingPlanRequest(String normalized) {
+        return containsAny(normalized,
+                "teaching.plan", "study plan", "teaching plan",
+                "学习计划", "教学规划", "教学计划", "复习计划", "课程规划", "学习路线", "提分计划")
+                || (containsAny(normalized, "学习", "教学", "复习", "课程", "备考", "提分")
+                && containsAny(normalized, "计划", "规划", "路线", "安排", "提纲", "排期", "节奏", "方案"));
+    }
+
+    private boolean isExplicitCoachRequest(String normalized) {
+        return containsAny(normalized,
+                "eq.coach", "高情商",
+                "怎么说", "怎么回", "怎么回复", "如何说", "如何回", "如何回复",
+                "帮我回复", "给我建议", "沟通建议", "道歉话术", "安慰话术", "拒绝话术", "回什么", "话术")
+                || (containsAny(normalized, "沟通", "冲突", "误会", "尴尬", "关系", "情绪", "争执", "道歉", "安慰", "拒绝")
+                && containsAny(normalized, "怎么", "如何", "帮我", "建议", "回复", "表达", "处理"));
+    }
+
+    private boolean isExplicitTodoRequest(String normalized) {
+        if (containsAny(normalized,
+                "todo.create", "创建待办", "创建任务", "新增待办", "加个待办",
+                "提醒我", "提醒一下", "稍后提醒", "明天提醒", "设置提醒", "设个提醒", "加个提醒", "记个待办")) {
+            return true;
+        }
+        return containsAny(normalized, "待办", "todo", "提醒", "任务", "截止", "到期", "deadline", "due")
+                && containsAny(normalized, "帮我", "请", "安排", "创建", "新增", "添加", "记下", "记一下", "记录", "提醒", "设", "加个");
+    }
+
+    private boolean isExplicitCodeRequest(String normalized) {
+        if (containsAny(normalized, "code.generate", "generate code", "生成代码", "写代码", "代码草稿")) {
+            return true;
+        }
+        boolean strongCodeDomain = containsAny(normalized,
+                "代码", "api", "dto", "controller", "sql", "脚本", "方法", "类", "bug", "报错", "异常");
+        boolean interfaceDomain = containsAny(normalized, "接口");
+        boolean strongAction = containsAny(normalized,
+                "修复", "fix", "排查", "定位", "debug", "分析", "实现", "生成", "编写", "开发", "重构", "review", "优化", "调整", "补");
+        boolean requestCue = containsAny(normalized, "帮我", "请", "需要", "想要", "如何", "怎么", "麻烦");
+        return (strongCodeDomain && (strongAction || requestCue))
+                || (interfaceDomain && strongAction);
+    }
+
+    private boolean isExplicitFileSearchRequest(String normalized) {
+        if (containsAny(normalized,
+                "file.search", "search file", "search files", "grep",
+                "找文件", "查文件", "搜索文件", "搜文件", "搜目录", "搜路径")) {
+            return true;
+        }
+        return containsAny(normalized, "文件", "目录", "路径", "path", "folder")
+                && containsAny(normalized, "找", "查", "搜索", "搜", "定位", "在哪个文件", "哪个文件", "检索", "grep");
+    }
+
+    private boolean hasRequestedSpecificRoutingKeyword(String userInput, String normalizedInput, String skillName) {
+        if (skillCatalog == null || skillName == null || skillName.isBlank()) {
+            return false;
+        }
+        String normalized = normalizedInput == null ? normalize(userInput) : normalizedInput;
+        if (!looksLikeDirectRequest(normalized)) {
+            return false;
+        }
+        for (String keyword : skillCatalog.resolvedRoutingKeywords(skillName)) {
+            String candidate = normalize(keyword);
+            if (candidate.isBlank() || isGenericRoutingKeyword(candidate)) {
+                continue;
+            }
+            if (normalized.contains(candidate)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean looksLikeDirectRequest(String normalized) {
+        return containsAny(normalized,
+                "帮我", "请", "麻烦", "给我", "来个", "做一个", "做个", "安排",
+                "生成", "写", "创建", "查", "找", "搜索", "提醒", "修复", "分析",
+                "规划", "计划", "怎么", "如何", "能不能", "可以帮");
+    }
+
+    private boolean isGenericRoutingKeyword(String keyword) {
+        return keyword == null || keyword.isBlank() || keyword.codePointCount(0, keyword.length()) <= 2;
     }
 
     private Optional<SemanticAnalysisResult> heuristicContinuationAnalysis(String userInput, String memoryContext) {

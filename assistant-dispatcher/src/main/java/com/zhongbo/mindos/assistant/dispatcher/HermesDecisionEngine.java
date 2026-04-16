@@ -13,6 +13,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 final class HermesDecisionEngine {
@@ -726,6 +727,7 @@ final class HermesDecisionEngine {
         } else {
             score = MIN_ROUTE_CONFIDENCE;
         }
+        score = applySemanticGuardrailsToDetectedScore(context, candidate, rawScore, score);
         score += priorityBoost;
         String normalizedInput = context == null ? "" : normalize(context.userInput()).toLowerCase(Locale.ROOT);
         if ("mcp.docs.searchDocs".equals(candidate.skillName())
@@ -738,6 +740,49 @@ final class HermesDecisionEngine {
             }
         }
         return score;
+    }
+
+    private double applySemanticGuardrailsToDetectedScore(HermesDecisionContext context,
+                                                          SkillCandidate candidate,
+                                                          int rawScore,
+                                                          double score) {
+        SemanticAnalysisResult semanticAnalysis = context == null ? SemanticAnalysisResult.empty() : context.semanticAnalysis();
+        if (semanticAnalysis == null || candidate == null) {
+            return score;
+        }
+        String candidateSkill = normalize(candidate.skillName());
+        if (candidateSkill.isBlank()) {
+            return score;
+        }
+        if (semanticAlignsWithDetectedCandidate(semanticAnalysis, candidateSkill)) {
+            return Math.max(score, semanticAnalysis.confidenceForSkill(candidateSkill));
+        }
+        if (rawScore >= 900) {
+            return score;
+        }
+        if (semanticAnalysis.toolRequired() && semanticAnalysis.effectiveConfidence() >= 0.72d) {
+            return Math.min(score, MIN_ROUTE_CONFIDENCE - 0.01d);
+        }
+        if (Set.of("planning", "blocking", "reporting", "decision").contains(semanticAnalysis.intentPhase())) {
+            return Math.min(score, MIN_ROUTE_CONFIDENCE - 0.02d);
+        }
+        return score;
+    }
+
+    private boolean semanticAlignsWithDetectedCandidate(SemanticAnalysisResult semanticAnalysis, String candidateSkill) {
+        if (semanticAnalysis == null || candidateSkill == null || candidateSkill.isBlank()) {
+            return false;
+        }
+        if (candidateSkill.equals(normalize(semanticAnalysis.suggestedSkill()))
+                || candidateSkill.equals(normalize(semanticAnalysis.intent()))) {
+            return true;
+        }
+        for (SemanticAnalysisResult.CandidateIntent candidateIntent : semanticAnalysis.candidateIntents()) {
+            if (candidateIntent != null && candidateSkill.equals(normalize(candidateIntent.intent()))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private int priorityRank(String skillName) {

@@ -117,6 +117,60 @@ class SemanticAnalysisServiceTest {
     }
 
     @Test
+    void shouldNotInferCodeGenerateFromGenericBlockingStatusWithoutActionRequest() {
+        SkillRegistry registry = new SkillRegistry(List.of(new FixedSkill("code.generate")));
+        SemanticAnalysisService service = new SemanticAnalysisService((prompt, context) -> "stub", registry, true, false, true, "", "local", "cost", 120);
+
+        SemanticAnalysisResult result = service.analyze(
+                "u1",
+                "当前阻塞点是接口一直报错，还在等权限恢复",
+                "",
+                Map.of(),
+                List.of("code.generate - Generate code drafts and fixes")
+        );
+
+        assertTrue(result.suggestedSkill().isBlank());
+        assertEquals("blocked", result.intentState());
+        assertEquals("blocking", result.intentPhase());
+    }
+
+    @Test
+    void shouldInferCodeGenerateWhenUserExplicitlyRequestsFix() {
+        SkillRegistry registry = new SkillRegistry(List.of(new FixedSkill("code.generate")));
+        SemanticAnalysisService service = new SemanticAnalysisService((prompt, context) -> "stub", registry, true, false, true, "", "local", "cost", 120);
+
+        SemanticAnalysisResult result = service.analyze(
+                "u1",
+                "帮我修复这个接口 bug",
+                "",
+                Map.of(),
+                List.of("code.generate - Generate code drafts and fixes")
+        );
+
+        assertEquals("code.generate", result.suggestedSkill());
+        assertEquals("execution", result.intentPhase());
+        assertTrue(result.confidence() >= 0.78);
+    }
+
+    @Test
+    void shouldNotInferFileSearchFromGenericPathDiscussion() {
+        SkillRegistry registry = new SkillRegistry(List.of(new FixedSkill("file.search")));
+        SemanticAnalysisService service = new SemanticAnalysisService((prompt, context) -> "stub", registry, true, false, true, "", "local", "cost", 120);
+
+        SemanticAnalysisResult result = service.analyze(
+                "u1",
+                "这个路径设计不太合理，后面再调整",
+                "",
+                Map.of(),
+                List.of("file.search - Search files by path and keyword")
+        );
+
+        assertTrue(result.suggestedSkill().isBlank());
+        assertEquals("update", result.intentState());
+        assertEquals("decision", result.intentPhase());
+    }
+
+    @Test
     void shouldIgnoreDelegateSkillExecutionPath() {
         Skill delegateSkill = new Skill() {
             @Override

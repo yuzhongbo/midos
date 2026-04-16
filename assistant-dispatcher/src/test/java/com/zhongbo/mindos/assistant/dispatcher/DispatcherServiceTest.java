@@ -860,6 +860,45 @@ class DispatcherServiceTest {
     }
 
     @Test
+    void shouldPreferSemanticBlockingInterpretationOverDetectedCodeKeywords() {
+        MemoryManager memoryManager = createMemoryManager();
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of("先确认报错日志和权限状态。"));
+        DispatcherService service = createDispatcher(memoryManager, llmClient, List.of(
+                scriptedSkill(
+                        "code.generate",
+                        "Generate code and repair Spring API bugs",
+                        List.of("generate code", "代码", "生成代码", "写代码", "接口", "api", "dto", "controller", "bug", "修复", "sql"),
+                        context -> SkillResult.success("code.generate", "代码修复完成")
+                )
+        ), 2);
+
+        DispatchResult result = service.dispatch("semantic-guard-user", "当前阻塞点是接口一直报错，还在等权限恢复");
+
+        assertEquals("llm", result.channel());
+        assertEquals(1, llmClient.fallbackCallCount());
+        assertEquals("llm-fallback", result.executionTrace().routing().route());
+    }
+
+    @Test
+    void shouldStillRouteToCodeSkillForExplicitFixRequestWithBroadKeywords() {
+        MemoryManager memoryManager = createMemoryManager();
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of("不应进入 llm"));
+        DispatcherService service = createDispatcher(memoryManager, llmClient, List.of(
+                scriptedSkill(
+                        "code.generate",
+                        "Generate code and repair Spring API bugs",
+                        List.of("generate code", "代码", "生成代码", "写代码", "接口", "api", "dto", "controller", "bug", "修复", "sql"),
+                        context -> SkillResult.success("code.generate", "代码修复完成")
+                )
+        ), 2);
+
+        DispatchResult result = service.dispatch("code-fix-user", "帮我修复这个接口 bug");
+
+        assertEquals("code.generate", result.channel());
+        assertEquals(0, llmClient.fallbackCallCount());
+    }
+
+    @Test
     void shouldFallbackToLlmWhenQuestionLooksLikeGeneralKnowledge() {
         MemoryManager memoryManager = createMemoryManager();
         RecordingLlmClient llmClient = new RecordingLlmClient(List.of(

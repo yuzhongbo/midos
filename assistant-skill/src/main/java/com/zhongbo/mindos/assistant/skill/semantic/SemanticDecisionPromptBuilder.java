@@ -43,6 +43,8 @@ final class SemanticDecisionPromptBuilder {
         prompt.append("11. Distinguish execution, planning, blocker-report, progress-report, and decision-adjustment turns when the user is working on an ongoing task.\n");
         prompt.append("12. If the user is reporting progress or a blocker on an active task, keep suggestedSkill empty unless a tool is clearly requested.\n");
         prompt.append("13. If the user clearly switches to another matter, do not force the previous task thread.\n");
+        prompt.append("14. A generic domain noun does not equal a tool request. Words like 时间, 接口, 路径, 沟通, 截止 should not trigger a tool unless the user clearly asks you to act.\n");
+        prompt.append("15. If the user is only describing status, pressure, blockers, or context, prefer suggestedSkill empty over a weak keyword-based tool guess.\n");
         prompt.append('\n');
         prompt.append("JSON shape example:\n");
         prompt.append("{\"intent\":\"task_create\",\"rewrittenInput\":\"创建一个待办：提交周报\",\"suggestedSkill\":\"todo.create\",\"summary\":\"用户要创建待办并记录截止时间\",\"confidence\":0.92,\"payload\":{\"task\":\"提交周报\",\"dueDate\":\"周五前\"},\"keywords\":[\"待办\",\"周报\",\"周五\"],\"candidate_intents\":[{\"intent\":\"todo.create\",\"confidence\":0.92},{\"intent\":\"calendar.lookup\",\"confidence\":0.21}]}\n");
