@@ -1418,7 +1418,7 @@ public class SemanticAnalysisService implements SemanticAnalyzer {
             return "为当前事项设置提醒：" + focus;
         }
         if (looksLikeSummaryFollowUp(normalized)) {
-            return "补充总结当前事项：" + focus;
+            return "总结当前事项：" + focus;
         }
         if (looksLikeBlockingFollowUp(normalized)) {
             return "当前事项遇到阻塞：" + focus;
@@ -1446,7 +1446,7 @@ public class SemanticAnalysisService implements SemanticAnalyzer {
 
     private String buildContinuationIntent(String normalized, String suggestedSkill) {
         if (looksLikeSummaryFollowUp(normalized)) {
-            return "围绕当前事项补充总结关键信息";
+            return "围绕当前事项整理总结关键信息";
         }
         if (looksLikePlanningFollowUp(normalized)) {
             return "围绕当前任务整理方案或步骤";
@@ -1471,7 +1471,7 @@ public class SemanticAnalysisService implements SemanticAnalyzer {
     private String buildContinuationSummary(String normalized, String focus) {
         String clippedFocus = capText(focus, 60);
         if (looksLikeSummaryFollowUp(normalized)) {
-            return "用户希望补充总结当前事项：" + clippedFocus;
+            return "用户希望总结当前事项：" + clippedFocus;
         }
         if (looksLikePlanningFollowUp(normalized)) {
             return "用户想先明确当前事项的方案或步骤：" + clippedFocus;

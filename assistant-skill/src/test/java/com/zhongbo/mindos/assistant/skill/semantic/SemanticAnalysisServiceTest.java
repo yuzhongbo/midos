@@ -652,8 +652,8 @@ class SemanticAnalysisServiceTest {
         assertEquals("伊朗", result.taskFocus());
         assertEquals("伊朗", result.payload().get("query"));
         assertEquals("5", String.valueOf(result.payload().get("limit")));
-        assertTrue(result.rewrittenInput().contains("补充总结当前事项"));
-        assertTrue(result.summary().contains("补充总结"));
+        assertTrue(result.rewrittenInput().contains("总结当前事项"));
+        assertTrue(result.summary().contains("总结当前事项"));
     }
 
     @Test
