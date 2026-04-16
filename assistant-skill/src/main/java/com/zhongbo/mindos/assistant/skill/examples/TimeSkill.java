@@ -38,7 +38,18 @@ public class TimeSkill implements Skill, SkillDescriptorProvider {
 
     @Override
     public SkillDescriptor skillDescriptor() {
-        return new SkillDescriptor(name(), description(), List.of("time", "clock", "what time", "几点", "时间", "现在几点了"));
+        return new SkillDescriptor(name(), description(), List.of(
+                "time",
+                "clock",
+                "current time",
+                "what time",
+                "几点",
+                "几点了",
+                "现在几点",
+                "现在几点了",
+                "当前时间",
+                "现在时间"
+        ));
     }
 
     @Override

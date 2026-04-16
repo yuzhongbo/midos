@@ -33,6 +33,7 @@ import com.zhongbo.mindos.assistant.skill.SkillDslExecutor;
 import com.zhongbo.mindos.assistant.skill.SkillEngine;
 import com.zhongbo.mindos.assistant.skill.SkillRegistry;
 import com.zhongbo.mindos.assistant.skill.SkillRoutingProperties;
+import com.zhongbo.mindos.assistant.skill.examples.TimeSkill;
 import com.zhongbo.mindos.assistant.skill.mcp.McpToolDefinition;
 import com.zhongbo.mindos.assistant.skill.mcp.McpToolExecutor;
 import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalysisResult;
@@ -826,6 +827,36 @@ class DispatcherServiceTest {
         assertEquals(0, llmClient.routingCallCount());
         assertEquals(1, llmClient.fallbackCallCount());
         assertTrue(llmClient.routingPrompts().isEmpty());
+    }
+
+    @Test
+    void shouldNotRouteToTimeSkillWhenTimeIsOnlyGenericContextWord() {
+        MemoryManager memoryManager = createMemoryManager();
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of("先按影响范围和紧急度排一下优先级。"));
+        DispatcherService service = createDispatcher(memoryManager, llmClient, List.of(
+                new TimeSkill()
+        ), 2);
+
+        DispatchResult result = service.dispatch("time-misroute-user", "这个任务时间比较紧，先帮我排一下优先级");
+
+        assertEquals("llm", result.channel());
+        assertEquals(1, llmClient.fallbackCallCount());
+        assertEquals("llm-fallback", result.executionTrace().routing().route());
+    }
+
+    @Test
+    void shouldStillRouteToTimeSkillForExplicitCurrentTimeQuestion() {
+        MemoryManager memoryManager = createMemoryManager();
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of("不应进入 llm"));
+        DispatcherService service = createDispatcher(memoryManager, llmClient, List.of(
+                new TimeSkill()
+        ), 2);
+
+        DispatchResult result = service.dispatch("time-user", "现在几点了");
+
+        assertEquals("time", result.channel());
+        assertEquals(0, llmClient.fallbackCallCount());
+        assertTrue(result.reply().contains("时间"));
     }
 
     @Test

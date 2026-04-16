@@ -709,7 +709,24 @@ final class HermesDecisionEngine {
         double priorityBoost = priorityRank == Integer.MAX_VALUE
                 ? 0.0d
                 : Math.max(0, parallelSearchPriorityOrder.size() - priorityRank) * 0.01d;
-        double score = 0.92d + priorityBoost + Math.min(Math.max(candidate.score(), 0), 5) * 0.001d;
+        int rawScore = candidate.score();
+        double score;
+        if (rawScore >= 1000) {
+            score = 0.99d;
+        } else if (rawScore >= 900) {
+            score = 0.96d;
+        } else if (rawScore >= 700) {
+            score = 0.88d;
+        } else if (rawScore >= 600) {
+            score = 0.74d;
+        } else if (rawScore >= 400) {
+            score = 0.62d;
+        } else if (rawScore >= 300) {
+            score = 0.52d;
+        } else {
+            score = MIN_ROUTE_CONFIDENCE;
+        }
+        score += priorityBoost;
         String normalizedInput = context == null ? "" : normalize(context.userInput()).toLowerCase(Locale.ROOT);
         if ("mcp.docs.searchDocs".equals(candidate.skillName())
                 && (normalizedInput.contains("searchdocs") || normalizedInput.contains("docs"))) {

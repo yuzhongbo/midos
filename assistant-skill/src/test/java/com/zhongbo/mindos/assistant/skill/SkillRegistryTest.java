@@ -2,6 +2,7 @@ package com.zhongbo.mindos.assistant.skill;
 
 import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.common.SkillResult;
+import com.zhongbo.mindos.assistant.skill.examples.TimeSkill;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -55,6 +56,28 @@ class SkillRegistryTest {
         assertTrue(descriptor.routingKeywords().contains("todo create"));
         assertEquals(List.of("alpha.clean", "todo.create"), descriptors.stream().map(SkillDescriptor::name).toList());
         assertEquals(descriptor, descriptors.get(1));
+    }
+
+    @Test
+    void shouldNotDetectTimeSkillFromGenericTimeMentions() {
+        SkillRoutingProperties properties = new SkillRoutingProperties();
+        SkillRegistry registry = new SkillRegistry(List.of(new TimeSkill()), properties);
+        DefaultSkillCatalog catalog = new DefaultSkillCatalog(registry, null, properties);
+
+        List<SkillCandidate> candidates = catalog.detectSkillCandidates("这个项目时间比较紧，需要先排优先级", 3);
+
+        assertTrue(candidates.stream().noneMatch(candidate -> "time".equals(candidate.skillName())));
+    }
+
+    @Test
+    void shouldDetectTimeSkillForExplicitCurrentTimeQuestion() {
+        SkillRoutingProperties properties = new SkillRoutingProperties();
+        SkillRegistry registry = new SkillRegistry(List.of(new TimeSkill()), properties);
+        DefaultSkillCatalog catalog = new DefaultSkillCatalog(registry, null, properties);
+
+        String detected = catalog.detectSkillName("现在几点了").orElse("");
+
+        assertEquals("time", detected);
     }
 
     private record FixedSkill(String name) implements Skill {
