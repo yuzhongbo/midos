@@ -63,7 +63,7 @@ final class HermesDecisionEngine {
 
     DecisionPlan decide(HermesDecisionContext context) {
         HermesDecisionContext safeContext = context == null
-                ? new HermesDecisionContext("", "", "", Map.of(), true, answerMode, null, "", List.of(), List.of(), SemanticAnalysisResult.empty(), Map.of(), Map.of(), null)
+                ? new HermesDecisionContext("", "", "", Map.of(), true, answerMode, null, "", List.of(), List.of(), SemanticAnalysisResult.empty(), Map.of(), Map.of(), Map.of(), null)
                 : context;
         SemanticAnalysisResult semanticAnalysis = safeContext.semanticAnalysis();
 
@@ -110,6 +110,7 @@ final class HermesDecisionEngine {
         }
         if (!safeContext.answerMode().llmFirst()) {
             boostCandidatesFromMemory(candidates, safeContext, safeContext.skillSuccessRates());
+            boostCandidatesFromGraphMemory(candidates, safeContext);
         }
         applySearchPriorityOverrides(candidates, safeContext);
         applyBuiltinSkillPreference(candidates, safeContext);
@@ -572,6 +573,55 @@ final class HermesDecisionEngine {
                     current.clarifyReply()
             ));
         }
+    }
+
+    private void boostCandidatesFromGraphMemory(Map<String, Candidate> candidates, HermesDecisionContext context) {
+        if (candidates.isEmpty() || context == null || context.graphSkillScores().isEmpty()) {
+            return;
+        }
+        for (Map.Entry<String, Candidate> entry : new ArrayList<>(candidates.entrySet())) {
+            Double graphScore = graphScoreForCandidate(entry.getKey(), context);
+            if (graphScore == null || graphScore <= 0.0d) {
+                continue;
+            }
+            double graphBoost = Math.max(0.0d, graphScore - 0.60d) * 0.25d;
+            if (graphBoost <= 0.0d) {
+                continue;
+            }
+            Candidate current = entry.getValue();
+            List<String> reasons = new ArrayList<>(current.reasons());
+            reasons.add("graph-memory=" + String.format(Locale.ROOT, "%.2f", graphScore));
+            candidates.put(entry.getKey(), new Candidate(
+                    current.skillName(),
+                    clamp(current.score() + graphBoost),
+                    current.route(),
+                    current.params(),
+                    List.copyOf(reasons),
+                    current.needClarify(),
+                    current.clarifyReply()
+            ));
+        }
+    }
+
+    private Double graphScoreForCandidate(String decisionTarget, HermesDecisionContext context) {
+        if (context == null || context.graphSkillScores().isEmpty()) {
+            return null;
+        }
+        Double score = context.graphSkillScores().get(decisionTarget);
+        if (score != null) {
+            return score;
+        }
+        if (toolSchemaCatalog == null) {
+            return null;
+        }
+        String executionTarget = toolSchemaCatalog.executionTargetForDecision(
+                decisionTarget,
+                context.profileContext()
+        );
+        if (executionTarget.equals(decisionTarget)) {
+            return null;
+        }
+        return context.graphSkillScores().get(executionTarget);
     }
 
     private void applySearchPriorityOverrides(Map<String, Candidate> candidates, HermesDecisionContext context) {

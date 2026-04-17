@@ -20,6 +20,7 @@ record HermesDecisionContext(
         List<HermesToolSchema> toolSchemas,
         SemanticAnalysisResult semanticAnalysis,
         Map<String, Double> skillSuccessRates,
+        Map<String, Double> graphSkillScores,
         Map<String, Object> llmContext,
         SkillContext skillContext
 ) {
@@ -30,6 +31,7 @@ record HermesDecisionContext(
         toolSchemas = toolSchemas == null ? List.of() : List.copyOf(toolSchemas);
         semanticAnalysis = semanticAnalysis == null ? SemanticAnalysisResult.empty() : semanticAnalysis;
         skillSuccessRates = skillSuccessRates == null ? Map.of() : Map.copyOf(skillSuccessRates);
+        graphSkillScores = graphSkillScores == null ? Map.of() : Map.copyOf(graphSkillScores);
         llmContext = llmContext == null ? Map.of() : Map.copyOf(llmContext);
     }
 }

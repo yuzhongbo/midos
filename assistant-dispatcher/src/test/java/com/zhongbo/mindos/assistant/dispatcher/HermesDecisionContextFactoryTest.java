@@ -4,17 +4,25 @@ import com.zhongbo.mindos.assistant.common.dto.PromptMemoryContextDto;
 import com.zhongbo.mindos.assistant.common.dto.TaskThreadSnapshotDto;
 import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryFacade;
 import com.zhongbo.mindos.assistant.memory.MemoryFacade;
+import com.zhongbo.mindos.assistant.memory.MemoryGateway;
 import com.zhongbo.mindos.assistant.memory.MemoryManager;
+import com.zhongbo.mindos.assistant.memory.graph.GraphMemory;
+import com.zhongbo.mindos.assistant.memory.graph.MemoryNode;
 import com.zhongbo.mindos.assistant.memory.model.ConversationTurn;
 import com.zhongbo.mindos.assistant.memory.model.SemanticMemoryEntry;
 import com.zhongbo.mindos.assistant.memory.model.SkillUsageStats;
+import com.zhongbo.mindos.assistant.skill.SkillCandidate;
+import com.zhongbo.mindos.assistant.skill.SkillCatalogFacade;
+import com.zhongbo.mindos.assistant.skill.SkillDescriptor;
 import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalysisResult;
 import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalyzer;
+import com.zhongbo.mindos.assistant.dispatcher.orchestrator.InMemoryParamSchemaRegistry;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -94,6 +102,63 @@ class HermesDecisionContextFactoryTest {
         assertTrue(context.memoryContext().contains("Relevant knowledge:"));
     }
 
+    @Test
+    void shouldIncludeGraphSkillScoresInDecisionContext() {
+        GraphMemory graphMemory = new GraphMemory();
+        Instant recordedAt = Instant.parse("2024-01-01T00:00:00Z");
+        graphMemory.upsertNode("u1", new MemoryNode(
+                "skill:todo.create",
+                "hermes.skill",
+                Map.of(
+                        "name", "todo.create",
+                        "skillName", "todo.create",
+                        "lastTask", "整理任务"
+                ),
+                recordedAt,
+                recordedAt
+        ));
+        DispatcherMemoryFacade facade = new DispatcherMemoryFacade(
+                new MemoryFacade(new TestMemoryManager(
+                        List.of(),
+                        List.of(),
+                        List.of(),
+                        new PromptMemoryContextDto("recent", "semantic", "procedural", Map.of(), List.of())
+                )),
+                (MemoryGateway) null,
+                graphMemory,
+                graphMemory,
+                null
+        );
+        InMemoryParamSchemaRegistry schemaRegistry = new InMemoryParamSchemaRegistry();
+        schemaRegistry.registerDefaults();
+        HermesDecisionContextFactory factory = new HermesDecisionContextFactory(
+                facade,
+                null,
+                (userId, userInput, memoryContext, profileContext, availableSkillSummaries) -> SemanticAnalysisResult.empty(),
+                new HermesToolSchemaCatalog(
+                        new TestSkillCatalog(List.of(
+                                new SkillDescriptor("todo.create", "Create todo item", List.of("待办", "整理任务")),
+                                new SkillDescriptor("file.search", "Search local files", List.of("找文件", "搜索文件"))
+                        )),
+                        schemaRegistry
+                ),
+                new DispatchHeuristicsSupport(null, false, List.of(), false, true, Set.of("新闻", "天气")),
+                DispatcherAnswerMode.BALANCED,
+                1600,
+                900,
+                true,
+                280,
+                stats -> {
+                }
+        );
+
+        HermesDecisionContext context = factory.create("u1", "整理任务", Map.of());
+
+        assertTrue(context.graphSkillScores().getOrDefault("todo.create", 0.0d) > 0.0d);
+        assertTrue(context.graphSkillScores().getOrDefault("todo.create", 0.0d)
+                > context.graphSkillScores().getOrDefault("file.search", 0.0d));
+    }
+
     private static final class TestMemoryManager extends MemoryManager {
         private final List<ConversationTurn> recentConversation;
         private final List<SemanticMemoryEntry> knowledge;
@@ -132,6 +197,46 @@ class HermesDecisionContextFactoryTest {
                                                                int maxChars,
                                                                Map<String, Object> profileContext) {
             return promptMemoryContext;
+        }
+    }
+
+    private static final class TestSkillCatalog implements SkillCatalogFacade {
+        private final List<SkillDescriptor> descriptors;
+
+        private TestSkillCatalog(List<SkillDescriptor> descriptors) {
+            this.descriptors = descriptors == null ? List.of() : List.copyOf(descriptors);
+        }
+
+        @Override
+        public Optional<String> detectSkillName(String input) {
+            return Optional.empty();
+        }
+
+        @Override
+        public List<SkillCandidate> detectSkillCandidates(String input, int limit) {
+            return List.of();
+        }
+
+        @Override
+        public Optional<SkillDescriptor> describeSkill(String skillName) {
+            return descriptors.stream().filter(descriptor -> descriptor.name().equals(skillName)).findFirst();
+        }
+
+        @Override
+        public List<SkillDescriptor> listSkillDescriptors() {
+            return descriptors;
+        }
+
+        @Override
+        public String describeAvailableSkills() {
+            return descriptors.stream().map(SkillDescriptor::name).reduce((left, right) -> left + ", " + right).orElse("");
+        }
+
+        @Override
+        public List<String> listAvailableSkillSummaries() {
+            return descriptors.stream()
+                    .map(descriptor -> descriptor.name() + " - " + descriptor.description())
+                    .toList();
         }
     }
 }

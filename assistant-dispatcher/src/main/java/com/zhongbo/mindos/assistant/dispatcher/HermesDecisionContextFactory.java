@@ -8,6 +8,7 @@ import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalysisResult;
 import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalyzer;
 
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
@@ -85,6 +86,9 @@ final class HermesDecisionContextFactory {
                 topMemoryHints(promptMemoryContext)
         );
         List<HermesToolSchema> toolSchemas = toolSchemaCatalog == null ? List.of() : toolSchemaCatalog.listSchemas(adaptiveProfileContext);
+        Map<String, Double> graphSkillScores = memoryEnabled
+                ? buildGraphSkillScores(userId, userInput, adaptiveProfileContext, toolSchemas)
+                : Map.of();
         boolean realtimeIntentInput = memoryEnabled
                 && dispatchHeuristicsSupport != null
                 && dispatchHeuristicsSupport.isRealtimeLikeInput(userInput);
@@ -162,6 +166,7 @@ final class HermesDecisionContextFactory {
                 toolSchemas,
                 semanticAnalysis,
                 memoryEnabled ? buildSkillSuccessRates(userId) : Map.of(),
+                graphSkillScores,
                 llmContext,
                 skillContext
         );
@@ -194,6 +199,44 @@ final class HermesDecisionContextFactory {
 
     private Map<String, Object> safeMap(Map<String, Object> value) {
         return value == null || value.isEmpty() ? Map.of() : Map.copyOf(value);
+    }
+
+    private Map<String, Double> buildGraphSkillScores(String userId,
+                                                      String userInput,
+                                                      Map<String, Object> profileContext,
+                                                      List<HermesToolSchema> toolSchemas) {
+        if (userId == null || userId.isBlank() || toolSchemas == null || toolSchemas.isEmpty()) {
+            return Map.of();
+        }
+        LinkedHashSet<String> candidateNames = new LinkedHashSet<>();
+        Map<String, Object> safeProfileContext = safeMap(profileContext);
+        for (HermesToolSchema toolSchema : toolSchemas) {
+            if (toolSchema == null || toolSchema.name().isBlank()) {
+                continue;
+            }
+            candidateNames.add(toolSchema.name());
+            if (toolSchemaCatalog != null) {
+                String executionTarget = toolSchemaCatalog.executionTargetForDecision(toolSchema.name(), safeProfileContext);
+                if (executionTarget != null && !executionTarget.isBlank()) {
+                    candidateNames.add(executionTarget);
+                }
+            }
+        }
+        if (candidateNames.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, Double> rawScores = dispatcherMemoryFacade.scoreGraphCandidates(userId, userInput, List.copyOf(candidateNames));
+        if (rawScores == null || rawScores.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, Double> positiveScores = new LinkedHashMap<>();
+        for (Map.Entry<String, Double> entry : rawScores.entrySet()) {
+            if (entry == null || entry.getKey() == null || entry.getKey().isBlank() || entry.getValue() == null || entry.getValue() <= 0.0d) {
+                continue;
+            }
+            positiveScores.put(entry.getKey(), entry.getValue());
+        }
+        return positiveScores.isEmpty() ? Map.of() : Map.copyOf(positiveScores);
     }
 
     private Map<String, Object> mergeLearnedPreferences(Map<String, Object> resolvedProfileContext,

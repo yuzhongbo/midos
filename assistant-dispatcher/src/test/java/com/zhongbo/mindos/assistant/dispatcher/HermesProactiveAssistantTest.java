@@ -173,6 +173,7 @@ class HermesProactiveAssistantTest {
                 semanticAnalysis,
                 Map.of(),
                 Map.of(),
+                Map.of(),
                 skillContext
         );
     }
