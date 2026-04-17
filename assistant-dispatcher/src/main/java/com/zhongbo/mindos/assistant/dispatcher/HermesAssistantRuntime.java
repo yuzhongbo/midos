@@ -9,7 +9,6 @@ import com.zhongbo.mindos.assistant.dispatcher.decision.Decision;
 import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryFacade;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.DecisionOrchestrator;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.ParamValidator;
-import com.zhongbo.mindos.assistant.dispatcher.system.DevelopmentWorkflowService;
 import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalysisResult;
 
 import java.time.Instant;
@@ -304,7 +303,7 @@ final class HermesAssistantRuntime {
         String executionTarget = skillRouter == null
                 ? requestedTarget
                 : skillRouter.resolveExecutionTarget(requestedTarget, decisionContext.skillContext());
-        boolean developmentWorkflow = skillRouter != null && skillRouter.usesDevelopmentWorkflow(executionTarget);
+        String workflowReason = skillRouter == null ? "" : skillRouter.workflowReasonFor(requestedTarget, executionTarget);
         Optional<SkillResult> capabilityBlocked = maybeBlockedByCapability(executionTarget);
         if (capabilityBlocked.isPresent()) {
             SkillResult blocked = capabilityBlocked.get();
@@ -412,10 +411,10 @@ final class HermesAssistantRuntime {
         );
         List<String> executionReasons = appendReason(
                 decisionPlan.reasons(),
-                developmentWorkflow ? DevelopmentWorkflowService.WORKFLOW_REASON : ""
+                workflowReason
         );
         String attemptedSkill = validatedDecision.target();
-        SkillResult routedResult = skillRouter.execute(validatedDecision, decisionContext.skillContext());
+        SkillResult routedResult = skillRouter.execute(requestedTarget, validatedDecision, decisionContext.skillContext());
         boolean attemptedSuccess = routedResult != null && routedResult.success();
 
         if (attemptedSuccess) {

@@ -18,6 +18,7 @@ import java.util.logging.LogRecord;
 import java.util.logging.Logger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class McpToolSkillTest {
@@ -195,6 +196,49 @@ class McpToolSkillTest {
         }
     }
 
+    @Test
+    void shouldSkipDetailAugmentAndStripInternalArguments() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/detail", exchange -> {
+            byte[] payload = """
+                    <html><head><title>MindOS Detail</title></head><body><p>detail body</p></body></html>
+                    """.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "text/html; charset=utf-8");
+            exchange.sendResponseHeaders(200, payload.length);
+            exchange.getResponseBody().write(payload);
+            exchange.close();
+        });
+        server.start();
+        try {
+            String url = "http://127.0.0.1:" + server.getAddress().getPort() + "/detail";
+            McpToolDefinition tool = new McpToolDefinition("bravesearch", "http://unused.local/res/v1/web/search", "webSearch", "Search latest web news");
+            CapturingSearchMcpClient client = new CapturingSearchMcpClient("""
+                    Brave 搜索（MindOS 架构）结果：
+                    1. MindOS 架构说明 - 单一决策和纯执行链路
+                    %s
+                    """.formatted(url));
+            McpToolExecutor executor = new McpToolExecutor(
+                    toolCatalogWith(tool, client),
+                    new SearchResultDetailAugmentor(true, 3000, 1, 240, 3000)
+            );
+
+            var result = executor.execute(tool.skillName(), Map.of(
+                    "query", "MindOS 架构",
+                    "input", "帮我查 MindOS 架构",
+                    "internalSkipDetailAugment", true,
+                    "systemWorkflowRecipe", "web.lookup.detail"
+            ));
+
+            assertTrue(result.success());
+            assertTrue(result.output().contains("Brave 搜索（MindOS 架构）结果"), result.output());
+            assertFalse(result.output().contains("最相关详情"), result.output());
+            assertFalse(client.lastArguments.containsKey("internalSkipDetailAugment"));
+            assertFalse(client.lastArguments.containsKey("systemWorkflowRecipe"));
+        } finally {
+            server.stop(0);
+        }
+    }
+
     private static final class CapturingMcpClient extends McpJsonRpcClient {
         private Map<String, Object> lastArguments = Map.of();
 
@@ -214,6 +258,21 @@ class McpToolSkillTest {
 
         @Override
         public String callTool(String serverUrl, String toolName, Map<String, Object> arguments, Map<String, String> headers) {
+            return output;
+        }
+    }
+
+    private static final class CapturingSearchMcpClient extends McpJsonRpcClient {
+        private final String output;
+        private Map<String, Object> lastArguments = Map.of();
+
+        private CapturingSearchMcpClient(String output) {
+            this.output = output;
+        }
+
+        @Override
+        public String callTool(String serverUrl, String toolName, Map<String, Object> arguments, Map<String, String> headers) {
+            this.lastArguments = new LinkedHashMap<>(arguments);
             return output;
         }
     }

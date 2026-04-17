@@ -4,7 +4,7 @@ import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.common.SkillDsl;
 import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.dispatcher.decision.Decision;
-import com.zhongbo.mindos.assistant.dispatcher.system.DevelopmentWorkflowService;
+import com.zhongbo.mindos.assistant.dispatcher.system.SkillCompositionService;
 import com.zhongbo.mindos.assistant.skill.SkillExecutionGateway;
 
 import java.util.LinkedHashMap;
@@ -14,7 +14,7 @@ final class HermesSkillRouter {
 
     private final SkillExecutionGateway skillExecutionGateway;
     private final HermesToolSchemaCatalog toolSchemaCatalog;
-    private final DevelopmentWorkflowService developmentWorkflowService;
+    private final SkillCompositionService skillCompositionService;
 
     HermesSkillRouter(SkillExecutionGateway skillExecutionGateway, HermesToolSchemaCatalog toolSchemaCatalog) {
         this(skillExecutionGateway, toolSchemaCatalog, null);
@@ -22,21 +22,24 @@ final class HermesSkillRouter {
 
     HermesSkillRouter(SkillExecutionGateway skillExecutionGateway,
                       HermesToolSchemaCatalog toolSchemaCatalog,
-                      DevelopmentWorkflowService developmentWorkflowService) {
+                      SkillCompositionService skillCompositionService) {
         this.skillExecutionGateway = skillExecutionGateway;
         this.toolSchemaCatalog = toolSchemaCatalog;
-        this.developmentWorkflowService = developmentWorkflowService;
+        this.skillCompositionService = skillCompositionService;
     }
 
-    SkillResult execute(Decision decision, SkillContext baseContext) {
+    SkillResult execute(String requestedDecisionTarget, Decision decision, SkillContext baseContext) {
         if (decision == null || decision.target() == null || decision.target().isBlank()) {
             return SkillResult.failure("decision-engine", "missing routed target");
         }
-        String executionTarget = resolveExecutionTarget(decision.target(), baseContext);
-        SkillContext executionContext = buildExecutionContext(decision, baseContext);
-        if (usesDevelopmentWorkflow(executionTarget)) {
-            return developmentWorkflowService.execute(executionTarget, decision.params(), executionContext);
+        String decisionTarget = requestedDecisionTarget == null || requestedDecisionTarget.isBlank()
+                ? decision.target()
+                : requestedDecisionTarget;
+        String executionTarget = resolveExecutionTarget(decisionTarget, baseContext);
+        if (usesSkillComposition(decisionTarget, executionTarget)) {
+            return skillCompositionService.execute(decisionTarget, executionTarget, decision.params(), baseContext);
         }
+        SkillContext executionContext = buildExecutionContext(decision, baseContext);
         if (skillExecutionGateway == null) {
             return SkillResult.failure(executionTarget, "skill execution gateway unavailable");
         }
@@ -50,8 +53,15 @@ final class HermesSkillRouter {
         }
     }
 
-    boolean usesDevelopmentWorkflow(String executionTarget) {
-        return developmentWorkflowService != null && developmentWorkflowService.supports(executionTarget);
+    String workflowReasonFor(String requestedDecisionTarget, String executionTarget) {
+        if (!usesSkillComposition(requestedDecisionTarget, executionTarget)) {
+            return "";
+        }
+        return skillCompositionService.workflowReasonFor(requestedDecisionTarget, executionTarget);
+    }
+
+    boolean usesSkillComposition(String requestedDecisionTarget, String executionTarget) {
+        return skillCompositionService != null && skillCompositionService.supports(requestedDecisionTarget, executionTarget);
     }
 
     private SkillContext buildExecutionContext(Decision decision, SkillContext baseContext) {

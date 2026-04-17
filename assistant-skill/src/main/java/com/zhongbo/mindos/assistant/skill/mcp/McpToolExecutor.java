@@ -10,6 +10,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.logging.Logger;
 
 @Component
@@ -26,6 +27,16 @@ public class McpToolExecutor {
     private static final List<String> REALTIME_INTENT_CUES = List.of(
             "news", "latest", "realtime", "real time", "current", "today", "headline",
             "新闻", "最新", "实时", "今天", "头条", "热点", "热搜", "天气", "汇率", "股价"
+    );
+    private static final Set<String> INTERNAL_ARGUMENT_KEYS = Set.of(
+            "internalSkipDetailAugment",
+            "systemWorkflow",
+            "systemWorkflowRecipe",
+            "systemWorkflowStep",
+            "systemWorkflowStepTarget",
+            "systemWorkflowExecutionTarget",
+            "systemWorkflowCapability",
+            "systemWorkflowDecisionTarget"
     );
     private final McpToolCatalog toolCatalog;
     private final SearchResultDetailAugmentor detailAugmentor;
@@ -79,16 +90,18 @@ public class McpToolExecutor {
             if (isSearchLikeTool(toolDefinition) && stringValue(arguments.get("query")).isBlank()) {
                 return SkillResult.success(toolDefinition.skillName(), buildMissingQueryReply(params));
             }
+            boolean skipDetailAugment = shouldSkipDetailAugment(arguments);
             String output = mcpClient.callTool(
                     toolDefinition.serverUrl(),
                     toolDefinition.name(),
-                    arguments,
+                    sanitizeOutboundArguments(arguments),
                     toolDefinition.headers()
             );
             String enrichedOutput = maybeAugmentSearchOutput(
                     toolDefinition,
                     stringValue(arguments.get("query")),
-                    output
+                    output,
+                    skipDetailAugment
             );
             return SkillResult.success(toolDefinition.skillName(), enrichedOutput);
         } catch (RuntimeException ex) {
@@ -158,15 +171,39 @@ public class McpToolExecutor {
                 || text.contains("search docs");
     }
 
-    private String maybeAugmentSearchOutput(McpToolDefinition toolDefinition, String query, String output) {
+    private String maybeAugmentSearchOutput(McpToolDefinition toolDefinition,
+                                            String query,
+                                            String output,
+                                            boolean skipDetailAugment) {
         if (detailAugmentor == null
                 || toolDefinition == null
                 || output == null
                 || output.isBlank()
+                || skipDetailAugment
                 || !isSearchLikeTool(toolDefinition)) {
             return output;
         }
         return detailAugmentor.augmentRenderedSearchOutput(query, output);
+    }
+
+    private boolean shouldSkipDetailAugment(Map<String, Object> arguments) {
+        Object value = arguments == null ? null : arguments.get("internalSkipDetailAugment");
+        if (value instanceof Boolean bool) {
+            return bool;
+        }
+        String normalized = stringValue(value).toLowerCase(Locale.ROOT);
+        return "true".equals(normalized) || "1".equals(normalized) || "yes".equals(normalized);
+    }
+
+    private Map<String, Object> sanitizeOutboundArguments(Map<String, Object> arguments) {
+        if (arguments == null || arguments.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, Object> sanitized = new LinkedHashMap<>(arguments);
+        for (String key : INTERNAL_ARGUMENT_KEYS) {
+            sanitized.remove(key);
+        }
+        return Map.copyOf(sanitized);
     }
 
     private boolean isMissingQueryError(RuntimeException ex) {
