@@ -6,9 +6,11 @@ import com.zhongbo.mindos.assistant.skill.loader.CustomSkillLoader;
 import com.zhongbo.mindos.assistant.skill.loader.ExternalSkillLoader;
 import com.zhongbo.mindos.assistant.skill.mcp.McpSkillLoader;
 import com.zhongbo.mindos.assistant.skill.learning.GeneratedSkillDeployment;
+import com.zhongbo.mindos.assistant.skill.learning.ToolGenerationResult;
 import com.zhongbo.mindos.assistant.skill.learning.ToolGenerationRequest;
 import com.zhongbo.mindos.assistant.skill.learning.ToolLearningService;
 import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -42,6 +44,7 @@ public class SkillController {
     private final CloudApiSkillLoader cloudApiSkillLoader;
     private final ToolLearningService toolLearningService;
     private final SecurityPolicyGuard securityPolicyGuard;
+    private final boolean skillGenerateRegisterEnabled;
     private final SkillControllerRequestParser requestParser = new SkillControllerRequestParser();
 
     public SkillController(SkillRegistry skillRegistry,
@@ -50,7 +53,8 @@ public class SkillController {
                            McpSkillLoader mcpSkillLoader,
                            CloudApiSkillLoader cloudApiSkillLoader,
                            ToolLearningService toolLearningService,
-                           SecurityPolicyGuard securityPolicyGuard) {
+                           SecurityPolicyGuard securityPolicyGuard,
+                           @Value("${mindos.skills.generate.register-enabled:false}") boolean skillGenerateRegisterEnabled) {
         this.skillRegistry = skillRegistry;
         this.customSkillLoader = customSkillLoader;
         this.externalSkillLoader = externalSkillLoader;
@@ -58,6 +62,7 @@ public class SkillController {
         this.cloudApiSkillLoader = cloudApiSkillLoader;
         this.toolLearningService = toolLearningService;
         this.securityPolicyGuard = securityPolicyGuard;
+        this.skillGenerateRegisterEnabled = skillGenerateRegisterEnabled;
     }
 
     /**
@@ -85,11 +90,14 @@ public class SkillController {
      * <p>Response: {"reloaded": 3, "dir": "/path/to/custom-skills"}</p>
      */
     @PostMapping("/reload")
-    public Map<String, Object> reloadCustomSkills() {
+    public Map<String, Object> reloadCustomSkills(HttpServletRequest servletRequest) {
+        String dir = customSkillLoader.getCustomSkillDir() == null ? "" : customSkillLoader.getCustomSkillDir();
+        securityPolicyGuard.verifySkillMutationAllowed(servletRequest, "skills.reload", dir, "system");
+        securityPolicyGuard.verifyRiskyOperationApproval(servletRequest, "skills.reload", dir, "system");
         int count = customSkillLoader.reload();
         return Map.of(
                 "reloaded", count,
-                "dir", customSkillLoader.getCustomSkillDir() == null ? "" : customSkillLoader.getCustomSkillDir(),
+                "dir", dir,
                 "status", "ok"
         );
     }
@@ -105,6 +113,12 @@ public class SkillController {
         SkillControllerRequestParser.ValidationResult<SkillControllerRequestParser.LoadJarRequest> parsedRequest =
                 requestParser.parseLoadJar(request);
         String jarUrl = parsedRequest.valid() ? parsedRequest.value().url() : null;
+        securityPolicyGuard.verifySkillMutationAllowed(
+                servletRequest,
+                "skills.load-jar",
+                jarUrl == null ? "" : jarUrl.trim(),
+                "system"
+        );
         securityPolicyGuard.verifyRiskyOperationApproval(
                 servletRequest,
                 "skills.load-jar",
@@ -124,11 +138,14 @@ public class SkillController {
     }
 
     @PostMapping("/reload-mcp")
-    public Map<String, Object> reloadMcpSkills() {
+    public Map<String, Object> reloadMcpSkills(HttpServletRequest servletRequest) {
+        String servers = mcpSkillLoader.getConfiguredServers() == null ? "" : mcpSkillLoader.getConfiguredServers();
+        securityPolicyGuard.verifySkillMutationAllowed(servletRequest, "skills.reload-mcp", servers, "system");
+        securityPolicyGuard.verifyRiskyOperationApproval(servletRequest, "skills.reload-mcp", servers, "system");
         int count = mcpSkillLoader.reload();
         return Map.of(
                 "reloaded", count,
-                "servers", mcpSkillLoader.getConfiguredServers() == null ? "" : mcpSkillLoader.getConfiguredServers(),
+                "servers", servers,
                 "status", "ok"
         );
     }
@@ -141,6 +158,12 @@ public class SkillController {
         String alias = parsedRequest.valid() ? parsedRequest.value().alias() : null;
         String url = parsedRequest.valid() ? parsedRequest.value().url() : null;
         String resource = (alias == null ? "" : alias) + "@" + (url == null ? "" : url);
+        securityPolicyGuard.verifySkillMutationAllowed(
+                servletRequest,
+                "skills.load-mcp",
+                resource,
+                "system"
+        );
         securityPolicyGuard.verifyRiskyOperationApproval(
                 servletRequest,
                 "skills.load-mcp",
@@ -170,17 +193,20 @@ public class SkillController {
      * <p>Response: {"reloaded": 2, "dir": "/path/to/cloud-skills", "status": "ok"}</p>
      */
     @PostMapping("/reload-cloud")
-    public Map<String, Object> reloadCloudApiSkills() {
+    public Map<String, Object> reloadCloudApiSkills(HttpServletRequest servletRequest) {
+        String dir = cloudApiSkillLoader.getConfigDir() == null ? "" : cloudApiSkillLoader.getConfigDir();
+        securityPolicyGuard.verifySkillMutationAllowed(servletRequest, "skills.reload-cloud", dir, "system");
+        securityPolicyGuard.verifyRiskyOperationApproval(servletRequest, "skills.reload-cloud", dir, "system");
         int count = cloudApiSkillLoader.reload();
         return Map.of(
                 "reloaded", count,
-                "dir", cloudApiSkillLoader.getConfigDir() == null ? "" : cloudApiSkillLoader.getConfigDir(),
+                "dir", dir,
                 "status", "ok"
         );
     }
 
     /**
-     * Generates a new skill from the request, compiles it, and registers it dynamically.
+     * Generates a new skill draft from the request. Runtime registration stays opt-in.
      */
     @PostMapping("/generate")
     public Map<String, Object> generateSkill(@RequestBody Map<String, Object> request,
@@ -188,6 +214,12 @@ public class SkillController {
         SkillControllerRequestParser.ValidationResult<SkillControllerRequestParser.GenerateSkillRequest> parsedRequest =
                 requestParser.parseGenerate(request);
         String prompt = parsedRequest.valid() ? parsedRequest.value().prompt() : null;
+        securityPolicyGuard.verifySkillMutationAllowed(
+                servletRequest,
+                "skills.generate",
+                prompt == null ? "" : prompt,
+                "system"
+        );
         securityPolicyGuard.verifyRiskyOperationApproval(
                 servletRequest,
                 "skills.generate",
@@ -198,21 +230,37 @@ public class SkillController {
             return parsedRequest.errorResponse();
         }
         SkillControllerRequestParser.GenerateSkillRequest validated = parsedRequest.value();
-        GeneratedSkillDeployment deployment = toolLearningService.generateAndRegister(
-                new ToolGenerationRequest(validated.userId(), validated.prompt(), validated.skillName(), validated.hints())
-        );
+        ToolGenerationRequest generationRequest =
+                new ToolGenerationRequest(validated.userId(), validated.prompt(), validated.skillName(), validated.hints());
+        ToolGenerationResult artifact;
+        String registeredSkillName;
+        boolean replaced;
+        boolean registered;
+        if (skillGenerateRegisterEnabled) {
+            GeneratedSkillDeployment deployment = toolLearningService.generateAndRegister(generationRequest);
+            artifact = deployment.artifact();
+            registeredSkillName = deployment.registeredSkillName();
+            replaced = deployment.replaced();
+            registered = true;
+        } else {
+            artifact = toolLearningService.generateDraft(generationRequest);
+            registeredSkillName = artifact.skillName();
+            replaced = false;
+            registered = false;
+        }
 
         Map<String, Object> response = new LinkedHashMap<>();
-        response.put("status", "ok");
-        response.put("skillName", deployment.registeredSkillName());
-        response.put("kind", deployment.artifact().kind().name());
-        response.put("replaced", deployment.replaced());
-        response.put("description", deployment.artifact().description());
-        response.put("keywords", deployment.artifact().routingKeywords());
-        response.put("packageName", deployment.artifact().packageName());
-        response.put("className", deployment.artifact().className());
-        response.put("source", deployment.artifact().sourceCode());
-        response.put("rationale", deployment.artifact().rationale());
+        response.put("status", registered ? "ok" : "draft");
+        response.put("registered", registered);
+        response.put("skillName", registeredSkillName);
+        response.put("kind", artifact.kind().name());
+        response.put("replaced", replaced);
+        response.put("description", artifact.description());
+        response.put("keywords", artifact.routingKeywords());
+        response.put("packageName", artifact.packageName());
+        response.put("className", artifact.className());
+        response.put("source", artifact.sourceCode());
+        response.put("rationale", artifact.rationale());
         return response;
     }
 }

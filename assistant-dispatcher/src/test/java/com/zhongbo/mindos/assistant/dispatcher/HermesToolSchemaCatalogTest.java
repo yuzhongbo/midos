@@ -181,6 +181,51 @@ class HermesToolSchemaCatalogTest {
         assertFalse(catalog.isDecisionEligible("skill.factory"));
     }
 
+    @Test
+    void shouldHideRawSkillsWithoutExplicitParamSchema() {
+        SkillRegistry registry = new SkillRegistry(List.of(new DescriptorSkill(
+                "generated.web.scrape.demo",
+                "Generated scraper",
+                List.of("抓取网页")
+        )));
+        InMemoryParamSchemaRegistry paramSchemaRegistry = new InMemoryParamSchemaRegistry();
+        paramSchemaRegistry.registerDefaults();
+        HermesToolSchemaCatalog catalog = new HermesToolSchemaCatalog(
+                new DefaultSkillCatalog(registry, null, new SkillRoutingProperties()),
+                paramSchemaRegistry
+        );
+
+        List<String> schemaNames = catalog.listSchemas().stream()
+                .map(HermesToolSchema::name)
+                .toList();
+
+        assertFalse(schemaNames.contains("generated.web.scrape.demo"));
+        assertFalse(catalog.isKnownDecisionTarget("generated.web.scrape.demo"));
+    }
+
+    @Test
+    void shouldHideRawMcpToolsWithoutCapabilityAlias() {
+        SkillRegistry registry = new SkillRegistry(List.of(new DescriptorSkill(
+                "mcp.crm.lookupCustomer",
+                "Lookup CRM customer",
+                List.of("查客户")
+        )));
+        InMemoryParamSchemaRegistry paramSchemaRegistry = new InMemoryParamSchemaRegistry();
+        paramSchemaRegistry.registerDefaults();
+        HermesToolSchemaCatalog catalog = new HermesToolSchemaCatalog(
+                new DefaultSkillCatalog(registry, null, new SkillRoutingProperties()),
+                paramSchemaRegistry
+        );
+
+        List<String> schemaNames = catalog.listSchemas().stream()
+                .map(HermesToolSchema::name)
+                .toList();
+
+        assertFalse(schemaNames.contains("mcp.crm.lookupCustomer"));
+        assertFalse(catalog.isDecisionEligible("mcp.crm.lookupCustomer"));
+        assertFalse(catalog.isKnownDecisionTarget("mcp.crm.lookupCustomer"));
+    }
+
     private record DescriptorSkill(String name, String description, List<String> routingKeywords)
             implements Skill, SkillDescriptorProvider {
 

@@ -34,7 +34,6 @@ import java.util.logging.Logger;
  *   <li>{@code ${input}}           — full user input text</li>
  *   <li>{@code ${input.fieldName}} — context attribute by field name</li>
  *   <li>{@code ${apiKey}}          — definition's apiKey field</li>
- *   <li>{@code ${env.VAR_NAME}}    — system environment variable</li>
  * </ul>
  */
 public class CloudApiSkill implements Skill, SkillDescriptorProvider {
@@ -208,8 +207,9 @@ public class CloudApiSkill implements Skill, SkillDescriptorProvider {
     }
 
     /**
-     * Resolves {@code ${input}}, {@code ${input.field}}, {@code ${apiKey}}, and
-     * {@code ${env.VAR}} placeholders in {@code template}.
+     * Resolves {@code ${input}}, {@code ${input.field}}, and {@code ${apiKey}}
+     * placeholders in {@code template}. Environment-variable expansion is
+     * intentionally disabled for externally defined cloud skills.
      */
     String resolveTemplate(String template, SkillContext context) {
         if (template == null || template.isBlank()) {
@@ -228,21 +228,6 @@ public class CloudApiSkill implements Skill, SkillDescriptorProvider {
 
         if (definition.apiKey() != null) {
             result = result.replace("${apiKey}", definition.apiKey());
-        }
-
-        int envStart;
-        int guard = 0;
-        while ((envStart = result.indexOf("${env.")) >= 0 && guard++ < 20) {
-            int envEnd = result.indexOf("}", envStart);
-            if (envEnd < 0) {
-                break;
-            }
-            String varName = result.substring(envStart + 6, envEnd);
-            String envVal = System.getenv(varName);
-            // Replace only the matched placeholder to avoid re-processing substituted values
-            result = result.substring(0, envStart)
-                    + (envVal == null ? "" : envVal)
-                    + result.substring(envEnd + 1);
         }
 
         return result;

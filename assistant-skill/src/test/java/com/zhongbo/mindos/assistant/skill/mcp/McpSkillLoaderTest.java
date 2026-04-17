@@ -3,9 +3,14 @@ package com.zhongbo.mindos.assistant.skill.mcp;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
+import com.zhongbo.mindos.assistant.common.SkillDsl;
 import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.common.SkillResult;
+import com.zhongbo.mindos.assistant.skill.DefaultSkillExecutionGateway;
 import com.zhongbo.mindos.assistant.skill.DefaultSkillCatalog;
+import com.zhongbo.mindos.assistant.skill.SkillDslExecutor;
+import com.zhongbo.mindos.assistant.skill.SkillEngine;
+import com.zhongbo.mindos.assistant.skill.SkillRegistry;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -89,6 +94,80 @@ class McpSkillLoaderTest {
         assertTrue(result.success());
         assertTrue(result.output().contains("query=auth"));
         assertTrue(authHeaderSeen.get());
+    }
+
+    @Test
+    void shouldRegisterMcpToolIntoSkillRegistryForSingleExecutionPath() throws Exception {
+        server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/mcp", exchange -> {
+            Map<String, Object> request = objectMapper.readValue(
+                    exchange.getRequestBody().readAllBytes(), new TypeReference<>() {});
+            String method = String.valueOf(request.get("method"));
+            byte[] response = switch (method) {
+                case "initialize" -> json(Map.of("jsonrpc", "2.0", "id", request.get("id"), "result", Map.of()));
+                case "tools/list" -> json(Map.of(
+                        "jsonrpc", "2.0",
+                        "id", request.get("id"),
+                        "result", Map.of("tools", List.of(
+                                Map.of("name", "searchDocs", "description", "Search docs")
+                        ))
+                ));
+                case "tools/call" -> json(Map.of(
+                        "jsonrpc", "2.0",
+                        "id", request.get("id"),
+                        "result", Map.of("content", List.of(Map.of("type", "text", "text", "docs-result")))
+                ));
+                default -> json(Map.of("jsonrpc", "2.0", "id", request.get("id"), "result", Map.of()));
+            };
+            exchange.getResponseHeaders().set("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+        server.start();
+
+        String url = "http://127.0.0.1:" + server.getAddress().getPort() + "/mcp";
+        DefaultMcpToolCatalog catalog = new DefaultMcpToolCatalog();
+        SkillRegistry registry = new SkillRegistry(List.of());
+        McpToolExecutor executor = new McpToolExecutor(catalog);
+        McpSkillLoader loader = new McpSkillLoader(catalog, registry, executor, new McpJsonRpcClient(), "docs:" + url, "");
+
+        int loaded = loader.loadServer("docs", url, Map.of());
+
+        assertEquals(1, loaded);
+        assertTrue(registry.containsSkill("mcp.docs.searchDocs"));
+        SkillResult result = registry.getSkill("mcp.docs.searchDocs").orElseThrow().run(
+                new SkillContext("u1", "search docs for auth guide", Map.of("query", "auth"))
+        );
+        assertTrue(result.success());
+        assertTrue(result.output().contains("docs-result"));
+    }
+
+    @Test
+    void shouldRejectDirectMcpExecutionWhenToolIsNotRegisteredInSkillRegistry() {
+        DefaultMcpToolCatalog catalog = new DefaultMcpToolCatalog();
+        catalog.register(new McpToolDefinition("docs", "http://127.0.0.1/mock", "searchDocs", "Search docs"), new McpJsonRpcClient());
+
+        SkillRegistry registry = new SkillRegistry(List.of());
+        SkillDslExecutor dslExecutor = new SkillDslExecutor(registry);
+        SkillEngine engine = new SkillEngine(registry, dslExecutor, catalog, new McpToolExecutor(catalog));
+        SkillResult engineResult = engine.execute("mcp.docs.searchDocs", Map.of("query", "auth"));
+        assertTrue(!engineResult.success());
+        assertTrue(engineResult.output().contains("not registered in SkillRegistry"));
+
+        DefaultSkillExecutionGateway gateway = new DefaultSkillExecutionGateway(
+                registry,
+                dslExecutor,
+                catalog,
+                new McpToolExecutor(catalog),
+                null
+        );
+        SkillResult gatewayResult = gateway.executeDslAsync(
+                new SkillDsl("mcp.docs.searchDocs", Map.of("query", "auth")),
+                new SkillContext("u1", "find auth guide", Map.of("query", "auth"))
+        ).join();
+        assertTrue(!gatewayResult.success());
+        assertTrue(gatewayResult.output().contains("not registered in SkillRegistry"));
     }
 
     @Test

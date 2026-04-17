@@ -67,6 +67,9 @@ final class HermesToolSchemaCatalog {
         Map<String, Object> safeContextAttributes = safeContextAttributes(contextAttributes);
         for (DecisionCapabilityCatalog.CapabilityDefinition capability : DecisionCapabilityCatalog.availableCapabilities(availableSkillNames, safeContextAttributes)) {
             String executionSkill = resolveCapabilityExecutionSkill(capability, availableSkillNames, safeContextAttributes);
+            if (!hasDecisionSchema(executionSkill)) {
+                continue;
+            }
             SkillDescriptor rawDescriptor = descriptorsByName.get(normalize(executionSkill));
             String fallbackDescription = rawDescriptor == null ? "" : rawDescriptor.description();
             SkillDescriptor capabilityDescriptor = capabilityDescriptor(capability, fallbackDescription, availableSkillNames);
@@ -81,12 +84,18 @@ final class HermesToolSchemaCatalog {
             if (!decisionTarget.equals(normalize(descriptor.name())) || !isDecisionEligible(decisionTarget, safeContextAttributes)) {
                 continue;
             }
+            if (!hasDecisionSchema(descriptor.name())) {
+                continue;
+            }
             schemas.put(decisionTarget, HermesToolSchema.fromDescriptor(descriptor, findSchema(descriptor.name())));
         }
         for (String summary : skillCatalog.listAvailableSkillSummaries()) {
             NameDescription parsed = parseSummary(summary);
             String decisionTarget = decisionTargetForSkill(parsed.name(), safeContextAttributes);
             if (!decisionTarget.equals(normalize(parsed.name())) || !isDecisionEligible(decisionTarget, safeContextAttributes)) {
+                continue;
+            }
+            if (!hasDecisionSchema(parsed.name())) {
                 continue;
             }
             schemas.putIfAbsent(decisionTarget, HermesToolSchema.of(parsed.name(), parsed.description(), findSchema(parsed.name())));
@@ -107,14 +116,16 @@ final class HermesToolSchemaCatalog {
         if (DecisionCapabilityCatalog.findByDecisionTarget(normalized)
                 .filter(definition -> isCapabilityAvailable(definition, available, contextAttributes))
                 .isPresent()) {
-            return true;
+            return hasDecisionSchema(executionTargetForDecision(normalized, contextAttributes));
         }
         return !normalized.isBlank()
                 && !RESERVED_AUTO_ROUTE_TARGETS.contains(normalized)
                 && DecisionCapabilityCatalog.findByExecutionSkill(normalized).isEmpty()
+                && !normalized.startsWith("mcp.")
                 && !normalized.startsWith("im.")
                 && !normalized.startsWith("internal.")
-                && !normalized.startsWith("skills.");
+                && !normalized.startsWith("skills.")
+                && hasDecisionSchema(normalized);
     }
 
     String decisionTargetForSkill(String skillName) {
@@ -159,7 +170,7 @@ final class HermesToolSchemaCatalog {
                 .isPresent()) {
             return true;
         }
-        return available.contains(normalized);
+        return available.contains(normalized) && isDecisionEligible(normalized, contextAttributes);
     }
 
     List<SkillCandidate> detectDecisionCandidates(String input, int limit) {
@@ -191,6 +202,10 @@ final class HermesToolSchemaCatalog {
             return null;
         }
         return paramSchemaRegistry.find(skillName).orElse(null);
+    }
+
+    private boolean hasDecisionSchema(String skillName) {
+        return findSchema(skillName) != null;
     }
 
     private NameDescription parseSummary(String rawSummary) {

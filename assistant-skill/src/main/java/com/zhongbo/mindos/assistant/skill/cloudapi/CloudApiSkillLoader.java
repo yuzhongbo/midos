@@ -1,8 +1,11 @@
 package com.zhongbo.mindos.assistant.skill.cloudapi;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.zhongbo.mindos.assistant.skill.SkillGovernanceValidator;
+import com.zhongbo.mindos.assistant.skill.Skill;
 import com.zhongbo.mindos.assistant.skill.SkillRegistry;
 import jakarta.annotation.PostConstruct;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -35,11 +38,26 @@ public class CloudApiSkillLoader {
     private final SkillRegistry skillRegistry;
     private final ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
     private final String configDir;
+    private final SkillGovernanceValidator skillGovernanceValidator;
 
+    @Autowired
     public CloudApiSkillLoader(SkillRegistry skillRegistry,
+                               SkillGovernanceValidator skillGovernanceValidator,
                                @Value("${mindos.skills.cloud-api.config-dir:}") String configDir) {
+        this(skillRegistry, configDir, skillGovernanceValidator);
+    }
+
+    CloudApiSkillLoader(SkillRegistry skillRegistry,
+                        @Value("${mindos.skills.cloud-api.config-dir:}") String configDir) {
+        this(skillRegistry, configDir, new SkillGovernanceValidator());
+    }
+
+    CloudApiSkillLoader(SkillRegistry skillRegistry,
+                        String configDir,
+                        SkillGovernanceValidator skillGovernanceValidator) {
         this.skillRegistry = skillRegistry;
         this.configDir = configDir;
+        this.skillGovernanceValidator = skillGovernanceValidator;
     }
 
     @PostConstruct
@@ -75,22 +93,17 @@ public class CloudApiSkillLoader {
                         try {
                             CloudApiSkillDefinition def = objectMapper.readValue(
                                     jsonPath.toFile(), CloudApiSkillDefinition.class);
-                            if (def.name() == null || def.name().isBlank()) {
-                                LOGGER.warning("CloudApiSkillLoader: skipping definition with empty name in " + jsonPath);
-                                return;
-                            }
-                            if (def.url() == null || def.url().isBlank()) {
-                                LOGGER.warning("CloudApiSkillLoader: skipping definition with empty url in " + jsonPath);
-                                return;
-                            }
-                            skillRegistry.register(new CloudApiSkill(def));
+                            skillGovernanceValidator.validateCloudDefinition(def, jsonPath.toString());
+                            Skill skill = new CloudApiSkill(def);
+                            skillGovernanceValidator.validateRuntimeSkill(skill, jsonPath.toString());
+                            skillRegistry.register(skill);
                             loaded.add(def.name());
                             LOGGER.info("CloudApiSkillLoader: registered cloud API skill '"
                                     + def.name() + "' -> " + def.url()
                                     + " from " + jsonPath.getFileName());
-                        } catch (IOException ex) {
+                        } catch (IOException | IllegalArgumentException ex) {
                             LOGGER.log(Level.WARNING,
-                                    "CloudApiSkillLoader: failed to parse cloud API skill definition from " + jsonPath, ex);
+                                    "CloudApiSkillLoader: failed to load cloud API skill definition from " + jsonPath, ex);
                         }
                     });
         } catch (IOException ex) {

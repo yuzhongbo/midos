@@ -69,7 +69,8 @@ public class DefaultSkillExecutionGateway implements SkillExecutionGateway {
                             context.userId(),
                             context.input(),
                             dslAttributes,
-                            () -> mcpToolExecutor.execute(dsl.skill(), dslAttributes)),
+                            () -> SkillResult.failure(dsl.skill(),
+                                    "MCP tool is not registered in SkillRegistry: " + dsl.skill())),
                     skillExecutor
             );
         }

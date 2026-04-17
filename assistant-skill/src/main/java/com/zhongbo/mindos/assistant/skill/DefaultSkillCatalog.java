@@ -9,9 +9,11 @@ import org.springframework.stereotype.Service;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -57,7 +59,7 @@ public class DefaultSkillCatalog implements SkillCatalogFacade {
         if (input == null || input.isBlank() || limit <= 0) {
             return List.of();
         }
-        List<SkillCandidate> candidates = new ArrayList<>();
+        Map<String, Integer> scoresBySkill = new LinkedHashMap<>();
         String normalized = input.trim();
         String firstToken = normalized.split("\\s+", 2)[0].toLowerCase(Locale.ROOT);
         for (Skill skill : skillRegistry.getAllSkills()) {
@@ -65,18 +67,17 @@ public class DefaultSkillCatalog implements SkillCatalogFacade {
             if (skill.name().equalsIgnoreCase(firstToken)) {
                 score = Math.max(score, 1000);
             }
-            if (score > 0) {
-                candidates.add(new SkillCandidate(skill.name(), score));
-            }
+            mergeCandidate(scoresBySkill, skill.name(), score);
         }
         if (mcpToolCatalog != null) {
             for (McpToolCatalog.RegisteredTool tool : mcpToolCatalog.listTools()) {
                 int score = routingScore(tool.definition(), normalized);
-                if (score > 0) {
-                    candidates.add(new SkillCandidate(tool.definition().skillName(), score));
-                }
+                mergeCandidate(scoresBySkill, tool.definition().skillName(), score);
             }
         }
+        List<SkillCandidate> candidates = new ArrayList<>(scoresBySkill.entrySet().stream()
+                .map(entry -> new SkillCandidate(entry.getKey(), entry.getValue()))
+                .toList());
         candidates.sort(Comparator.comparingInt(SkillCandidate::score).reversed()
                 .thenComparing(SkillCandidate::skillName));
         int safeLimit = Math.min(limit, candidates.size());
@@ -86,14 +87,26 @@ public class DefaultSkillCatalog implements SkillCatalogFacade {
     @Override
     public Optional<SkillDescriptor> describeSkill(String skillName) {
         return skillRegistry.get(skillName)
-                .map(skill -> new SkillDescriptor(skill.name(), skill.description(), resolvedRoutingKeywords(skill)));
+                .map(skill -> new SkillDescriptor(skill.name(), skill.description(), resolvedRoutingKeywords(skill)))
+                .or(() -> describeMcpTool(skillName));
     }
 
     @Override
     public List<SkillDescriptor> listSkillDescriptors() {
-        return skillRegistry.getAllSkills().stream()
+        LinkedHashMap<String, SkillDescriptor> descriptors = new LinkedHashMap<>();
+        skillRegistry.getAllSkills().stream()
                 .sorted(Comparator.comparing(Skill::name))
                 .map(skill -> new SkillDescriptor(skill.name(), skill.description(), resolvedRoutingKeywords(skill)))
+                .forEach(descriptor -> descriptors.put(descriptor.name(), descriptor));
+        if (mcpToolCatalog != null) {
+            mcpToolCatalog.listTools().stream()
+                    .map(McpToolCatalog.RegisteredTool::definition)
+                    .sorted(Comparator.comparing(McpToolDefinition::skillName))
+                    .map(this::descriptorFor)
+                    .forEach(descriptor -> descriptors.putIfAbsent(descriptor.name(), descriptor));
+        }
+        return descriptors.values().stream()
+                .sorted(Comparator.comparing(SkillDescriptor::name))
                 .toList();
     }
 
@@ -104,30 +117,22 @@ public class DefaultSkillCatalog implements SkillCatalogFacade {
 
     @Override
     public List<String> listAvailableSkillSummaries() {
-        List<String> summaries = new ArrayList<>(skillRegistry.getAllSkills().stream()
-                .sorted(Comparator.comparing(Skill::name))
-                .map(skill -> skill.name() + " - " + (skill.description() == null ? "" : skill.description()))
-                .toList());
-        if (mcpToolCatalog != null) {
-            summaries.addAll(mcpToolCatalog.listTools().stream()
-                    .map(McpToolCatalog.RegisteredTool::definition)
-                    .sorted(Comparator.comparing(McpToolDefinition::skillName))
-                    .map(definition -> definition.skillName() + " - " + (definition.description() == null ? "" : definition.description()))
-                    .toList());
-        }
-        summaries.sort(String::compareTo);
-        return List.copyOf(summaries);
+        return listSkillDescriptors().stream()
+                .map(descriptor -> descriptor.name() + " - " + descriptor.description())
+                .toList();
     }
 
     public List<String> resolvedRoutingKeywords(String skillName) {
         return skillRegistry.get(skillName)
                 .map(this::resolvedRoutingKeywords)
+                .or(() -> resolveMcpTool(skillName).map(this::routingKeywords))
                 .orElse(List.of());
     }
 
     public int routingScore(String skillName, String input) {
         return skillRegistry.get(skillName)
                 .map(skill -> routingScore(skill, input))
+                .or(() -> resolveMcpTool(skillName).map(tool -> routingScore(tool, input)))
                 .orElse(Integer.MIN_VALUE);
     }
 
@@ -166,6 +171,21 @@ public class DefaultSkillCatalog implements SkillCatalogFacade {
             return provider.skillDescriptor();
         }
         return new SkillDescriptor(skill.name(), skill.description(), List.of());
+    }
+
+    private SkillDescriptor descriptorFor(McpToolDefinition toolDefinition) {
+        return new SkillDescriptor(toolDefinition.skillName(), toolDefinition.description(), routingKeywords(toolDefinition));
+    }
+
+    private Optional<McpToolDefinition> resolveMcpTool(String skillName) {
+        if (mcpToolCatalog == null || skillName == null || skillName.isBlank()) {
+            return Optional.empty();
+        }
+        return mcpToolCatalog.getTool(skillName).map(McpToolCatalog.RegisteredTool::definition);
+    }
+
+    private Optional<SkillDescriptor> describeMcpTool(String skillName) {
+        return resolveMcpTool(skillName).map(this::descriptorFor);
     }
 
     private int routingScore(Skill skill, String input) {
@@ -247,6 +267,13 @@ public class DefaultSkillCatalog implements SkillCatalogFacade {
         }
 
         return bestScore > 0 ? bestScore : Integer.MIN_VALUE;
+    }
+
+    private void mergeCandidate(Map<String, Integer> scoresBySkill, String skillName, int score) {
+        if (skillName == null || skillName.isBlank() || score <= 0) {
+            return;
+        }
+        scoresBySkill.merge(skillName, score, Math::max);
     }
 
     private List<String> routingKeywords(McpToolDefinition toolDefinition) {

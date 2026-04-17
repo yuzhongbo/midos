@@ -1,19 +1,22 @@
 package com.zhongbo.mindos.assistant.skill.loader;
 
 import com.zhongbo.mindos.assistant.skill.Skill;
+import com.zhongbo.mindos.assistant.skill.SkillGovernanceValidator;
 import com.zhongbo.mindos.assistant.skill.SkillRegistry;
 import jakarta.annotation.PostConstruct;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
-import java.io.InputStream;
 import java.net.URI;
 import java.net.URL;
 import java.net.URLClassLoader;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.ServiceLoader;
@@ -43,20 +46,37 @@ public class ExternalSkillLoader {
 
     private final SkillRegistry skillRegistry;
     private final String externalJarUrls;
+    private final boolean startupEnabled;
+    private final Duration downloadTimeout;
+    private final HttpClient httpClient;
+    private final SkillGovernanceValidator skillGovernanceValidator;
 
     // Keep classloaders alive to prevent unloading of skill classes.
     @SuppressWarnings("MismatchedQueryAndUpdateOfCollection")
     private final List<URLClassLoader> activeClassLoaders = new ArrayList<>();
 
     public ExternalSkillLoader(SkillRegistry skillRegistry,
-                               @Value("${mindos.skills.external-jars:}") String externalJarUrls) {
+                               SkillGovernanceValidator skillGovernanceValidator,
+                               @Value("${mindos.skills.external-jars:}") String externalJarUrls,
+                               @Value("${mindos.skills.external-jars.startup-enabled:false}") boolean startupEnabled,
+                               @Value("${mindos.skills.external-jars.download-timeout-ms:8000}") long downloadTimeoutMs) {
         this.skillRegistry = skillRegistry;
         this.externalJarUrls = externalJarUrls;
+        this.startupEnabled = startupEnabled;
+        this.downloadTimeout = Duration.ofMillis(Math.max(1000L, downloadTimeoutMs));
+        this.httpClient = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(5))
+                .build();
+        this.skillGovernanceValidator = skillGovernanceValidator;
     }
 
     @PostConstruct
     public void loadOnStartup() {
         if (externalJarUrls == null || externalJarUrls.isBlank()) {
+            return;
+        }
+        if (!startupEnabled) {
+            LOGGER.warning("ExternalSkillLoader: startup JAR loading is disabled; skipping configured external JARs.");
             return;
         }
         String[] urls = externalJarUrls.split(",");
@@ -92,8 +112,26 @@ public class ExternalSkillLoader {
     private Path downloadJar(String jarUrl) throws IOException {
         Path tempFile = Files.createTempFile("mindos-ext-skill-", ".jar");
         tempFile.toFile().deleteOnExit();
-        try (InputStream in = URI.create(jarUrl).toURL().openStream()) {
-            Files.copy(in, tempFile, StandardCopyOption.REPLACE_EXISTING);
+        URI uri = URI.create(jarUrl);
+        String scheme = uri.getScheme() == null ? "" : uri.getScheme().trim().toLowerCase();
+        if ("http".equals(scheme) || "https".equals(scheme)) {
+            try {
+                HttpResponse<Path> response = httpClient.send(
+                        HttpRequest.newBuilder(uri)
+                                .timeout(downloadTimeout)
+                                .GET()
+                                .build(),
+                        HttpResponse.BodyHandlers.ofFile(tempFile)
+                );
+                if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                    throw new IOException("External skill JAR download failed with HTTP " + response.statusCode());
+                }
+            } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
+                throw new IOException("External skill JAR download interrupted", ex);
+            }
+        } else {
+            throw new IOException("Only http/https external skill JAR URLs are supported");
         }
         LOGGER.info("ExternalSkillLoader: JAR downloaded to " + tempFile + " (source: " + jarUrl + ")");
         return tempFile;
@@ -111,6 +149,7 @@ public class ExternalSkillLoader {
         List<String> registered = new ArrayList<>();
         ServiceLoader<Skill> loader = ServiceLoader.load(Skill.class, classLoader);
         for (Skill skill : loader) {
+            skillGovernanceValidator.validateRuntimeSkill(skill, sourceUrl);
             skillRegistry.register(skill);
             registered.add(skill.name());
             LOGGER.info("ExternalSkillLoader: registered skill '" + skill.name()
@@ -124,4 +163,3 @@ public class ExternalSkillLoader {
         return registered.size();
     }
 }
-

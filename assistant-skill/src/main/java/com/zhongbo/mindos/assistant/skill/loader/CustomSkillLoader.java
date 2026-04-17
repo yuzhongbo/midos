@@ -2,8 +2,10 @@ package com.zhongbo.mindos.assistant.skill.loader;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zhongbo.mindos.assistant.common.LlmClient;
+import com.zhongbo.mindos.assistant.skill.SkillGovernanceValidator;
 import com.zhongbo.mindos.assistant.skill.SkillRegistry;
 import jakarta.annotation.PostConstruct;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -35,13 +37,30 @@ public class CustomSkillLoader {
     private final LlmClient llmClient;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final String customSkillDir;
+    private final SkillGovernanceValidator skillGovernanceValidator;
 
+    @Autowired
     public CustomSkillLoader(SkillRegistry skillRegistry,
                              LlmClient llmClient,
+                             SkillGovernanceValidator skillGovernanceValidator,
                              @Value("${mindos.skills.custom-dir:}") String customSkillDir) {
+        this(skillRegistry, llmClient, customSkillDir, skillGovernanceValidator);
+    }
+
+    CustomSkillLoader(SkillRegistry skillRegistry,
+                      LlmClient llmClient,
+                      @Value("${mindos.skills.custom-dir:}") String customSkillDir) {
+        this(skillRegistry, llmClient, customSkillDir, new SkillGovernanceValidator());
+    }
+
+    CustomSkillLoader(SkillRegistry skillRegistry,
+                      LlmClient llmClient,
+                      String customSkillDir,
+                      SkillGovernanceValidator skillGovernanceValidator) {
         this.skillRegistry = skillRegistry;
         this.llmClient = llmClient;
         this.customSkillDir = customSkillDir;
+        this.skillGovernanceValidator = skillGovernanceValidator;
     }
 
     @PostConstruct
@@ -77,17 +96,16 @@ public class CustomSkillLoader {
                         try {
                             ScriptSkillDefinition def = objectMapper.readValue(
                                     jsonPath.toFile(), ScriptSkillDefinition.class);
-                            if (def.name() == null || def.name().isBlank()) {
-                                LOGGER.warning("CustomSkillLoader: skipping skill with empty name in " + jsonPath);
-                                return;
-                            }
-                            skillRegistry.register(createSkill(def));
+                            skillGovernanceValidator.validateScriptDefinition(def, jsonPath.toString());
+                            ScriptSkill skill = createSkill(def);
+                            skillGovernanceValidator.validateRuntimeSkill(skill, jsonPath.toString());
+                            skillRegistry.register(skill);
                             loaded.add(def.name());
                             LOGGER.info("CustomSkillLoader: registered custom skill '" + def.name()
                                     + "' from " + jsonPath.getFileName());
-                        } catch (IOException ex) {
+                        } catch (IOException | IllegalArgumentException ex) {
                             LOGGER.log(Level.WARNING,
-                                    "CustomSkillLoader: failed to parse skill definition from " + jsonPath, ex);
+                                    "CustomSkillLoader: failed to load skill definition from " + jsonPath, ex);
                         }
                     });
         } catch (IOException ex) {

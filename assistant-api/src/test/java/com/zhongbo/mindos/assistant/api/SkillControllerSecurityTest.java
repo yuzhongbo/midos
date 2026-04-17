@@ -13,6 +13,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @SpringBootTest(properties = {
+        "mindos.skills.live-mutation.enabled=true",
         "mindos.security.risky-ops.require-approval=true",
         "mindos.security.risky-ops.approval-header=X-MindOS-Approve",
         "mindos.security.risky-ops.approval-value=YES",
@@ -56,6 +57,12 @@ class SkillControllerSecurityTest {
         mockMvc.perform(post("/api/skills/generate")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"request\":\"抓取某网站数据\"}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void shouldRejectReloadWithoutApprovalHeaders() throws Exception {
+        mockMvc.perform(post("/api/skills/reload"))
                 .andExpect(status().isForbidden());
     }
 }

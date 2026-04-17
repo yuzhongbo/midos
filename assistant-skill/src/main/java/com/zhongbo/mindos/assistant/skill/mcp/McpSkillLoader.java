@@ -1,5 +1,6 @@
 package com.zhongbo.mindos.assistant.skill.mcp;
 
+import com.zhongbo.mindos.assistant.skill.SkillRegistry;
 import com.zhongbo.mindos.assistant.skill.search.SearchSourceConfig;
 import jakarta.annotation.PostConstruct;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -45,9 +46,13 @@ public class McpSkillLoader {
     private final String serperApiKey;
     private final String serperApiKeyHeader;
     private final SearchToolAdapterChain searchToolAdapterChain;
+    private final SkillRegistry skillRegistry;
+    private final McpToolExecutor mcpToolExecutor;
 
     @Autowired
     public McpSkillLoader(McpToolCatalog mcpToolCatalog,
+                          SkillRegistry skillRegistry,
+                          McpToolExecutor mcpToolExecutor,
                           @Value("${mindos.skills.mcp-servers:}") String configuredServers,
                           @Value("${mindos.skills.mcp-server-headers:}") String configuredServerHeaders,
                           @Value("${mindos.skills.search-sources:}") String configuredSearchSources,
@@ -62,6 +67,8 @@ public class McpSkillLoader {
                           @Value("${mindos.skills.mcp.serper.api-key:}") String serperApiKey,
                           @Value("${mindos.skills.mcp.serper.api-key-header:X-API-KEY}") String serperApiKeyHeader) {
         this(mcpToolCatalog,
+                skillRegistry,
+                mcpToolExecutor,
                 new McpJsonRpcClient(),
                 configuredServers,
                 configuredServerHeaders,
@@ -83,6 +90,8 @@ public class McpSkillLoader {
                    String configuredServers,
                    String configuredServerHeaders) {
         this(mcpToolCatalog,
+                null,
+                null,
                 mcpClient,
                 configuredServers,
                 configuredServerHeaders,
@@ -112,6 +121,8 @@ public class McpSkillLoader {
                    String braveApiKey,
                    String braveApiKeyHeader) {
         this(mcpToolCatalog,
+                null,
+                null,
                 mcpClient,
                 configuredServers,
                 configuredServerHeaders,
@@ -120,7 +131,12 @@ public class McpSkillLoader {
                 braveAlias,
                 braveUrl,
                 braveApiKey,
-                braveApiKeyHeader);
+                braveApiKeyHeader,
+                false,
+                "serper",
+                "",
+                "",
+                "X-API-KEY");
     }
 
     /**
@@ -141,6 +157,8 @@ public class McpSkillLoader {
                    String serperApiKey,
                    String serperApiKeyHeader) {
         this(mcpToolCatalog,
+                null,
+                null,
                 mcpClient,
                 configuredServers,
                 configuredServerHeaders,
@@ -158,6 +176,31 @@ public class McpSkillLoader {
     }
 
     McpSkillLoader(McpToolCatalog mcpToolCatalog,
+                   SkillRegistry skillRegistry,
+                   McpToolExecutor mcpToolExecutor,
+                   McpJsonRpcClient mcpClient,
+                   String configuredServers,
+                   String configuredServerHeaders) {
+        this(mcpToolCatalog,
+                skillRegistry,
+                mcpToolExecutor,
+                mcpClient,
+                configuredServers,
+                configuredServerHeaders,
+                "",
+                false,
+                "brave",
+                "",
+                "",
+                "X-Subscription-Token",
+                false,
+                "serper",
+                "",
+                "",
+                "X-API-KEY");
+    }
+
+    McpSkillLoader(McpToolCatalog mcpToolCatalog,
                    McpJsonRpcClient mcpClient,
                    String configuredServers,
                    String configuredServerHeaders,
@@ -168,6 +211,8 @@ public class McpSkillLoader {
                    String braveApiKey,
                    String braveApiKeyHeader) {
         this(mcpToolCatalog,
+                null,
+                null,
                 mcpClient,
                 configuredServers,
                 configuredServerHeaders,
@@ -199,7 +244,45 @@ public class McpSkillLoader {
                    String serperUrl,
                    String serperApiKey,
                    String serperApiKeyHeader) {
+        this(mcpToolCatalog,
+                null,
+                null,
+                mcpClient,
+                configuredServers,
+                configuredServerHeaders,
+                configuredSearchSources,
+                braveEnabled,
+                braveAlias,
+                braveUrl,
+                braveApiKey,
+                braveApiKeyHeader,
+                serperEnabled,
+                serperAlias,
+                serperUrl,
+                serperApiKey,
+                serperApiKeyHeader);
+    }
+
+    McpSkillLoader(McpToolCatalog mcpToolCatalog,
+                   SkillRegistry skillRegistry,
+                   McpToolExecutor mcpToolExecutor,
+                   McpJsonRpcClient mcpClient,
+                   String configuredServers,
+                   String configuredServerHeaders,
+                   String configuredSearchSources,
+                   boolean braveEnabled,
+                   String braveAlias,
+                   String braveUrl,
+                   String braveApiKey,
+                   String braveApiKeyHeader,
+                   boolean serperEnabled,
+                   String serperAlias,
+                   String serperUrl,
+                   String serperApiKey,
+                   String serperApiKeyHeader) {
         this.mcpToolCatalog = mcpToolCatalog;
+        this.skillRegistry = skillRegistry;
+        this.mcpToolExecutor = mcpToolExecutor;
         this.mcpClient = mcpClient;
         this.configuredServers = configuredServers;
         this.configuredServerHeaders = configuredServerHeaders;
@@ -231,6 +314,9 @@ public class McpSkillLoader {
 
     public int reload() {
         mcpToolCatalog.unregisterByPrefix(SKILL_PREFIX);
+        if (skillRegistry != null) {
+            skillRegistry.unregisterByPrefix(SKILL_PREFIX);
+        }
         return loadConfiguredServers();
     }
 
@@ -267,14 +353,14 @@ public class McpSkillLoader {
             SearchSourceConfig searchSource = SearchSourceConfig.shortcut(normalizedAlias, serverUrl, "", "");
             SearchToolBinding searchBinding = searchToolAdapterChain.resolve(searchSource, safeHeaders).orElse(null);
             if (searchBinding != null) {
-                mcpToolCatalog.register(searchBinding.definition(), searchBinding.client());
+                registerTool(searchBinding.definition(), searchBinding.client());
                 LOGGER.info("McpSkillLoader: registered search tool '" + searchBinding.definition().skillName() + "'");
                 return 1;
             }
             mcpClient.initialize(serverUrl, safeHeaders);
             List<McpToolDefinition> tools = mcpClient.listTools(normalizedAlias, serverUrl, safeHeaders);
             for (McpToolDefinition tool : tools) {
-                mcpToolCatalog.register(tool, mcpClient);
+                registerTool(tool, mcpClient);
                 LOGGER.info("McpSkillLoader: registered MCP tool '" + tool.skillName() + "'");
             }
             return tools.size();
@@ -453,6 +539,13 @@ public class McpSkillLoader {
 
     private boolean hasConfiguredSearchSources() {
         return configuredSearchSources != null && !configuredSearchSources.isBlank();
+    }
+
+    private void registerTool(McpToolDefinition toolDefinition, McpJsonRpcClient client) {
+        mcpToolCatalog.register(toolDefinition, client);
+        if (skillRegistry != null && mcpToolExecutor != null) {
+            skillRegistry.register(new McpDelegatingSkill(toolDefinition, mcpToolExecutor));
+        }
     }
 
 

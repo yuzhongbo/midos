@@ -31,7 +31,6 @@ import java.util.Map;
  *   <li>{@code ${input}}           — full user input text</li>
  *   <li>{@code ${input.fieldName}} — context attribute by field name</li>
  *   <li>{@code ${apiKey}}          — definition's apiKey value</li>
- *   <li>{@code ${env.VAR_NAME}}    — system environment variable</li>
  * </ul>
  *
  * {@code resultPath} supports dot-notation traversal of the JSON response

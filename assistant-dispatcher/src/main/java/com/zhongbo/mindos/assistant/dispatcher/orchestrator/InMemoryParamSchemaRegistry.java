@@ -56,6 +56,7 @@ public class InMemoryParamSchemaRegistry implements ParamSchemaRegistry {
                         "action", "create",
                         "publishMode", "draft"
                 )));
+        register("time", ParamSchema.of(Set.of(), Set.of()));
         register("file.search", ParamSchema.atLeastOne("keyword", "path")
                 .withAliases(Map.of(
                         "keyword", java.util.List.of("query"),

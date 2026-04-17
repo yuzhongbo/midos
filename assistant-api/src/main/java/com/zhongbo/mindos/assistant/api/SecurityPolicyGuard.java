@@ -16,6 +16,7 @@ import java.util.stream.Collectors;
 public class SecurityPolicyGuard {
 
     private final boolean riskyOpsRequireApproval;
+    private final boolean skillLiveMutationEnabled;
     private final boolean useChallengeToken;
     private final String approvalHeaderName;
     private final String approvalExpectedValue;
@@ -29,6 +30,7 @@ public class SecurityPolicyGuard {
 
     public SecurityPolicyGuard(
             @Value("${mindos.security.risky-ops.require-approval:false}") boolean riskyOpsRequireApproval,
+            @Value("${mindos.skills.live-mutation.enabled:false}") boolean skillLiveMutationEnabled,
             @Value("${mindos.security.risky-ops.use-challenge-token:true}") boolean useChallengeToken,
             @Value("${mindos.security.risky-ops.approval-header:X-MindOS-Approve}") String approvalHeaderName,
             @Value("${mindos.security.risky-ops.approval-value:YES}") String approvalExpectedValue,
@@ -40,6 +42,7 @@ public class SecurityPolicyGuard {
             SecurityChallengeService securityChallengeService,
             SecurityAuditLogService securityAuditLogService) {
         this.riskyOpsRequireApproval = riskyOpsRequireApproval;
+        this.skillLiveMutationEnabled = skillLiveMutationEnabled;
         this.useChallengeToken = useChallengeToken;
         this.approvalHeaderName = normalizeText(approvalHeaderName, "X-MindOS-Approve");
         this.approvalExpectedValue = normalizeText(approvalExpectedValue, "YES");
@@ -98,6 +101,22 @@ public class SecurityPolicyGuard {
                 "approval_header", remoteAddress, userAgent);
     }
 
+    public void verifySkillMutationAllowed(HttpServletRequest request,
+                                           String operationName,
+                                           String resource,
+                                           String actor) {
+        if (skillLiveMutationEnabled) {
+            return;
+        }
+        String normalizedActor = normalizeText(actor, "unknown");
+        String remoteAddress = request == null ? "" : normalizeText(request.getRemoteAddr(), "");
+        String userAgent = request == null ? "" : normalizeText(request.getHeader("User-Agent"), "");
+        String traceId = request == null ? "system" : securityAuditLogService.resolveTraceId(request);
+        securityAuditLogService.record(traceId, normalizedActor, operationName, resource, "denied",
+                "live_mutation_disabled", remoteAddress, userAgent);
+        throw forbidden("Live skill mutation is disabled: " + operationName);
+    }
+
     public void verifyExternalSkillUrl(String rawUrl, boolean loadJar) {
         URI uri;
         try {
@@ -151,4 +170,3 @@ public class SecurityPolicyGuard {
         return new ResponseStatusException(HttpStatus.FORBIDDEN, message);
     }
 }
-

@@ -47,7 +47,8 @@ public class SkillEngine implements SkillEngineFacade {
             return dslExecutor.execute(dsl, context);
         }
         if (mcpToolCatalog != null && mcpToolCatalog.hasTool(normalizedTarget)) {
-            return mcpToolExecutor.execute(normalizedTarget, attributes);
+            return SkillResult.failure(normalizedTarget,
+                    "MCP tool is not registered in SkillRegistry: " + normalizedTarget);
         }
         return SkillResult.failure(normalizedTarget.isBlank() ? "skill" : normalizedTarget,
                 "Unknown skill target: " + normalizedTarget);

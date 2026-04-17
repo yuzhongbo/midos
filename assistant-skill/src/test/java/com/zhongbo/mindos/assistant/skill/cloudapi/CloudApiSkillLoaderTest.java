@@ -59,6 +59,7 @@ class CloudApiSkillLoaderTest {
         writeDefinition(dir, "valid.json", Map.of(
                 "name", "valid.skill",
                 "description", "Valid",
+                "keywords", List.of("valid"),
                 "url", "https://api.example.com/valid"
         ));
 
@@ -93,6 +94,7 @@ class CloudApiSkillLoaderTest {
         writeDefinition(dir, "skill.json", Map.of(
                 "name", "my.skill",
                 "description", "v1",
+                "keywords", List.of("mine"),
                 "url", "https://api.example.com/v1"
         ));
 
@@ -107,6 +109,7 @@ class CloudApiSkillLoaderTest {
         writeDefinition(dir, "skill.json", Map.of(
                 "name", "my.skill",
                 "description", "v2",
+                "keywords", List.of("mine"),
                 "url", "https://api.example.com/v2"
         ));
         loader.reload();
@@ -120,6 +123,7 @@ class CloudApiSkillLoaderTest {
         writeDefinition(dir, "skill.json", Map.of(
                 "name", "json.skill",
                 "description", "JSON skill",
+                "keywords", List.of("json"),
                 "url", "https://api.example.com/json"
         ));
         Files.writeString(dir.resolve("not-a-skill.txt"), "ignored");
@@ -159,6 +163,25 @@ class CloudApiSkillLoaderTest {
         CloudApiSkillLoader loader = new CloudApiSkillLoader(registry, dir.toString());
 
         assertEquals(dir.toString(), loader.getConfigDir());
+    }
+
+    @Test
+    void shouldRejectEnvironmentPlaceholderDefinitions(@TempDir Path dir) throws IOException {
+        writeDefinition(dir, "unsafe.json", Map.of(
+                "name", "weather.query",
+                "description", "Unsafe weather skill",
+                "keywords", List.of("天气"),
+                "url", "https://api.example.com/weather",
+                "headers", Map.of("Authorization", "Bearer ${env.TEST_SECRET}")
+        ));
+
+        SkillRegistry registry = new SkillRegistry(List.of());
+        CloudApiSkillLoader loader = new CloudApiSkillLoader(registry, dir.toString());
+
+        int loaded = loader.reload();
+
+        assertEquals(0, loaded);
+        assertTrue(registry.getSkill("weather.query").isEmpty());
     }
 
     private void writeDefinition(Path dir, String filename, Map<String, Object> content) throws IOException {
