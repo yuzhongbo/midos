@@ -189,6 +189,7 @@ public class DispatcherService implements ContextCompressionMetricsReader,
     private final DispatchLlmSupport dispatchLlmSupport;
     private final BehaviorRoutingSupport behaviorRoutingSupport;
     private final SemanticRoutingSupport semanticRoutingSupport;
+    private final HermesDecisionPolicy hermesDecisionPolicy;
     private final DispatcherAnswerMode answerMode;
     private final ConversationMemoryModeService conversationMemoryModeService;
     private volatile HermesAssistantRuntime hermesAssistantRuntime;
@@ -517,10 +518,12 @@ public class DispatcherService implements ContextCompressionMetricsReader,
                 this.preferSuggestedSkillEnabled,
                 this.preferSuggestedSkillMinConfidence
         );
+        this.hermesDecisionPolicy = new HermesDecisionPolicy(
+                this.semanticRoutingSupport,
+                this.behaviorRoutingSupport
+        );
         this.dispatchMemoryLifecycle = new DispatchMemoryLifecycle(
-                this.dispatcherMemoryFacade,
-                this.memoryCommandService,
-                this.behaviorRoutingSupport,
+                this.hermesDecisionPolicy,
                 this::inferMemoryBucket
         );
         this.dispatchHeuristicsSupport = new DispatchHeuristicsSupport(
@@ -684,8 +687,7 @@ public class DispatcherService implements ContextCompressionMetricsReader,
                                 this.skillDslParser,
                                 this.skillEngine,
                                 toolSchemaCatalog,
-                                this.semanticRoutingSupport,
-                                this.behaviorRoutingSupport,
+                                this.hermesDecisionPolicy,
                                 this.decisionParamAssembler,
                                 this.llmDecisionEngine,
                                 this.dispatchHeuristicsSupport,
@@ -707,14 +709,14 @@ public class DispatcherService implements ContextCompressionMetricsReader,
                                 this.dispatcherMemoryFacade,
                                 this.memoryCommandService,
                                 this.dispatchMemoryLifecycle,
-                                this.semanticRoutingSupport
+                                this.hermesDecisionPolicy
                         ),
                         this.dispatchLlmSupport,
                         this.dispatcherMemoryFacade,
                         new HermesExecutionGuard(
                                 this.dispatcherMemoryFacade,
                                 this.skillCapabilityPolicy,
-                                this.behaviorRoutingSupport,
+                                this.hermesDecisionPolicy,
                                 this.skillGuardMaxConsecutive,
                                 this.skillGuardRecentWindowSize,
                                 this.skillGuardRepeatInputThreshold,

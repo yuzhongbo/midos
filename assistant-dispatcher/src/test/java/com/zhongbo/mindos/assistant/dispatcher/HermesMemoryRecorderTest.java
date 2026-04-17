@@ -4,6 +4,9 @@ import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryCommandService;
 import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryFacade;
 import com.zhongbo.mindos.assistant.memory.MemoryGateway;
+import com.zhongbo.mindos.assistant.memory.graph.GraphMemory;
+import com.zhongbo.mindos.assistant.memory.graph.MemoryEdge;
+import com.zhongbo.mindos.assistant.memory.graph.MemoryNode;
 import com.zhongbo.mindos.assistant.memory.model.PreferenceProfile;
 import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalysisResult;
 import org.junit.jupiter.api.Test;
@@ -20,9 +23,9 @@ class HermesMemoryRecorderTest {
 
     @Test
     void shouldWriteReusableTaskFactMemoryForStructuredTaskExecution() {
-        DispatcherMemoryFacade dispatcherMemoryFacade = new DispatcherMemoryFacade((MemoryGateway) null, null, null);
+        DispatcherMemoryFacade dispatcherMemoryFacade = new DispatcherMemoryFacade((MemoryGateway) null, new GraphMemory(), null);
         RecordingMemoryCommandService commandService = new RecordingMemoryCommandService(dispatcherMemoryFacade);
-        HermesMemoryRecorder recorder = new HermesMemoryRecorder(dispatcherMemoryFacade, commandService, null, null);
+        HermesMemoryRecorder recorder = new HermesMemoryRecorder(dispatcherMemoryFacade, commandService, null, new HermesDecisionPolicy(null, null));
 
         SemanticAnalysisResult semanticAnalysis = new SemanticAnalysisResult(
                 "heuristic",
@@ -70,13 +73,22 @@ class HermesMemoryRecorderTest {
         assertTrue(taskFact.text().contains("来源要求：引用本周指标"));
         assertTrue(taskFact.text().contains("完成标准：负责人确认可发"));
         assertTrue(commandService.semanticWrites().stream().anyMatch(write -> write.text().contains("[任务状态]")));
+        assertTrue(commandService.graphNodes().stream().anyMatch(node ->
+                "hermes.execution".equals(node.type()) && "todo.create".equals(node.data().get("skillName"))));
+        assertTrue(commandService.graphNodes().stream().anyMatch(node ->
+                "hermes.task".equals(node.type()) && "提交周报".equals(node.data().get("task"))));
+        assertTrue(commandService.graphNodes().stream().anyMatch(node ->
+                "hermes.skill".equals(node.type()) && "todo.create".equals(node.data().get("skillName"))));
+        assertTrue(commandService.graphEdges().stream().anyMatch(edge -> "latest-result".equals(edge.relation())));
+        assertTrue(commandService.graphEdges().stream().anyMatch(edge -> "uses-skill".equals(edge.relation())));
+        assertTrue(commandService.graphEdges().stream().anyMatch(edge -> "result-of".equals(edge.relation())));
     }
 
     @Test
     void shouldSkipTaskFactMemoryForRealtimeSearch() {
         DispatcherMemoryFacade dispatcherMemoryFacade = new DispatcherMemoryFacade((MemoryGateway) null, null, null);
         RecordingMemoryCommandService commandService = new RecordingMemoryCommandService(dispatcherMemoryFacade);
-        HermesMemoryRecorder recorder = new HermesMemoryRecorder(dispatcherMemoryFacade, commandService, null, null);
+        HermesMemoryRecorder recorder = new HermesMemoryRecorder(dispatcherMemoryFacade, commandService, null, new HermesDecisionPolicy(null, null));
 
         SemanticAnalysisResult semanticAnalysis = new SemanticAnalysisResult(
                 "heuristic",
@@ -108,7 +120,7 @@ class HermesMemoryRecorderTest {
     void shouldWriteTaskStateAndLearningSignalForContinuationSuccess() {
         DispatcherMemoryFacade dispatcherMemoryFacade = new DispatcherMemoryFacade((MemoryGateway) null, null, null);
         RecordingMemoryCommandService commandService = new RecordingMemoryCommandService(dispatcherMemoryFacade);
-        HermesMemoryRecorder recorder = new HermesMemoryRecorder(dispatcherMemoryFacade, commandService, null, null);
+        HermesMemoryRecorder recorder = new HermesMemoryRecorder(dispatcherMemoryFacade, commandService, null, new HermesDecisionPolicy(null, null));
 
         SemanticAnalysisResult semanticAnalysis = new SemanticAnalysisResult(
                 "heuristic",
@@ -146,7 +158,7 @@ class HermesMemoryRecorderTest {
     void shouldWriteBlockedTaskStateAndLearningSignalForBlockingFollowUp() {
         DispatcherMemoryFacade dispatcherMemoryFacade = new DispatcherMemoryFacade((MemoryGateway) null, null, null);
         RecordingMemoryCommandService commandService = new RecordingMemoryCommandService(dispatcherMemoryFacade);
-        HermesMemoryRecorder recorder = new HermesMemoryRecorder(dispatcherMemoryFacade, commandService, null, null);
+        HermesMemoryRecorder recorder = new HermesMemoryRecorder(dispatcherMemoryFacade, commandService, null, new HermesDecisionPolicy(null, null));
 
         SemanticAnalysisResult semanticAnalysis = new SemanticAnalysisResult(
                 "heuristic",
@@ -186,6 +198,8 @@ class HermesMemoryRecorderTest {
 
     private static final class RecordingMemoryCommandService extends DispatcherMemoryCommandService {
         private final List<SemanticWrite> semanticWrites = new ArrayList<>();
+        private final List<MemoryNode> graphNodes = new ArrayList<>();
+        private final List<MemoryEdge> graphEdges = new ArrayList<>();
 
         private RecordingMemoryCommandService(DispatcherMemoryFacade dispatcherMemoryFacade) {
             super(dispatcherMemoryFacade, null);
@@ -215,6 +229,32 @@ class HermesMemoryRecorderTest {
 
         private List<SemanticWrite> semanticWrites() {
             return semanticWrites;
+        }
+
+        @Override
+        public MemoryNode upsertGraphNode(String userId, MemoryNode node) {
+            graphNodes.add(node);
+            return node;
+        }
+
+        @Override
+        public MemoryEdge linkGraph(String userId,
+                                    String fromNodeId,
+                                    String relation,
+                                    String toNodeId,
+                                    double weight,
+                                    Map<String, Object> metadata) {
+            MemoryEdge edge = new MemoryEdge(fromNodeId, toNodeId, relation, weight, metadata, null);
+            graphEdges.add(edge);
+            return edge;
+        }
+
+        private List<MemoryNode> graphNodes() {
+            return graphNodes;
+        }
+
+        private List<MemoryEdge> graphEdges() {
+            return graphEdges;
         }
     }
 }

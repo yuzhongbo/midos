@@ -24,14 +24,12 @@ final class DispatchMemoryLifecycle {
             Pattern.CASE_INSENSITIVE
     );
 
-    private final BehaviorRoutingSupport behaviorRoutingSupport;
+    private final HermesDecisionPolicy decisionPolicy;
     private final Function<String, String> memoryBucketResolver;
 
-    DispatchMemoryLifecycle(DispatcherMemoryFacade dispatcherMemoryFacade,
-                            com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryCommandService memoryCommandService,
-                            BehaviorRoutingSupport behaviorRoutingSupport,
+    DispatchMemoryLifecycle(HermesDecisionPolicy decisionPolicy,
                             Function<String, String> memoryBucketResolver) {
-        this.behaviorRoutingSupport = behaviorRoutingSupport;
+        this.decisionPolicy = decisionPolicy;
         this.memoryBucketResolver = memoryBucketResolver;
     }
 
@@ -51,7 +49,7 @@ final class DispatchMemoryLifecycle {
             return MemoryWriteBatch.empty();
         }
         return recordAssistantReply(userId, result.output())
-                .merge(behaviorRoutingSupport.maybeStoreBehaviorProfile(userId, result));
+                .merge(decisionPolicy == null ? MemoryWriteBatch.empty() : decisionPolicy.maybeStoreBehaviorProfile(userId, result));
     }
 
     private MemoryWriteOperation rememberedKnowledgeWrite(String input) {

@@ -70,9 +70,14 @@ public final class SkillCompositionService {
             SkillResult stepResult = executeStep(step, resolvedStepTarget, stepParams, recipeContext);
             stepResults.put(step.id(), stepResult);
             if (stepResult != null && stepResult.success()) {
-                lastSuccessful = normalize(resolvedStepTarget).equals(normalize(executionTarget))
-                        ? stepResult
-                        : SkillResult.success(executionTarget, stepResult.output());
+                lastSuccessful = decorateWorkflowResult(
+                        recipe,
+                        decisionTarget,
+                        executionTarget,
+                        normalizeExecutionResult(stepResult, executionTarget),
+                        requestParams,
+                        stepResults
+                );
                 continue;
             }
             if (step.failurePolicy() == SkillRecipeFailurePolicy.RETURN_PREVIOUS_SUCCESS && lastSuccessful != null) {
@@ -88,6 +93,47 @@ public final class SkillCompositionService {
         }
         return SkillResult.failure(executionTarget == null || executionTarget.isBlank() ? decisionTarget : executionTarget,
                 "skill composition produced no result");
+    }
+
+    private SkillResult normalizeExecutionResult(SkillResult result, String executionTarget) {
+        if (result == null) {
+            return SkillResult.failure(executionTarget, "skill composition step failed");
+        }
+        if (normalize(result.skillName()).equals(normalize(executionTarget))) {
+            return result;
+        }
+        return result.relabel(executionTarget);
+    }
+
+    private SkillResult decorateWorkflowResult(SkillRecipe recipe,
+                                              String decisionTarget,
+                                              String executionTarget,
+                                              SkillResult result,
+                                              Map<String, Object> requestParams,
+                                              Map<String, SkillResult> stepResults) {
+        if (result == null) {
+            return SkillResult.failure(executionTarget, "skill composition produced no result");
+        }
+        SkillResult decorated = result.withMetadata(Map.of(
+                "systemWorkflow", recipe.workflowName(),
+                "systemWorkflowRecipe", recipe.id(),
+                "systemWorkflowCapability", DecisionCapabilityCatalog.decisionTarget(executionTarget),
+                "systemWorkflowExecutionTarget", executionTarget == null ? "" : executionTarget,
+                "systemWorkflowDecisionTarget", decisionTarget == null ? "" : decisionTarget,
+                "systemWorkflowStepCount", recipe.steps().size(),
+                "systemWorkflowSteps", recipe.steps().stream().map(SkillRecipeStep::id).toList()
+        ));
+        LinkedHashMap<String, Object> artifacts = new LinkedHashMap<>();
+        putIfPresent(artifacts, "query", requestParams.get("query"));
+        SkillResult searchResult = stepResults.get("search");
+        if (searchResult != null && searchResult.output() != null && !searchResult.output().isBlank()) {
+            artifacts.put("searchOutput", searchResult.output());
+        }
+        SkillResult detailResult = stepResults.get("detail");
+        if (detailResult != null && detailResult.success()) {
+            artifacts.put("detailApplied", detailResult.artifacts().getOrDefault("detailApplied", Boolean.TRUE));
+        }
+        return decorated.withArtifacts(artifacts);
     }
 
     private SkillResult executeStep(SkillRecipeStep step,
@@ -264,6 +310,16 @@ public final class SkillCompositionService {
 
     private String stringValue(Object value) {
         return value == null ? "" : String.valueOf(value).trim();
+    }
+
+    private void putIfPresent(Map<String, Object> target, String key, Object value) {
+        if (target == null || key == null || key.isBlank() || value == null) {
+            return;
+        }
+        if (value instanceof String text && text.isBlank()) {
+            return;
+        }
+        target.put(key, value);
     }
 
     private enum SkillRecipeFailurePolicy {

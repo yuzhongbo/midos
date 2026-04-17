@@ -16,7 +16,7 @@ final class HermesExecutionGuard {
 
     private final DispatcherMemoryFacade dispatcherMemoryFacade;
     private final SkillCapabilityPolicy skillCapabilityPolicy;
-    private final BehaviorRoutingSupport behaviorRoutingSupport;
+    private final HermesDecisionPolicy decisionPolicy;
     private final int skillGuardMaxConsecutive;
     private final int skillGuardRecentWindowSize;
     private final int skillGuardRepeatInputThreshold;
@@ -26,7 +26,7 @@ final class HermesExecutionGuard {
 
     HermesExecutionGuard(DispatcherMemoryFacade dispatcherMemoryFacade,
                          SkillCapabilityPolicy skillCapabilityPolicy,
-                         BehaviorRoutingSupport behaviorRoutingSupport,
+                         HermesDecisionPolicy decisionPolicy,
                          int skillGuardMaxConsecutive,
                          int skillGuardRecentWindowSize,
                          int skillGuardRepeatInputThreshold,
@@ -35,7 +35,7 @@ final class HermesExecutionGuard {
                          boolean preferenceReuseEnabled) {
         this.dispatcherMemoryFacade = dispatcherMemoryFacade;
         this.skillCapabilityPolicy = skillCapabilityPolicy;
-        this.behaviorRoutingSupport = behaviorRoutingSupport;
+        this.decisionPolicy = decisionPolicy;
         this.skillGuardMaxConsecutive = Math.max(1, skillGuardMaxConsecutive);
         this.skillGuardRecentWindowSize = Math.max(2, skillGuardRecentWindowSize);
         this.skillGuardRepeatInputThreshold = Math.max(2, skillGuardRepeatInputThreshold);
@@ -75,7 +75,13 @@ final class HermesExecutionGuard {
         if (preferenceReuseEnabled && profileContext != null && !profileContext.isEmpty()) {
             hint.append("，并复用用户偏好");
         }
-        return new SkillResult(result.skillName(), hint + "\n" + result.output(), result.success());
+        return new SkillResult(
+                result.skillName(),
+                hint + "\n" + result.output(),
+                result.success(),
+                result.artifacts(),
+                result.metadata()
+        );
     }
 
     private boolean isConsecutiveSkillLoop(List<ProceduralMemoryEntry> history, String skillName) {
@@ -130,9 +136,9 @@ final class HermesExecutionGuard {
         if (value == null || value.isBlank()) {
             return "";
         }
-        String sanitized = behaviorRoutingSupport == null
+        String sanitized = decisionPolicy == null
                 ? value
-                : behaviorRoutingSupport.sanitizeContinuationPrefix(value);
+                : decisionPolicy.sanitizeContinuationPrefix(value);
         return normalize(sanitized);
     }
 

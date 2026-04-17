@@ -7,14 +7,18 @@ import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryCommandSer
 import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryFacade;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.memory.MemoryWriteBatch;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.memory.MemoryWriteOperation;
+import com.zhongbo.mindos.assistant.memory.graph.MemoryNode;
 import com.zhongbo.mindos.assistant.memory.model.PreferenceProfile;
 import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalysisResult;
 
+import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 
 final class HermesMemoryRecorder {
 
@@ -36,16 +40,16 @@ final class HermesMemoryRecorder {
     private final DispatcherMemoryFacade dispatcherMemoryFacade;
     private final DispatcherMemoryCommandService memoryCommandService;
     private final DispatchMemoryLifecycle dispatchMemoryLifecycle;
-    private final SemanticRoutingSupport semanticRoutingSupport;
+    private final HermesDecisionPolicy decisionPolicy;
 
     HermesMemoryRecorder(DispatcherMemoryFacade dispatcherMemoryFacade,
                          DispatcherMemoryCommandService memoryCommandService,
                          DispatchMemoryLifecycle dispatchMemoryLifecycle,
-                         SemanticRoutingSupport semanticRoutingSupport) {
+                         HermesDecisionPolicy decisionPolicy) {
         this.dispatcherMemoryFacade = dispatcherMemoryFacade;
         this.memoryCommandService = memoryCommandService;
         this.dispatchMemoryLifecycle = dispatchMemoryLifecycle;
-        this.semanticRoutingSupport = semanticRoutingSupport;
+        this.decisionPolicy = decisionPolicy;
     }
 
     void record(String userId,
@@ -101,14 +105,22 @@ final class HermesMemoryRecorder {
             batch = batch.append(new MemoryWriteOperation.UpdatePreferenceProfile(merged));
         }
 
-        if (semanticRoutingSupport != null
+        if (decisionPolicy != null
                 && finalResult != null
                 && shouldRecordSemanticSummary(finalResult.skillName())) {
-            batch = batch.merge(semanticRoutingSupport.maybeStoreSemanticSummary(userId, userInput, semanticAnalysis));
+            batch = batch.merge(decisionPolicy.maybeStoreSemanticSummary(userId, userInput, semanticAnalysis));
         }
         batch = batch.merge(buildTaskFactBatch(semanticAnalysis, finalResult, effectivePayload, effectiveTaskFocus));
         batch = batch.merge(buildTaskStateBatch(semanticAnalysis, finalResult, effectivePayload, effectiveTaskFocus));
         batch = batch.merge(buildLearningSignalBatch(userInput, semanticAnalysis, finalResult, effectiveTaskFocus));
+        batch = batch.merge(buildExecutionGraphBatch(
+                userId,
+                userInput,
+                finalResult,
+                semanticAnalysis,
+                effectivePayload,
+                effectiveTaskFocus
+        ));
 
         String rollup = buildConversationRollup(userInput, semanticAnalysis, finalResult);
         if (!rollup.isBlank()) {
@@ -134,6 +146,17 @@ final class HermesMemoryRecorder {
                 commandService().recordSkillUsage(userId, value.skillName(), value.input(), value.success());
             } else if (operation instanceof MemoryWriteOperation.WriteProcedural value) {
                 commandService().writeProcedural(userId, value.entry());
+            } else if (operation instanceof MemoryWriteOperation.UpsertGraphNode value) {
+                commandService().upsertGraphNode(userId, value.node());
+            } else if (operation instanceof MemoryWriteOperation.LinkGraph value) {
+                commandService().linkGraph(
+                        userId,
+                        value.fromNodeId(),
+                        value.relation(),
+                        value.toNodeId(),
+                        value.weight(),
+                        value.metadata()
+                );
             }
         }
     }
@@ -327,6 +350,119 @@ final class HermesMemoryRecorder {
         }
         String bucket = effectiveTaskFocus.isBlank() ? "general" : "task";
         return MemoryWriteBatch.of(new MemoryWriteOperation.WriteSemantic(entry, List.of(), bucket));
+    }
+
+    private MemoryWriteBatch buildExecutionGraphBatch(String userId,
+                                                      String userInput,
+                                                      SkillResult finalResult,
+                                                      SemanticAnalysisResult semanticAnalysis,
+                                                      Map<String, Object> effectivePayload,
+                                                      String effectiveTaskFocus) {
+        if (!dispatcherMemoryFacade.hasGraphMemory() || finalResult == null || !finalResult.success()) {
+            return MemoryWriteBatch.empty();
+        }
+        Instant recordedAt = Instant.now();
+        String channel = firstNonBlank(finalResult.skillName(), finalResult.metadataText("systemWorkflowExecutionTarget"));
+        String routedSkill = shouldRecordSkillUsage(channel) ? channel : "";
+        String taskFocus = effectiveTaskFocus == null ? "" : effectiveTaskFocus;
+        String executionNodeId = executionNodeId(userId, userInput, channel, recordedAt);
+
+        LinkedHashMap<String, Object> executionData = new LinkedHashMap<>();
+        putGraphValue(executionData, "name", firstNonBlank(taskFocus, channel, cap(userInput, 60)));
+        putGraphValue(executionData, "channel", channel);
+        putGraphValue(executionData, "skillName", routedSkill);
+        putGraphValue(executionData, "task", cap(taskFocus, 120));
+        putGraphValue(executionData, "userInput", cap(userInput, 160));
+        putGraphValue(executionData, "intent", semanticAnalysis == null ? "" : semanticAnalysis.intent());
+        putGraphValue(executionData, "summary", semanticAnalysis == null ? "" : cap(semanticAnalysis.summary(), 160));
+        putGraphValue(executionData, "contextScope", semanticAnalysis == null ? "" : semanticAnalysis.contextScope());
+        putGraphValue(executionData, "intentPhase", semanticAnalysis == null ? "" : semanticAnalysis.intentPhase());
+        putGraphValue(executionData, "query", cap(finalResult.artifactText("query"), 120));
+        putGraphValue(executionData, "workflow", finalResult.metadataText("systemWorkflow"));
+        putGraphValue(executionData, "workflowRecipe", finalResult.metadataText("systemWorkflowRecipe"));
+        putGraphValue(executionData, "decisionTarget", finalResult.metadataText("systemWorkflowDecisionTarget"));
+        putGraphValue(executionData, "executionTarget", finalResult.metadataText("systemWorkflowExecutionTarget"));
+        putGraphValue(executionData, "output", cap(finalResult.output(), 200));
+        executionData.put("success", Boolean.TRUE);
+
+        MemoryWriteBatch batch = MemoryWriteBatch.of(
+                new MemoryWriteOperation.UpsertGraphNode(new MemoryNode(
+                        executionNodeId,
+                        "hermes.execution",
+                        executionData,
+                        recordedAt,
+                        recordedAt
+                ))
+        );
+
+        if (!routedSkill.isBlank()) {
+            String skillNodeId = stableNodeId("hermes:skill", routedSkill);
+            LinkedHashMap<String, Object> skillData = new LinkedHashMap<>();
+            putGraphValue(skillData, "name", routedSkill);
+            putGraphValue(skillData, "skillName", routedSkill);
+            putGraphValue(skillData, "lastTask", cap(taskFocus, 120));
+            putGraphValue(skillData, "lastUserInput", cap(userInput, 160));
+            putGraphValue(skillData, "lastIntent", semanticAnalysis == null ? "" : semanticAnalysis.intent());
+            putGraphValue(skillData, "lastSummary", semanticAnalysis == null ? "" : cap(semanticAnalysis.summary(), 160));
+            putGraphValue(skillData, "lastWorkflow", finalResult.metadataText("systemWorkflow"));
+            putGraphValue(skillData, "lastWorkflowRecipe", finalResult.metadataText("systemWorkflowRecipe"));
+            putGraphValue(skillData, "lastOutput", cap(finalResult.output(), 160));
+            batch = batch.append(new MemoryWriteOperation.UpsertGraphNode(new MemoryNode(
+                    skillNodeId,
+                    "hermes.skill",
+                    skillData,
+                    recordedAt,
+                    recordedAt
+            )));
+            batch = batch.append(new MemoryWriteOperation.LinkGraph(
+                    executionNodeId,
+                    "result-of",
+                    skillNodeId,
+                    1.0,
+                    graphEdgeMetadata(channel, taskFocus, finalResult)
+            ));
+        }
+
+        if (!taskFocus.isBlank()) {
+            String taskNodeId = stableNodeId("hermes:task", taskFocus);
+            LinkedHashMap<String, Object> taskData = new LinkedHashMap<>();
+            putGraphValue(taskData, "name", taskFocus);
+            putGraphValue(taskData, "task", taskFocus);
+            putGraphValue(taskData, "goal", CanonicalTaskFields.text(effectivePayload, CanonicalTaskFields.GOAL));
+            putGraphValue(taskData, "project", CanonicalTaskFields.text(effectivePayload, CanonicalTaskFields.PROJECT));
+            putGraphValue(taskData, "topic", CanonicalTaskFields.text(effectivePayload, CanonicalTaskFields.TOPIC));
+            putGraphValue(taskData, "dueDate", CanonicalTaskFields.text(effectivePayload, CanonicalTaskFields.DEADLINE));
+            putGraphValue(taskData, "nextAction", resolveNextAction(semanticAnalysis, finalResult, effectivePayload, taskFocus, resolveTaskState(semanticAnalysis, finalResult, taskFocus)));
+            putGraphValue(taskData, "channel", channel);
+            putGraphValue(taskData, "skillName", routedSkill);
+            putGraphValue(taskData, "intent", semanticAnalysis == null ? "" : semanticAnalysis.intent());
+            putGraphValue(taskData, "summary", semanticAnalysis == null ? "" : cap(semanticAnalysis.summary(), 160));
+            batch = batch.append(new MemoryWriteOperation.UpsertGraphNode(new MemoryNode(
+                    taskNodeId,
+                    "hermes.task",
+                    taskData,
+                    recordedAt,
+                    recordedAt
+            )));
+            batch = batch.append(new MemoryWriteOperation.LinkGraph(
+                    taskNodeId,
+                    "latest-result",
+                    executionNodeId,
+                    1.0,
+                    graphEdgeMetadata(channel, taskFocus, finalResult)
+            ));
+            if (!routedSkill.isBlank()) {
+                batch = batch.append(new MemoryWriteOperation.LinkGraph(
+                        taskNodeId,
+                        "uses-skill",
+                        stableNodeId("hermes:skill", routedSkill),
+                        0.85,
+                        graphEdgeMetadata(channel, taskFocus, finalResult)
+                ));
+            }
+        }
+
+        return batch;
     }
 
     private String buildLearningSignalEntry(String userInput,
@@ -547,5 +683,36 @@ final class HermesMemoryRecorder {
             return value;
         }
         return value.substring(0, Math.max(0, maxLength - 3)) + "...";
+    }
+
+    private void putGraphValue(Map<String, Object> target, String key, String value) {
+        if (target == null || key == null || key.isBlank() || value == null || value.isBlank()) {
+            return;
+        }
+        target.put(key, value.trim());
+    }
+
+    private Map<String, Object> graphEdgeMetadata(String channel, String taskFocus, SkillResult finalResult) {
+        LinkedHashMap<String, Object> metadata = new LinkedHashMap<>();
+        putGraphValue(metadata, "channel", channel);
+        putGraphValue(metadata, "task", cap(taskFocus, 120));
+        putGraphValue(metadata, "workflow", finalResult == null ? "" : finalResult.metadataText("systemWorkflow"));
+        metadata.put("success", finalResult != null && finalResult.success());
+        return Map.copyOf(metadata);
+    }
+
+    private String stableNodeId(String prefix, String value) {
+        return prefix + ":" + UUID.nameUUIDFromBytes(normalize(value).getBytes(StandardCharsets.UTF_8));
+    }
+
+    private String executionNodeId(String userId, String userInput, String channel, Instant recordedAt) {
+        String raw = firstNonBlank(userId, "anonymous")
+                + "|"
+                + recordedAt.toEpochMilli()
+                + "|"
+                + firstNonBlank(channel, "unknown")
+                + "|"
+                + cap(firstNonBlank(userInput, ""), 120);
+        return "hermes:execution:" + UUID.nameUUIDFromBytes(raw.getBytes(StandardCharsets.UTF_8));
     }
 }

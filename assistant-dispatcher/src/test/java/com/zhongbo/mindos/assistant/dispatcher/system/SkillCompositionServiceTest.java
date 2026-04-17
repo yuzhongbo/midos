@@ -62,6 +62,11 @@ class SkillCompositionServiceTest {
         assertTrue(result.success());
         assertEquals("mcp.bravesearch.webSearch", result.skillName());
         assertEquals("detail-brief", result.output());
+        assertEquals("MindOS 架构", result.artifactText("query"));
+        assertEquals("search-results", result.artifactText("searchOutput"));
+        assertEquals(Boolean.TRUE, result.artifacts().get("detailApplied"));
+        assertEquals("skill-graph", result.metadataText("systemWorkflow"));
+        assertEquals("web.lookup.detail", result.metadataText("systemWorkflowRecipe"));
         assertEquals("systemWorkflow=skill-graph:web.lookup.detail", service.workflowReasonFor("web.lookup", "mcp.bravesearch.webSearch"));
         assertEquals(1, gateway.invocations.size());
         Invocation invocation = gateway.invocations.get(0);
@@ -92,6 +97,9 @@ class SkillCompositionServiceTest {
         assertTrue(result.success());
         assertEquals("mcp.bravesearch.webSearch", result.skillName());
         assertEquals("search-results", result.output());
+        assertEquals("MindOS 架构", result.artifactText("query"));
+        assertEquals("search-results", result.artifactText("searchOutput"));
+        assertEquals("skill-graph", result.metadataText("systemWorkflow"));
     }
 
     private static final class CapturingGateway implements SkillExecutionGateway {

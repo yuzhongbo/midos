@@ -23,8 +23,7 @@ final class HermesDecisionEngine {
     private final SkillDslParser skillDslParser;
     private final SkillCatalogFacade skillCatalog;
     private final HermesToolSchemaCatalog toolSchemaCatalog;
-    private final SemanticRoutingSupport semanticRoutingSupport;
-    private final BehaviorRoutingSupport behaviorRoutingSupport;
+    private final HermesDecisionPolicy decisionPolicy;
     private final DecisionParamAssembler decisionParamAssembler;
     private final LLMDecisionEngine llmDecisionEngine;
     private final DispatchHeuristicsSupport heuristicsSupport;
@@ -34,12 +33,11 @@ final class HermesDecisionEngine {
     private final List<DispatchSkillDslResolver> dispatchSkillDslResolvers;
 
     HermesDecisionEngine(SkillDslParser skillDslParser,
-                          SkillCatalogFacade skillCatalog,
-                          HermesToolSchemaCatalog toolSchemaCatalog,
-                          SemanticRoutingSupport semanticRoutingSupport,
-                          BehaviorRoutingSupport behaviorRoutingSupport,
-                          DecisionParamAssembler decisionParamAssembler,
-                          LLMDecisionEngine llmDecisionEngine,
+                           SkillCatalogFacade skillCatalog,
+                           HermesToolSchemaCatalog toolSchemaCatalog,
+                           HermesDecisionPolicy decisionPolicy,
+                           DecisionParamAssembler decisionParamAssembler,
+                           LLMDecisionEngine llmDecisionEngine,
                           DispatchHeuristicsSupport heuristicsSupport,
                           DispatcherAnswerMode answerMode,
                           ConversationMemoryModeService conversationMemoryModeService,
@@ -48,8 +46,7 @@ final class HermesDecisionEngine {
         this.skillDslParser = skillDslParser;
         this.skillCatalog = skillCatalog;
         this.toolSchemaCatalog = toolSchemaCatalog;
-        this.semanticRoutingSupport = semanticRoutingSupport;
-        this.behaviorRoutingSupport = behaviorRoutingSupport;
+        this.decisionPolicy = decisionPolicy;
         this.decisionParamAssembler = decisionParamAssembler;
         this.llmDecisionEngine = llmDecisionEngine;
         this.heuristicsSupport = heuristicsSupport;
@@ -393,8 +390,8 @@ final class HermesDecisionEngine {
         if (semanticAnalysis == null) {
             return;
         }
-        if (semanticRoutingSupport != null && context != null) {
-            for (SemanticRoutingSupport.SemanticRoutingPlan plan : semanticRoutingSupport.recommendSemanticRoutingPlans(
+        if (decisionPolicy != null && context != null) {
+            for (SemanticRoutingSupport.SemanticRoutingPlan plan : decisionPolicy.recommendSemanticRoutingPlans(
                     context.userId(),
                     semanticAnalysis,
                     context.userInput()
@@ -410,7 +407,7 @@ final class HermesDecisionEngine {
                 if (isRealtimeIntent(context.userInput(), semanticAnalysis) || isRealtimeSearchSkill(plan.skillName())) {
                     reasons.add("realtime semantic route");
                 }
-                boolean needClarify = semanticRoutingSupport.shouldAskSemanticClarification(
+                boolean needClarify = decisionPolicy.shouldAskSemanticClarification(
                         semanticAnalysis,
                         context.userInput(),
                         plan
@@ -424,7 +421,7 @@ final class HermesDecisionEngine {
                         reasons,
                         plan.effectivePayload(),
                         needClarify,
-                        needClarify ? semanticRoutingSupport.buildSemanticClarifyReply(semanticAnalysis, plan) : null,
+                        needClarify ? decisionPolicy.buildSemanticClarifyReply(semanticAnalysis, plan) : null,
                         false
                 );
             }
@@ -501,13 +498,13 @@ final class HermesDecisionEngine {
     }
 
     private void addHabitCandidates(Map<String, Candidate> candidates, HermesDecisionContext context) {
-        if (behaviorRoutingSupport == null || context == null || context.userId().isBlank() || context.userInput().isBlank()) {
+        if (decisionPolicy == null || context == null || context.userId().isBlank() || context.userInput().isBlank()) {
             return;
         }
         if (heuristicsSupport != null && heuristicsSupport.isRealtimeLikeInput(context.userInput(), context.semanticAnalysis())) {
             return;
         }
-        List<DecisionSignal> recommendations = behaviorRoutingSupport.recommendSkillsWithMemoryHabits(
+        List<DecisionSignal> recommendations = decisionPolicy.recommendSkillsWithMemoryHabits(
                 context.userId(),
                 context.userInput(),
                 context.profileContext(),
@@ -517,7 +514,7 @@ final class HermesDecisionEngine {
             if (recommendation == null || recommendation.target().isBlank()) {
                 continue;
             }
-            Optional<SkillDsl> habitDsl = behaviorRoutingSupport.buildHabitSkillDsl(
+            Optional<SkillDsl> habitDsl = decisionPolicy.buildHabitSkillDsl(
                     context.userId(),
                     context.userInput(),
                     context.profileContext(),
@@ -901,8 +898,8 @@ final class HermesDecisionEngine {
         if (context == null) {
             return safeMap(semanticAnalysis == null ? Map.of() : semanticAnalysis.payload());
         }
-        if (semanticRoutingSupport != null) {
-            Map<String, Object> completed = semanticRoutingSupport.completeSemanticPayload(
+        if (decisionPolicy != null) {
+            Map<String, Object> completed = decisionPolicy.completeSemanticPayload(
                     context.userId(),
                     semanticAnalysis,
                     context.userInput(),
