@@ -4,8 +4,11 @@ import com.zhongbo.mindos.assistant.common.dto.LongTaskCreateRequestDto;
 import com.zhongbo.mindos.assistant.common.dto.LongTaskAutoRunResultDto;
 import com.zhongbo.mindos.assistant.common.dto.LongTaskDto;
 import com.zhongbo.mindos.assistant.common.dto.LongTaskProgressUpdateDto;
+import com.zhongbo.mindos.assistant.common.dto.LongTaskSplitRequestDto;
+import com.zhongbo.mindos.assistant.common.dto.LongTaskSplitResultDto;
 import com.zhongbo.mindos.assistant.common.dto.LongTaskStatusUpdateDto;
 import com.zhongbo.mindos.assistant.memory.LongTaskCommandService;
+import com.zhongbo.mindos.assistant.memory.LongTaskService;
 import com.zhongbo.mindos.assistant.memory.MemoryFacade;
 import com.zhongbo.mindos.assistant.memory.model.LongTask;
 import org.springframework.http.HttpStatus;
@@ -143,6 +146,31 @@ public class LongTaskController {
         }
     }
 
+    @PostMapping("/{userId}/{taskId}/split")
+    public LongTaskSplitResultDto splitTask(@PathVariable String userId,
+                                            @PathVariable String taskId,
+                                            @RequestBody(required = false) LongTaskSplitRequestDto request) {
+        try {
+            LongTaskService.TaskSplitResult result = longTaskCommandOrchestrator.splitTask(
+                    userId,
+                    taskId,
+                    request == null ? null : request.workerId(),
+                    request == null ? null : request.childSteps(),
+                    request == null ? null : request.note(),
+                    request == null ? null : request.nextCheckAt()
+            );
+            if (result == null || result.parentTask() == null) {
+                throw new ResponseStatusException(HttpStatus.NOT_FOUND, "task not found");
+            }
+            return new LongTaskSplitResultDto(
+                    toDto(result.parentTask()),
+                    result.childTasks().stream().map(this::toDto).toList()
+            );
+        } catch (IllegalArgumentException ex) {
+            throw translateCommandFailure(ex);
+        }
+    }
+
     private ResponseStatusException translateCommandFailure(IllegalArgumentException ex) {
         String message = ex == null || ex.getMessage() == null || ex.getMessage().isBlank()
                 ? "invalid task command"
@@ -158,6 +186,8 @@ public class LongTaskController {
                 task.title(),
                 task.objective(),
                 task.goalId(),
+                task.parentTaskId(),
+                task.childTaskIds(),
                 task.status().name(),
                 task.progressPercent(),
                 task.pendingSteps(),

@@ -10,6 +10,8 @@ import com.zhongbo.mindos.assistant.common.dto.LongTaskCreateRequestDto;
 import com.zhongbo.mindos.assistant.common.dto.LongTaskAutoRunResultDto;
 import com.zhongbo.mindos.assistant.common.dto.LongTaskDto;
 import com.zhongbo.mindos.assistant.common.dto.LongTaskProgressUpdateDto;
+import com.zhongbo.mindos.assistant.common.dto.LongTaskSplitRequestDto;
+import com.zhongbo.mindos.assistant.common.dto.LongTaskSplitResultDto;
 import com.zhongbo.mindos.assistant.common.dto.LongTaskStatusUpdateDto;
 import com.zhongbo.mindos.assistant.common.dto.MemoryCompressionPlanRequestDto;
 import com.zhongbo.mindos.assistant.common.dto.MemoryCompressionPlanResponseDto;
@@ -452,6 +454,25 @@ public class AssistantSdkClient {
         }
     }
 
+    public LongTaskSplitResultDto splitLongTask(String userId, String taskId, LongTaskSplitRequestDto request) {
+        String encodedUser = encodePathSegment(userId);
+        String encodedTaskId = encodePathSegment(taskId);
+        URI uri = baseUri.resolve("/api/tasks/" + encodedUser + "/" + encodedTaskId + "/split");
+        try {
+            String body = objectMapper.writeValueAsString(request);
+            HttpRequest httpRequest = HttpRequest.newBuilder(uri)
+                    .header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(body))
+                    .build();
+            return sendForBody(httpRequest, LongTaskSplitResultDto.class);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new AssistantSdkException(0, "INTERRUPTED", "MindOS long task split call interrupted");
+        } catch (IOException e) {
+            throw new AssistantSdkException(0, "NETWORK_ERROR", "Failed to call MindOS long task split endpoint");
+        }
+    }
+
     public LongTaskAutoRunResultDto runLongTaskAuto(String userId) {
         String encodedUser = encodePathSegment(userId);
         URI uri = baseUri.resolve("/api/tasks/" + encodedUser + "/auto-run");
@@ -518,4 +539,3 @@ public class AssistantSdkClient {
         }
     }
 }
-

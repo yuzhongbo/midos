@@ -13,9 +13,21 @@
   },
   "snapshotsByUser" : {
     "persona-conflict-user" : {
-      "snapshotId" : "policy-evolved-persona-conflict-user-1776423762570",
+      "snapshotId" : "policy-evolved-persona-conflict-user-1776427176338",
       "source" : "stage5-evolution-loop",
-      "createdAt" : "2026-04-17T11:02:42.570658Z",
+      "createdAt" : "2026-04-17T11:59:36.338869Z",
+      "memorySuccessBoostWeight" : 0.26,
+      "graphBoostWeight" : 0.32999999999999996,
+      "graphContinuationBaseScore" : 0.78,
+      "searchPriorityLeadBoost" : 0.02,
+      "builtinNewsLeadBoost" : 0.03,
+      "skillScoreAdjustments" : { },
+      "skillAdjustmentReasons" : { }
+    },
+    "solo-smoke-user-5263bfc0-8b24-4502-83da-0f774910903b" : {
+      "snapshotId" : "policy-evolved-solo-smoke-user-5263bfc0-8b24-4502-83da-0f774910903b-1776426822024",
+      "source" : "stage5-evolution-loop",
+      "createdAt" : "2026-04-17T11:53:42.025822Z",
       "memorySuccessBoostWeight" : 0.26,
       "graphBoostWeight" : 0.32999999999999996,
       "graphContinuationBaseScore" : 0.78,
@@ -25,9 +37,9 @@
       "skillAdjustmentReasons" : { }
     },
     "habit-user" : {
-      "snapshotId" : "policy-evolved-habit-user-1776423765666",
+      "snapshotId" : "policy-evolved-habit-user-1776427179502",
       "source" : "stage5-evolution-loop",
-      "createdAt" : "2026-04-17T11:02:45.666129Z",
+      "createdAt" : "2026-04-17T11:59:39.502992Z",
       "memorySuccessBoostWeight" : 0.26,
       "graphBoostWeight" : 0.32999999999999996,
       "graphContinuationBaseScore" : 0.78,
@@ -37,9 +49,9 @@
       "skillAdjustmentReasons" : { }
     },
     "api-help-user" : {
-      "snapshotId" : "policy-evolved-api-help-user-1776423768209",
+      "snapshotId" : "policy-evolved-api-help-user-1776427181222",
       "source" : "stage5-evolution-loop",
-      "createdAt" : "2026-04-17T11:02:48.209206Z",
+      "createdAt" : "2026-04-17T11:59:41.222885Z",
       "memorySuccessBoostWeight" : 0.26,
       "graphBoostWeight" : 0.32999999999999996,
       "graphContinuationBaseScore" : 0.78,
@@ -61,9 +73,9 @@
       "skillAdjustmentReasons" : { }
     },
     "time-zh-user" : {
-      "snapshotId" : "policy-evolved-time-zh-user-1776423767100",
+      "snapshotId" : "policy-evolved-time-zh-user-1776427180476",
       "source" : "stage5-evolution-loop",
-      "createdAt" : "2026-04-17T11:02:47.100993Z",
+      "createdAt" : "2026-04-17T11:59:40.476781Z",
       "memorySuccessBoostWeight" : 0.26,
       "graphBoostWeight" : 0.32999999999999996,
       "graphContinuationBaseScore" : 0.78,
@@ -73,9 +85,9 @@
       "skillAdjustmentReasons" : { }
     },
     "test-user" : {
-      "snapshotId" : "policy-evolved-test-user-1776423765831",
+      "snapshotId" : "policy-evolved-test-user-1776427179630",
       "source" : "stage5-evolution-loop",
-      "createdAt" : "2026-04-17T11:02:45.831382Z",
+      "createdAt" : "2026-04-17T11:59:39.630358Z",
       "memorySuccessBoostWeight" : 0.12,
       "graphBoostWeight" : 0.15,
       "graphContinuationBaseScore" : 0.68,
@@ -85,9 +97,9 @@
       "skillAdjustmentReasons" : { }
     },
     "time-en-user" : {
-      "snapshotId" : "policy-evolved-time-en-user-1776423767169",
+      "snapshotId" : "policy-evolved-time-en-user-1776427180518",
       "source" : "stage5-evolution-loop",
-      "createdAt" : "2026-04-17T11:02:47.169007Z",
+      "createdAt" : "2026-04-17T11:59:40.518044Z",
       "memorySuccessBoostWeight" : 0.26,
       "graphBoostWeight" : 0.32999999999999996,
       "graphContinuationBaseScore" : 0.78,
@@ -97,9 +109,9 @@
       "skillAdjustmentReasons" : { }
     },
     "meta-user" : {
-      "snapshotId" : "policy-evolved-meta-user-1776423768246",
+      "snapshotId" : "policy-evolved-meta-user-1776427181245",
       "source" : "stage5-evolution-loop",
-      "createdAt" : "2026-04-17T11:02:48.246383Z",
+      "createdAt" : "2026-04-17T11:59:41.245517Z",
       "memorySuccessBoostWeight" : 0.12,
       "graphBoostWeight" : 0.15,
       "graphContinuationBaseScore" : 0.68,
@@ -109,9 +121,21 @@
       "skillAdjustmentReasons" : { }
     },
     "im:dingtalk:ding-review-user" : {
-      "snapshotId" : "policy-evolved-im:dingtalk:ding-review-user-1776423771122",
+      "snapshotId" : "policy-evolved-im:dingtalk:ding-review-user-1776427182792",
       "source" : "stage5-evolution-loop",
-      "createdAt" : "2026-04-17T11:02:51.122795Z",
+      "createdAt" : "2026-04-17T11:59:42.792102Z",
+      "memorySuccessBoostWeight" : 0.26,
+      "graphBoostWeight" : 0.32999999999999996,
+      "graphContinuationBaseScore" : 0.78,
+      "searchPriorityLeadBoost" : 0.02,
+      "builtinNewsLeadBoost" : 0.03,
+      "skillScoreAdjustments" : { },
+      "skillAdjustmentReasons" : { }
+    },
+    "solo-smoke-user-3ab11e86-8a99-411d-a79c-30075e0fefc1" : {
+      "snapshotId" : "policy-evolved-solo-smoke-user-3ab11e86-8a99-411d-a79c-30075e0fefc1-1776427170049",
+      "source" : "stage5-evolution-loop",
+      "createdAt" : "2026-04-17T11:59:30.050110Z",
       "memorySuccessBoostWeight" : 0.26,
       "graphBoostWeight" : 0.32999999999999996,
       "graphContinuationBaseScore" : 0.78,
@@ -121,9 +145,9 @@
       "skillAdjustmentReasons" : { }
     },
     "news-topic-user" : {
-      "snapshotId" : "policy-evolved-news-topic-user-1776423766975",
+      "snapshotId" : "policy-evolved-news-topic-user-1776427180423",
       "source" : "stage5-evolution-loop",
-      "createdAt" : "2026-04-17T11:02:46.975519Z",
+      "createdAt" : "2026-04-17T11:59:40.423785Z",
       "memorySuccessBoostWeight" : 0.26,
       "graphBoostWeight" : 0.32999999999999996,
       "graphContinuationBaseScore" : 0.78,
@@ -133,9 +157,9 @@
       "skillAdjustmentReasons" : { }
     },
     "dev-user" : {
-      "snapshotId" : "policy-evolved-dev-user-1776423767356",
+      "snapshotId" : "policy-evolved-dev-user-1776427180592",
       "source" : "stage5-evolution-loop",
-      "createdAt" : "2026-04-17T11:02:47.356560Z",
+      "createdAt" : "2026-04-17T11:59:40.592624Z",
       "memorySuccessBoostWeight" : 0.26,
       "graphBoostWeight" : 0.32999999999999996,
       "graphContinuationBaseScore" : 0.78,
@@ -145,9 +169,9 @@
       "skillAdjustmentReasons" : { }
     },
     "persona-promote-user" : {
-      "snapshotId" : "policy-evolved-persona-promote-user-1776423762402",
+      "snapshotId" : "policy-evolved-persona-promote-user-1776427176042",
       "source" : "stage5-evolution-loop",
-      "createdAt" : "2026-04-17T11:02:42.402413Z",
+      "createdAt" : "2026-04-17T11:59:36.042141Z",
       "memorySuccessBoostWeight" : 0.26,
       "graphBoostWeight" : 0.32999999999999996,
       "graphContinuationBaseScore" : 0.78,
@@ -157,9 +181,9 @@
       "skillAdjustmentReasons" : { }
     },
     "habit-threshold-user" : {
-      "snapshotId" : "policy-evolved-habit-threshold-user-1776423765584",
+      "snapshotId" : "policy-evolved-habit-threshold-user-1776427179397",
       "source" : "stage5-evolution-loop",
-      "createdAt" : "2026-04-17T11:02:45.584339Z",
+      "createdAt" : "2026-04-17T11:59:39.397911Z",
       "memorySuccessBoostWeight" : 0.12,
       "graphBoostWeight" : 0.15,
       "graphContinuationBaseScore" : 0.68,
@@ -169,9 +193,9 @@
       "skillAdjustmentReasons" : { }
     },
     "im:wechat:fromUser" : {
-      "snapshotId" : "policy-evolved-im:wechat:fromUser-1776423770194",
+      "snapshotId" : "policy-evolved-im:wechat:fromUser-1776427182396",
       "source" : "stage5-evolution-loop",
-      "createdAt" : "2026-04-17T11:02:50.194275Z",
+      "createdAt" : "2026-04-17T11:59:42.396516Z",
       "memorySuccessBoostWeight" : 0.26,
       "graphBoostWeight" : 0.32999999999999996,
       "graphContinuationBaseScore" : 0.78,
@@ -181,9 +205,9 @@
       "skillAdjustmentReasons" : { }
     },
     "im:dingtalk:ding-cap-user" : {
-      "snapshotId" : "policy-evolved-im:dingtalk:ding-cap-user-1776423770054",
+      "snapshotId" : "policy-evolved-im:dingtalk:ding-cap-user-1776427182331",
       "source" : "stage5-evolution-loop",
-      "createdAt" : "2026-04-17T11:02:50.054099Z",
+      "createdAt" : "2026-04-17T11:59:42.331112Z",
       "memorySuccessBoostWeight" : 0.26,
       "graphBoostWeight" : 0.32999999999999996,
       "graphContinuationBaseScore" : 0.78,
@@ -193,9 +217,9 @@
       "skillAdjustmentReasons" : { }
     },
     "im:dingtalk:ding-memory-user" : {
-      "snapshotId" : "policy-evolved-im:dingtalk:ding-memory-user-1776423770113",
+      "snapshotId" : "policy-evolved-im:dingtalk:ding-memory-user-1776427182361",
       "source" : "stage5-evolution-loop",
-      "createdAt" : "2026-04-17T11:02:50.113589Z",
+      "createdAt" : "2026-04-17T11:59:42.361288Z",
       "memorySuccessBoostWeight" : 0.26,
       "graphBoostWeight" : 0.32999999999999996,
       "graphContinuationBaseScore" : 0.78,
@@ -205,9 +229,9 @@
       "skillAdjustmentReasons" : { }
     },
     "persona-user" : {
-      "snapshotId" : "policy-evolved-persona-user-1776423762289",
+      "snapshotId" : "policy-evolved-persona-user-1776427175903",
       "source" : "stage5-evolution-loop",
-      "createdAt" : "2026-04-17T11:02:42.289816Z",
+      "createdAt" : "2026-04-17T11:59:35.903276Z",
       "memorySuccessBoostWeight" : 0.26,
       "graphBoostWeight" : 0.32999999999999996,
       "graphContinuationBaseScore" : 0.78,
@@ -217,9 +241,9 @@
       "skillAdjustmentReasons" : { }
     },
     "code-habit-user" : {
-      "snapshotId" : "policy-evolved-code-habit-user-1776423767775",
+      "snapshotId" : "policy-evolved-code-habit-user-1776427180920",
       "source" : "stage5-evolution-loop",
-      "createdAt" : "2026-04-17T11:02:47.775373Z",
+      "createdAt" : "2026-04-17T11:59:40.920507Z",
       "memorySuccessBoostWeight" : 0.12,
       "graphBoostWeight" : 0.15,
       "graphContinuationBaseScore" : 0.68,
@@ -229,9 +253,9 @@
       "skillAdjustmentReasons" : { }
     },
     "im:dingtalk:ding-user" : {
-      "snapshotId" : "policy-evolved-im:dingtalk:ding-user-1776423770371",
+      "snapshotId" : "policy-evolved-im:dingtalk:ding-user-1776427182519",
       "source" : "stage5-evolution-loop",
-      "createdAt" : "2026-04-17T11:02:50.371224Z",
+      "createdAt" : "2026-04-17T11:59:42.519393Z",
       "memorySuccessBoostWeight" : 0.26,
       "graphBoostWeight" : 0.32999999999999996,
       "graphContinuationBaseScore" : 0.78,
@@ -241,9 +265,9 @@
       "skillAdjustmentReasons" : { }
     },
     "im:dingtalk:ding-open-user" : {
-      "snapshotId" : "policy-evolved-im:dingtalk:ding-open-user-1776423770265",
+      "snapshotId" : "policy-evolved-im:dingtalk:ding-open-user-1776427182428",
       "source" : "stage5-evolution-loop",
-      "createdAt" : "2026-04-17T11:02:50.265666Z",
+      "createdAt" : "2026-04-17T11:59:42.428545Z",
       "memorySuccessBoostWeight" : 0.26,
       "graphBoostWeight" : 0.32999999999999996,
       "graphContinuationBaseScore" : 0.78,
@@ -253,9 +277,9 @@
       "skillAdjustmentReasons" : { }
     },
     "todo-habit-user" : {
-      "snapshotId" : "policy-evolved-todo-habit-user-1776423765306",
+      "snapshotId" : "policy-evolved-todo-habit-user-1776427179180",
       "source" : "stage5-evolution-loop",
-      "createdAt" : "2026-04-17T11:02:45.306543Z",
+      "createdAt" : "2026-04-17T11:59:39.180395Z",
       "memorySuccessBoostWeight" : 0.26,
       "graphBoostWeight" : 0.32999999999999996,
       "graphContinuationBaseScore" : 0.78,
@@ -265,9 +289,9 @@
       "skillAdjustmentReasons" : { }
     },
     "im:dingtalk:ding-async-user" : {
-      "snapshotId" : "policy-evolved-im:dingtalk:ding-async-user-1776423770314",
+      "snapshotId" : "policy-evolved-im:dingtalk:ding-async-user-1776427182481",
       "source" : "stage5-evolution-loop",
-      "createdAt" : "2026-04-17T11:02:50.314457Z",
+      "createdAt" : "2026-04-17T11:59:42.481655Z",
       "memorySuccessBoostWeight" : 0.26,
       "graphBoostWeight" : 0.32999999999999996,
       "graphContinuationBaseScore" : 0.78,
@@ -277,9 +301,9 @@
       "skillAdjustmentReasons" : { }
     },
     "im:dingtalk:ding-query-user" : {
-      "snapshotId" : "policy-evolved-im:dingtalk:ding-query-user-1776423770457",
+      "snapshotId" : "policy-evolved-im:dingtalk:ding-query-user-1776427182565",
       "source" : "stage5-evolution-loop",
-      "createdAt" : "2026-04-17T11:02:50.458009Z",
+      "createdAt" : "2026-04-17T11:59:42.565436Z",
       "memorySuccessBoostWeight" : 0.26,
       "graphBoostWeight" : 0.32999999999999996,
       "graphContinuationBaseScore" : 0.78,
@@ -289,9 +313,9 @@
       "skillAdjustmentReasons" : { }
     },
     "preview-chat-user" : {
-      "snapshotId" : "policy-evolved-preview-chat-user-1776423762215",
+      "snapshotId" : "policy-evolved-preview-chat-user-1776427175768",
       "source" : "stage5-evolution-loop",
-      "createdAt" : "2026-04-17T11:02:42.215459Z",
+      "createdAt" : "2026-04-17T11:59:35.768534Z",
       "memorySuccessBoostWeight" : 0.26,
       "graphBoostWeight" : 0.32999999999999996,
       "graphContinuationBaseScore" : 0.78,
@@ -301,9 +325,9 @@
       "skillAdjustmentReasons" : { }
     },
     "placeholder-user" : {
-      "snapshotId" : "policy-evolved-placeholder-user-1776423768306",
+      "snapshotId" : "policy-evolved-placeholder-user-1776427181284",
       "source" : "stage5-evolution-loop",
-      "createdAt" : "2026-04-17T11:02:48.306522Z",
+      "createdAt" : "2026-04-17T11:59:41.284910Z",
       "memorySuccessBoostWeight" : 0.26,
       "graphBoostWeight" : 0.32999999999999996,
       "graphContinuationBaseScore" : 0.78,
@@ -313,9 +337,9 @@
       "skillAdjustmentReasons" : { }
     },
     "im:dingtalk:ding-style-user" : {
-      "snapshotId" : "policy-evolved-im:dingtalk:ding-style-user-1776423771229",
+      "snapshotId" : "policy-evolved-im:dingtalk:ding-style-user-1776427182850",
       "source" : "stage5-evolution-loop",
-      "createdAt" : "2026-04-17T11:02:51.229858Z",
+      "createdAt" : "2026-04-17T11:59:42.850386Z",
       "memorySuccessBoostWeight" : 0.26,
       "graphBoostWeight" : 0.32999999999999996,
       "graphContinuationBaseScore" : 0.78,
@@ -325,9 +349,9 @@
       "skillAdjustmentReasons" : { }
     },
     "news-user" : {
-      "snapshotId" : "policy-evolved-news-user-1776423765239",
+      "snapshotId" : "policy-evolved-news-user-1776427179116",
       "source" : "stage5-evolution-loop",
-      "createdAt" : "2026-04-17T11:02:45.239379Z",
+      "createdAt" : "2026-04-17T11:59:39.116946Z",
       "memorySuccessBoostWeight" : 0.26,
       "graphBoostWeight" : 0.32999999999999996,
       "graphContinuationBaseScore" : 0.78,
@@ -337,9 +361,9 @@
       "skillAdjustmentReasons" : { }
     },
     "pref-learn-user" : {
-      "snapshotId" : "policy-evolved-pref-learn-user-1776423767608",
+      "snapshotId" : "policy-evolved-pref-learn-user-1776427180758",
       "source" : "stage5-evolution-loop",
-      "createdAt" : "2026-04-17T11:02:47.608373Z",
+      "createdAt" : "2026-04-17T11:59:40.758796Z",
       "memorySuccessBoostWeight" : 0.26,
       "graphBoostWeight" : 0.32999999999999996,
       "graphContinuationBaseScore" : 0.78,
@@ -349,9 +373,9 @@
       "skillAdjustmentReasons" : { }
     },
     "im:dingtalk:ding-comp-user" : {
-      "snapshotId" : "policy-evolved-im:dingtalk:ding-comp-user-1776423770734",
+      "snapshotId" : "policy-evolved-im:dingtalk:ding-comp-user-1776427182679",
       "source" : "stage5-evolution-loop",
-      "createdAt" : "2026-04-17T11:02:50.734799Z",
+      "createdAt" : "2026-04-17T11:59:42.679236Z",
       "memorySuccessBoostWeight" : 0.26,
       "graphBoostWeight" : 0.32999999999999996,
       "graphContinuationBaseScore" : 0.78,
@@ -361,9 +385,9 @@
       "skillAdjustmentReasons" : { }
     },
     "stream-user" : {
-      "snapshotId" : "policy-evolved-stream-user-1776423767518",
+      "snapshotId" : "policy-evolved-stream-user-1776427180681",
       "source" : "stage5-evolution-loop",
-      "createdAt" : "2026-04-17T11:02:47.518476Z",
+      "createdAt" : "2026-04-17T11:59:40.681050Z",
       "memorySuccessBoostWeight" : 0.26,
       "graphBoostWeight" : 0.32999999999999996,
       "graphContinuationBaseScore" : 0.78,
@@ -373,9 +397,9 @@
       "skillAdjustmentReasons" : { }
     },
     "im:feishu:ou_123" : {
-      "snapshotId" : "policy-evolved-im:feishu:ou_123-1776423771034",
+      "snapshotId" : "policy-evolved-im:feishu:ou_123-1776427182766",
       "source" : "stage5-evolution-loop",
-      "createdAt" : "2026-04-17T11:02:51.035824Z",
+      "createdAt" : "2026-04-17T11:59:42.766960Z",
       "memorySuccessBoostWeight" : 0.26,
       "graphBoostWeight" : 0.32999999999999996,
       "graphContinuationBaseScore" : 0.78,
@@ -385,9 +409,9 @@
       "skillAdjustmentReasons" : { }
     },
     "pref-user" : {
-      "snapshotId" : "policy-evolved-pref-user-1776423768018",
+      "snapshotId" : "policy-evolved-pref-user-1776427181090",
       "source" : "stage5-evolution-loop",
-      "createdAt" : "2026-04-17T11:02:48.018211Z",
+      "createdAt" : "2026-04-17T11:59:41.090532Z",
       "memorySuccessBoostWeight" : 0.26,
       "graphBoostWeight" : 0.32999999999999996,
       "graphContinuationBaseScore" : 0.78,

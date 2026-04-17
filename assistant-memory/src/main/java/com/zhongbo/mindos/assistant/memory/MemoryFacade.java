@@ -258,6 +258,15 @@ public class MemoryFacade {
         return requireMemoryManager().getLongTask(userId, taskId);
     }
 
+    public LongTaskService.TaskSplitResult splitLongTask(String userId,
+                                                         String taskId,
+                                                         String workerId,
+                                                         List<String> childSteps,
+                                                         String note,
+                                                         Instant nextCheckAt) {
+        return requireMemoryManager().splitLongTask(userId, taskId, workerId, childSteps, note, nextCheckAt);
+    }
+
     public LongGoal createLongGoal(String userId,
                                    String title,
                                    String objective,

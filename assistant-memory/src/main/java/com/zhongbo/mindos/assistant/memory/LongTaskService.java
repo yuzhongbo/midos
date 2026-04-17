@@ -9,6 +9,7 @@ import org.springframework.stereotype.Service;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -26,6 +27,9 @@ public class LongTaskService {
     private final LongGoalService longGoalService;
 
     public record AutoAdvanceResult(int claimedCount, int advancedCount, int completedCount) {
+    }
+
+    public record TaskSplitResult(LongTask parentTask, List<LongTask> childTasks) {
     }
 
     public LongTaskService() {
@@ -50,7 +54,7 @@ public class LongTaskService {
                                List<String> steps,
                                Instant dueAt,
                                Instant nextCheckAt) {
-        return createTask(userId, title, objective, steps, dueAt, nextCheckAt, "");
+        return createTask(userId, title, objective, steps, dueAt, nextCheckAt, "", "");
     }
 
     public LongTask createTask(String userId,
@@ -60,15 +64,33 @@ public class LongTaskService {
                                Instant dueAt,
                                Instant nextCheckAt,
                                String goalId) {
+        return createTask(userId, title, objective, steps, dueAt, nextCheckAt, goalId, "");
+    }
+
+    public LongTask createTask(String userId,
+                               String title,
+                               String objective,
+                               List<String> steps,
+                               Instant dueAt,
+                               Instant nextCheckAt,
+                               String goalId,
+                               String parentTaskId) {
         String normalizedUserId = normalizeText(userId, "local-user");
         String normalizedTitle = normalizeText(title, "Untitled long task");
         String normalizedObjective = normalizeText(objective, "");
         String normalizedGoalId = normalizeText(goalId, "");
+        String normalizedParentTaskId = normalizeText(parentTaskId, "");
         List<String> pendingSteps = normalizeSteps(steps);
         Instant now = Instant.now();
         Instant effectiveNextCheck = nextCheckAt == null ? now : nextCheckAt;
         if (!normalizedGoalId.isBlank() && longGoalService.getGoal(normalizedUserId, normalizedGoalId) == null) {
             throw new IllegalArgumentException("goal not found: " + normalizedGoalId);
+        }
+
+        Map<String, LongTask> userTasks = tasksByUser.computeIfAbsent(normalizedUserId, key -> new ConcurrentHashMap<>());
+        LongTask parentTask = normalizedParentTaskId.isBlank() ? null : userTasks.get(normalizedParentTaskId);
+        if (!normalizedParentTaskId.isBlank() && parentTask == null) {
+            throw new IllegalArgumentException("parent task not found: " + normalizedParentTaskId);
         }
 
         LongTask task = new LongTask(
@@ -77,6 +99,8 @@ public class LongTaskService {
                 normalizedTitle,
                 normalizedObjective,
                 normalizedGoalId,
+                normalizedParentTaskId,
+                List.of(),
                 LongTaskStatus.PENDING,
                 0,
                 pendingSteps,
@@ -91,9 +115,12 @@ public class LongTaskService {
                 null
         );
 
-        Map<String, LongTask> userTasks = tasksByUser.computeIfAbsent(normalizedUserId, key -> new ConcurrentHashMap<>());
         synchronized (userTasks) {
             userTasks.put(task.taskId(), task);
+            if (parentTask != null) {
+                userTasks.put(parentTask.taskId(), withChildTask(parentTask, task.taskId(), now));
+                refreshParentChain(userTasks, parentTask.parentTaskId(), now);
+            }
             persistState();
         }
         if (!normalizedGoalId.isBlank()) {
@@ -115,6 +142,108 @@ public class LongTaskService {
     public LongTask getTask(String userId, String taskId) {
         String normalizedUserId = normalizeText(userId, "local-user");
         return tasksByUser.getOrDefault(normalizedUserId, Map.of()).get(taskId);
+    }
+
+    public TaskSplitResult splitTask(String userId,
+                                     String taskId,
+                                     String workerId,
+                                     List<String> childSteps,
+                                     String note,
+                                     Instant nextCheckAt) {
+        String normalizedUserId = normalizeText(userId, "local-user");
+        Map<String, LongTask> userTasks = tasksByUser.computeIfAbsent(normalizedUserId, key -> new ConcurrentHashMap<>());
+        List<LongTask> createdChildren = new ArrayList<>();
+        LongTask updatedParent;
+
+        synchronized (userTasks) {
+            LongTask current = userTasks.get(taskId);
+            if (current == null) {
+                return null;
+            }
+            if (current.status().isTerminal()) {
+                throw new IllegalArgumentException("task is already terminal: " + taskId);
+            }
+            String normalizedWorker = normalizeText(workerId, "assistant-worker");
+            if (current.leaseOwner() != null
+                    && !current.leaseOwner().isBlank()
+                    && !current.leaseOwner().equals(normalizedWorker)) {
+                throw new IllegalArgumentException("task lease is owned by another worker: " + current.leaseOwner());
+            }
+
+            List<String> selectedSteps = selectChildSteps(current.pendingSteps(), childSteps);
+            if (selectedSteps.isEmpty()) {
+                throw new IllegalArgumentException("no splittable steps found for task: " + taskId);
+            }
+            Instant now = Instant.now();
+            List<String> remainingSteps = new ArrayList<>(current.pendingSteps());
+            LinkedHashSet<String> childTaskIds = new LinkedHashSet<>(current.childTaskIds());
+            for (String step : selectedSteps) {
+                remainingSteps.remove(step);
+                LongTask childTask = new LongTask(
+                        UUID.randomUUID().toString(),
+                        current.userId(),
+                        step,
+                        firstNonBlank(current.objective(), current.title()),
+                        current.goalId(),
+                        current.taskId(),
+                        List.of(),
+                        LongTaskStatus.PENDING,
+                        0,
+                        List.of(step),
+                        List.of(),
+                        List.of(),
+                        "",
+                        now,
+                        now,
+                        current.dueAt(),
+                        nextCheckAt == null ? current.nextCheckAt() : nextCheckAt,
+                        "",
+                        null
+                );
+                userTasks.put(childTask.taskId(), childTask);
+                createdChildren.add(childTask);
+                childTaskIds.add(childTask.taskId());
+            }
+
+            List<String> notes = appendNote(
+                    current.recentNotes(),
+                    firstNonBlank(note, "split into " + createdChildren.size() + " child tasks"),
+                    normalizedWorker
+            );
+            updatedParent = new LongTask(
+                    current.taskId(),
+                    current.userId(),
+                    current.title(),
+                    current.objective(),
+                    current.goalId(),
+                    current.parentTaskId(),
+                    List.copyOf(childTaskIds),
+                    current.status(),
+                    current.progressPercent(),
+                    List.copyOf(remainingSteps),
+                    current.completedSteps(),
+                    notes,
+                    "",
+                    current.createdAt(),
+                    now,
+                    current.dueAt(),
+                    nextCheckAt == null ? current.nextCheckAt() : nextCheckAt,
+                    current.leaseOwner(),
+                    current.leaseUntil()
+            );
+            updatedParent = refreshAggregateTask(updatedParent, userTasks, now);
+            userTasks.put(taskId, updatedParent);
+            refreshParentChain(userTasks, updatedParent.parentTaskId(), now);
+            persistState();
+        }
+
+        if (!updatedParent.goalId().isBlank()) {
+            for (LongTask child : createdChildren) {
+                longGoalService.linkTask(normalizedUserId, updatedParent.goalId(), child.taskId());
+            }
+            syncGoal(normalizedUserId, updatedParent.goalId());
+        }
+        return new TaskSplitResult(updatedParent, List.copyOf(createdChildren));
     }
 
     public List<String> listUserIds() {
@@ -154,6 +283,8 @@ public class LongTaskService {
                         task.title(),
                         task.objective(),
                         task.goalId(),
+                        task.parentTaskId(),
+                        task.childTaskIds(),
                         LongTaskStatus.RUNNING,
                         task.progressPercent(),
                         task.pendingSteps(),
@@ -234,6 +365,8 @@ public class LongTaskService {
                     current.title(),
                     current.objective(),
                     current.goalId(),
+                    current.parentTaskId(),
+                    current.childTaskIds(),
                     nextStatus,
                     progress,
                     List.copyOf(pending),
@@ -247,7 +380,9 @@ public class LongTaskService {
                     leaseOwner,
                     leaseUntil
             );
+            updated = refreshAggregateTask(updated, userTasks, now);
             userTasks.put(taskId, updated);
+            refreshParentChain(userTasks, current.parentTaskId(), now);
             persistState();
             syncGoal(normalizedUserId, current.goalId());
             return updated;
@@ -280,6 +415,8 @@ public class LongTaskService {
                     current.title(),
                     current.objective(),
                     current.goalId(),
+                    current.parentTaskId(),
+                    current.childTaskIds(),
                     nextStatus,
                     current.progressPercent(),
                     current.pendingSteps(),
@@ -293,7 +430,9 @@ public class LongTaskService {
                     leaseOwner,
                     leaseUntil
             );
+            updated = refreshAggregateTask(updated, userTasks, now);
             userTasks.put(taskId, updated);
+            refreshParentChain(userTasks, current.parentTaskId(), now);
             persistState();
             syncGoal(normalizedUserId, current.goalId());
             return updated;
@@ -360,6 +499,9 @@ public class LongTaskService {
         if (task == null || task.status().isTerminal()) {
             return false;
         }
+        if (task.childTaskIds() != null && !task.childTaskIds().isEmpty()) {
+            return false;
+        }
         if (task.nextCheckAt() != null && task.nextCheckAt().isAfter(now)) {
             return false;
         }
@@ -380,6 +522,25 @@ public class LongTaskService {
         return List.copyOf(normalized);
     }
 
+    private List<String> selectChildSteps(List<String> pendingSteps, List<String> requestedSteps) {
+        List<String> pending = normalizeSteps(pendingSteps);
+        if (pending.isEmpty()) {
+            return List.of();
+        }
+        List<String> requested = normalizeSteps(requestedSteps);
+        if (requested.isEmpty()) {
+            return pending;
+        }
+        List<String> selected = new ArrayList<>();
+        for (String step : requested) {
+            if (!pending.contains(step)) {
+                throw new IllegalArgumentException("pending step not found for split: " + step);
+            }
+            selected.add(step);
+        }
+        return List.copyOf(selected);
+    }
+
     private List<String> appendNote(List<String> existing, String note, String workerId) {
         String normalized = normalizeText(note, "");
         if (normalized.isBlank()) {
@@ -398,6 +559,137 @@ public class LongTaskService {
             return 0;
         }
         return (int) Math.round(completedCount * 100.0 / total);
+    }
+
+    private LongTask withChildTask(LongTask task, String childTaskId, Instant now) {
+        LinkedHashSet<String> childTaskIds = new LinkedHashSet<>(task.childTaskIds());
+        childTaskIds.add(childTaskId);
+        return refreshAggregateTask(new LongTask(
+                task.taskId(),
+                task.userId(),
+                task.title(),
+                task.objective(),
+                task.goalId(),
+                task.parentTaskId(),
+                List.copyOf(childTaskIds),
+                task.status(),
+                task.progressPercent(),
+                task.pendingSteps(),
+                task.completedSteps(),
+                task.recentNotes(),
+                task.blockedReason(),
+                task.createdAt(),
+                now,
+                task.dueAt(),
+                task.nextCheckAt(),
+                task.leaseOwner(),
+                task.leaseUntil()
+        ), tasksByUser.getOrDefault(task.userId(), Map.of()), now);
+    }
+
+    private void refreshParentChain(Map<String, LongTask> userTasks, String parentTaskId, Instant now) {
+        String currentParentId = normalizeText(parentTaskId, "");
+        while (!currentParentId.isBlank()) {
+            LongTask parent = userTasks.get(currentParentId);
+            if (parent == null) {
+                return;
+            }
+            LongTask refreshed = refreshAggregateTask(parent, userTasks, now);
+            userTasks.put(refreshed.taskId(), refreshed);
+            currentParentId = refreshed.parentTaskId();
+        }
+    }
+
+    private LongTask refreshAggregateTask(LongTask current, Map<String, LongTask> userTasks, Instant now) {
+        if (current == null || current.childTaskIds().isEmpty() || current.status() == LongTaskStatus.CANCELLED) {
+            return current;
+        }
+        List<LongTask> children = current.childTaskIds().stream()
+                .map(userTasks::get)
+                .filter(task -> task != null)
+                .toList();
+        if (children.isEmpty()) {
+            return current;
+        }
+        int progress = aggregateProgress(current, children);
+        LongTaskStatus status = aggregateStatus(current, children);
+        String blockedReason = status == LongTaskStatus.BLOCKED
+                ? children.stream()
+                .filter(child -> child.status() == LongTaskStatus.BLOCKED)
+                .map(LongTask::blockedReason)
+                .filter(reason -> reason != null && !reason.isBlank())
+                .findFirst()
+                .orElse(current.blockedReason())
+                : "";
+        String leaseOwner = status.isTerminal() || status == LongTaskStatus.BLOCKED ? "" : current.leaseOwner();
+        Instant leaseUntil = status.isTerminal() || status == LongTaskStatus.BLOCKED ? null : current.leaseUntil();
+        return new LongTask(
+                current.taskId(),
+                current.userId(),
+                current.title(),
+                current.objective(),
+                current.goalId(),
+                current.parentTaskId(),
+                current.childTaskIds(),
+                status,
+                progress,
+                current.pendingSteps(),
+                current.completedSteps(),
+                current.recentNotes(),
+                blockedReason,
+                current.createdAt(),
+                now,
+                current.dueAt(),
+                current.nextCheckAt(),
+                leaseOwner,
+                leaseUntil
+        );
+    }
+
+    private int aggregateProgress(LongTask current, List<LongTask> children) {
+        int units = 0;
+        int totalProgress = 0;
+        int directUnits = current.completedSteps().size() + current.pendingSteps().size();
+        if (directUnits > 0) {
+            totalProgress += calculateProgressPercent(current.completedSteps().size(), current.pendingSteps().size());
+            units++;
+        }
+        for (LongTask child : children) {
+            totalProgress += Math.max(0, Math.min(100, child.progressPercent()));
+            units++;
+        }
+        if (units <= 0) {
+            return current.progressPercent();
+        }
+        return (int) Math.round(totalProgress / (double) units);
+    }
+
+    private LongTaskStatus aggregateStatus(LongTask current, List<LongTask> children) {
+        if (children.stream().anyMatch(child -> child.status() == LongTaskStatus.BLOCKED)) {
+            return LongTaskStatus.BLOCKED;
+        }
+        boolean allChildrenCompleted = children.stream().allMatch(child -> child.status() == LongTaskStatus.COMPLETED);
+        boolean anyChildStarted = children.stream().anyMatch(child -> child.status() != LongTaskStatus.PENDING);
+        boolean hasPendingDirectSteps = !current.pendingSteps().isEmpty();
+        if (!hasPendingDirectSteps && allChildrenCompleted) {
+            return LongTaskStatus.COMPLETED;
+        }
+        if (current.status() == LongTaskStatus.PENDING && !anyChildStarted && !allChildrenCompleted) {
+            return LongTaskStatus.PENDING;
+        }
+        return LongTaskStatus.RUNNING;
+    }
+
+    private String firstNonBlank(String... values) {
+        if (values == null) {
+            return "";
+        }
+        for (String value : values) {
+            if (value != null && !value.isBlank()) {
+                return value.trim();
+            }
+        }
+        return "";
     }
 
     private String normalizeText(String value, String fallback) {

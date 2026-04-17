@@ -412,6 +412,15 @@ public class MemoryManager implements InitializingBean, DisposableBean {
         return longTaskService.getTask(userId, taskId);
     }
 
+    public LongTaskService.TaskSplitResult splitLongTask(String userId,
+                                                         String taskId,
+                                                         String workerId,
+                                                         List<String> childSteps,
+                                                         String note,
+                                                         Instant nextCheckAt) {
+        return longTaskService.splitTask(userId, taskId, workerId, childSteps, note, nextCheckAt);
+    }
+
     public LongGoal createLongGoal(String userId,
                                    String title,
                                    String objective,

@@ -1,4 +1,20 @@
 {
+  "u-goal-1-19889238-bc64-4b45-a6c2-a07f42222670" : {
+    "e9ea13da-2f54-43a0-9c83-7d9c3dfdfe67" : {
+      "goalId" : "e9ea13da-2f54-43a0-9c83-7d9c3dfdfe67",
+      "userId" : "u-goal-1-19889238-bc64-4b45-a6c2-a07f42222670",
+      "title" : "升级 Hermes",
+      "objective" : "完成 goal persistence",
+      "successCriteria" : "Goal context 全链路生效",
+      "status" : "ON_HOLD",
+      "progressPercent" : 0,
+      "linkedTaskIds" : [ ],
+      "recentNotes" : [ "system: 等待外部依赖" ],
+      "createdAt" : "2026-04-17T11:53:42.547944Z",
+      "updatedAt" : "2026-04-17T11:53:42.557236Z",
+      "nextReviewAt" : "2026-04-17T11:53:42.547944Z"
+    }
+  },
   "u-goal-1-be0eb39f-29d4-4cbb-ba32-c5f49dcd6c45" : {
     "662218c5-59a8-4450-97cc-0afa62813428" : {
       "goalId" : "662218c5-59a8-4450-97cc-0afa62813428",
@@ -15,6 +31,22 @@
       "nextReviewAt" : "2026-04-17T11:02:37.133596Z"
     }
   },
+  "u-long-goal-d7834698-31ba-4c20-aaf1-75d905da7a7b" : {
+    "1e819776-c56c-4796-8cc2-f83119a89018" : {
+      "goalId" : "1e819776-c56c-4796-8cc2-f83119a89018",
+      "userId" : "u-long-goal-d7834698-31ba-4c20-aaf1-75d905da7a7b",
+      "title" : "升级 Hermes",
+      "objective" : "完成 goal persistence",
+      "successCriteria" : "Goal context 全链路生效",
+      "status" : "ACHIEVED",
+      "progressPercent" : 100,
+      "linkedTaskIds" : [ "fe7a8a94-cf5c-40d1-9d3f-34eb34beb966" ],
+      "recentNotes" : [ ],
+      "createdAt" : "2026-04-17T11:53:53.003713Z",
+      "updatedAt" : "2026-04-17T11:53:53.030870Z",
+      "nextReviewAt" : "2026-04-17T11:53:53.003713Z"
+    }
+  },
   "u-long-goal-2fca0aeb-4967-4f54-b08d-60d8b233de86" : {
     "e4ea6b07-36dc-434b-92df-46df1041d0c3" : {
       "goalId" : "e4ea6b07-36dc-434b-92df-46df1041d0c3",
@@ -29,6 +61,38 @@
       "createdAt" : "2026-04-17T11:02:48.473992Z",
       "updatedAt" : "2026-04-17T11:02:48.502105Z",
       "nextReviewAt" : "2026-04-17T11:02:48.473992Z"
+    }
+  },
+  "u-goal-1-64c1aa7d-83bf-4d55-8758-fee9b655f3bf" : {
+    "3085e273-4be9-408b-9831-26a2342a9266" : {
+      "goalId" : "3085e273-4be9-408b-9831-26a2342a9266",
+      "userId" : "u-goal-1-64c1aa7d-83bf-4d55-8758-fee9b655f3bf",
+      "title" : "升级 Hermes",
+      "objective" : "完成 goal persistence",
+      "successCriteria" : "Goal context 全链路生效",
+      "status" : "ON_HOLD",
+      "progressPercent" : 0,
+      "linkedTaskIds" : [ ],
+      "recentNotes" : [ "system: 等待外部依赖" ],
+      "createdAt" : "2026-04-17T11:59:30.571524Z",
+      "updatedAt" : "2026-04-17T11:59:30.587026Z",
+      "nextReviewAt" : "2026-04-17T11:59:30.571524Z"
+    }
+  },
+  "u-long-goal-ecc99e49-7acc-4b68-b510-ce3a3b5cf95c" : {
+    "21c71e4f-11f8-47c0-84d5-5165ce91edca" : {
+      "goalId" : "21c71e4f-11f8-47c0-84d5-5165ce91edca",
+      "userId" : "u-long-goal-ecc99e49-7acc-4b68-b510-ce3a3b5cf95c",
+      "title" : "升级 Hermes",
+      "objective" : "完成 goal persistence",
+      "successCriteria" : "Goal context 全链路生效",
+      "status" : "ACHIEVED",
+      "progressPercent" : 100,
+      "linkedTaskIds" : [ "3c4fd4fa-e222-4e27-a0ef-e0fbbfa173aa" ],
+      "recentNotes" : [ ],
+      "createdAt" : "2026-04-17T11:59:41.415998Z",
+      "updatedAt" : "2026-04-17T11:59:41.439626Z",
+      "nextReviewAt" : "2026-04-17T11:59:41.415998Z"
     }
   }
 }

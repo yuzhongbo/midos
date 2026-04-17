@@ -14,6 +14,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class LongTaskServiceTest {
 
@@ -87,6 +88,71 @@ class LongTaskServiceTest {
 
         assertEquals(LongTaskStatus.COMPLETED, completed.status());
         LongGoal updatedGoal = longGoalService.getGoal("u-goal-task", goal.goalId());
+        assertEquals(LongGoalStatus.ACHIEVED, updatedGoal.status());
+        assertEquals(100, updatedGoal.progressPercent());
+    }
+
+    @Test
+    void shouldSplitTaskIntoChildTasksAndTrackGoalProgressByLeafTasks(@TempDir Path tempDir) {
+        MemoryStateStore stateStore = new FileMemoryStateStore(true, tempDir, new ObjectMapper());
+        LongGoalService longGoalService = new LongGoalService(stateStore);
+        LongTaskService longTaskService = new LongTaskService(stateStore, longGoalService);
+
+        LongGoal goal = longGoalService.createGoal(
+                "u-split",
+                "Upgrade Hermes to stage5",
+                "Finish task tree goal wiring",
+                "Goal progress follows leaf tasks",
+                Instant.parse("2026-05-01T00:00:00Z"),
+                Instant.parse("2026-04-20T00:00:00Z")
+        );
+
+        LongTask parent = longTaskService.createTask(
+                "u-split",
+                "推进 stage5",
+                "拆分成更细的执行项",
+                List.of("补 graph 关系", "补 goal 持久化"),
+                Instant.parse("2026-04-25T00:00:00Z"),
+                Instant.parse("2026-04-18T00:00:00Z"),
+                goal.goalId()
+        );
+
+        LongTaskService.TaskSplitResult split = longTaskService.splitTask(
+                "u-split",
+                parent.taskId(),
+                "worker-a",
+                List.of(),
+                "split into leaf tasks",
+                Instant.parse("2026-04-18T01:00:00Z")
+        );
+
+        assertEquals(parent.taskId(), split.parentTask().taskId());
+        assertEquals(2, split.childTasks().size());
+        assertTrue(split.parentTask().childTaskIds().containsAll(split.childTasks().stream().map(LongTask::taskId).toList()));
+
+        LongGoal midGoal = longGoalService.getGoal("u-split", goal.goalId());
+        assertEquals(LongGoalStatus.ACTIVE, midGoal.status());
+        assertEquals(0, midGoal.progressPercent());
+
+        for (LongTask child : split.childTasks()) {
+            longTaskService.claimReadyTasks("u-split", "worker-a", 1, 120);
+            longTaskService.updateProgress(
+                    "u-split",
+                    child.taskId(),
+                    "worker-a",
+                    child.pendingSteps().get(0),
+                    "done " + child.title(),
+                    "",
+                    Instant.parse("2026-04-18T02:00:00Z"),
+                    true
+            );
+        }
+
+        LongTask refreshedParent = longTaskService.getTask("u-split", parent.taskId());
+        assertEquals(LongTaskStatus.COMPLETED, refreshedParent.status());
+        assertEquals(100, refreshedParent.progressPercent());
+
+        LongGoal updatedGoal = longGoalService.getGoal("u-split", goal.goalId());
         assertEquals(LongGoalStatus.ACHIEVED, updatedGoal.status());
         assertEquals(100, updatedGoal.progressPercent());
     }

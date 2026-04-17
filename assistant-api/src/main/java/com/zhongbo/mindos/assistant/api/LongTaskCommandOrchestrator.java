@@ -1,6 +1,7 @@
 package com.zhongbo.mindos.assistant.api;
 
 import com.zhongbo.mindos.assistant.memory.LongTaskCommandService;
+import com.zhongbo.mindos.assistant.memory.LongTaskService;
 import com.zhongbo.mindos.assistant.memory.model.LongTask;
 import org.springframework.stereotype.Service;
 
@@ -65,5 +66,14 @@ public class LongTaskCommandOrchestrator {
                                  String note,
                                  Instant nextCheckAt) {
         return longTaskCommandService.updateStatus(userId, taskId, status, note, nextCheckAt);
+    }
+
+    public LongTaskService.TaskSplitResult splitTask(String userId,
+                                                     String taskId,
+                                                     String workerId,
+                                                     List<String> childSteps,
+                                                     String note,
+                                                     Instant nextCheckAt) {
+        return longTaskCommandService.splitTask(userId, taskId, workerId, childSteps, note, nextCheckAt);
     }
 }

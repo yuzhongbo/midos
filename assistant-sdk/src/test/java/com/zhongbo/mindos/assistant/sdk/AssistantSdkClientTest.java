@@ -474,6 +474,14 @@ class AssistantSdkClientTest {
                 responseBody = "[" + longTaskJson("task-1", "RUNNING", 30, "worker-a") + "]";
             } else if ("POST".equalsIgnoreCase(exchange.getRequestMethod()) && path.endsWith("/progress")) {
                 responseBody = longTaskJson("task-1", "RUNNING", 60, "worker-a");
+            } else if ("POST".equalsIgnoreCase(exchange.getRequestMethod()) && path.endsWith("/split")) {
+                responseBody = "{" +
+                        "\"parentTask\":" + longTaskJson("task-1", "RUNNING", 0, "worker-a") + "," +
+                        "\"childTasks\":[" +
+                        longTaskJson("task-2", "PENDING", 0, "") + "," +
+                        longTaskJson("task-3", "PENDING", 0, "") +
+                        "]" +
+                        "}";
             } else if ("POST".equalsIgnoreCase(exchange.getRequestMethod()) && path.endsWith("/status")) {
                 responseBody = longTaskJson("task-1", "COMPLETED", 100, "");
             } else {
@@ -524,6 +532,16 @@ class AssistantSdkClientTest {
             assertEquals(60, progressed.progressPercent());
             assertTrue(pathRef.get().endsWith("/progress"));
 
+            var split = client.splitLongTask("user a+b", "task-1", new com.zhongbo.mindos.assistant.common.dto.LongTaskSplitRequestDto(
+                    "worker-a",
+                    List.of("准备 changelog", "灰度发布"),
+                    "split it",
+                    null
+            ));
+            assertEquals("task-1", split.parentTask().taskId());
+            assertEquals(2, split.childTasks().size());
+            assertTrue(pathRef.get().endsWith("/split"));
+
             var completed = client.updateLongTaskStatus("user a+b", "task-1", new LongTaskStatusUpdateDto(
                     "COMPLETED",
                     "all done",
@@ -547,6 +565,9 @@ class AssistantSdkClientTest {
         payload.put("userId", "user a+b");
         payload.put("title", "发布新版本");
         payload.put("objective", "三天内发布");
+        payload.put("goalId", "");
+        payload.put("parentTaskId", "");
+        payload.put("childTaskIds", List.of());
         payload.put("status", status);
         payload.put("progressPercent", progress);
         payload.put("pendingSteps", List.of("灰度发布"));
@@ -566,4 +587,3 @@ class AssistantSdkClientTest {
         }
     }
 }
-

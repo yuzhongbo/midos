@@ -74,11 +74,20 @@ public class LongTaskCommandService {
     }
 
     public LongTask updateStatus(String userId,
-                                 String taskId,
-                                 LongTaskStatus status,
-                                 String note,
-                                 Instant nextCheckAt) {
+                                  String taskId,
+                                  LongTaskStatus status,
+                                  String note,
+                                  Instant nextCheckAt) {
         return memoryFacade.updateLongTaskStatus(userId, taskId, status, note, nextCheckAt);
+    }
+
+    public LongTaskService.TaskSplitResult splitTask(String userId,
+                                                     String taskId,
+                                                     String workerId,
+                                                     List<String> childSteps,
+                                                     String note,
+                                                     Instant nextCheckAt) {
+        return memoryFacade.splitLongTask(userId, taskId, workerId, childSteps, note, nextCheckAt);
     }
 
     private LongTaskStatus parseStatus(String status) {

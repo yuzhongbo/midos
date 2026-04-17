@@ -15,6 +15,8 @@ record HermesRuntimePolicySnapshot(
         double graphContinuationBaseScore,
         double searchPriorityLeadBoost,
         double builtinNewsLeadBoost,
+        String strategySummary,
+        List<String> reconstructionActions,
         Map<String, Double> skillScoreAdjustments,
         Map<String, String> skillAdjustmentReasons
 ) {
@@ -35,6 +37,8 @@ record HermesRuntimePolicySnapshot(
         graphContinuationBaseScore = clamp(graphContinuationBaseScore, 0.0d, 1.0d);
         searchPriorityLeadBoost = clamp(searchPriorityLeadBoost, 0.0d, 0.20d);
         builtinNewsLeadBoost = clamp(builtinNewsLeadBoost, 0.0d, 0.20d);
+        strategySummary = strategySummary == null ? "" : strategySummary.trim();
+        reconstructionActions = reconstructionActions == null ? List.of() : List.copyOf(reconstructionActions);
         skillScoreAdjustments = immutableAdjustments(skillScoreAdjustments);
         skillAdjustmentReasons = immutableReasons(skillAdjustmentReasons);
     }
@@ -49,8 +53,36 @@ record HermesRuntimePolicySnapshot(
                 DEFAULT_GRAPH_CONTINUATION_BASE_SCORE,
                 DEFAULT_SEARCH_PRIORITY_LEAD_BOOST,
                 DEFAULT_BUILTIN_NEWS_LEAD_BOOST,
+                "",
+                List.of(),
                 Map.of(),
                 Map.of()
+        );
+    }
+
+    HermesRuntimePolicySnapshot(String snapshotId,
+                                String source,
+                                Instant createdAt,
+                                double memorySuccessBoostWeight,
+                                double graphBoostWeight,
+                                double graphContinuationBaseScore,
+                                double searchPriorityLeadBoost,
+                                double builtinNewsLeadBoost,
+                                Map<String, Double> skillScoreAdjustments,
+                                Map<String, String> skillAdjustmentReasons) {
+        this(
+                snapshotId,
+                source,
+                createdAt,
+                memorySuccessBoostWeight,
+                graphBoostWeight,
+                graphContinuationBaseScore,
+                searchPriorityLeadBoost,
+                builtinNewsLeadBoost,
+                "",
+                List.of(),
+                skillScoreAdjustments,
+                skillAdjustmentReasons
         );
     }
 

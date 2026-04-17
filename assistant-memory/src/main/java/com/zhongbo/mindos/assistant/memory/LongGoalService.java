@@ -170,22 +170,30 @@ public class LongGoalService {
             List<LongTask> linkedTasks = tasks == null ? List.of() : tasks.stream()
                     .filter(task -> task != null && goalId.equals(task.goalId()))
                     .toList();
+            List<LongTask> effectiveTasks = linkedTasks.stream()
+                    .filter(task -> task.childTaskIds() == null || task.childTaskIds().isEmpty())
+                    .toList();
+            if (effectiveTasks.isEmpty()) {
+                effectiveTasks = linkedTasks;
+            }
             LinkedHashSet<String> linkedTaskIds = new LinkedHashSet<>();
             int totalProgress = 0;
             int completedCount = 0;
             for (LongTask task : linkedTasks) {
                 linkedTaskIds.add(task.taskId());
+            }
+            for (LongTask task : effectiveTasks) {
                 totalProgress += Math.max(0, Math.min(100, task.progressPercent()));
                 if (task.status() == LongTaskStatus.COMPLETED) {
                     completedCount++;
                 }
             }
-            int progressPercent = linkedTasks.isEmpty()
+            int progressPercent = effectiveTasks.isEmpty()
                     ? current.progressPercent()
-                    : (int) Math.round(totalProgress / (double) linkedTasks.size());
+                    : (int) Math.round(totalProgress / (double) effectiveTasks.size());
             LongGoalStatus nextStatus = current.status();
             if (nextStatus != LongGoalStatus.CANCELLED && nextStatus != LongGoalStatus.ON_HOLD) {
-                nextStatus = !linkedTaskIds.isEmpty() && completedCount == linkedTasks.size()
+                nextStatus = !effectiveTasks.isEmpty() && completedCount == effectiveTasks.size()
                         ? LongGoalStatus.ACHIEVED
                         : LongGoalStatus.ACTIVE;
             }
