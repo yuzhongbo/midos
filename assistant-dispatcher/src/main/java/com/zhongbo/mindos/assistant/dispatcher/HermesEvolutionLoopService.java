@@ -238,6 +238,7 @@ final class HermesEvolutionLoopService {
                 adjustmentReasons.put(skillName, reason);
             }
         }
+        List<String> reconstructionActions = buildReconstructionActions(adjustments, usageStats, weightedSuccessRate);
         return new HermesRuntimePolicySnapshot(
                 "policy-evolved-" + userId + "-" + Instant.now().toEpochMilli(),
                 "stage5-evolution-loop",
@@ -247,9 +248,48 @@ final class HermesEvolutionLoopService {
                 graphContinuationBaseScore,
                 HermesRuntimePolicySnapshot.defaults().searchPriorityLeadBoost(),
                 HermesRuntimePolicySnapshot.defaults().builtinNewsLeadBoost(),
+                buildStrategySummary(weightedSuccessRate, adjustments, reconstructionActions),
+                reconstructionActions,
                 adjustments,
                 adjustmentReasons
         );
+    }
+
+    private String buildStrategySummary(double weightedSuccessRate,
+                                        Map<String, Double> adjustments,
+                                        List<String> reconstructionActions) {
+        StringBuilder summary = new StringBuilder("self-reconstruction: successRate=");
+        summary.append(String.format(Locale.ROOT, "%.2f", weightedSuccessRate));
+        summary.append(", skillAdjustments=").append(adjustments == null ? 0 : adjustments.size());
+        if (reconstructionActions != null && !reconstructionActions.isEmpty()) {
+            summary.append(", actions=").append(String.join(" | ", reconstructionActions));
+        }
+        return summary.toString();
+    }
+
+    private List<String> buildReconstructionActions(Map<String, Double> adjustments,
+                                                    Map<String, SkillUsageStats> usageStats,
+                                                    double weightedSuccessRate) {
+        List<String> actions = new ArrayList<>();
+        if (weightedSuccessRate < 0.60d) {
+            actions.add("tighten routing toward higher-success skills");
+        } else {
+            actions.add("reinforce graph-guided routing for stable skills");
+        }
+        if (adjustments != null && !adjustments.isEmpty()) {
+            adjustments.entrySet().stream()
+                    .sorted((left, right) -> Double.compare(Math.abs(right.getValue()), Math.abs(left.getValue())))
+                    .limit(2)
+                    .forEach(entry -> actions.add((entry.getValue() >= 0.0d ? "boost " : "deprioritize ") + entry.getKey()));
+        }
+        long stableSkills = usageStats == null ? 0L : usageStats.values().stream()
+                .filter(stats -> stats != null && stats.totalCount() >= minUsageSamples)
+                .filter(stats -> stats.successCount() / (double) Math.max(1L, stats.totalCount()) >= 0.80d)
+                .count();
+        if (stableSkills > 0) {
+            actions.add("materialize stable skill graph edges");
+        }
+        return actions.isEmpty() ? List.of("preserve current runtime policy") : List.copyOf(actions);
     }
 
     private double weightedSuccessRate(Map<String, SkillUsageStats> usageStats, Map<String, CostModel> costModels) {

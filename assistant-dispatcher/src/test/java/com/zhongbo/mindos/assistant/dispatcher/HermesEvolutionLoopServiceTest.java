@@ -61,6 +61,8 @@ class HermesEvolutionLoopServiceTest {
         assertTrue(snapshot.memorySuccessBoostWeight() > 0.20d);
         assertTrue(snapshot.skillScoreAdjustments().get("todo.create") > 0.0d);
         assertTrue(snapshot.skillScoreAdjustments().get("file.search") < 0.0d);
+        assertTrue(snapshot.strategySummary().contains("self-reconstruction"));
+        assertTrue(snapshot.reconstructionActions().stream().anyMatch(action -> action.contains("boost todo.create")));
         assertTrue(snapshot.adjustmentReason(new HermesSkillIdentity("todo.create", "todo.create", "todo.create"))
                 .contains("lower-cost higher-success"));
     }

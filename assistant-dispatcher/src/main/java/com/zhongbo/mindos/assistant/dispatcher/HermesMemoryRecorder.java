@@ -409,24 +409,15 @@ final class HermesMemoryRecorder {
 
         if (!routedSkill.isBlank()) {
             String skillNodeId = stableNodeId("hermes:skill", routedSkill);
-            LinkedHashMap<String, Object> skillData = new LinkedHashMap<>();
-            putGraphValue(skillData, "name", routedSkill);
-            putGraphValue(skillData, "skillName", routedSkill);
-            putGraphValue(skillData, "decisionTarget", skillIdentity.decisionTarget());
-            putGraphValue(skillData, "executionTarget", skillIdentity.executionTarget());
-            putGraphValue(skillData, "canonicalSkill", skillIdentity.canonicalSkill());
-            putGraphValue(skillData, "lastTask", cap(taskFocus, 120));
-            putGraphValue(skillData, "lastUserInput", cap(userInput, 160));
-            putGraphValue(skillData, "lastIntent", semanticAnalysis == null ? "" : semanticAnalysis.intent());
-            putGraphValue(skillData, "lastSummary", semanticAnalysis == null ? "" : cap(semanticAnalysis.summary(), 160));
-            putGraphValue(skillData, "lastWorkflow", finalResult.metadataText("systemWorkflow"));
-            putGraphValue(skillData, "lastWorkflowRecipe", finalResult.metadataText("systemWorkflowRecipe"));
-            putGraphValue(skillData, "lastOutput", cap(finalResult.output(), 160));
-            batch = batch.append(new MemoryWriteOperation.UpsertGraphNode(new MemoryNode(
+            batch = batch.append(new MemoryWriteOperation.UpsertGraphNode(skillNode(
                     skillNodeId,
-                    "hermes.skill",
-                    skillData,
-                    recordedAt,
+                    routedSkill,
+                    "",
+                    taskFocus,
+                    userInput,
+                    finalResult,
+                    semanticAnalysis,
+                    skillIdentity,
                     recordedAt
             )));
             batch = batch.append(new MemoryWriteOperation.LinkGraph(
@@ -437,6 +428,16 @@ final class HermesMemoryRecorder {
                     graphEdgeMetadata(channel, taskFocus, finalResult, skillIdentity)
             ));
         }
+
+        batch = appendSkillIdentityGraph(
+                batch,
+                userInput,
+                finalResult,
+                semanticAnalysis,
+                taskFocus,
+                skillIdentity,
+                recordedAt
+        );
 
         if (!taskFocus.isBlank()) {
             String taskNodeId = stableNodeId("hermes:task", taskFocus);
@@ -725,8 +726,117 @@ final class HermesMemoryRecorder {
         return Map.copyOf(metadata);
     }
 
+    private MemoryWriteBatch appendSkillIdentityGraph(MemoryWriteBatch batch,
+                                                      String userInput,
+                                                      SkillResult finalResult,
+                                                      SemanticAnalysisResult semanticAnalysis,
+                                                      String taskFocus,
+                                                      HermesSkillIdentity skillIdentity,
+                                                      Instant recordedAt) {
+        if (batch == null || skillIdentity == null) {
+            return batch == null ? MemoryWriteBatch.empty() : batch;
+        }
+        String decisionTarget = firstNonBlank(skillIdentity.decisionTarget(), "");
+        String executionTarget = firstNonBlank(skillIdentity.executionTarget(), "");
+        String canonicalSkill = firstNonBlank(skillIdentity.canonicalSkill(), "");
+        String decisionNodeId = stableSkillNodeId(decisionTarget);
+        if (!decisionNodeId.isBlank()) {
+            batch = batch.append(new MemoryWriteOperation.UpsertGraphNode(skillNode(
+                    decisionNodeId,
+                    decisionTarget,
+                    "decision-target",
+                    taskFocus,
+                    userInput,
+                    finalResult,
+                    semanticAnalysis,
+                    skillIdentity,
+                    recordedAt
+            )));
+        }
+        String executionNodeId = stableSkillNodeId(executionTarget);
+        if (!executionNodeId.isBlank()) {
+            batch = batch.append(new MemoryWriteOperation.UpsertGraphNode(skillNode(
+                    executionNodeId,
+                    executionTarget,
+                    "execution-target",
+                    taskFocus,
+                    userInput,
+                    finalResult,
+                    semanticAnalysis,
+                    skillIdentity,
+                    recordedAt
+            )));
+        }
+        String canonicalNodeId = stableSkillNodeId(canonicalSkill);
+        if (!canonicalNodeId.isBlank()) {
+            batch = batch.append(new MemoryWriteOperation.UpsertGraphNode(skillNode(
+                    canonicalNodeId,
+                    canonicalSkill,
+                    "canonical-skill",
+                    taskFocus,
+                    userInput,
+                    finalResult,
+                    semanticAnalysis,
+                    skillIdentity,
+                    recordedAt
+            )));
+        }
+        if (!decisionNodeId.isBlank() && !executionNodeId.isBlank() && !decisionNodeId.equals(executionNodeId)) {
+            batch = batch.append(new MemoryWriteOperation.LinkGraph(
+                    decisionNodeId,
+                    "routes-to",
+                    executionNodeId,
+                    1.0d,
+                    graphEdgeMetadata(executionTarget, taskFocus, finalResult, skillIdentity)
+            ));
+        }
+        if (!canonicalNodeId.isBlank() && !executionNodeId.isBlank() && !canonicalNodeId.equals(executionNodeId)) {
+            batch = batch.append(new MemoryWriteOperation.LinkGraph(
+                    canonicalNodeId,
+                    "implemented-by",
+                    executionNodeId,
+                    0.95d,
+                    graphEdgeMetadata(executionTarget, taskFocus, finalResult, skillIdentity)
+            ));
+        }
+        return batch;
+    }
+
+    private MemoryNode skillNode(String nodeId,
+                                 String skillName,
+                                 String role,
+                                 String taskFocus,
+                                 String userInput,
+                                 SkillResult finalResult,
+                                 SemanticAnalysisResult semanticAnalysis,
+                                 HermesSkillIdentity skillIdentity,
+                                 Instant recordedAt) {
+        LinkedHashMap<String, Object> skillData = new LinkedHashMap<>();
+        putGraphValue(skillData, "name", skillName);
+        putGraphValue(skillData, "skillName", skillName);
+        putGraphValue(skillData, "role", role);
+        putGraphValue(skillData, "decisionTarget", skillIdentity.decisionTarget());
+        putGraphValue(skillData, "executionTarget", skillIdentity.executionTarget());
+        putGraphValue(skillData, "canonicalSkill", skillIdentity.canonicalSkill());
+        putGraphValue(skillData, "lastTask", cap(taskFocus, 120));
+        putGraphValue(skillData, "lastUserInput", cap(userInput, 160));
+        putGraphValue(skillData, "lastIntent", semanticAnalysis == null ? "" : semanticAnalysis.intent());
+        putGraphValue(skillData, "lastSummary", semanticAnalysis == null ? "" : cap(semanticAnalysis.summary(), 160));
+        putGraphValue(skillData, "lastWorkflow", finalResult == null ? "" : finalResult.metadataText("systemWorkflow"));
+        putGraphValue(skillData, "lastWorkflowRecipe", finalResult == null ? "" : finalResult.metadataText("systemWorkflowRecipe"));
+        putGraphValue(skillData, "lastOutput", finalResult == null ? "" : cap(finalResult.output(), 160));
+        return new MemoryNode(nodeId, "hermes.skill", skillData, recordedAt, recordedAt);
+    }
+
     private String stableNodeId(String prefix, String value) {
         return prefix + ":" + UUID.nameUUIDFromBytes(normalize(value).getBytes(StandardCharsets.UTF_8));
+    }
+
+    private String stableSkillNodeId(String skillName) {
+        if (skillName == null || skillName.isBlank()) {
+            return "";
+        }
+        return stableNodeId("hermes:skill", skillName);
     }
 
     private String executionNodeId(String userId, String userInput, String channel, Instant recordedAt) {

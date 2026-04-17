@@ -7,7 +7,6 @@ import com.zhongbo.mindos.assistant.common.dto.LongTaskProgressUpdateDto;
 import com.zhongbo.mindos.assistant.common.dto.LongTaskSplitRequestDto;
 import com.zhongbo.mindos.assistant.common.dto.LongTaskSplitResultDto;
 import com.zhongbo.mindos.assistant.common.dto.LongTaskStatusUpdateDto;
-import com.zhongbo.mindos.assistant.memory.LongTaskCommandService;
 import com.zhongbo.mindos.assistant.memory.LongTaskService;
 import com.zhongbo.mindos.assistant.memory.MemoryFacade;
 import com.zhongbo.mindos.assistant.memory.model.LongTask;

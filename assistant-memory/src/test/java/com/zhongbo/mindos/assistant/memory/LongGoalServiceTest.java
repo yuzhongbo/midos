@@ -104,4 +104,87 @@ class LongGoalServiceTest {
         assertEquals(75, synced.progressPercent());
         assertEquals(List.of("task-1", "task-2"), synced.linkedTaskIds());
     }
+
+    @Test
+    void shouldIgnoreCompositeParentWhenCalculatingGoalProgress() {
+        LongGoalService service = new LongGoalService(MemoryStateStore.noOp());
+        LongGoal goal = service.createGoal(
+                "u-tree",
+                "Upgrade Hermes",
+                "Finish task split wiring",
+                "Goal progress follows leaf tasks",
+                Instant.parse("2026-05-01T00:00:00Z"),
+                Instant.parse("2026-04-20T00:00:00Z")
+        );
+
+        Instant now = Instant.parse("2026-04-17T00:00:00Z");
+        LongTask parentTask = new LongTask(
+                "task-parent",
+                "u-tree",
+                "Stage5 parent",
+                "",
+                goal.goalId(),
+                "",
+                List.of("task-child-1", "task-child-2"),
+                LongTaskStatus.RUNNING,
+                50,
+                List.of(),
+                List.of(),
+                List.of(),
+                "",
+                now,
+                now,
+                now,
+                now,
+                "",
+                null
+        );
+        LongTask childTask1 = new LongTask(
+                "task-child-1",
+                "u-tree",
+                "Graph work",
+                "",
+                goal.goalId(),
+                "task-parent",
+                List.of(),
+                LongTaskStatus.COMPLETED,
+                100,
+                List.of(),
+                List.of("done"),
+                List.of(),
+                "",
+                now,
+                now,
+                now,
+                now,
+                "",
+                null
+        );
+        LongTask childTask2 = new LongTask(
+                "task-child-2",
+                "u-tree",
+                "Goal work",
+                "",
+                goal.goalId(),
+                "task-parent",
+                List.of(),
+                LongTaskStatus.PENDING,
+                0,
+                List.of("todo"),
+                List.of(),
+                List.of(),
+                "",
+                now,
+                now,
+                now,
+                now,
+                "",
+                null
+        );
+
+        LongGoal synced = service.syncWithTasks("u-tree", goal.goalId(), List.of(parentTask, childTask1, childTask2));
+
+        assertEquals(50, synced.progressPercent());
+        assertEquals(LongGoalStatus.ACTIVE, synced.status());
+    }
 }

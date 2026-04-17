@@ -238,6 +238,10 @@ class HermesMemoryRecorderTest {
                         && "todo.create".equals(node.data().get("executionTarget"))));
         assertTrue(commandService.graphEdges().stream().anyMatch(edge ->
                 "todo.create".equals(edge.data().get("canonicalSkill"))));
+        assertTrue(commandService.graphEdges().stream().anyMatch(edge ->
+                "routes-to".equals(edge.relation())
+                        && "task.manage".equals(edge.data().get("decisionTarget"))
+                        && "todo.create".equals(edge.data().get("executionTarget"))));
     }
 
     @Test

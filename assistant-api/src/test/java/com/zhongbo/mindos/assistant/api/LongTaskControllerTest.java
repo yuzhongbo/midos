@@ -189,4 +189,38 @@ class LongTaskControllerTest {
                 .andExpect(jsonPath("$.status").value("ACHIEVED"))
                 .andExpect(jsonPath("$.progressPercent").value(100));
     }
+
+    @Test
+    void shouldSplitLongTaskIntoChildTasks() throws Exception {
+        String userId = ApiTestSupport.uniqueUserId("u-long-split");
+        String createPayload = "{" +
+                "\"title\":\"推进 stage5\"," +
+                "\"steps\":[\"补 graph 关系\",\"补 goal 持久化\"]" +
+                "}";
+
+        MvcResult created = mockMvc.perform(post("/api/tasks/" + userId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(createPayload))
+                .andExpect(status().isOk())
+                .andReturn();
+        String taskId = ApiTestSupport.readString(created, "$.taskId");
+
+        String splitPayload = "{" +
+                "\"workerId\":\"worker-split\"," +
+                "\"note\":\"split into child tasks\"" +
+                "}";
+
+        mockMvc.perform(post("/api/tasks/" + userId + "/" + taskId + "/split")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(splitPayload))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.parentTask.taskId").value(taskId))
+                .andExpect(jsonPath("$.parentTask.childTaskIds.length()").value(2))
+                .andExpect(jsonPath("$.childTasks.length()").value(2))
+                .andExpect(jsonPath("$.childTasks[0].parentTaskId").value(taskId));
+
+        mockMvc.perform(get("/api/tasks/" + userId + "/" + taskId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.childTaskIds.length()").value(2));
+    }
 }
