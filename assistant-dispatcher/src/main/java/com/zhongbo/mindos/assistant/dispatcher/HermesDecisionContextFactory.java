@@ -1,6 +1,7 @@
 package com.zhongbo.mindos.assistant.dispatcher;
 
 import com.zhongbo.mindos.assistant.common.SkillContext;
+import com.zhongbo.mindos.assistant.common.dto.ActiveGoalSnapshotDto;
 import com.zhongbo.mindos.assistant.common.dto.PromptMemoryContextDto;
 import com.zhongbo.mindos.assistant.common.dto.TaskThreadSnapshotDto;
 import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryFacade;
@@ -75,9 +76,16 @@ final class HermesDecisionContextFactory {
                 resolvedProfileContext
         )
                 : new PromptMemoryContextDto("", "", "", Map.of(), List.of());
+        ActiveGoalSnapshotDto activeGoalSnapshot = promptMemoryContext.activeGoalSnapshot() == null
+                ? ActiveGoalSnapshotDto.empty()
+                : promptMemoryContext.activeGoalSnapshot();
         ActiveTaskResolver.ResolvedTaskThread activeTaskThread = memoryEnabled
                 ? activeTaskResolver.resolve(userId, userInput, promptMemoryContext)
                 : ActiveTaskResolver.ResolvedTaskThread.empty();
+        String activeContextSummary = joinNonBlank(
+                activeTaskThread == null ? "" : activeTaskThread.summary(),
+                activeGoalSnapshot.summary()
+        );
         Map<String, Object> decisionProfileContext = mergeLearnedPreferences(
                 resolvedProfileContext,
                 promptMemoryContext.learnedPreferences()
@@ -85,7 +93,7 @@ final class HermesDecisionContextFactory {
         Map<String, Object> adaptiveProfileContext = AdaptiveWorkModeSupport.enrichProfileContext(
                 decisionProfileContext,
                 userInput,
-                activeTaskThread == null ? "" : activeTaskThread.summary(),
+                activeContextSummary,
                 topMemoryHints(promptMemoryContext)
         );
         List<HermesToolSchema> toolSchemas = toolSchemaCatalog == null ? List.of() : toolSchemaCatalog.listSchemas(adaptiveProfileContext);
@@ -101,7 +109,7 @@ final class HermesDecisionContextFactory {
         String decisionMemoryContext = memoryEnabled
                 ? dispatcherMemoryFacade.buildDecisionMemoryContext(
                 promptMemoryContext,
-                activeTaskThread.toMemoryContextSection(),
+                joinSections(activeTaskThread.toMemoryContextSection(), activeGoalSnapshot.toMemoryContextSection()),
                 userInput,
                 realtimeIntentInput,
                 realtimeIntentMemoryShrinkEnabled,
@@ -126,7 +134,11 @@ final class HermesDecisionContextFactory {
                 compressionMetricsConsumer
         )
                 : "";
-        String memoryContext = activeTaskResolver.enrichMemoryContext(rawMemoryContext, activeTaskThread, memoryContextMaxChars);
+        String memoryContext = appendContextSection(
+                activeTaskResolver.enrichMemoryContext(rawMemoryContext, activeTaskThread, memoryContextMaxChars),
+                activeGoalSnapshot.toMemoryContextSection(),
+                memoryContextMaxChars
+        );
         String routingInput = semanticAnalysis.routingInput(userInput);
         SkillContext skillContext = dispatcherMemoryFacade.buildSkillContext(
                 userId,
@@ -140,6 +152,11 @@ final class HermesDecisionContextFactory {
         if (!activeTaskThread.asAttributes().isEmpty()) {
             Map<String, Object> attributes = new LinkedHashMap<>(skillContext.attributes());
             attributes.putAll(activeTaskThread.asAttributes());
+            skillContext = new SkillContext(skillContext.userId(), skillContext.input(), attributes);
+        }
+        if (!activeGoalSnapshot.asAttributes().isEmpty()) {
+            Map<String, Object> attributes = new LinkedHashMap<>(skillContext.attributes());
+            attributes.putAll(activeGoalSnapshot.asAttributes());
             skillContext = new SkillContext(skillContext.userId(), skillContext.input(), attributes);
         }
         if (!graphContinuationHint.isEmpty()) {
@@ -159,6 +176,9 @@ final class HermesDecisionContextFactory {
         }
         if (!activeTaskThread.asAttributes().isEmpty()) {
             llmContext.put("taskThread", activeTaskThread.asAttributes());
+        }
+        if (!activeGoalSnapshot.asAttributes().isEmpty()) {
+            llmContext.put("activeGoal", activeGoalSnapshot.asAttributes());
         }
         if (!chatHistory.isEmpty()) {
             llmContext.put("chatHistory", chatHistory);
@@ -385,5 +405,37 @@ final class HermesDecisionContextFactory {
         Map<String, Object> merged = new LinkedHashMap<>(safeProfileContext);
         merged.put("learnedPreferences", Map.copyOf(learnedPreferences));
         return Map.copyOf(merged);
+    }
+
+    private String appendContextSection(String base, String section, int maxChars) {
+        String merged = joinSections(base, section);
+        if (maxChars <= 0 || merged.length() <= maxChars) {
+            return merged;
+        }
+        return merged.substring(0, Math.max(0, maxChars - 3)) + "...";
+    }
+
+    private String joinSections(String first, String second) {
+        String left = first == null ? "" : first.trim();
+        String right = second == null ? "" : second.trim();
+        if (left.isBlank()) {
+            return right;
+        }
+        if (right.isBlank()) {
+            return left;
+        }
+        return left + "\n" + right;
+    }
+
+    private String joinNonBlank(String first, String second) {
+        String left = first == null ? "" : first.trim();
+        String right = second == null ? "" : second.trim();
+        if (left.isBlank()) {
+            return right;
+        }
+        if (right.isBlank()) {
+            return left;
+        }
+        return left + "；" + right;
     }
 }

@@ -1,6 +1,7 @@
 package com.zhongbo.mindos.assistant.memory;
 
 import com.zhongbo.mindos.assistant.common.LegacyRoleSupport;
+import com.zhongbo.mindos.assistant.common.dto.ActiveGoalSnapshotDto;
 import com.zhongbo.mindos.assistant.common.dto.PromptMemoryContextDto;
 import com.zhongbo.mindos.assistant.common.dto.RetrievedMemoryItemDto;
 import com.zhongbo.mindos.assistant.common.dto.TaskThreadSnapshotDto;
@@ -9,6 +10,7 @@ import com.zhongbo.mindos.assistant.memory.model.PreferenceProfile;
 import com.zhongbo.mindos.assistant.memory.model.ProceduralMemoryEntry;
 import com.zhongbo.mindos.assistant.memory.model.SemanticMemoryEntry;
 import com.zhongbo.mindos.assistant.memory.model.SkillUsageStats;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
@@ -41,15 +43,27 @@ public class DefaultPromptMemoryContextAssembler implements PromptMemoryContextA
     private final SemanticMemoryService semanticMemoryService;
     private final ProceduralMemoryService proceduralMemoryService;
     private final PreferenceProfileService preferenceProfileService;
+    private final LongGoalService longGoalService;
 
     public DefaultPromptMemoryContextAssembler(EpisodicMemoryService episodicMemoryService,
                                                SemanticMemoryService semanticMemoryService,
                                                ProceduralMemoryService proceduralMemoryService,
                                                PreferenceProfileService preferenceProfileService) {
+        this(episodicMemoryService, semanticMemoryService, proceduralMemoryService, preferenceProfileService,
+                new LongGoalService(MemoryStateStore.noOp()));
+    }
+
+    @Autowired
+    public DefaultPromptMemoryContextAssembler(EpisodicMemoryService episodicMemoryService,
+                                               SemanticMemoryService semanticMemoryService,
+                                               ProceduralMemoryService proceduralMemoryService,
+                                               PreferenceProfileService preferenceProfileService,
+                                               LongGoalService longGoalService) {
         this.episodicMemoryService = episodicMemoryService;
         this.semanticMemoryService = semanticMemoryService;
         this.proceduralMemoryService = proceduralMemoryService;
         this.preferenceProfileService = preferenceProfileService;
+        this.longGoalService = longGoalService == null ? new LongGoalService(MemoryStateStore.noOp()) : longGoalService;
     }
 
     @Override
@@ -73,6 +87,7 @@ public class DefaultPromptMemoryContextAssembler implements PromptMemoryContextA
 
         Map<String, Object> personaSnapshot = buildPersonaSnapshot(userId, profileContext);
         TaskThreadSnapshotDto taskThreadSnapshot = buildTaskThreadSnapshot(semanticEntries);
+        ActiveGoalSnapshotDto activeGoalSnapshot = buildActiveGoalSnapshot(userId);
         Map<String, Object> learnedPreferences = buildLearnedPreferences(taskThreadSnapshot, semanticEntries);
 
         List<RetrievedMemoryItemDto> debugTopItems = candidates.stream()
@@ -87,7 +102,32 @@ public class DefaultPromptMemoryContextAssembler implements PromptMemoryContextA
                 personaSnapshot,
                 debugTopItems,
                 taskThreadSnapshot,
+                activeGoalSnapshot,
                 learnedPreferences
+        );
+    }
+
+    private ActiveGoalSnapshotDto buildActiveGoalSnapshot(String userId) {
+        if (longGoalService == null) {
+            return ActiveGoalSnapshotDto.empty();
+        }
+        var goal = longGoalService.activeGoal(userId);
+        if (goal == null) {
+            return ActiveGoalSnapshotDto.empty();
+        }
+        String dueDate = goal.dueAt() == null ? "" : goal.dueAt().toString();
+        String nextReviewAt = goal.nextReviewAt() == null ? "" : goal.nextReviewAt().toString();
+        String summary = summarizeGoal(goal.title(), goal.objective(), goal.successCriteria(), dueDate, goal.progressPercent());
+        return new ActiveGoalSnapshotDto(
+                goal.goalId(),
+                goal.title(),
+                goal.objective(),
+                goal.status().name(),
+                goal.successCriteria(),
+                dueDate,
+                nextReviewAt,
+                goal.progressPercent(),
+                summary
         );
     }
 
@@ -650,6 +690,32 @@ public class DefaultPromptMemoryContextAssembler implements PromptMemoryContextA
             return;
         }
         target.put(key, trimmed);
+    }
+
+    private String summarizeGoal(String title,
+                                 String objective,
+                                 String successCriteria,
+                                 String dueDate,
+                                 int progressPercent) {
+        StringBuilder builder = new StringBuilder();
+        appendGoalSummary(builder, "长期目标", title);
+        appendGoalSummary(builder, "目标说明", objective);
+        appendGoalSummary(builder, "完成标准", successCriteria);
+        appendGoalSummary(builder, "目标截止", dueDate);
+        if (progressPercent > 0) {
+            appendGoalSummary(builder, "进度", progressPercent + "%");
+        }
+        return builder.toString();
+    }
+
+    private void appendGoalSummary(StringBuilder builder, String label, String value) {
+        if (value == null || value.isBlank()) {
+            return;
+        }
+        if (builder.length() > 0) {
+            builder.append("；");
+        }
+        builder.append(label).append(" ").append(value.trim());
     }
 
     private static final class TaskThreadBuilder {

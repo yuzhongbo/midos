@@ -8,6 +8,7 @@ public record LongTaskDto(
         String userId,
         String title,
         String objective,
+        String goalId,
         String status,
         int progressPercent,
         List<String> pendingSteps,
@@ -22,4 +23,3 @@ public record LongTaskDto(
         Instant leaseUntil
 ) {
 }
-

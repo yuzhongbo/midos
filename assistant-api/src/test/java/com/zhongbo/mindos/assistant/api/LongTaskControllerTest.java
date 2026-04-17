@@ -129,5 +129,64 @@ class LongTaskControllerTest {
                 .andExpect(jsonPath("$.completedSteps.length()").value(1))
                 .andExpect(jsonPath("$.progressPercent", greaterThan(0)));
     }
-}
 
+    @Test
+    void shouldCreateGoalLinkedTaskAndReflectGoalProgress() throws Exception {
+        String userId = ApiTestSupport.uniqueUserId("u-long-goal");
+        String goalPayload = "{" +
+                "\"title\":\"升级 Hermes\"," +
+                "\"objective\":\"完成 goal persistence\"," +
+                "\"successCriteria\":\"Goal context 全链路生效\"" +
+                "}";
+
+        MvcResult createdGoal = mockMvc.perform(post("/api/goals/" + userId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(goalPayload))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.goalId").isString())
+                .andExpect(jsonPath("$.status").value("ACTIVE"))
+                .andReturn();
+        String goalId = ApiTestSupport.readString(createdGoal, "$.goalId");
+
+        String taskPayload = "{" +
+                "\"title\":\"接入 active goal context\"," +
+                "\"steps\":[\"完成 wiring\"]," +
+                "\"goalId\":\"" + goalId + "\"" +
+                "}";
+
+        MvcResult createdTask = mockMvc.perform(post("/api/tasks/" + userId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(taskPayload))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.taskId").isString())
+                .andExpect(jsonPath("$.goalId").value(goalId))
+                .andReturn();
+        String taskId = ApiTestSupport.readString(createdTask, "$.taskId");
+
+        mockMvc.perform(post("/api/tasks/" + userId + "/claim")
+                        .param("workerId", "worker-goal")
+                        .param("limit", "1"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].taskId").value(taskId));
+
+        String progressPayload = "{" +
+                "\"workerId\":\"worker-goal\"," +
+                "\"completedStep\":\"完成 wiring\"," +
+                "\"note\":\"goal context done\"" +
+                "}";
+
+        mockMvc.perform(post("/api/tasks/" + userId + "/" + taskId + "/progress")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(progressPayload))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("COMPLETED"))
+                .andExpect(jsonPath("$.goalId").value(goalId));
+
+        mockMvc.perform(get("/api/goals/" + userId + "/" + goalId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.linkedTaskIds.length()").value(1))
+                .andExpect(jsonPath("$.linkedTaskIds[0]").value(taskId))
+                .andExpect(jsonPath("$.status").value("ACHIEVED"))
+                .andExpect(jsonPath("$.progressPercent").value(100));
+    }
+}

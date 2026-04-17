@@ -1,5 +1,6 @@
 package com.zhongbo.mindos.assistant.dispatcher;
 
+import com.zhongbo.mindos.assistant.common.dto.ActiveGoalSnapshotDto;
 import com.zhongbo.mindos.assistant.common.dto.PromptMemoryContextDto;
 import com.zhongbo.mindos.assistant.common.dto.RetrievedMemoryItemDto;
 import com.zhongbo.mindos.assistant.common.dto.TaskThreadSnapshotDto;
@@ -168,6 +169,17 @@ public class PromptBuilder {
                 return capByTokens("Continue the active task naturally: " + focus, 120);
             }
         }
+        ActiveGoalSnapshotDto activeGoal = promptMemoryContext == null ? null : promptMemoryContext.activeGoalSnapshot();
+        if (activeGoal != null && !activeGoal.isEmpty()) {
+            String summary = normalize(activeGoal.summary());
+            if (!summary.isBlank()) {
+                return capByTokens("Keep moving the user's long-term goal forward: " + summary, 120);
+            }
+            String title = normalize(activeGoal.title());
+            if (!title.isBlank()) {
+                return capByTokens("Keep moving the user's long-term goal forward: " + title, 120);
+            }
+        }
         String normalized = normalize(userQuery);
         if (normalized.isBlank()) {
             return "(none)";
@@ -229,6 +241,12 @@ public class PromptBuilder {
         appendLearnedPreferenceGuidance(builder, learnedPreferences);
         if (currentTask != null && !currentTask.isBlank() && !"(none)".equals(currentTask)) {
             builder.append("Active task hint: ").append(currentTask).append('\n');
+        }
+        ActiveGoalSnapshotDto activeGoal = promptMemoryContext == null ? null : promptMemoryContext.activeGoalSnapshot();
+        if (activeGoal != null && !activeGoal.isEmpty() && !activeGoal.summary().isBlank()) {
+            builder.append("Active long-term goal hint: ")
+                    .append(capByTokens(activeGoal.summary(), 120))
+                    .append('\n');
         }
         return builder.toString().trim();
     }

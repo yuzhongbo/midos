@@ -28,6 +28,16 @@ public class LongTaskCommandService {
         return memoryFacade.createLongTask(userId, title, objective, steps, dueAt, nextCheckAt);
     }
 
+    public LongTask createTask(String userId,
+                               String title,
+                               String objective,
+                               List<String> steps,
+                               Instant dueAt,
+                               Instant nextCheckAt,
+                               String goalId) {
+        return memoryFacade.createLongTask(userId, title, objective, steps, dueAt, nextCheckAt, goalId);
+    }
+
     public List<LongTask> claimReadyTasks(String userId,
                                           String workerId,
                                           int limit,

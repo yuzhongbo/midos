@@ -1,5 +1,6 @@
 package com.zhongbo.mindos.assistant.dispatcher;
 
+import com.zhongbo.mindos.assistant.common.dto.ActiveGoalSnapshotDto;
 import com.zhongbo.mindos.assistant.common.dto.PromptMemoryContextDto;
 import com.zhongbo.mindos.assistant.common.dto.TaskThreadSnapshotDto;
 import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryFacade;
@@ -229,6 +230,62 @@ class HermesDecisionContextFactoryTest {
         assertEquals("task.manage", context.graphContinuationHint().get("decisionTarget"));
         assertEquals("todo.create", context.graphContinuationHint().get("executionTarget"));
         assertEquals("todo.create", context.graphContinuationHint().get("canonicalSkill"));
+    }
+
+    @Test
+    void shouldCarryActiveGoalIntoDecisionMemoryAndRuntimeContexts() {
+        PromptMemoryContextDto promptMemoryContext = new PromptMemoryContextDto(
+                "",
+                "- [fact] 当前在推进 Hermes stage5 升级",
+                "",
+                Map.of(),
+                List.of(),
+                TaskThreadSnapshotDto.empty(),
+                new ActiveGoalSnapshotDto(
+                        "goal-1",
+                        "升级 Hermes",
+                        "完成 goal persistence",
+                        "ACTIVE",
+                        "Goal context 全链路生效",
+                        "2026-05-01T00:00:00Z",
+                        "2026-04-20T00:00:00Z",
+                        40,
+                        "长期目标 升级 Hermes；目标说明 完成 goal persistence；进度 40%"
+                ),
+                Map.of()
+        );
+        DispatcherMemoryFacade facade = new DispatcherMemoryFacade(
+                new MemoryFacade(new TestMemoryManager(List.of(), List.of(), List.of(), promptMemoryContext)),
+                4,
+                2,
+                2,
+                2,
+                3
+        );
+        HermesDecisionContextFactory factory = new HermesDecisionContextFactory(
+                facade,
+                null,
+                (userId, userInput, memoryContext, profileContext, availableSkillSummaries) -> SemanticAnalysisResult.empty(),
+                null,
+                new DispatchHeuristicsSupport(null, false, List.of(), false, true, Set.of("新闻", "天气")),
+                DispatcherAnswerMode.BALANCED,
+                1600,
+                900,
+                true,
+                280,
+                stats -> {
+                }
+        );
+
+        HermesDecisionContext context = factory.create("u-goal", "继续推进", Map.of());
+
+        assertTrue(context.memoryContext().contains("Active long-term goal:"));
+        assertEquals("升级 Hermes", context.skillContext().attributes().get("activeGoal"));
+        assertEquals("ACTIVE", context.skillContext().attributes().get("activeGoalStatus"));
+        assertTrue(context.llmContext().get("activeGoal") instanceof Map);
+        Map<?, ?> activeGoal = (Map<?, ?>) context.llmContext().get("activeGoal");
+        assertEquals("升级 Hermes", activeGoal.get("activeGoal"));
+        assertEquals(40, activeGoal.get("activeGoalProgressPercent"));
     }
 
     private static final class TestMemoryManager extends MemoryManager {

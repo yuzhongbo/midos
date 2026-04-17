@@ -122,6 +122,38 @@ class PromptMemoryContextAssemblerTest {
     }
 
     @Test
+    void shouldIncludeActiveGoalSnapshotWhenLongTermGoalExists() {
+        EpisodicMemoryService episodicMemoryService = new EpisodicMemoryService();
+        SemanticMemoryService semanticMemoryService = new SemanticMemoryService(new MemoryConsolidationService());
+        ProceduralMemoryService proceduralMemoryService = new ProceduralMemoryService();
+        PreferenceProfileService preferenceProfileService = new PreferenceProfileService(2, true);
+        LongGoalService longGoalService = new LongGoalService(MemoryStateStore.noOp());
+        DefaultPromptMemoryContextAssembler assembler = new DefaultPromptMemoryContextAssembler(
+                episodicMemoryService,
+                semanticMemoryService,
+                proceduralMemoryService,
+                preferenceProfileService,
+                longGoalService
+        );
+
+        longGoalService.createGoal(
+                "u-goal-context",
+                "升级 Hermes",
+                "完成 goal persistence",
+                "Goal context 全链路生效",
+                Instant.parse("2026-05-01T00:00:00Z"),
+                Instant.parse("2026-04-20T00:00:00Z")
+        );
+
+        PromptMemoryContextDto context = assembler.assemble("u-goal-context", "继续推进", 800, Map.of());
+
+        assertEquals("升级 Hermes", context.activeGoalSnapshot().title());
+        assertEquals("ACTIVE", context.activeGoalSnapshot().status());
+        assertTrue(context.activeGoalSnapshot().summary().contains("长期目标 升级 Hermes"));
+        assertTrue(context.activeGoalSnapshot().summary().contains("目标说明 完成 goal persistence"));
+    }
+
+    @Test
     void shouldSuppressProceduralHintsForConversationalQueries() {
         EpisodicMemoryService episodicMemoryService = new EpisodicMemoryService();
         SemanticMemoryService semanticMemoryService = new SemanticMemoryService(new MemoryConsolidationService());

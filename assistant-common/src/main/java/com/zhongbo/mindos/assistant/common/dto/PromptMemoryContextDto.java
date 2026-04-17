@@ -10,6 +10,7 @@ public record PromptMemoryContextDto(
         Map<String, Object> personaSnapshot,
         List<RetrievedMemoryItemDto> debugTopItems,
         TaskThreadSnapshotDto taskThreadSnapshot,
+        ActiveGoalSnapshotDto activeGoalSnapshot,
         Map<String, Object> learnedPreferences
 ) {
 
@@ -24,6 +25,24 @@ public record PromptMemoryContextDto(
                 personaSnapshot,
                 debugTopItems,
                 TaskThreadSnapshotDto.empty(),
+                ActiveGoalSnapshotDto.empty(),
                 Map.of());
+    }
+
+    public PromptMemoryContextDto(String recentConversation,
+                                  String semanticContext,
+                                  String proceduralHints,
+                                  Map<String, Object> personaSnapshot,
+                                  List<RetrievedMemoryItemDto> debugTopItems,
+                                  TaskThreadSnapshotDto taskThreadSnapshot,
+                                  Map<String, Object> learnedPreferences) {
+        this(recentConversation,
+                semanticContext,
+                proceduralHints,
+                personaSnapshot,
+                debugTopItems,
+                taskThreadSnapshot,
+                ActiveGoalSnapshotDto.empty(),
+                learnedPreferences);
     }
 }

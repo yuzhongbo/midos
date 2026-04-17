@@ -25,6 +25,16 @@ public class LongTaskCommandOrchestrator {
         return longTaskCommandService.createTask(userId, title, objective, steps, dueAt, nextCheckAt);
     }
 
+    public LongTask createTask(String userId,
+                               String title,
+                               String objective,
+                               List<String> steps,
+                               Instant dueAt,
+                               Instant nextCheckAt,
+                               String goalId) {
+        return longTaskCommandService.createTask(userId, title, objective, steps, dueAt, nextCheckAt, goalId);
+    }
+
     public List<LongTask> claimReadyTasks(String userId, String workerId, int limit, long leaseSeconds) {
         return longTaskCommandService.claimReadyTasks(userId, workerId, limit, leaseSeconds);
     }

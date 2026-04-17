@@ -23,17 +23,24 @@ public class LongTaskService {
 
     private final Map<String, Map<String, LongTask>> tasksByUser = new ConcurrentHashMap<>();
     private final MemoryStateStore memoryStateStore;
+    private final LongGoalService longGoalService;
 
     public record AutoAdvanceResult(int claimedCount, int advancedCount, int completedCount) {
     }
 
     public LongTaskService() {
-        this(MemoryStateStore.noOp());
+        this(MemoryStateStore.noOp(), new LongGoalService(MemoryStateStore.noOp()));
+    }
+
+    public LongTaskService(MemoryStateStore memoryStateStore) {
+        this(memoryStateStore, new LongGoalService(MemoryStateStore.noOp()));
     }
 
     @Autowired
-    public LongTaskService(MemoryStateStore memoryStateStore) {
+    public LongTaskService(MemoryStateStore memoryStateStore,
+                           LongGoalService longGoalService) {
         this.memoryStateStore = memoryStateStore == null ? MemoryStateStore.noOp() : memoryStateStore;
+        this.longGoalService = longGoalService == null ? new LongGoalService(MemoryStateStore.noOp()) : longGoalService;
         loadState();
     }
 
@@ -43,18 +50,33 @@ public class LongTaskService {
                                List<String> steps,
                                Instant dueAt,
                                Instant nextCheckAt) {
+        return createTask(userId, title, objective, steps, dueAt, nextCheckAt, "");
+    }
+
+    public LongTask createTask(String userId,
+                               String title,
+                               String objective,
+                               List<String> steps,
+                               Instant dueAt,
+                               Instant nextCheckAt,
+                               String goalId) {
         String normalizedUserId = normalizeText(userId, "local-user");
         String normalizedTitle = normalizeText(title, "Untitled long task");
         String normalizedObjective = normalizeText(objective, "");
+        String normalizedGoalId = normalizeText(goalId, "");
         List<String> pendingSteps = normalizeSteps(steps);
         Instant now = Instant.now();
         Instant effectiveNextCheck = nextCheckAt == null ? now : nextCheckAt;
+        if (!normalizedGoalId.isBlank() && longGoalService.getGoal(normalizedUserId, normalizedGoalId) == null) {
+            throw new IllegalArgumentException("goal not found: " + normalizedGoalId);
+        }
 
         LongTask task = new LongTask(
                 UUID.randomUUID().toString(),
                 normalizedUserId,
                 normalizedTitle,
                 normalizedObjective,
+                normalizedGoalId,
                 LongTaskStatus.PENDING,
                 0,
                 pendingSteps,
@@ -73,6 +95,10 @@ public class LongTaskService {
         synchronized (userTasks) {
             userTasks.put(task.taskId(), task);
             persistState();
+        }
+        if (!normalizedGoalId.isBlank()) {
+            longGoalService.linkTask(normalizedUserId, normalizedGoalId, task.taskId());
+            syncGoal(normalizedUserId, normalizedGoalId);
         }
         return task;
     }
@@ -127,6 +153,7 @@ public class LongTaskService {
                         task.userId(),
                         task.title(),
                         task.objective(),
+                        task.goalId(),
                         LongTaskStatus.RUNNING,
                         task.progressPercent(),
                         task.pendingSteps(),
@@ -206,6 +233,7 @@ public class LongTaskService {
                     current.userId(),
                     current.title(),
                     current.objective(),
+                    current.goalId(),
                     nextStatus,
                     progress,
                     List.copyOf(pending),
@@ -221,6 +249,7 @@ public class LongTaskService {
             );
             userTasks.put(taskId, updated);
             persistState();
+            syncGoal(normalizedUserId, current.goalId());
             return updated;
         }
     }
@@ -250,6 +279,7 @@ public class LongTaskService {
                     current.userId(),
                     current.title(),
                     current.objective(),
+                    current.goalId(),
                     nextStatus,
                     current.progressPercent(),
                     current.pendingSteps(),
@@ -265,6 +295,7 @@ public class LongTaskService {
             );
             userTasks.put(taskId, updated);
             persistState();
+            syncGoal(normalizedUserId, current.goalId());
             return updated;
         }
     }
@@ -375,6 +406,15 @@ public class LongTaskService {
         }
         String normalized = value.trim();
         return normalized.isBlank() ? fallback : normalized;
+    }
+
+    private void syncGoal(String userId, String goalId) {
+        String normalizedGoalId = normalizeText(goalId, "");
+        if (normalizedGoalId.isBlank()) {
+            return;
+        }
+        List<LongTask> userTasks = listTasks(userId, null);
+        longGoalService.syncWithTasks(userId, normalizedGoalId, userTasks);
     }
 
     private LongTaskStatus parseStatus(String value) {

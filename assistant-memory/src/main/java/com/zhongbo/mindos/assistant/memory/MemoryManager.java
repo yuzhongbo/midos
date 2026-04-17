@@ -2,6 +2,8 @@ package com.zhongbo.mindos.assistant.memory;
 
 import com.zhongbo.mindos.assistant.common.dto.PromptMemoryContextDto;
 import com.zhongbo.mindos.assistant.memory.model.ConversationTurn;
+import com.zhongbo.mindos.assistant.memory.model.LongGoal;
+import com.zhongbo.mindos.assistant.memory.model.LongGoalStatus;
 import com.zhongbo.mindos.assistant.memory.model.LongTask;
 import com.zhongbo.mindos.assistant.memory.model.LongTaskStatus;
 import com.zhongbo.mindos.assistant.memory.model.MemoryCompressionPlan;
@@ -45,6 +47,7 @@ public class MemoryManager implements InitializingBean, DisposableBean {
     private final LongTaskService longTaskService;
     private final MemoryRouter memoryRouter;
     private final PromptMemoryContextAssembler promptMemoryContextAssembler;
+    private LongGoalService longGoalService = new LongGoalService(MemoryStateStore.noOp());
     private final boolean conversationRollupEnabled;
     private final int conversationRollupThresholdTurns;
     private final int conversationRollupKeepRecentTurns;
@@ -181,6 +184,13 @@ public class MemoryManager implements InitializingBean, DisposableBean {
         this.conversationRollupKeepRecentTurns = Math.max(2, conversationRollupKeepRecentTurns);
         this.conversationRollupMinRollupTurns = Math.max(2, conversationRollupMinRollupTurns);
         this.hydrationBatchSize = Math.max(32, hydrationBatchSize);
+    }
+
+    @Autowired(required = false)
+    void setLongGoalService(LongGoalService longGoalService) {
+        if (longGoalService != null) {
+            this.longGoalService = longGoalService;
+        }
     }
 
     public void storeUserConversation(String userId, String message) {
@@ -384,12 +394,47 @@ public class MemoryManager implements InitializingBean, DisposableBean {
         return longTaskService.createTask(userId, title, objective, steps, dueAt, nextCheckAt);
     }
 
+    public LongTask createLongTask(String userId,
+                                   String title,
+                                   String objective,
+                                   List<String> steps,
+                                   Instant dueAt,
+                                   Instant nextCheckAt,
+                                   String goalId) {
+        return longTaskService.createTask(userId, title, objective, steps, dueAt, nextCheckAt, goalId);
+    }
+
     public List<LongTask> listLongTasks(String userId, String statusFilter) {
         return longTaskService.listTasks(userId, statusFilter);
     }
 
     public LongTask getLongTask(String userId, String taskId) {
         return longTaskService.getTask(userId, taskId);
+    }
+
+    public LongGoal createLongGoal(String userId,
+                                   String title,
+                                   String objective,
+                                   String successCriteria,
+                                   Instant dueAt,
+                                   Instant nextReviewAt) {
+        return longGoalService.createGoal(userId, title, objective, successCriteria, dueAt, nextReviewAt);
+    }
+
+    public List<LongGoal> listLongGoals(String userId, String statusFilter) {
+        return longGoalService.listGoals(userId, statusFilter);
+    }
+
+    public LongGoal getLongGoal(String userId, String goalId) {
+        return longGoalService.getGoal(userId, goalId);
+    }
+
+    public LongGoal updateLongGoalStatus(String userId,
+                                         String goalId,
+                                         LongGoalStatus status,
+                                         String note,
+                                         Instant nextReviewAt) {
+        return longGoalService.updateStatus(userId, goalId, status, note, nextReviewAt);
     }
 
     public List<LongTask> claimReadyLongTasks(String userId, String workerId, int limit, long leaseSeconds) {

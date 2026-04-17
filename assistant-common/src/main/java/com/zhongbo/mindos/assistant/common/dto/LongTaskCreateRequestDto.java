@@ -8,7 +8,15 @@ public record LongTaskCreateRequestDto(
         String objective,
         List<String> steps,
         Instant dueAt,
-        Instant nextCheckAt
+        Instant nextCheckAt,
+        String goalId
 ) {
-}
 
+    public LongTaskCreateRequestDto(String title,
+                                    String objective,
+                                    List<String> steps,
+                                    Instant dueAt,
+                                    Instant nextCheckAt) {
+        this(title, objective, steps, dueAt, nextCheckAt, "");
+    }
+}

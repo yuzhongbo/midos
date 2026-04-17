@@ -8,6 +8,7 @@ public record LongTask(
         String userId,
         String title,
         String objective,
+        String goalId,
         LongTaskStatus status,
         int progressPercent,
         List<String> pendingSteps,
@@ -21,5 +22,8 @@ public record LongTask(
         String leaseOwner,
         Instant leaseUntil
 ) {
-}
 
+    public LongTask {
+        goalId = goalId == null ? "" : goalId.trim();
+    }
+}

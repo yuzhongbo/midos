@@ -43,15 +43,20 @@ public class LongTaskController {
     @PostMapping("/{userId}")
     public LongTaskDto createTask(@PathVariable String userId,
                                   @RequestBody LongTaskCreateRequestDto request) {
-        LongTask created = longTaskCommandOrchestrator.createTask(
-                userId,
-                request == null ? null : request.title(),
-                request == null ? null : request.objective(),
-                request == null ? List.of() : request.steps(),
-                request == null ? null : request.dueAt(),
-                request == null ? null : request.nextCheckAt()
-        );
-        return toDto(created);
+        try {
+            LongTask created = longTaskCommandOrchestrator.createTask(
+                    userId,
+                    request == null ? null : request.title(),
+                    request == null ? null : request.objective(),
+                    request == null ? List.of() : request.steps(),
+                    request == null ? null : request.dueAt(),
+                    request == null ? null : request.nextCheckAt(),
+                    request == null ? null : request.goalId()
+            );
+            return toDto(created);
+        } catch (IllegalArgumentException ex) {
+            throw translateCommandFailure(ex);
+        }
     }
 
     @GetMapping("/{userId}")
@@ -152,6 +157,7 @@ public class LongTaskController {
                 task.userId(),
                 task.title(),
                 task.objective(),
+                task.goalId(),
                 task.status().name(),
                 task.progressPercent(),
                 task.pendingSteps(),

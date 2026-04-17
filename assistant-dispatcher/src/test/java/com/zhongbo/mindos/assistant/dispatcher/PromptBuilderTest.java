@@ -1,5 +1,6 @@
 package com.zhongbo.mindos.assistant.dispatcher;
 
+import com.zhongbo.mindos.assistant.common.dto.ActiveGoalSnapshotDto;
 import com.zhongbo.mindos.assistant.common.dto.PromptMemoryContextDto;
 import com.zhongbo.mindos.assistant.common.dto.RetrievedMemoryItemDto;
 import com.zhongbo.mindos.assistant.common.dto.TaskThreadSnapshotDto;
@@ -109,5 +110,36 @@ class PromptBuilderTest {
         assertTrue(prompt.contains("planner="));
         assertTrue(prompt.contains("analyst="));
         assertTrue(prompt.contains("Detected industry focus: healthcare"));
+    }
+
+    @Test
+    void shouldUseActiveGoalHintWhenNoTaskThreadExists() {
+        PromptBuilder builder = new PromptBuilder();
+        PromptMemoryContextDto context = new PromptMemoryContextDto(
+                "",
+                "",
+                "",
+                Map.of(),
+                List.of(item("semantic", "当前在推进 Hermes stage5 升级")),
+                TaskThreadSnapshotDto.empty(),
+                new ActiveGoalSnapshotDto(
+                        "goal-1",
+                        "升级 Hermes",
+                        "完成 goal persistence",
+                        "ACTIVE",
+                        "Goal context 全链路生效",
+                        "2026-05-01T00:00:00Z",
+                        "2026-04-20T00:00:00Z",
+                        40,
+                        "长期目标 升级 Hermes；目标说明 完成 goal persistence；进度 40%"
+                ),
+                Map.of()
+        );
+
+        String prompt = builder.build(context, "继续");
+
+        assertTrue(prompt.contains("Keep moving the user's long-term goal forward"));
+        assertTrue(prompt.contains("Active long-term goal hint:"));
+        assertTrue(prompt.contains("升级 Hermes"));
     }
 }

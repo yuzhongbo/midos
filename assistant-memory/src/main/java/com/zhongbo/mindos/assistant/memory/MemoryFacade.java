@@ -4,6 +4,8 @@ import com.zhongbo.mindos.assistant.common.dto.PromptMemoryContextDto;
 import com.zhongbo.mindos.assistant.memory.graph.GraphMemory;
 import com.zhongbo.mindos.assistant.memory.graph.MemoryNode;
 import com.zhongbo.mindos.assistant.memory.model.ConversationTurn;
+import com.zhongbo.mindos.assistant.memory.model.LongGoal;
+import com.zhongbo.mindos.assistant.memory.model.LongGoalStatus;
 import com.zhongbo.mindos.assistant.memory.model.LongTask;
 import com.zhongbo.mindos.assistant.memory.model.LongTaskStatus;
 import com.zhongbo.mindos.assistant.memory.model.MemoryApplyResult;
@@ -238,12 +240,47 @@ public class MemoryFacade {
         return requireMemoryManager().createLongTask(userId, title, objective, steps, dueAt, nextCheckAt);
     }
 
+    public LongTask createLongTask(String userId,
+                                   String title,
+                                   String objective,
+                                   List<String> steps,
+                                   Instant dueAt,
+                                   Instant nextCheckAt,
+                                   String goalId) {
+        return requireMemoryManager().createLongTask(userId, title, objective, steps, dueAt, nextCheckAt, goalId);
+    }
+
     public List<LongTask> listLongTasks(String userId, String statusFilter) {
         return requireMemoryManager().listLongTasks(userId, statusFilter);
     }
 
     public LongTask getLongTask(String userId, String taskId) {
         return requireMemoryManager().getLongTask(userId, taskId);
+    }
+
+    public LongGoal createLongGoal(String userId,
+                                   String title,
+                                   String objective,
+                                   String successCriteria,
+                                   Instant dueAt,
+                                   Instant nextReviewAt) {
+        return requireMemoryManager().createLongGoal(userId, title, objective, successCriteria, dueAt, nextReviewAt);
+    }
+
+    public List<LongGoal> listLongGoals(String userId, String statusFilter) {
+        return requireMemoryManager().listLongGoals(userId, statusFilter);
+    }
+
+    public LongGoal getLongGoal(String userId, String goalId) {
+        return requireMemoryManager().getLongGoal(userId, goalId);
+    }
+
+    public LongGoal updateLongGoalStatus(String userId,
+                                         String goalId,
+                                         LongGoalStatus status,
+                                         String note,
+                                         Instant nextReviewAt) {
+        return requireMemoryManager().updateLongGoalStatus(userId, goalId, status, note, nextReviewAt);
     }
 
     public List<LongTask> claimReadyLongTasks(String userId, String workerId, int limit, long leaseSeconds) {
