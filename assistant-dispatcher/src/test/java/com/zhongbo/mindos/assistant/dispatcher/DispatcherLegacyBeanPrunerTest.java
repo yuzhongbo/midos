@@ -1,6 +1,7 @@
 package com.zhongbo.mindos.assistant.dispatcher;
 
 import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.AutonomousLoopEngine;
+import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.AutonomousPlanner;
 import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.coruntime.HumanAICoRuntime;
 import com.zhongbo.mindos.assistant.dispatcher.agent.multiagent.DefaultPlannerAgent;
 import com.zhongbo.mindos.assistant.dispatcher.agent.procedure.ProceduralMemory;
@@ -31,6 +32,7 @@ class DispatcherLegacyBeanPrunerTest {
         assertFalse(registry.containsBeanDefinition("decisionPlanner"));
         assertFalse(registry.containsBeanDefinition("humanCoRuntime"));
         assertFalse(registry.containsBeanDefinition("autonomousLoop"));
+        assertFalse(registry.containsBeanDefinition("autonomousPlanner"));
         assertFalse(registry.containsBeanDefinition("proceduralMemory"));
         assertFalse(registry.containsBeanDefinition("policyUpdater"));
         assertTrue(registry.containsBeanDefinition("paramSchemaRegistry"));
@@ -48,6 +50,7 @@ class DispatcherLegacyBeanPrunerTest {
         assertTrue(registry.containsBeanDefinition("decisionPlanner"));
         assertTrue(registry.containsBeanDefinition("proceduralMemory"));
         assertTrue(registry.containsBeanDefinition("policyUpdater"));
+        assertFalse(registry.containsBeanDefinition("autonomousPlanner"));
         assertFalse(registry.containsBeanDefinition("humanCoRuntime"));
         assertFalse(registry.containsBeanDefinition("autonomousLoop"));
     }
@@ -61,6 +64,7 @@ class DispatcherLegacyBeanPrunerTest {
 
         assertTrue(registry.containsBeanDefinition("humanCoRuntime"));
         assertTrue(registry.containsBeanDefinition("autonomousLoop"));
+        assertTrue(registry.containsBeanDefinition("autonomousPlanner"));
         assertTrue(registry.containsBeanDefinition("proceduralMemory"));
         assertTrue(registry.containsBeanDefinition("policyUpdater"));
         assertFalse(registry.containsBeanDefinition("plannerAgent"));
@@ -83,6 +87,7 @@ class DispatcherLegacyBeanPrunerTest {
         registry.registerBeanDefinition("decisionPlanner", new RootBeanDefinition(DefaultDecisionPlanner.class));
         registry.registerBeanDefinition("humanCoRuntime", new RootBeanDefinition(HumanAICoRuntime.class));
         registry.registerBeanDefinition("autonomousLoop", new RootBeanDefinition(AutonomousLoopEngine.class));
+        registry.registerBeanDefinition("autonomousPlanner", new RootBeanDefinition(AutonomousPlanner.class));
         registry.registerBeanDefinition("proceduralMemory", new RootBeanDefinition(ProceduralMemory.class));
         registry.registerBeanDefinition("policyUpdater", new RootBeanDefinition(DefaultPolicyUpdater.class));
         registry.registerBeanDefinition("paramSchemaRegistry", new RootBeanDefinition(InMemoryParamSchemaRegistry.class));

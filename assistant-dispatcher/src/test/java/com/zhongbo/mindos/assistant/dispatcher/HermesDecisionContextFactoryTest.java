@@ -26,6 +26,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -157,6 +158,77 @@ class HermesDecisionContextFactoryTest {
         assertTrue(context.graphSkillScores().getOrDefault("todo.create", 0.0d) > 0.0d);
         assertTrue(context.graphSkillScores().getOrDefault("todo.create", 0.0d)
                 > context.graphSkillScores().getOrDefault("file.search", 0.0d));
+    }
+
+    @Test
+    void shouldBuildGraphContinuationHintForShortFollowUp() {
+        GraphMemory graphMemory = new GraphMemory();
+        Instant recordedAt = Instant.parse("2024-01-01T00:00:00Z");
+        graphMemory.upsertNode("u1", new MemoryNode(
+                "task:weekly-report",
+                "hermes.task",
+                Map.of(
+                        "name", "提交周报",
+                        "task", "提交周报",
+                        "project", "运营周报",
+                        "nextAction", "整理风险说明",
+                        "decisionTarget", "task.manage",
+                        "executionTarget", "todo.create",
+                        "canonicalSkill", "todo.create",
+                        "skillName", "todo.create"
+                ),
+                recordedAt,
+                recordedAt
+        ));
+        PromptMemoryContextDto promptMemoryContext = new PromptMemoryContextDto(
+                "",
+                "",
+                "",
+                Map.of(),
+                List.of(),
+                new TaskThreadSnapshotDto(
+                        "提交周报",
+                        "进行中",
+                        "整理风险说明",
+                        "运营周报",
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        "",
+                        "当前事项 提交周报；下一步 整理风险说明"
+                ),
+                Map.of()
+        );
+        DispatcherMemoryFacade facade = new DispatcherMemoryFacade(
+                new MemoryFacade(new TestMemoryManager(List.of(), List.of(), List.of(), promptMemoryContext)),
+                (MemoryGateway) null,
+                graphMemory,
+                graphMemory,
+                null
+        );
+        HermesDecisionContextFactory factory = new HermesDecisionContextFactory(
+                facade,
+                null,
+                (userId, userInput, memoryContext, profileContext, availableSkillSummaries) -> SemanticAnalysisResult.empty(),
+                null,
+                new DispatchHeuristicsSupport(null, false, List.of(), false, true, Set.of("新闻", "天气")),
+                DispatcherAnswerMode.BALANCED,
+                1600,
+                900,
+                true,
+                280,
+                stats -> {
+                }
+        );
+
+        HermesDecisionContext context = factory.create("u1", "开始吧", Map.of());
+
+        assertEquals("提交周报", context.graphContinuationHint().get("task"));
+        assertEquals("task.manage", context.graphContinuationHint().get("decisionTarget"));
+        assertEquals("todo.create", context.graphContinuationHint().get("executionTarget"));
+        assertEquals("todo.create", context.graphContinuationHint().get("canonicalSkill"));
     }
 
     private static final class TestMemoryManager extends MemoryManager {

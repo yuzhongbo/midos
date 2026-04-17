@@ -85,6 +85,8 @@ final class HermesMemoryRecorder {
         }
         Map<String, Object> effectivePayload = resolveTaskPayload(semanticAnalysis, executionParams);
         String effectiveTaskFocus = resolveTaskFocus(semanticAnalysis, effectivePayload);
+        HermesSkillIdentity skillIdentity = HermesSkillIdentity.fromRecordedOutcome(finalResult, attemptedSkill);
+        String recordedSkill = skillIdentity.recordableSkill();
         MemoryWriteBatch batch = dispatchMemoryLifecycle == null
                 ? MemoryWriteBatch.empty()
                 : dispatchMemoryLifecycle.recordUserInput(userId, userInput == null ? "" : userInput);
@@ -95,8 +97,8 @@ final class HermesMemoryRecorder {
                 batch = batch.append(new MemoryWriteOperation.AppendAssistantConversation(finalResult.output()));
             }
         }
-        if (attemptedSkill != null && !attemptedSkill.isBlank() && attemptedSuccess != null && shouldRecordSkillUsage(attemptedSkill)) {
-            batch = batch.append(new MemoryWriteOperation.RecordSkillUsage(attemptedSkill, userInput, attemptedSuccess));
+        if (!recordedSkill.isBlank() && attemptedSuccess != null && shouldRecordSkillUsage(recordedSkill)) {
+            batch = batch.append(new MemoryWriteOperation.RecordSkillUsage(recordedSkill, userInput, attemptedSuccess));
         }
 
         PreferenceProfile learnedProfile = buildLearnedProfile(profileContext);
@@ -107,11 +109,11 @@ final class HermesMemoryRecorder {
 
         if (decisionPolicy != null
                 && finalResult != null
-                && shouldRecordSemanticSummary(finalResult.skillName())) {
+                && shouldRecordSemanticSummary(firstNonBlank(recordedSkill, finalResult.skillName()))) {
             batch = batch.merge(decisionPolicy.maybeStoreSemanticSummary(userId, userInput, semanticAnalysis));
         }
-        batch = batch.merge(buildTaskFactBatch(semanticAnalysis, finalResult, effectivePayload, effectiveTaskFocus));
-        batch = batch.merge(buildTaskStateBatch(semanticAnalysis, finalResult, effectivePayload, effectiveTaskFocus));
+        batch = batch.merge(buildTaskFactBatch(semanticAnalysis, finalResult, effectivePayload, effectiveTaskFocus, recordedSkill));
+        batch = batch.merge(buildTaskStateBatch(semanticAnalysis, finalResult, effectivePayload, effectiveTaskFocus, recordedSkill));
         batch = batch.merge(buildLearningSignalBatch(userInput, semanticAnalysis, finalResult, effectiveTaskFocus));
         batch = batch.merge(buildExecutionGraphBatch(
                 userId,
@@ -119,10 +121,11 @@ final class HermesMemoryRecorder {
                 finalResult,
                 semanticAnalysis,
                 effectivePayload,
-                effectiveTaskFocus
+                effectiveTaskFocus,
+                skillIdentity
         ));
 
-        String rollup = buildConversationRollup(userInput, semanticAnalysis, finalResult);
+        String rollup = buildConversationRollup(userInput, semanticAnalysis, finalResult, recordedSkill);
         if (!rollup.isBlank()) {
             batch = batch.append(new MemoryWriteOperation.WriteSemantic(rollup, List.of(), "conversation-rollup"));
         }
@@ -195,11 +198,12 @@ final class HermesMemoryRecorder {
 
     private String buildConversationRollup(String userInput,
                                            SemanticAnalysisResult semanticAnalysis,
-                                           SkillResult finalResult) {
+                                           SkillResult finalResult,
+                                           String effectiveSkillName) {
         if (semanticAnalysis == null) {
             return "";
         }
-        if (finalResult == null || !shouldRecordSemanticSummary(finalResult.skillName())) {
+        if (finalResult == null || !shouldRecordSemanticSummary(firstNonBlank(effectiveSkillName, finalResult.skillName()))) {
             return "";
         }
         String summary = firstNonBlank(semanticAnalysis.summary(), semanticAnalysis.intent());
@@ -209,8 +213,8 @@ final class HermesMemoryRecorder {
         StringBuilder entry = new StringBuilder();
         entry.append(ASSISTANT_CONTEXT_MARKER).append(' ');
         entry.append("用户刚才在处理：").append(summary);
-        if (finalResult != null && finalResult.skillName() != null && !finalResult.skillName().isBlank()) {
-            entry.append("；执行方式：").append(finalResult.skillName());
+        if (effectiveSkillName != null && !effectiveSkillName.isBlank()) {
+            entry.append("；执行方式：").append(effectiveSkillName);
         }
         entry.append("；结果：").append(finalResult.success() ? "已推进" : "遇到阻塞");
         String scope = humanizedContextScope(semanticAnalysis.contextScope());
@@ -234,11 +238,12 @@ final class HermesMemoryRecorder {
     private MemoryWriteBatch buildTaskFactBatch(SemanticAnalysisResult semanticAnalysis,
                                                 SkillResult finalResult,
                                                 Map<String, Object> effectivePayload,
-                                                String effectiveTaskFocus) {
+                                                String effectiveTaskFocus,
+                                                String effectiveSkillName) {
         if (semanticAnalysis == null || finalResult == null || !finalResult.success()) {
             return MemoryWriteBatch.empty();
         }
-        if (!shouldRecordSemanticSummary(finalResult.skillName())
+        if (!shouldRecordSemanticSummary(firstNonBlank(effectiveSkillName, finalResult.skillName()))
                 || "realtime".equals(semanticAnalysis.contextScope())
                 || !"none".equals(semanticAnalysis.memoryOperation())) {
             return MemoryWriteBatch.empty();
@@ -300,14 +305,15 @@ final class HermesMemoryRecorder {
     private MemoryWriteBatch buildTaskStateBatch(SemanticAnalysisResult semanticAnalysis,
                                                  SkillResult finalResult,
                                                  Map<String, Object> effectivePayload,
-                                                 String effectiveTaskFocus) {
+                                                 String effectiveTaskFocus,
+                                                 String effectiveSkillName) {
         if (semanticAnalysis == null || finalResult == null || !finalResult.success()) {
             return MemoryWriteBatch.empty();
         }
         if ("realtime".equals(semanticAnalysis.contextScope()) || "recall".equals(semanticAnalysis.memoryOperation())) {
             return MemoryWriteBatch.empty();
         }
-        String entry = buildTaskStateEntry(semanticAnalysis, finalResult, effectivePayload, effectiveTaskFocus);
+        String entry = buildTaskStateEntry(semanticAnalysis, finalResult, effectivePayload, effectiveTaskFocus, effectiveSkillName);
         if (entry.isBlank()) {
             return MemoryWriteBatch.empty();
         }
@@ -317,7 +323,8 @@ final class HermesMemoryRecorder {
     private String buildTaskStateEntry(SemanticAnalysisResult semanticAnalysis,
                                        SkillResult finalResult,
                                        Map<String, Object> effectivePayload,
-                                       String effectiveTaskFocus) {
+                                       String effectiveTaskFocus,
+                                       String effectiveSkillName) {
         String task = firstNonBlank(effectiveTaskFocus, semanticAnalysis == null ? "" : semanticAnalysis.taskFocus());
         if (task.isBlank()) {
             return "";
@@ -333,7 +340,7 @@ final class HermesMemoryRecorder {
         appendFactSegment(entry, "下一步", resolveNextAction(semanticAnalysis, finalResult, payload, task, state));
         appendFactSegment(entry, "阻塞点", CanonicalTaskFields.text(payload, CanonicalTaskFields.BLOCKER));
         appendFactSegment(entry, "完成标准", CanonicalTaskFields.text(payload, CanonicalTaskFields.DONE_DEFINITION));
-        appendFactSegment(entry, "执行方式", finalResult.skillName());
+        appendFactSegment(entry, "执行方式", firstNonBlank(effectiveSkillName, finalResult.skillName()));
         return cap(entry.toString(), 240);
     }
 
@@ -357,20 +364,24 @@ final class HermesMemoryRecorder {
                                                       SkillResult finalResult,
                                                       SemanticAnalysisResult semanticAnalysis,
                                                       Map<String, Object> effectivePayload,
-                                                      String effectiveTaskFocus) {
+                                                      String effectiveTaskFocus,
+                                                      HermesSkillIdentity skillIdentity) {
         if (!dispatcherMemoryFacade.hasGraphMemory() || finalResult == null || !finalResult.success()) {
             return MemoryWriteBatch.empty();
         }
         Instant recordedAt = Instant.now();
-        String channel = firstNonBlank(finalResult.skillName(), finalResult.metadataText("systemWorkflowExecutionTarget"));
-        String routedSkill = shouldRecordSkillUsage(channel) ? channel : "";
+        String channel = firstNonBlank(finalResult.skillName(), skillIdentity.executionTarget(), skillIdentity.decisionTarget());
+        String routedSkill = shouldRecordSkillUsage(skillIdentity.recordableSkill()) ? skillIdentity.recordableSkill() : "";
         String taskFocus = effectiveTaskFocus == null ? "" : effectiveTaskFocus;
         String executionNodeId = executionNodeId(userId, userInput, channel, recordedAt);
 
         LinkedHashMap<String, Object> executionData = new LinkedHashMap<>();
-        putGraphValue(executionData, "name", firstNonBlank(taskFocus, channel, cap(userInput, 60)));
+        putGraphValue(executionData, "name", firstNonBlank(taskFocus, routedSkill, channel, cap(userInput, 60)));
         putGraphValue(executionData, "channel", channel);
         putGraphValue(executionData, "skillName", routedSkill);
+        putGraphValue(executionData, "decisionTarget", skillIdentity.decisionTarget());
+        putGraphValue(executionData, "executionTarget", skillIdentity.executionTarget());
+        putGraphValue(executionData, "canonicalSkill", skillIdentity.canonicalSkill());
         putGraphValue(executionData, "task", cap(taskFocus, 120));
         putGraphValue(executionData, "userInput", cap(userInput, 160));
         putGraphValue(executionData, "intent", semanticAnalysis == null ? "" : semanticAnalysis.intent());
@@ -378,10 +389,11 @@ final class HermesMemoryRecorder {
         putGraphValue(executionData, "contextScope", semanticAnalysis == null ? "" : semanticAnalysis.contextScope());
         putGraphValue(executionData, "intentPhase", semanticAnalysis == null ? "" : semanticAnalysis.intentPhase());
         putGraphValue(executionData, "query", cap(finalResult.artifactText("query"), 120));
+        putGraphValue(executionData, "detailTitle", cap(finalResult.artifactText("detailTitle"), 160));
+        putGraphValue(executionData, "detailLink", cap(finalResult.artifactText("detailLink"), 200));
+        putGraphValue(executionData, "detailSummary", cap(finalResult.artifactText("detailSummary"), 200));
         putGraphValue(executionData, "workflow", finalResult.metadataText("systemWorkflow"));
         putGraphValue(executionData, "workflowRecipe", finalResult.metadataText("systemWorkflowRecipe"));
-        putGraphValue(executionData, "decisionTarget", finalResult.metadataText("systemWorkflowDecisionTarget"));
-        putGraphValue(executionData, "executionTarget", finalResult.metadataText("systemWorkflowExecutionTarget"));
         putGraphValue(executionData, "output", cap(finalResult.output(), 200));
         executionData.put("success", Boolean.TRUE);
 
@@ -400,6 +412,9 @@ final class HermesMemoryRecorder {
             LinkedHashMap<String, Object> skillData = new LinkedHashMap<>();
             putGraphValue(skillData, "name", routedSkill);
             putGraphValue(skillData, "skillName", routedSkill);
+            putGraphValue(skillData, "decisionTarget", skillIdentity.decisionTarget());
+            putGraphValue(skillData, "executionTarget", skillIdentity.executionTarget());
+            putGraphValue(skillData, "canonicalSkill", skillIdentity.canonicalSkill());
             putGraphValue(skillData, "lastTask", cap(taskFocus, 120));
             putGraphValue(skillData, "lastUserInput", cap(userInput, 160));
             putGraphValue(skillData, "lastIntent", semanticAnalysis == null ? "" : semanticAnalysis.intent());
@@ -419,7 +434,7 @@ final class HermesMemoryRecorder {
                     "result-of",
                     skillNodeId,
                     1.0,
-                    graphEdgeMetadata(channel, taskFocus, finalResult)
+                    graphEdgeMetadata(channel, taskFocus, finalResult, skillIdentity)
             ));
         }
 
@@ -435,6 +450,9 @@ final class HermesMemoryRecorder {
             putGraphValue(taskData, "nextAction", resolveNextAction(semanticAnalysis, finalResult, effectivePayload, taskFocus, resolveTaskState(semanticAnalysis, finalResult, taskFocus)));
             putGraphValue(taskData, "channel", channel);
             putGraphValue(taskData, "skillName", routedSkill);
+            putGraphValue(taskData, "decisionTarget", skillIdentity.decisionTarget());
+            putGraphValue(taskData, "executionTarget", skillIdentity.executionTarget());
+            putGraphValue(taskData, "canonicalSkill", skillIdentity.canonicalSkill());
             putGraphValue(taskData, "intent", semanticAnalysis == null ? "" : semanticAnalysis.intent());
             putGraphValue(taskData, "summary", semanticAnalysis == null ? "" : cap(semanticAnalysis.summary(), 160));
             batch = batch.append(new MemoryWriteOperation.UpsertGraphNode(new MemoryNode(
@@ -449,7 +467,7 @@ final class HermesMemoryRecorder {
                     "latest-result",
                     executionNodeId,
                     1.0,
-                    graphEdgeMetadata(channel, taskFocus, finalResult)
+                    graphEdgeMetadata(channel, taskFocus, finalResult, skillIdentity)
             ));
             if (!routedSkill.isBlank()) {
                 batch = batch.append(new MemoryWriteOperation.LinkGraph(
@@ -457,7 +475,7 @@ final class HermesMemoryRecorder {
                         "uses-skill",
                         stableNodeId("hermes:skill", routedSkill),
                         0.85,
-                        graphEdgeMetadata(channel, taskFocus, finalResult)
+                        graphEdgeMetadata(channel, taskFocus, finalResult, skillIdentity)
                 ));
             }
         }
@@ -692,10 +710,16 @@ final class HermesMemoryRecorder {
         target.put(key, value.trim());
     }
 
-    private Map<String, Object> graphEdgeMetadata(String channel, String taskFocus, SkillResult finalResult) {
+    private Map<String, Object> graphEdgeMetadata(String channel,
+                                                  String taskFocus,
+                                                  SkillResult finalResult,
+                                                  HermesSkillIdentity skillIdentity) {
         LinkedHashMap<String, Object> metadata = new LinkedHashMap<>();
         putGraphValue(metadata, "channel", channel);
         putGraphValue(metadata, "task", cap(taskFocus, 120));
+        putGraphValue(metadata, "decisionTarget", skillIdentity == null ? "" : skillIdentity.decisionTarget());
+        putGraphValue(metadata, "executionTarget", skillIdentity == null ? "" : skillIdentity.executionTarget());
+        putGraphValue(metadata, "canonicalSkill", skillIdentity == null ? "" : skillIdentity.canonicalSkill());
         putGraphValue(metadata, "workflow", finalResult == null ? "" : finalResult.metadataText("systemWorkflow"));
         metadata.put("success", finalResult != null && finalResult.success());
         return Map.copyOf(metadata);

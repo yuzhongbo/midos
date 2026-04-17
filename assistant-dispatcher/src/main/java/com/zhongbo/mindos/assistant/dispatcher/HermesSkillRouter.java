@@ -35,21 +35,33 @@ final class HermesSkillRouter {
         String decisionTarget = requestedDecisionTarget == null || requestedDecisionTarget.isBlank()
                 ? decision.target()
                 : requestedDecisionTarget;
-        String executionTarget = resolveExecutionTarget(decisionTarget, baseContext);
-        if (usesSkillComposition(decisionTarget, executionTarget)) {
-            return skillCompositionService.execute(decisionTarget, executionTarget, decision.params(), baseContext);
+        HermesSkillIdentity skillIdentity = resolveSkillIdentity(decisionTarget, baseContext);
+        if (usesSkillComposition(skillIdentity.decisionTarget(), skillIdentity.executionTarget())) {
+            return skillIdentity.attachTo(
+                    skillCompositionService.execute(
+                            skillIdentity.decisionTarget(),
+                            skillIdentity.executionTarget(),
+                            decision.params(),
+                            baseContext
+                    )
+            );
         }
         SkillContext executionContext = buildExecutionContext(decision, baseContext);
         if (skillExecutionGateway == null) {
-            return SkillResult.failure(executionTarget, "skill execution gateway unavailable");
+            return skillIdentity.attachTo(SkillResult.failure(skillIdentity.executionTarget(), "skill execution gateway unavailable"));
         }
         try {
-            return skillExecutionGateway.executeDslAsync(
-                    new SkillDsl(executionTarget, decision.params()),
+            return skillIdentity.attachTo(skillExecutionGateway.executeDslAsync(
+                    new SkillDsl(skillIdentity.executionTarget(), decision.params()),
                     executionContext
-            ).join();
+            ).join());
         } catch (RuntimeException ex) {
-            return SkillResult.failure(executionTarget, ex.getMessage() == null ? "skill execution failed" : ex.getMessage());
+            return skillIdentity.attachTo(
+                    SkillResult.failure(
+                            skillIdentity.executionTarget(),
+                            ex.getMessage() == null ? "skill execution failed" : ex.getMessage()
+                    )
+            );
         }
     }
 
@@ -81,16 +93,14 @@ final class HermesSkillRouter {
     }
 
     String resolveExecutionTarget(String decisionTarget, SkillContext baseContext) {
-        if (decisionTarget == null || decisionTarget.isBlank()) {
-            return "";
-        }
-        if (toolSchemaCatalog == null) {
-            return decisionTarget;
-        }
-        String resolved = toolSchemaCatalog.executionTargetForDecision(
+        return resolveSkillIdentity(decisionTarget, baseContext).executionTarget();
+    }
+
+    HermesSkillIdentity resolveSkillIdentity(String decisionTarget, SkillContext baseContext) {
+        return HermesSkillIdentity.resolve(
                 decisionTarget,
+                toolSchemaCatalog,
                 baseContext == null || baseContext.attributes() == null ? Map.of() : baseContext.attributes()
         );
-        return resolved.isBlank() ? decisionTarget : resolved;
     }
 }

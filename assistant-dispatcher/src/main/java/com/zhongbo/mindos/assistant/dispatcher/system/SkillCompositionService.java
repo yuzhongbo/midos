@@ -16,6 +16,7 @@ public final class SkillCompositionService {
 
     public static final String DEVELOPMENT_WORKFLOW_REASON = "systemWorkflow=development";
     public static final String WEB_LOOKUP_DETAIL_WORKFLOW_REASON = "systemWorkflow=skill-graph:web.lookup.detail";
+    public static final String DOCS_LOOKUP_DETAIL_WORKFLOW_REASON = "systemWorkflow=skill-graph:docs.lookup.detail";
 
     private static final String EXECUTION_TARGET_TOKEN = "$executionTarget";
 
@@ -132,6 +133,9 @@ public final class SkillCompositionService {
         SkillResult detailResult = stepResults.get("detail");
         if (detailResult != null && detailResult.success()) {
             artifacts.put("detailApplied", detailResult.artifacts().getOrDefault("detailApplied", Boolean.TRUE));
+            putIfPresent(artifacts, "detailTitle", detailResult.artifacts().get("detailTitle"));
+            putIfPresent(artifacts, "detailLink", detailResult.artifacts().get("detailLink"));
+            putIfPresent(artifacts, "detailSummary", detailResult.artifacts().get("detailSummary"));
         }
         return decorated.withArtifacts(artifacts);
     }
@@ -233,6 +237,9 @@ public final class SkillCompositionService {
         if (matchesWebLookup(decisionTarget, executionTarget)) {
             return Optional.of(webLookupDetailRecipe());
         }
+        if (matchesDocsLookup(decisionTarget, executionTarget)) {
+            return Optional.of(docsLookupDetailRecipe());
+        }
         return Optional.empty();
     }
 
@@ -247,6 +254,13 @@ public final class SkillCompositionService {
         String normalizedExecutionTarget = normalize(executionTarget);
         return DecisionCapabilityCatalog.WEB_LOOKUP_DECISION_TARGET.equals(normalizedDecisionTarget)
                 && DecisionCapabilityCatalog.isGenericWebSearchExecutionSkill(normalizedExecutionTarget);
+    }
+
+    private boolean matchesDocsLookup(String decisionTarget, String executionTarget) {
+        String normalizedDecisionTarget = normalize(decisionTarget);
+        String normalizedExecutionTarget = normalize(executionTarget);
+        return "docs.lookup".equals(normalizedDecisionTarget)
+                && "mcp.docs.searchdocs".equals(normalizedExecutionTarget);
     }
 
     private String resolveStepTarget(String target, String executionTarget) {
@@ -274,11 +288,29 @@ public final class SkillCompositionService {
     }
 
     private SkillRecipe webLookupDetailRecipe() {
-        return new SkillRecipe(
+        return searchDetailRecipe(
                 "web.lookup.detail",
                 DecisionCapabilityCatalog.WEB_LOOKUP_DECISION_TARGET,
+                WEB_LOOKUP_DETAIL_WORKFLOW_REASON
+        );
+    }
+
+    private SkillRecipe docsLookupDetailRecipe() {
+        return searchDetailRecipe(
+                "docs.lookup.detail",
+                "docs.lookup",
+                DOCS_LOOKUP_DETAIL_WORKFLOW_REASON
+        );
+    }
+
+    private SkillRecipe searchDetailRecipe(String recipeId,
+                                           String decisionTarget,
+                                           String workflowReason) {
+        return new SkillRecipe(
+                recipeId,
+                decisionTarget,
                 "skill-graph",
-                WEB_LOOKUP_DETAIL_WORKFLOW_REASON,
+                workflowReason,
                 List.of(
                         new SkillRecipeStep(
                                 "search",

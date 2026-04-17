@@ -70,6 +70,7 @@ class HermesDecisionEngineGraphMemoryTest {
                 Map.of(),
                 Map.of("todo.create", 0.82d),
                 Map.of(),
+                Map.of(),
                 new SkillContext("u1", "继续推进这个任务", Map.of())
         );
         String expectedDecisionTarget = toolSchemaCatalog.decisionTargetForSkill("todo.create", Map.of());
@@ -78,6 +79,61 @@ class HermesDecisionEngineGraphMemoryTest {
 
         assertEquals(expectedDecisionTarget, plan.decision().target());
         assertTrue(plan.reasons().stream().anyMatch(reason -> reason.startsWith("graph-memory=")));
+    }
+
+    @Test
+    void shouldRouteShortContinuationFromGraphHintAndCompleteTaskParams() {
+        InMemoryParamSchemaRegistry schemaRegistry = new InMemoryParamSchemaRegistry();
+        schemaRegistry.registerDefaults();
+        SkillCatalogFacade skillCatalog = new TestSkillCatalog(List.of(
+                new SkillDescriptor("todo.create", "Create todo item", List.of("待办", "任务"))
+        ));
+        HermesToolSchemaCatalog toolSchemaCatalog = new HermesToolSchemaCatalog(skillCatalog, schemaRegistry);
+        HermesDecisionEngine engine = new HermesDecisionEngine(
+                null,
+                skillCatalog,
+                toolSchemaCatalog,
+                null,
+                null,
+                new LLMDecisionEngine(),
+                new DispatchHeuristicsSupport(null, false, List.of(), false, true, Set.of("新闻", "天气")),
+                DispatcherAnswerMode.BALANCED,
+                null,
+                List.of(),
+                List.of()
+        );
+        HermesDecisionContext context = new HermesDecisionContext(
+                "u1",
+                "开始吧",
+                "开始吧",
+                Map.of(),
+                true,
+                DispatcherAnswerMode.BALANCED,
+                new PromptMemoryContextDto("", "", "", Map.of(), List.of()),
+                "",
+                List.of(),
+                toolSchemaCatalog.listSchemas(Map.of()),
+                SemanticAnalysisResult.empty(),
+                Map.of(),
+                Map.of("todo.create", 0.82d),
+                Map.of(
+                        "task", "提交周报",
+                        "project", "运营周报",
+                        "decisionTarget", "task.manage",
+                        "executionTarget", "todo.create",
+                        "canonicalSkill", "todo.create"
+                ),
+                Map.of(),
+                new SkillContext("u1", "开始吧", Map.of())
+        );
+        String expectedDecisionTarget = toolSchemaCatalog.decisionTargetForSkill("todo.create", Map.of());
+
+        HermesDecisionEngine.DecisionPlan plan = engine.decide(context);
+
+        assertEquals(expectedDecisionTarget, plan.decision().target());
+        assertEquals("提交周报", plan.decision().params().get("task"));
+        assertEquals("运营周报", plan.decision().params().get("project"));
+        assertTrue(plan.reasons().stream().anyMatch(reason -> reason.contains("continuation-like input matched recent execution memory")));
     }
 
     private static final class TestSkillCatalog implements SkillCatalogFacade {

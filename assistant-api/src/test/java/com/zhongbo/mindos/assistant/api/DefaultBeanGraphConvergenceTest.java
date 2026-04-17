@@ -1,6 +1,7 @@
 package com.zhongbo.mindos.assistant.api;
 
 import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.AutonomousLoopEngine;
+import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.AutonomousPlanner;
 import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.coruntime.HumanAICoRuntime;
 import com.zhongbo.mindos.assistant.dispatcher.agent.autonomous.coruntime.SharedDecisionEngine;
 import com.zhongbo.mindos.assistant.dispatcher.agent.multiagent.DefaultPlannerAgent;
@@ -37,5 +38,6 @@ class DefaultBeanGraphConvergenceTest {
         assertNull(applicationContext.getBeanProvider(SharedDecisionEngine.class).getIfAvailable());
         assertNull(applicationContext.getBeanProvider(HumanAICoRuntime.class).getIfAvailable());
         assertNull(applicationContext.getBeanProvider(AutonomousLoopEngine.class).getIfAvailable());
+        assertNull(applicationContext.getBeanProvider(AutonomousPlanner.class).getIfAvailable());
     }
 }

@@ -162,19 +162,23 @@ public final class SearchResultDetailAugmentor {
     }
 
     public String augmentRenderedSearchOutput(String query, String rawOutput) {
+        return augment(query, rawOutput).output();
+    }
+
+    public DetailAugmentation augment(String query, String rawOutput) {
         if (!enabled
                 || rawOutput == null
                 || rawOutput.isBlank()
                 || rawOutput.contains("最相关详情：")
                 || requestsMultiResultSummary(query)) {
-            return rawOutput;
+            return new DetailAugmentation(rawOutput, false, null);
         }
         Optional<DetailPageBrief> detail = buildDetailBrief(query, parseRenderedItems(rawOutput));
         if (detail.isEmpty()) {
-            return rawOutput;
+            return new DetailAugmentation(rawOutput, false, null);
         }
         DetailPageBrief brief = detail.get();
-        return """
+        return new DetailAugmentation("""
                 我先看了和你问题最接近的一条网页（最相关详情）：
                 - 标题: %s
                 - 关键信息: %s
@@ -183,7 +187,7 @@ public final class SearchResultDetailAugmentor {
                 safeText(brief.title()),
                 safeText(brief.summary()),
                 safeText(brief.link())
-        ).trim();
+        ).trim(), true, brief);
     }
 
     private boolean requestsMultiResultSummary(String query) {
@@ -1063,6 +1067,9 @@ public final class SearchResultDetailAugmentor {
             }
         }
         return "";
+    }
+
+    public record DetailAugmentation(String output, boolean detailApplied, DetailPageBrief detail) {
     }
 
     public record DetailPageBrief(String title, String link, String summary) {

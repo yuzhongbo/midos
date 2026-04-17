@@ -2,7 +2,9 @@ package com.zhongbo.mindos.assistant.dispatcher;
 
 import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.common.dto.PromptMemoryContextDto;
+import com.zhongbo.mindos.assistant.common.dto.TaskThreadSnapshotDto;
 import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryFacade;
+import com.zhongbo.mindos.assistant.memory.graph.MemoryNode;
 import com.zhongbo.mindos.assistant.memory.model.SkillUsageStats;
 import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalysisResult;
 import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalyzer;
@@ -10,6 +12,7 @@ import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalyzer;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.function.Consumer;
 
@@ -89,6 +92,9 @@ final class HermesDecisionContextFactory {
         Map<String, Double> graphSkillScores = memoryEnabled
                 ? buildGraphSkillScores(userId, userInput, adaptiveProfileContext, toolSchemas)
                 : Map.of();
+        Map<String, Object> graphContinuationHint = memoryEnabled
+                ? buildGraphContinuationHint(userId, userInput, adaptiveProfileContext, activeTaskThread, promptMemoryContext)
+                : Map.of();
         boolean realtimeIntentInput = memoryEnabled
                 && dispatchHeuristicsSupport != null
                 && dispatchHeuristicsSupport.isRealtimeLikeInput(userInput);
@@ -136,6 +142,11 @@ final class HermesDecisionContextFactory {
             attributes.putAll(activeTaskThread.asAttributes());
             skillContext = new SkillContext(skillContext.userId(), skillContext.input(), attributes);
         }
+        if (!graphContinuationHint.isEmpty()) {
+            Map<String, Object> attributes = new LinkedHashMap<>(skillContext.attributes());
+            attributes.put("graphContinuationHint", graphContinuationHint);
+            skillContext = new SkillContext(skillContext.userId(), skillContext.input(), attributes);
+        }
         Map<String, Object> llmContext = new LinkedHashMap<>(adaptiveProfileContext);
         llmContext.put("userId", userId == null ? "" : userId);
         llmContext.put("input", userInput == null ? "" : userInput);
@@ -152,6 +163,9 @@ final class HermesDecisionContextFactory {
         if (!chatHistory.isEmpty()) {
             llmContext.put("chatHistory", chatHistory);
         }
+        if (!graphContinuationHint.isEmpty()) {
+            llmContext.put("graphContinuationHint", graphContinuationHint);
+        }
         llmContext.putAll(semanticAnalysis.asAttributes());
         return new HermesDecisionContext(
                 userId == null ? "" : userId,
@@ -167,6 +181,7 @@ final class HermesDecisionContextFactory {
                 semanticAnalysis,
                 memoryEnabled ? buildSkillSuccessRates(userId) : Map.of(),
                 graphSkillScores,
+                graphContinuationHint,
                 llmContext,
                 skillContext
         );
@@ -214,12 +229,15 @@ final class HermesDecisionContextFactory {
             if (toolSchema == null || toolSchema.name().isBlank()) {
                 continue;
             }
-            candidateNames.add(toolSchema.name());
-            if (toolSchemaCatalog != null) {
-                String executionTarget = toolSchemaCatalog.executionTargetForDecision(toolSchema.name(), safeProfileContext);
-                if (executionTarget != null && !executionTarget.isBlank()) {
-                    candidateNames.add(executionTarget);
-                }
+            HermesSkillIdentity skillIdentity = HermesSkillIdentity.resolve(toolSchema.name(), toolSchemaCatalog, safeProfileContext);
+            if (!skillIdentity.decisionTarget().isBlank()) {
+                candidateNames.add(skillIdentity.decisionTarget());
+            }
+            if (!skillIdentity.executionTarget().isBlank()) {
+                candidateNames.add(skillIdentity.executionTarget());
+            }
+            if (!skillIdentity.canonicalSkill().isBlank()) {
+                candidateNames.add(skillIdentity.canonicalSkill());
             }
         }
         if (candidateNames.isEmpty()) {
@@ -237,6 +255,125 @@ final class HermesDecisionContextFactory {
             positiveScores.put(entry.getKey(), entry.getValue());
         }
         return positiveScores.isEmpty() ? Map.of() : Map.copyOf(positiveScores);
+    }
+
+    private Map<String, Object> buildGraphContinuationHint(String userId,
+                                                           String userInput,
+                                                           Map<String, Object> profileContext,
+                                                           ActiveTaskResolver.ResolvedTaskThread activeTaskThread,
+                                                           PromptMemoryContextDto promptMemoryContext) {
+        if (dispatcherMemoryFacade == null
+                || userId == null
+                || userId.isBlank()
+                || !shouldUseGraphContinuationHint(userInput, activeTaskThread, promptMemoryContext)) {
+            return Map.of();
+        }
+        String query = firstNonBlank(
+                activeTaskThread == null ? "" : activeTaskThread.focus(),
+                activeTaskThread == null ? "" : activeTaskThread.summary(),
+                promptMemoryContext == null || promptMemoryContext.taskThreadSnapshot() == null
+                        ? ""
+                        : promptMemoryContext.taskThreadSnapshot().focus(),
+                promptMemoryContext == null || promptMemoryContext.taskThreadSnapshot() == null
+                        ? ""
+                        : promptMemoryContext.taskThreadSnapshot().summary(),
+                userInput
+        );
+        if (query.isBlank()) {
+            return Map.of();
+        }
+        List<MemoryNode> nodes = dispatcherMemoryFacade.searchGraphNodes(userId, query, 6);
+        if (nodes == null || nodes.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, Object> hint = new LinkedHashMap<>();
+        for (MemoryNode node : nodes) {
+            if (node == null) {
+                continue;
+            }
+            Map<String, Object> data = node.data();
+            putHintValue(hint, "task", stringValue(data.get("task")));
+            putHintValue(hint, "project", stringValue(data.get("project")));
+            putHintValue(hint, "topic", stringValue(data.get("topic")));
+            putHintValue(hint, "dueDate", stringValue(data.get("dueDate")));
+            putHintValue(hint, "nextAction", stringValue(data.get("nextAction")));
+            putHintValue(hint, "query", stringValue(data.get("query")));
+            putHintValue(hint, "decisionTarget", stringValue(data.get("decisionTarget")));
+            putHintValue(hint, "executionTarget", stringValue(data.get("executionTarget")));
+            putHintValue(hint, "canonicalSkill", stringValue(data.get("canonicalSkill")));
+            putHintValue(hint, "skillName", stringValue(data.get("skillName")));
+        }
+        if (hint.isEmpty()) {
+            return Map.of();
+        }
+        HermesSkillIdentity skillIdentity = HermesSkillIdentity.resolve(
+                firstNonBlank(
+                        stringValue(hint.get("decisionTarget")),
+                        stringValue(hint.get("canonicalSkill")),
+                        stringValue(hint.get("executionTarget")),
+                        stringValue(hint.get("skillName"))
+                ),
+                toolSchemaCatalog,
+                safeMap(profileContext)
+        );
+        putHintValue(hint, "decisionTarget", skillIdentity.decisionTarget());
+        putHintValue(hint, "executionTarget", skillIdentity.executionTarget());
+        putHintValue(hint, "canonicalSkill", skillIdentity.canonicalSkill());
+        return Map.copyOf(hint);
+    }
+
+    private boolean shouldUseGraphContinuationHint(String userInput,
+                                                   ActiveTaskResolver.ResolvedTaskThread activeTaskThread,
+                                                   PromptMemoryContextDto promptMemoryContext) {
+        boolean hasTaskThread = activeTaskThread != null && !activeTaskThread.isEmpty();
+        TaskThreadSnapshotDto snapshot = promptMemoryContext == null ? null : promptMemoryContext.taskThreadSnapshot();
+        if (!hasTaskThread && (snapshot == null || snapshot.isEmpty())) {
+            return false;
+        }
+        String normalized = normalize(userInput);
+        if (normalized.isBlank()) {
+            return false;
+        }
+        return normalized.length() <= 12
+                && (normalized.startsWith("继续")
+                || normalized.startsWith("开始吧")
+                || normalized.startsWith("开始执行")
+                || normalized.startsWith("开始")
+                || normalized.startsWith("按刚才")
+                || normalized.startsWith("按上次")
+                || normalized.startsWith("照这个")
+                || normalized.startsWith("按这个")
+                || normalized.startsWith("那就这样")
+                || normalized.startsWith("继续吧")
+                || normalized.startsWith("go ahead")
+                || normalized.startsWith("continue"));
+    }
+
+    private void putHintValue(Map<String, Object> hint, String key, String value) {
+        if (hint == null || key == null || key.isBlank() || value == null || value.isBlank() || hint.containsKey(key)) {
+            return;
+        }
+        hint.put(key, value);
+    }
+
+    private String firstNonBlank(String... values) {
+        if (values == null) {
+            return "";
+        }
+        for (String value : values) {
+            if (value != null && !value.isBlank()) {
+                return value.trim();
+            }
+        }
+        return "";
+    }
+
+    private String stringValue(Object value) {
+        return value == null ? "" : String.valueOf(value).trim();
+    }
+
+    private String normalize(String value) {
+        return value == null ? "" : value.trim().toLowerCase(Locale.ROOT);
     }
 
     private Map<String, Object> mergeLearnedPreferences(Map<String, Object> resolvedProfileContext,

@@ -174,6 +174,7 @@ class HermesProactiveAssistantTest {
                 Map.of(),
                 Map.of(),
                 Map.of(),
+                Map.of(),
                 skillContext
         );
     }

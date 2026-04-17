@@ -166,6 +166,44 @@ class SearchResultDetailAugmentorTest {
     }
 
     @Test
+    void shouldExposeStructuredDetailAugmentation() throws Exception {
+        server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/detail", exchange -> {
+            byte[] payload = """
+                    <html>
+                      <head>
+                        <title>MindOS 架构详情</title>
+                        <meta name="description" content="这页解释了 Hermes 单链路下的 detail enrich。">
+                      </head>
+                      <body>
+                        <article>
+                          <p>正文说明 detail enrich 不只是改写文本，还要留下结构化 title、link、summary。</p>
+                        </article>
+                      </body>
+                    </html>
+                    """.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "text/html; charset=utf-8");
+            exchange.sendResponseHeaders(200, payload.length);
+            exchange.getResponseBody().write(payload);
+            exchange.close();
+        });
+        server.start();
+
+        SearchResultDetailAugmentor augmentor = new SearchResultDetailAugmentor(true, 3000, 3, 240, 3000);
+        String url = "http://127.0.0.1:" + server.getAddress().getPort() + "/detail";
+
+        SearchResultDetailAugmentor.DetailAugmentation augmentation = augmentor.augment("MindOS 架构", """
+                1. [MindOS 架构详情](%s) - Hermes 单链路 detail enrich 说明
+                """.formatted(url));
+
+        assertTrue(augmentation.detailApplied());
+        assertTrue(augmentation.output().contains("最相关详情"), augmentation.output());
+        assertEquals("MindOS 架构详情", augmentation.detail().title());
+        assertEquals(url, augmentation.detail().link());
+        assertTrue(augmentation.detail().summary().contains("结构化") || augmentation.detail().summary().contains("detail enrich"), augmentation.detail().summary());
+    }
+
+    @Test
     void shouldKeepMultiResultSummaryQueryAsListInsteadOfCollapsingToSingleDetail() throws Exception {
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/detail", exchange -> {

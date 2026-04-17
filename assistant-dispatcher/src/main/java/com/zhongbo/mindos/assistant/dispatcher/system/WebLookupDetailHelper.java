@@ -42,10 +42,17 @@ public class WebLookupDetailHelper {
         if (normalizedOutput.isBlank()) {
             return SkillResult.failure(HELPER_TARGET, "missing search output for web detail enrichment");
         }
-        String enriched = detailAugmentor.augmentRenderedSearchOutput(normalizedQuery, normalizedOutput);
-        return SkillResult.success(HELPER_TARGET, enriched)
+        SearchResultDetailAugmentor.DetailAugmentation augmentation = detailAugmentor.augment(normalizedQuery, normalizedOutput);
+        SkillResult result = SkillResult.success(HELPER_TARGET, augmentation.output())
                 .withArtifact("query", normalizedQuery)
                 .withArtifact("searchOutput", normalizedOutput)
-                .withArtifact("detailApplied", !normalizedOutput.equals(enriched));
+                .withArtifact("detailApplied", augmentation.detailApplied());
+        if (augmentation.detail() == null) {
+            return result;
+        }
+        return result
+                .withArtifact("detailTitle", augmentation.detail().title())
+                .withArtifact("detailLink", augmentation.detail().link())
+                .withArtifact("detailSummary", augmentation.detail().summary());
     }
 }

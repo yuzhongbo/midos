@@ -4,10 +4,12 @@ import com.zhongbo.mindos.assistant.dispatcher.FinalPlanner;
 import com.zhongbo.mindos.assistant.dispatcher.agent.taskgraph.TaskGraph;
 import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryFacade;
 import com.zhongbo.mindos.assistant.skill.SkillCatalogFacade;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 @Component
+@ConditionalOnProperty(name = "mindos.autonomous.runtime.enabled", havingValue = "true")
 public class AutonomousPlanner {
 
     private final FinalPlanner finalPlanner;

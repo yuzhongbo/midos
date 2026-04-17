@@ -63,7 +63,7 @@ final class HermesDecisionEngine {
 
     DecisionPlan decide(HermesDecisionContext context) {
         HermesDecisionContext safeContext = context == null
-                ? new HermesDecisionContext("", "", "", Map.of(), true, answerMode, null, "", List.of(), List.of(), SemanticAnalysisResult.empty(), Map.of(), Map.of(), Map.of(), null)
+                ? new HermesDecisionContext("", "", "", Map.of(), true, answerMode, null, "", List.of(), List.of(), SemanticAnalysisResult.empty(), Map.of(), Map.of(), Map.of(), Map.of(), null)
                 : context;
         SemanticAnalysisResult semanticAnalysis = safeContext.semanticAnalysis();
 
@@ -107,6 +107,7 @@ final class HermesDecisionEngine {
         addDetectedCandidates(candidates, safeContext);
         if (safeContext.memoryEnabled() && !safeContext.answerMode().llmFirst()) {
             addHabitCandidates(candidates, safeContext);
+            addGraphContinuationCandidates(candidates, safeContext);
         }
         if (!safeContext.answerMode().llmFirst()) {
             boostCandidatesFromMemory(candidates, safeContext, safeContext.skillSuccessRates());
@@ -539,6 +540,46 @@ final class HermesDecisionEngine {
         }
     }
 
+    private void addGraphContinuationCandidates(Map<String, Candidate> candidates, HermesDecisionContext context) {
+        if (context == null
+                || context.graphContinuationHint().isEmpty()
+                || isRealtimeIntent(context.userInput(), context.semanticAnalysis())) {
+            return;
+        }
+        String target = firstNonBlank(
+                stringValue(context.graphContinuationHint().get("decisionTarget")),
+                stringValue(context.graphContinuationHint().get("canonicalSkill")),
+                stringValue(context.graphContinuationHint().get("executionTarget")),
+                stringValue(context.graphContinuationHint().get("skillName"))
+        );
+        if (target.isBlank()) {
+            return;
+        }
+        List<String> reasons = new ArrayList<>();
+        reasons.add("continuation-like input matched recent execution memory");
+        String task = stringValue(context.graphContinuationHint().get("task"));
+        if (!task.isBlank()) {
+            reasons.add("graph-task=" + task);
+        }
+        Double graphScore = graphScoreForCandidate(target, context);
+        double score = 0.74d;
+        if (graphScore != null && graphScore > 0.0d) {
+            score = Math.max(score, 0.70d + Math.max(0.0d, graphScore - 0.60d) * 0.20d);
+        }
+        addCandidate(
+                context,
+                candidates,
+                target,
+                clamp(score),
+                "graph-continuation",
+                reasons,
+                enrichWithGraphContinuationHint(context, target, Map.of()),
+                false,
+                null,
+                false
+        );
+    }
+
     private void boostCandidatesFromMemory(Map<String, Candidate> candidates,
                                            HermesDecisionContext context,
                                            Map<String, Double> successRates) {
@@ -607,21 +648,20 @@ final class HermesDecisionEngine {
         if (context == null || context.graphSkillScores().isEmpty()) {
             return null;
         }
-        Double score = context.graphSkillScores().get(decisionTarget);
+        HermesSkillIdentity skillIdentity = HermesSkillIdentity.resolve(
+                decisionTarget,
+                toolSchemaCatalog,
+                context.profileContext()
+        );
+        Double score = context.graphSkillScores().get(skillIdentity.decisionTarget());
         if (score != null) {
             return score;
         }
-        if (toolSchemaCatalog == null) {
-            return null;
+        score = context.graphSkillScores().get(skillIdentity.executionTarget());
+        if (score != null) {
+            return score;
         }
-        String executionTarget = toolSchemaCatalog.executionTargetForDecision(
-                decisionTarget,
-                context.profileContext()
-        );
-        if (executionTarget.equals(decisionTarget)) {
-            return null;
-        }
-        return context.graphSkillScores().get(executionTarget);
+        return context.graphSkillScores().get(skillIdentity.canonicalSkill());
     }
 
     private void applySearchPriorityOverrides(Map<String, Candidate> candidates, HermesDecisionContext context) {
@@ -956,17 +996,17 @@ final class HermesDecisionEngine {
                     executionTarget
             );
             if (!completed.isEmpty()) {
-                return safeMap(completed);
+                return enrichWithGraphContinuationHint(context, skillName, safeMap(completed));
             }
         }
         if (decisionParamAssembler == null) {
-            return safeMap(semanticAnalysis == null ? Map.of() : semanticAnalysis.payload());
+            return enrichWithGraphContinuationHint(context, skillName, safeMap(semanticAnalysis == null ? Map.of() : semanticAnalysis.payload()));
         }
-        return decisionParamAssembler.decisionParamsFromInput(
+        return enrichWithGraphContinuationHint(context, skillName, decisionParamAssembler.decisionParamsFromInput(
                 executionTarget,
                 context.userInput(),
                 context.skillContext() == null ? Map.of() : context.skillContext().attributes()
-        );
+        ));
     }
 
     private Map<String, Object> buildDetectedParams(HermesDecisionContext context, String skillName) {
@@ -976,7 +1016,11 @@ final class HermesDecisionEngine {
         String executionTarget = toolSchemaCatalog == null
                 ? normalize(skillName)
                 : toolSchemaCatalog.executionTargetForDecision(skillName, context.profileContext());
-        return decisionParamAssembler.assembleParams(executionTarget, "detected", context.userInput(), context.skillContext());
+        return enrichWithGraphContinuationHint(
+                context,
+                skillName,
+                decisionParamAssembler.assembleParams(executionTarget, "detected", context.userInput(), context.skillContext())
+        );
     }
 
     private List<String> detectedReasons(HermesDecisionContext context, SkillCandidate candidate) {
@@ -1108,8 +1152,58 @@ final class HermesDecisionEngine {
         return value == null || value.isEmpty() ? Map.of() : Map.copyOf(value);
     }
 
+    private Map<String, Object> enrichWithGraphContinuationHint(HermesDecisionContext context,
+                                                                String skillName,
+                                                                Map<String, Object> params) {
+        Map<String, Object> base = safeMap(params);
+        if (context == null || context.graphContinuationHint().isEmpty()) {
+            return base;
+        }
+        LinkedHashMap<String, Object> merged = new LinkedHashMap<>(base);
+        Map<String, Object> hint = context.graphContinuationHint();
+        putIfMissing(merged, "task", hint.get("task"));
+        putIfMissing(merged, "goal", hint.get("task"));
+        putIfMissing(merged, "project", hint.get("project"));
+        putIfMissing(merged, "topic", hint.get("topic"));
+        putIfMissing(merged, "dueDate", hint.get("dueDate"));
+
+        HermesSkillIdentity skillIdentity = HermesSkillIdentity.resolve(skillName, toolSchemaCatalog, context.profileContext());
+        if (isRealtimeSearchSkill(skillIdentity.decisionTarget()) || normalize(skillIdentity.executionTarget()).contains("search")) {
+            Object query = hint.get("query") != null ? hint.get("query") : hint.get("task");
+            putIfMissing(merged, "query", query);
+            putIfMissing(merged, "keyword", query);
+        }
+        return Map.copyOf(merged);
+    }
+
+    private void putIfMissing(Map<String, Object> target, String key, Object value) {
+        if (target == null || key == null || key.isBlank() || value == null || target.containsKey(key)) {
+            return;
+        }
+        if (value instanceof String text && text.isBlank()) {
+            return;
+        }
+        target.put(key, value);
+    }
+
+    private String firstNonBlank(String... values) {
+        if (values == null) {
+            return "";
+        }
+        for (String value : values) {
+            if (value != null && !value.isBlank()) {
+                return value.trim();
+            }
+        }
+        return "";
+    }
+
     private String normalize(String value) {
         return value == null ? "" : value.trim();
+    }
+
+    private String stringValue(Object value) {
+        return value == null ? "" : String.valueOf(value).trim();
     }
 
     record DecisionPlan(Decision decision,

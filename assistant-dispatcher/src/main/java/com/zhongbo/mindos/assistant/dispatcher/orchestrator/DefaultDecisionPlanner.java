@@ -5,11 +5,14 @@ import com.zhongbo.mindos.assistant.dispatcher.FinalPlanner;
 import com.zhongbo.mindos.assistant.dispatcher.decision.Decision;
 import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryFacade;
 import com.zhongbo.mindos.assistant.skill.SkillCatalogFacade;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
+
 @Component
+@ConditionalOnProperty(name = "mindos.dispatcher.legacy-beans.enabled", havingValue = "true")
 public class DefaultDecisionPlanner implements DecisionPlanner {
 
     private final FinalPlanner finalPlanner;

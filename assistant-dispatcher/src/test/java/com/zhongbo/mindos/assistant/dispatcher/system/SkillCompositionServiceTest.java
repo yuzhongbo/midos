@@ -49,7 +49,15 @@ class SkillCompositionServiceTest {
         CapturingGateway gateway = new CapturingGateway(Map.of(
                 "mcp.bravesearch.webSearch", SkillResult.success("mcp.bravesearch.webSearch", "search-results")
         ));
-        RecordingDetailHelper helper = new RecordingDetailHelper(SkillResult.success(WebLookupDetailHelper.HELPER_TARGET, "detail-brief"));
+        RecordingDetailHelper helper = new RecordingDetailHelper(
+                SkillResult.success(WebLookupDetailHelper.HELPER_TARGET, "detail-brief")
+                        .withArtifacts(Map.of(
+                                "detailApplied", Boolean.TRUE,
+                                "detailTitle", "MindOS 架构详情",
+                                "detailLink", "https://example.com/mindos",
+                                "detailSummary", "这里是结构化 detail summary"
+                        ))
+        );
         SkillCompositionService service = new SkillCompositionService(gateway, helper);
 
         SkillResult result = service.execute(
@@ -65,6 +73,9 @@ class SkillCompositionServiceTest {
         assertEquals("MindOS 架构", result.artifactText("query"));
         assertEquals("search-results", result.artifactText("searchOutput"));
         assertEquals(Boolean.TRUE, result.artifacts().get("detailApplied"));
+        assertEquals("MindOS 架构详情", result.artifactText("detailTitle"));
+        assertEquals("https://example.com/mindos", result.artifactText("detailLink"));
+        assertEquals("这里是结构化 detail summary", result.artifactText("detailSummary"));
         assertEquals("skill-graph", result.metadataText("systemWorkflow"));
         assertEquals("web.lookup.detail", result.metadataText("systemWorkflowRecipe"));
         assertEquals("systemWorkflow=skill-graph:web.lookup.detail", service.workflowReasonFor("web.lookup", "mcp.bravesearch.webSearch"));
@@ -100,6 +111,53 @@ class SkillCompositionServiceTest {
         assertEquals("MindOS 架构", result.artifactText("query"));
         assertEquals("search-results", result.artifactText("searchOutput"));
         assertEquals("skill-graph", result.metadataText("systemWorkflow"));
+    }
+
+    @Test
+    void shouldComposeDocsLookupWithDetailHelper() {
+        CapturingGateway gateway = new CapturingGateway(Map.of(
+                "mcp.docs.searchDocs", SkillResult.success("mcp.docs.searchDocs", "docs-search-results")
+        ));
+        RecordingDetailHelper helper = new RecordingDetailHelper(
+                SkillResult.success(WebLookupDetailHelper.HELPER_TARGET, "docs-detail-brief")
+                        .withArtifacts(Map.of(
+                                "detailApplied", Boolean.TRUE,
+                                "detailTitle", "Spring RestClient Reference",
+                                "detailLink", "https://docs.spring.io/restclient",
+                                "detailSummary", "官方文档参考页"
+                        ))
+        );
+        SkillCompositionService service = new SkillCompositionService(gateway, helper);
+
+        SkillResult result = service.execute(
+                "docs.lookup",
+                "mcp.docs.searchDocs",
+                Map.of("query", "Spring Boot RestClient 官方文档"),
+                new SkillContext("u1", "帮我查 Spring Boot RestClient 官方文档", Map.of())
+        );
+
+        assertTrue(result.success());
+        assertEquals("mcp.docs.searchDocs", result.skillName());
+        assertEquals("docs-detail-brief", result.output());
+        assertEquals("Spring Boot RestClient 官方文档", result.artifactText("query"));
+        assertEquals("docs-search-results", result.artifactText("searchOutput"));
+        assertEquals(Boolean.TRUE, result.artifacts().get("detailApplied"));
+        assertEquals("Spring RestClient Reference", result.artifactText("detailTitle"));
+        assertEquals("https://docs.spring.io/restclient", result.artifactText("detailLink"));
+        assertEquals("官方文档参考页", result.artifactText("detailSummary"));
+        assertEquals("skill-graph", result.metadataText("systemWorkflow"));
+        assertEquals("docs.lookup.detail", result.metadataText("systemWorkflowRecipe"));
+        assertEquals("docs.lookup", result.metadataText("systemWorkflowCapability"));
+        assertEquals("systemWorkflow=skill-graph:docs.lookup.detail", service.workflowReasonFor("docs.lookup", "mcp.docs.searchDocs"));
+        assertEquals(1, gateway.invocations.size());
+        Invocation invocation = gateway.invocations.get(0);
+        assertEquals("mcp.docs.searchDocs", invocation.dsl.skill());
+        assertEquals(Boolean.TRUE, invocation.dsl.input().get("internalSkipDetailAugment"));
+        assertEquals("skill-graph", invocation.context.attributes().get("systemWorkflow"));
+        assertEquals("docs.lookup.detail", invocation.context.attributes().get("systemWorkflowRecipe"));
+        assertEquals("docs.lookup", invocation.context.attributes().get("systemWorkflowCapability"));
+        assertEquals("Spring Boot RestClient 官方文档", helper.lastQuery);
+        assertEquals("docs-search-results", helper.lastSearchOutput);
     }
 
     private static final class CapturingGateway implements SkillExecutionGateway {
