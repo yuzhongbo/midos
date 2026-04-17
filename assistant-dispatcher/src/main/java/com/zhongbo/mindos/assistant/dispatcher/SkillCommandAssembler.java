@@ -29,6 +29,7 @@ final class SkillCommandAssembler {
     private final EqCoachCommandSupport eqCoachCommandSupport;
     private final NewsSearchCommandSupport newsSearchCommandSupport;
     private final CodeGenerateCommandSupport codeGenerateCommandSupport;
+    private final SkillStudioCommandSupport skillStudioCommandSupport;
     private final boolean preferenceReuseEnabled;
 
     SkillCommandAssembler(SkillDslParser skillDslParser,
@@ -47,6 +48,7 @@ final class SkillCommandAssembler {
         this.eqCoachCommandSupport = new EqCoachCommandSupport();
         this.newsSearchCommandSupport = new NewsSearchCommandSupport();
         this.codeGenerateCommandSupport = new CodeGenerateCommandSupport();
+        this.skillStudioCommandSupport = new SkillStudioCommandSupport();
         this.preferenceReuseEnabled = preferenceReuseEnabled;
     }
 
@@ -74,6 +76,8 @@ final class SkillCommandAssembler {
                 return Optional.of(new SkillDsl(skillName, buildNewsSearchPayload(userInput)));
             case "web.lookup":
                 return Optional.of(new SkillDsl(skillName, buildWebLookupPayload(userInput)));
+            case "skill.factory":
+                return Optional.of(new SkillDsl(skillName, buildSkillStudioPayload(userInput)));
             case "echo", "time":
                 return Optional.of(SkillDsl.of(skillName));
             default:
@@ -97,6 +101,7 @@ final class SkillCommandAssembler {
             case "file.search" -> Optional.of(new SkillDsl(skillName, mergeInto(seed, fileSearchCommandSupport.resolveAttributes(context))));
             case "news_search" -> Optional.of(new SkillDsl(skillName, mergeInto(seed, newsSearchCommandSupport.resolveAttributes(context))));
             case "web.lookup" -> Optional.of(new SkillDsl(skillName, mergeInto(seed, buildWebLookupPayload(userInput))));
+            case "skill.factory" -> Optional.of(new SkillDsl(skillName, mergeInto(seed, skillStudioCommandSupport.resolveAttributes(context))));
             case "semantic.analyze" -> Optional.of(new SkillDsl(skillName, buildSemanticAnalyzePayload(userInput, seed)));
             case "echo", "time" -> Optional.of(SkillDsl.of(skillName));
             default -> Optional.empty();
@@ -137,6 +142,11 @@ final class SkillCommandAssembler {
                 putIfBlank(payload, "query", firstNonBlank(asString(payload.get("query")), asString(payload.get("keyword")), summary, routingInput, originalInput));
             }
             case "web.lookup" -> putIfBlank(payload, "query", firstNonBlank(asString(payload.get("query")), asString(payload.get("keyword")), summary, memoryHint, routingInput, originalInput));
+            case "skill.factory" -> {
+                mergeMissing(payload, skillStudioCommandSupport.resolveAttributes(originalInput, payload));
+                putIfBlank(payload, "request", firstNonBlank(asString(payload.get("request")), routingInput, originalInput));
+                putIfBlank(payload, "goal", firstNonBlank(asString(payload.get("goal")), summary));
+            }
             default -> {
             }
         }
@@ -216,6 +226,12 @@ final class SkillCommandAssembler {
         if (query != null && !query.isBlank()) {
             payload.put("query", query.trim());
         }
+        return payload;
+    }
+
+    private Map<String, Object> buildSkillStudioPayload(String userInput) {
+        Map<String, Object> payload = new LinkedHashMap<>(skillStudioCommandSupport.resolveAttributes(userInput, Map.of()));
+        payload.putIfAbsent("request", sanitizeContinuationPrefix(userInput));
         return payload;
     }
 

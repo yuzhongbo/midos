@@ -554,6 +554,22 @@ public class SemanticAnalysisService implements SemanticAnalyzer {
                     0.78
             );
         }
+        boolean explicitSkillStudioRequest = isExplicitSkillStudioRequest(normalized);
+        if (explicitSkillStudioRequest
+                || (hasRequestedSpecificRoutingKeyword(userInput, normalized, "skill.factory")
+                && matchesSkill(userInput, normalized, "skill.factory",
+                "开发技能", "创建技能", "skill studio", "skill factory", "导入技能", "学习开源技能", "扩展能力"))) {
+            return new SemanticAnalysisResult(
+                    "heuristic",
+                    "为用户整理新技能的创建或导入草案",
+                    userInput.trim(),
+                    "skill.studio",
+                    Map.of("request", userInput.trim()),
+                    routingKeywordHints(userInput, "skill.factory", "开发技能", "创建技能", "导入技能", "学习开源技能"),
+                    "用户想通过自然语言创建或导入新技能",
+                    0.83
+            );
+        }
         if ((isExplicitFileSearchRequest(normalized)
                 || hasRequestedSpecificRoutingKeyword(userInput, normalized, "file.search"))
                 && matchesSkill(userInput, normalized, "file.search", "找文件", "查文件", "搜索文件", "search file", "grep", "目录", "路径")) {
@@ -619,6 +635,19 @@ public class SemanticAnalysisService implements SemanticAnalyzer {
         boolean requestCue = containsAny(normalized, "帮我", "请", "需要", "想要", "如何", "怎么", "麻烦");
         return (strongCodeDomain && (strongAction || requestCue))
                 || (interfaceDomain && strongAction);
+    }
+
+    private boolean isExplicitSkillStudioRequest(String normalized) {
+        if (containsAny(normalized, "skill studio", "skill factory", "开发技能", "创建技能", "导入技能", "学习开源技能")) {
+            return true;
+        }
+        boolean skillCue = containsAny(normalized, "skill", "技能", "能力", "工具");
+        boolean requestCue = containsAny(normalized, "帮我", "请", "给我", "替我", "我要", "我想", "想做", "需要", "来个");
+        boolean actionCue = containsAny(normalized,
+                "开发", "创建", "新增", "设计", "实现", "生成", "导入", "接入", "加载", "学习", "适配", "封装", "扩展");
+        boolean sourceCue = containsAny(normalized,
+                "开源", "github", "gitlab", "repo", "仓库", "jar", "mcp", "openapi", "swagger", "api");
+        return skillCue && ((requestCue && actionCue) || (sourceCue && actionCue));
     }
 
     private boolean isExplicitFileSearchRequest(String normalized) {

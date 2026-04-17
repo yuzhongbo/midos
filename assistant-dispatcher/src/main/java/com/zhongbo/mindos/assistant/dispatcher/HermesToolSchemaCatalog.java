@@ -48,6 +48,10 @@ final class HermesToolSchemaCatalog {
     }
 
     List<HermesToolSchema> listSchemas() {
+        return listSchemas(Map.of());
+    }
+
+    List<HermesToolSchema> listSchemas(Map<String, Object> contextAttributes) {
         if (skillCatalog == null) {
             return List.of();
         }
@@ -60,8 +64,9 @@ final class HermesToolSchemaCatalog {
             descriptorsByName.put(normalize(descriptor.name()), descriptor);
         }
         Set<String> availableSkillNames = availableSkillNames();
-        for (DecisionCapabilityCatalog.CapabilityDefinition capability : DecisionCapabilityCatalog.availableCapabilities(availableSkillNames)) {
-            String executionSkill = resolveCapabilityExecutionSkill(capability, availableSkillNames, Map.of());
+        Map<String, Object> safeContextAttributes = safeContextAttributes(contextAttributes);
+        for (DecisionCapabilityCatalog.CapabilityDefinition capability : DecisionCapabilityCatalog.availableCapabilities(availableSkillNames, safeContextAttributes)) {
+            String executionSkill = resolveCapabilityExecutionSkill(capability, availableSkillNames, safeContextAttributes);
             SkillDescriptor rawDescriptor = descriptorsByName.get(normalize(executionSkill));
             String fallbackDescription = rawDescriptor == null ? "" : rawDescriptor.description();
             SkillDescriptor capabilityDescriptor = capabilityDescriptor(capability, fallbackDescription, availableSkillNames);
@@ -72,16 +77,16 @@ final class HermesToolSchemaCatalog {
             if (descriptor == null) {
                 continue;
             }
-            String decisionTarget = decisionTargetForSkill(descriptor.name());
-            if (!decisionTarget.equals(normalize(descriptor.name())) || !isDecisionEligible(decisionTarget)) {
+            String decisionTarget = decisionTargetForSkill(descriptor.name(), safeContextAttributes);
+            if (!decisionTarget.equals(normalize(descriptor.name())) || !isDecisionEligible(decisionTarget, safeContextAttributes)) {
                 continue;
             }
             schemas.put(decisionTarget, HermesToolSchema.fromDescriptor(descriptor, findSchema(descriptor.name())));
         }
         for (String summary : skillCatalog.listAvailableSkillSummaries()) {
             NameDescription parsed = parseSummary(summary);
-            String decisionTarget = decisionTargetForSkill(parsed.name());
-            if (!decisionTarget.equals(normalize(parsed.name())) || !isDecisionEligible(decisionTarget)) {
+            String decisionTarget = decisionTargetForSkill(parsed.name(), safeContextAttributes);
+            if (!decisionTarget.equals(normalize(parsed.name())) || !isDecisionEligible(decisionTarget, safeContextAttributes)) {
                 continue;
             }
             schemas.putIfAbsent(decisionTarget, HermesToolSchema.of(parsed.name(), parsed.description(), findSchema(parsed.name())));
@@ -90,13 +95,17 @@ final class HermesToolSchemaCatalog {
     }
 
     boolean isDecisionEligible(String skillName) {
+        return isDecisionEligible(skillName, Map.of());
+    }
+
+    boolean isDecisionEligible(String skillName, Map<String, Object> contextAttributes) {
         String normalized = normalize(skillName);
         Set<String> available = availableSkillNames();
         if (DecisionCapabilityCatalog.WEB_LOOKUP_DECISION_TARGET.equals(normalized)) {
             return hasGenericWebSearchSkill(available);
         }
         if (DecisionCapabilityCatalog.findByDecisionTarget(normalized)
-                .filter(definition -> isCapabilityAvailable(definition, available))
+                .filter(definition -> isCapabilityAvailable(definition, available, contextAttributes))
                 .isPresent()) {
             return true;
         }
@@ -109,10 +118,14 @@ final class HermesToolSchemaCatalog {
     }
 
     String decisionTargetForSkill(String skillName) {
+        return decisionTargetForSkill(skillName, Map.of());
+    }
+
+    String decisionTargetForSkill(String skillName, Map<String, Object> contextAttributes) {
         String normalized = normalize(skillName);
         Set<String> available = availableSkillNames();
         return DecisionCapabilityCatalog.findByExecutionSkill(normalized)
-                .filter(definition -> isCapabilityAvailable(definition, available))
+                .filter(definition -> isCapabilityAvailable(definition, available, contextAttributes))
                 .map(DecisionCapabilityCatalog.CapabilityDefinition::decisionTarget)
                 .orElse(normalized);
     }
@@ -125,20 +138,24 @@ final class HermesToolSchemaCatalog {
         String normalized = normalize(decisionTarget);
         Set<String> available = availableSkillNames();
         return DecisionCapabilityCatalog.findByDecisionTarget(normalized)
-                .filter(definition -> isCapabilityAvailable(definition, available))
+                .filter(definition -> isCapabilityAvailable(definition, available, contextAttributes))
                 .map(definition -> resolveCapabilityExecutionSkill(definition, available, contextAttributes))
                 .filter(resolved -> !resolved.isBlank())
                 .orElse(normalized);
     }
 
     boolean isKnownDecisionTarget(String target) {
+        return isKnownDecisionTarget(target, Map.of());
+    }
+
+    boolean isKnownDecisionTarget(String target, Map<String, Object> contextAttributes) {
         String normalized = normalize(target);
         if (normalized.isBlank()) {
             return false;
         }
         Set<String> available = availableSkillNames();
         if (DecisionCapabilityCatalog.findByDecisionTarget(normalized)
-                .filter(definition -> isCapabilityAvailable(definition, available))
+                .filter(definition -> isCapabilityAvailable(definition, available, contextAttributes))
                 .isPresent()) {
             return true;
         }
@@ -146,11 +163,15 @@ final class HermesToolSchemaCatalog {
     }
 
     List<SkillCandidate> detectDecisionCandidates(String input, int limit) {
+        return detectDecisionCandidates(input, limit, Map.of());
+    }
+
+    List<SkillCandidate> detectDecisionCandidates(String input, int limit, Map<String, Object> contextAttributes) {
         if (input == null || input.isBlank() || limit <= 0) {
             return List.of();
         }
         List<SkillCandidate> candidates = new ArrayList<>();
-        for (HermesToolSchema schema : listSchemas()) {
+        for (HermesToolSchema schema : listSchemas(contextAttributes)) {
             if (schema == null || schema.name().isBlank()) {
                 continue;
             }
@@ -219,8 +240,12 @@ final class HermesToolSchemaCatalog {
     }
 
     private boolean isCapabilityAvailable(DecisionCapabilityCatalog.CapabilityDefinition definition,
-                                          Set<String> availableSkillNames) {
+                                          Set<String> availableSkillNames,
+                                          Map<String, Object> contextAttributes) {
         if (definition == null) {
+            return false;
+        }
+        if (!definition.enabledFor(contextAttributes)) {
             return false;
         }
         if (DecisionCapabilityCatalog.WEB_LOOKUP_DECISION_TARGET.equals(normalize(definition.decisionTarget()))) {
@@ -315,6 +340,10 @@ final class HermesToolSchemaCatalog {
             }
         }
         return values.isEmpty() ? List.of() : List.copyOf(values);
+    }
+
+    private Map<String, Object> safeContextAttributes(Map<String, Object> contextAttributes) {
+        return contextAttributes == null || contextAttributes.isEmpty() ? Map.of() : Map.copyOf(contextAttributes);
     }
 
     private record NameDescription(String name, String description) {

@@ -10,6 +10,9 @@ public record TaskThreadSnapshotDto(
         String project,
         String topic,
         String dueDate,
+        String deliverable,
+        String blocker,
+        String doneDefinition,
         String preferenceHint,
         String summary
 ) {
@@ -21,12 +24,15 @@ public record TaskThreadSnapshotDto(
         project = safeText(project);
         topic = safeText(topic);
         dueDate = safeText(dueDate);
+        deliverable = safeText(deliverable);
+        blocker = safeText(blocker);
+        doneDefinition = safeText(doneDefinition);
         preferenceHint = safeText(preferenceHint);
         summary = safeText(summary);
     }
 
     public static TaskThreadSnapshotDto empty() {
-        return new TaskThreadSnapshotDto("", "", "", "", "", "", "", "");
+        return new TaskThreadSnapshotDto("", "", "", "", "", "", "", "", "", "", "");
     }
 
     public boolean isEmpty() {
@@ -36,6 +42,9 @@ public record TaskThreadSnapshotDto(
                 && project.isBlank()
                 && topic.isBlank()
                 && dueDate.isBlank()
+                && deliverable.isBlank()
+                && blocker.isBlank()
+                && doneDefinition.isBlank()
                 && preferenceHint.isBlank()
                 && summary.isBlank();
     }
@@ -51,6 +60,9 @@ public record TaskThreadSnapshotDto(
         putIfHasText(attributes, "activeTaskProject", project);
         putIfHasText(attributes, "activeTaskTopic", topic);
         putIfHasText(attributes, "activeTaskDueDate", dueDate);
+        putIfHasText(attributes, "activeTaskDeliverable", deliverable);
+        putIfHasText(attributes, "activeTaskBlocker", blocker);
+        putIfHasText(attributes, "activeTaskDoneDefinition", doneDefinition);
         putIfHasText(attributes, "activeTaskPreferenceHint", preferenceHint);
         putIfHasText(attributes, "activeTaskSummary", summary);
         return Map.copyOf(attributes);
@@ -67,6 +79,9 @@ public record TaskThreadSnapshotDto(
         appendLine(builder, "项目", project);
         appendLine(builder, "主题", topic);
         appendLine(builder, "截止时间", dueDate);
+        appendLine(builder, "交付物", deliverable);
+        appendLine(builder, "阻塞点", blocker);
+        appendLine(builder, "完成标准", doneDefinition);
         appendLine(builder, "偏好", preferenceHint);
         return builder.toString().trim();
     }

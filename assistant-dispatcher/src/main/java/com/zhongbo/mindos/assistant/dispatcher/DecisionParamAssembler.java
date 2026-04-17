@@ -1,5 +1,6 @@
 package com.zhongbo.mindos.assistant.dispatcher;
 
+import com.zhongbo.mindos.assistant.common.CanonicalTaskFields;
 import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.common.SkillDsl;
 import com.zhongbo.mindos.assistant.common.SkillResult;
@@ -59,6 +60,9 @@ final class DecisionParamAssembler {
         if ("code.generate".equals(executionTarget) && !enriched.containsKey("task") && effectiveInput != null && !effectiveInput.isBlank()) {
             enriched.put("task", effectiveInput);
         }
+        if ("skill.factory".equals(executionTarget) && !enriched.containsKey("request") && effectiveInput != null && !effectiveInput.isBlank()) {
+            enriched.put("request", effectiveInput);
+        }
         if ("news_search".equals(executionTarget) && !enriched.containsKey("query") && effectiveInput != null && !effectiveInput.isBlank()) {
             enriched.put("query", effectiveInput);
         }
@@ -74,7 +78,7 @@ final class DecisionParamAssembler {
         if (FinalPlanner.RULE_FALLBACK_SOURCE.equals(signalSource)) {
             enriched.put(FinalPlanner.PLANNER_ROUTE_SOURCE_KEY, FinalPlanner.RULE_FALLBACK_SOURCE);
         }
-        return enriched.isEmpty() ? Map.of() : Map.copyOf(enriched);
+        return normalizeCanonicalSlots(enriched);
     }
 
     Map<String, Object> decisionParamsFromContext(SkillContext context) {
@@ -105,14 +109,15 @@ final class DecisionParamAssembler {
                 return skillCommandAssembler.buildDetectedSkillDsl(executionTarget, userInput, params)
                         .map(SkillDsl::input)
                         .map(input -> (Map<String, Object>) new LinkedHashMap<>(input))
-                        .orElse(params);
+                        .map(this::normalizeCanonicalSlots)
+                        .orElseGet(() -> normalizeCanonicalSlots(params));
             }
-            return params;
+            return normalizeCanonicalSlots(params);
         }
         if (userInput != null && !userInput.isBlank()) {
             params.putIfAbsent("input", userInput);
         }
-        return params;
+        return normalizeCanonicalSlots(params);
     }
 
     Map<String, Object> orchestratorProfileContext(SkillContext context) {
@@ -139,7 +144,7 @@ final class DecisionParamAssembler {
             return false;
         }
         return switch (skillName) {
-            case "teaching.plan", "todo.create", "eq.coach", "file.search", "news_search", "web.lookup", "code.generate", "semantic.analyze", "echo", "time" -> true;
+            case "teaching.plan", "todo.create", "eq.coach", "file.search", "news_search", "web.lookup", "code.generate", "skill.factory", "semantic.analyze", "echo", "time" -> true;
             default -> false;
         };
     }
@@ -199,5 +204,10 @@ final class DecisionParamAssembler {
             }
         }
         return params.isEmpty() ? Map.of() : Map.copyOf(params);
+    }
+
+    private Map<String, Object> normalizeCanonicalSlots(Map<String, Object> params) {
+        Map<String, Object> normalized = CanonicalTaskFields.normalize(params);
+        return normalized.isEmpty() ? Map.of() : Map.copyOf(new LinkedHashMap<>(normalized));
     }
 }

@@ -99,6 +99,25 @@ class SemanticAnalysisServiceTest {
     }
 
     @Test
+    void shouldInferSkillStudioCapabilityForExplicitSkillCreationRequest() {
+        SkillRegistry registry = new SkillRegistry(List.of(new FixedSkill("skill.factory")));
+        SemanticAnalysisService service = new SemanticAnalysisService((prompt, context) -> "stub", registry, true, false, true, "", "local", "cost", 120);
+
+        SemanticAnalysisResult result = service.analyze(
+                "u1",
+                "帮我开发一个用于抓取 GitHub Releases 的技能",
+                "",
+                Map.of(),
+                List.of("skill.studio - create draft skill plans")
+        );
+
+        assertEquals("skill.studio", result.suggestedSkill());
+        assertEquals("帮我开发一个用于抓取 GitHub Releases 的技能", result.payload().get("request"));
+        assertTrue(result.summary().contains("新技能"), result.summary());
+        assertTrue(result.confidence() >= 0.80, String.valueOf(result.confidence()));
+    }
+
+    @Test
     void shouldInferMarketRealtimeSkillWithHeuristics() {
         SemanticAnalysisService service = new SemanticAnalysisService((prompt, context) -> "stub", realtimeRegistry(), true, false, true, "", "local", "cost", 120);
 
@@ -563,7 +582,37 @@ class SemanticAnalysisServiceTest {
         assertTrue(capturedPrompt.get().contains("Only use skill names listed in AVAILABLE_TOOLS."));
         assertTrue(capturedPrompt.get().contains("docs.lookup - Search official documentation | required=query"));
         assertFalse(capturedPrompt.get().contains("keywords=docs/manual/guide"));
-        assertTrue(capturedPrompt.get().length() < 2200);
+        assertTrue(capturedPrompt.get().length() < 2500);
+    }
+
+    @Test
+    void shouldExposeAdaptiveWorkingModesAndIndustryFocusInDecisionPrompt() {
+        SkillRegistry registry = new SkillRegistry(List.of(new FixedSkill("todo.create")));
+        AtomicReference<String> capturedPrompt = new AtomicReference<>("");
+        LlmClient llmClient = (prompt, context) -> {
+            capturedPrompt.set(prompt);
+            return "{\"intent\":\"task_plan\",\"target\":\"task.manage\",\"params\":{\"task\":\"制定金融增长复盘方案\"},\"confidence\":0.88}";
+        };
+        SemanticAnalysisService service = new SemanticAnalysisService(llmClient, registry, true, true, true, "", "local", "cost", 120);
+
+        service.analyze(
+                "u1",
+                "给我一个金融行业增长复盘方案",
+                "Recent conversation:\n- none",
+                Map.of(
+                        "workingModes", List.of("planner", "analyst"),
+                        "industryFocus", "finance"
+                ),
+                List.of("task.manage - Manage tasks and plans | required=task")
+        );
+
+        assertTrue(capturedPrompt.get().contains("WORKING_MODES:"));
+        assertTrue(capturedPrompt.get().contains("planner"));
+        assertTrue(capturedPrompt.get().contains("analyst"));
+        assertTrue(capturedPrompt.get().contains("INDUSTRY_FOCUS:"));
+        assertTrue(capturedPrompt.get().contains("finance"));
+        assertTrue(capturedPrompt.get().contains("do not require the user to switch roles"));
+        assertTrue(capturedPrompt.get().contains("goal, deliverable, audience, constraints, deadline"));
     }
 
     @Test

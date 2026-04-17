@@ -23,6 +23,8 @@ import com.zhongbo.mindos.assistant.dispatcher.orchestrator.ParamValidator;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.SimpleParamValidator;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.InMemoryParamSchemaRegistry;
 import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryFacade;
+import com.zhongbo.mindos.assistant.dispatcher.system.SkillFactorySkill;
+import com.zhongbo.mindos.assistant.dispatcher.system.SkillStudioWorkflowService;
 import com.zhongbo.mindos.assistant.common.dto.LocalEscalationMetricsDto;
 import com.zhongbo.mindos.assistant.skill.DefaultSkillCatalog;
 import com.zhongbo.mindos.assistant.skill.DefaultSkillExecutionGateway;
@@ -210,6 +212,31 @@ class DispatcherServiceTest {
         assertEquals("[news_search]\n关键词: 伊朗\n摘要: top 5 summary", result.reply());
         assertTrue(Set.of("detected-skill", "detected-skill-parallel", "semantic-analysis").contains(result.executionTrace().routing().route()));
         assertEquals("news_search", result.executionTrace().routing().selectedSkill());
+        assertEquals(0, llmClient.routingCallCount());
+        assertEquals(0, llmClient.fallbackCallCount());
+    }
+
+    @Test
+    void shouldRouteNaturalLanguageSkillCreationRequestToSkillStudio() {
+        MemoryManager memoryManager = createMemoryManager();
+        RecordingLlmClient llmClient = new RecordingLlmClient(List.of("不应走到 llm"));
+        DispatcherService service = createDispatcher(
+                memoryManager,
+                llmClient,
+                List.of(new SkillFactorySkill(new SkillStudioWorkflowService())),
+                2,
+                true,
+                false
+        );
+
+        DispatchResult result = service.dispatch("studio-user", "帮我开发一个用于抓取 GitHub Releases 的 skill");
+
+        assertEquals("skill.factory", result.channel());
+        assertTrue(result.reply().contains("[skill.studio]"), result.reply());
+        assertTrue(result.reply().contains("generated-web-scraper"), result.reply());
+        assertTrue(result.reply().contains("draft"), result.reply());
+        assertTrue(Set.of("detected-skill", "detected-skill-parallel", "semantic-analysis").contains(result.executionTrace().routing().route()));
+        assertEquals("skill.factory", result.executionTrace().routing().selectedSkill());
         assertEquals(0, llmClient.routingCallCount());
         assertEquals(0, llmClient.fallbackCallCount());
     }
@@ -1120,7 +1147,7 @@ class DispatcherServiceTest {
         };
         DispatcherService service = createDispatcherWithSemanticService(memoryManager, llmClient, registry, semanticAnalysisService, 2);
 
-        DispatchResult result = service.dispatch("alias-user", "帮我修复登录接口空指针");
+        DispatchResult result = service.dispatch("alias-user", "帮我修复登录接口空指针", Map.of("role", "programmer"));
 
         assertEquals("code.generate", result.channel());
         assertEquals("semantic-analysis", result.executionTrace().routing().route());
@@ -1153,7 +1180,7 @@ class DispatcherServiceTest {
         };
         DispatcherService service = createDispatcherWithSemanticService(memoryManager, llmClient, registry, semanticAnalysisService, 2);
 
-        DispatchResult capabilityResult = service.dispatch("capability-user", "请帮我修复代码");
+        DispatchResult capabilityResult = service.dispatch("capability-user", "请帮我修复代码", Map.of("role", "programmer"));
         DispatchResult rawExecutionKeywordResult = service.dispatch("capability-user", "内部调试暗号");
 
         assertEquals("code.generate", capabilityResult.channel());
@@ -1535,7 +1562,7 @@ class DispatcherServiceTest {
         memoryFacade.logSkillUsage("reflection-habit-user", "code.generate", "generate code for order service", true);
         memoryFacade.logSkillUsage("reflection-habit-user", "reflection", "reflection | pattern=stable", true);
 
-        DispatchResult result = service.dispatch("reflection-habit-user", "继续按之前方式");
+        DispatchResult result = service.dispatch("reflection-habit-user", "继续按之前方式", Map.of("role", "programmer"));
 
         assertEquals("code.generate", result.channel());
         assertEquals("memory-habit", result.executionTrace().routing().route());

@@ -4,10 +4,14 @@ import com.sun.net.httpserver.HttpServer;
 import com.zhongbo.mindos.assistant.memory.MemoryManager;
 import com.zhongbo.mindos.assistant.memory.model.LongTask;
 import com.zhongbo.mindos.assistant.memory.model.LongTaskStatus;
+import com.zhongbo.mindos.assistant.skill.examples.EchoSkill;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -37,6 +41,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
         "mindos.memory.file-repo.enabled=false"
 })
 @AutoConfigureMockMvc
+@Import(ImWebhookControllerTest.TestConfig.class)
 class ImWebhookControllerTest {
 
     @Autowired
@@ -382,6 +387,15 @@ class ImWebhookControllerTest {
     private int reserveUnusedPort() throws Exception {
         try (ServerSocket socket = new ServerSocket(0)) {
             return socket.getLocalPort();
+        }
+    }
+
+    @TestConfiguration
+    static class TestConfig {
+
+        @Bean
+        EchoSkill testEchoSkill() {
+            return new EchoSkill();
         }
     }
 }

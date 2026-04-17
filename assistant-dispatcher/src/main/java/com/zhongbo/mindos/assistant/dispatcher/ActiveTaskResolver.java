@@ -50,6 +50,9 @@ final class ActiveTaskResolver {
                 builder.project,
                 builder.topic,
                 builder.dueDate,
+                builder.deliverable,
+                builder.blocker,
+                builder.doneDefinition,
                 builder.preferenceHint,
                 builder.summary()
         );
@@ -115,6 +118,14 @@ final class ActiveTaskResolver {
             assign(builder, "项目", candidate);
             assign(builder, "主题", candidate);
             assign(builder, "截止时间", candidate);
+            assign(builder, "交付物", candidate);
+            assign(builder, "产出物", candidate);
+            assign(builder, "阻塞点", candidate);
+            assign(builder, "卡点", candidate);
+            assign(builder, "阻塞", candidate);
+            assign(builder, "完成标准", candidate);
+            assign(builder, "验收标准", candidate);
+            assign(builder, "完成定义", candidate);
             assign(builder, "偏好", candidate);
         }
     }
@@ -163,6 +174,21 @@ final class ActiveTaskResolver {
                     builder.dueDate = value;
                 }
             }
+            case "交付物", "产出物" -> {
+                if (builder.deliverable.isBlank()) {
+                    builder.deliverable = value;
+                }
+            }
+            case "阻塞点", "卡点", "阻塞" -> {
+                if (builder.blocker.isBlank()) {
+                    builder.blocker = value;
+                }
+            }
+            case "完成标准", "验收标准", "完成定义" -> {
+                if (builder.doneDefinition.isBlank()) {
+                    builder.doneDefinition = value;
+                }
+            }
             case "偏好" -> {
                 if (builder.preferenceHint.isBlank()) {
                     builder.preferenceHint = value;
@@ -207,11 +233,14 @@ final class ActiveTaskResolver {
                               String project,
                               String topic,
                               String dueDate,
+                              String deliverable,
+                              String blocker,
+                              String doneDefinition,
                               String preferenceHint,
                               String summary) {
 
         static ResolvedTaskThread empty() {
-            return new ResolvedTaskThread("", "", "", "", "", "", "", "");
+            return new ResolvedTaskThread("", "", "", "", "", "", "", "", "", "", "");
         }
 
         static ResolvedTaskThread fromSnapshot(TaskThreadSnapshotDto snapshot) {
@@ -225,6 +254,9 @@ final class ActiveTaskResolver {
                     snapshot.project(),
                     snapshot.topic(),
                     snapshot.dueDate(),
+                    snapshot.deliverable(),
+                    snapshot.blocker(),
+                    snapshot.doneDefinition(),
                     snapshot.preferenceHint(),
                     snapshot.summary()
             );
@@ -250,6 +282,9 @@ final class ActiveTaskResolver {
                     project,
                     topic,
                     dueDate,
+                    deliverable,
+                    blocker,
+                    doneDefinition,
                     preferenceHint,
                     summary
             );
@@ -263,6 +298,9 @@ final class ActiveTaskResolver {
         private String project = "";
         private String topic = "";
         private String dueDate = "";
+        private String deliverable = "";
+        private String blocker = "";
+        private String doneDefinition = "";
         private String preferenceHint = "";
 
         private boolean isEmpty() {
@@ -272,6 +310,9 @@ final class ActiveTaskResolver {
                     && project.isBlank()
                     && topic.isBlank()
                     && dueDate.isBlank()
+                    && deliverable.isBlank()
+                    && blocker.isBlank()
+                    && doneDefinition.isBlank()
                     && preferenceHint.isBlank();
         }
 
@@ -297,6 +338,24 @@ final class ActiveTaskResolver {
                     builder.append("；");
                 }
                 builder.append("主题 ").append(topic);
+            }
+            if (!deliverable.isBlank()) {
+                if (builder.length() > 0) {
+                    builder.append("；");
+                }
+                builder.append("交付物 ").append(deliverable);
+            }
+            if (!blocker.isBlank()) {
+                if (builder.length() > 0) {
+                    builder.append("；");
+                }
+                builder.append("阻塞点 ").append(blocker);
+            }
+            if (!doneDefinition.isBlank()) {
+                if (builder.length() > 0) {
+                    builder.append("；");
+                }
+                builder.append("完成标准 ").append(doneDefinition);
             }
             return builder.toString();
         }

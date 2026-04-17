@@ -37,11 +37,16 @@ class HermesToolSchemaCatalogTest {
         List<String> schemaNames = catalog.listSchemas().stream()
                 .map(HermesToolSchema::name)
                 .toList();
+        List<String> developerSchemaNames = catalog.listSchemas(Map.of("role", "programmer")).stream()
+                .map(HermesToolSchema::name)
+                .toList();
 
-        assertTrue(schemaNames.contains("code.assist"));
+        assertFalse(schemaNames.contains("code.assist"));
+        assertTrue(developerSchemaNames.contains("code.assist"));
         assertFalse(schemaNames.contains("code.generate"));
-        assertTrue(catalog.isKnownDecisionTarget("code.assist"));
-        assertEquals("code.generate", catalog.executionTargetForDecision("code.assist"));
+        assertFalse(catalog.isKnownDecisionTarget("code.assist"));
+        assertTrue(catalog.isKnownDecisionTarget("code.assist", Map.of("role", "programmer")));
+        assertEquals("code.generate", catalog.executionTargetForDecision("code.assist", Map.of("role", "programmer")));
         assertFalse(catalog.isDecisionEligible("code.generate"));
     }
 
@@ -59,7 +64,7 @@ class HermesToolSchemaCatalogTest {
                 paramSchemaRegistry
         );
 
-        List<String> capabilityCandidates = catalog.detectDecisionCandidates("请帮我修复代码", 3).stream()
+        List<String> capabilityCandidates = catalog.detectDecisionCandidates("请帮我修复代码", 3, Map.of("role", "programmer")).stream()
                 .map(candidate -> candidate.skillName())
                 .toList();
         List<String> rawExecutionCandidates = catalog.detectDecisionCandidates("内部调试暗号", 3).stream()
@@ -146,6 +151,34 @@ class HermesToolSchemaCatalogTest {
         assertEquals("mcp.bravesearch.webSearch", catalog.executionTargetForDecision("web.lookup", Map.of(
                 "searchPriorityOrder", List.of("mcp.bravesearch.webSearch", "mcp.qwensearch.webSearch")
         )));
+    }
+
+    @Test
+    void shouldHideSkillFactoryBehindSkillStudioCapability() {
+        SkillRegistry registry = new SkillRegistry(List.of(new DescriptorSkill(
+                "skill.factory",
+                "Create draft skill plans",
+                List.of("开发技能", "导入技能")
+        )));
+        InMemoryParamSchemaRegistry paramSchemaRegistry = new InMemoryParamSchemaRegistry();
+        paramSchemaRegistry.registerDefaults();
+        HermesToolSchemaCatalog catalog = new HermesToolSchemaCatalog(
+                new DefaultSkillCatalog(registry, null, new SkillRoutingProperties()),
+                paramSchemaRegistry
+        );
+
+        List<String> schemaNames = catalog.listSchemas().stream()
+                .map(HermesToolSchema::name)
+                .toList();
+        List<String> candidates = catalog.detectDecisionCandidates("帮我开发一个用于抓取官网公告的 skill", 3).stream()
+                .map(candidate -> candidate.skillName())
+                .toList();
+
+        assertTrue(schemaNames.contains("skill.studio"));
+        assertFalse(schemaNames.contains("skill.factory"));
+        assertTrue(candidates.contains("skill.studio"));
+        assertEquals("skill.factory", catalog.executionTargetForDecision("skill.studio"));
+        assertFalse(catalog.isDecisionEligible("skill.factory"));
     }
 
     private record DescriptorSkill(String name, String description, List<String> routingKeywords)

@@ -473,6 +473,14 @@ public class DefaultPromptMemoryContextAssembler implements PromptMemoryContextA
                 assignTaskValue(builder, "项目", candidate);
                 assignTaskValue(builder, "主题", candidate);
                 assignTaskValue(builder, "截止时间", candidate);
+                assignTaskValue(builder, "交付物", candidate);
+                assignTaskValue(builder, "产出物", candidate);
+                assignTaskValue(builder, "阻塞点", candidate);
+                assignTaskValue(builder, "卡点", candidate);
+                assignTaskValue(builder, "阻塞", candidate);
+                assignTaskValue(builder, "完成标准", candidate);
+                assignTaskValue(builder, "验收标准", candidate);
+                assignTaskValue(builder, "完成定义", candidate);
                 assignTaskValue(builder, "偏好", candidate);
             }
         }
@@ -498,6 +506,9 @@ public class DefaultPromptMemoryContextAssembler implements PromptMemoryContextA
             case "项目" -> builder.project = firstNonBlank(builder.project, value);
             case "主题" -> builder.topic = firstNonBlank(builder.topic, value);
             case "截止时间" -> builder.dueDate = firstNonBlank(builder.dueDate, value);
+            case "交付物", "产出物" -> builder.deliverable = firstNonBlank(builder.deliverable, value);
+            case "阻塞点", "卡点", "阻塞" -> builder.blocker = firstNonBlank(builder.blocker, value);
+            case "完成标准", "验收标准", "完成定义" -> builder.doneDefinition = firstNonBlank(builder.doneDefinition, value);
             case "偏好" -> builder.preferenceHint = firstNonBlank(builder.preferenceHint, value);
             default -> {
             }
@@ -647,12 +658,17 @@ public class DefaultPromptMemoryContextAssembler implements PromptMemoryContextA
         private String project = "";
         private String topic = "";
         private String dueDate = "";
+        private String deliverable = "";
+        private String blocker = "";
+        private String doneDefinition = "";
         private String preferenceHint = "";
 
         private TaskThreadSnapshotDto toSnapshot() {
             String summary = summary();
             if (focus.isBlank() && state.isBlank() && nextAction.isBlank() && project.isBlank()
-                    && topic.isBlank() && dueDate.isBlank() && preferenceHint.isBlank()) {
+                    && topic.isBlank() && dueDate.isBlank()
+                    && deliverable.isBlank() && blocker.isBlank() && doneDefinition.isBlank()
+                    && preferenceHint.isBlank()) {
                 return TaskThreadSnapshotDto.empty();
             }
             return new TaskThreadSnapshotDto(
@@ -662,6 +678,9 @@ public class DefaultPromptMemoryContextAssembler implements PromptMemoryContextA
                     project,
                     topic,
                     dueDate,
+                    deliverable,
+                    blocker,
+                    doneDefinition,
                     preferenceHint,
                     summary
             );
@@ -673,6 +692,9 @@ public class DefaultPromptMemoryContextAssembler implements PromptMemoryContextA
             appendSummary(builder, "状态", state);
             appendSummary(builder, "下一步", nextAction);
             appendSummary(builder, "主题", topic);
+            appendSummary(builder, "交付物", deliverable);
+            appendSummary(builder, "阻塞点", blocker);
+            appendSummary(builder, "完成标准", doneDefinition);
             return builder.toString();
         }
 

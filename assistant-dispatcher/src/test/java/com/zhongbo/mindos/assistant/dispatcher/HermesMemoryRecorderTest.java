@@ -29,7 +29,16 @@ class HermesMemoryRecorderTest {
                 "创建待办或提醒事项",
                 "帮我创建一个待办，周五前提交周报",
                 "todo.create",
-                Map.of("task", "提交周报", "dueDate", "周五前", "project", "运营周报"),
+                Map.of(
+                        "task", "提交周报",
+                        "dueDate", "周五前",
+                        "project", "运营周报",
+                        "artifact", "风险说明版周报",
+                        "audience", "管理层",
+                        "requirements", "三页内",
+                        "source", "引用本周指标",
+                        "successCriteria", "负责人确认可发"
+                ),
                 List.of("待办", "周报"),
                 "用户希望创建周报待办",
                 0.88
@@ -55,6 +64,11 @@ class HermesMemoryRecorderTest {
         assertTrue(taskFact.text().contains("当前事项：提交周报"));
         assertTrue(taskFact.text().contains("截止时间：周五前"));
         assertTrue(taskFact.text().contains("项目：运营周报"));
+        assertTrue(taskFact.text().contains("交付物：风险说明版周报"));
+        assertTrue(taskFact.text().contains("受众：管理层"));
+        assertTrue(taskFact.text().contains("约束：三页内"));
+        assertTrue(taskFact.text().contains("来源要求：引用本周指标"));
+        assertTrue(taskFact.text().contains("完成标准：负责人确认可发"));
         assertTrue(commandService.semanticWrites().stream().anyMatch(write -> write.text().contains("[任务状态]")));
     }
 
@@ -139,7 +153,7 @@ class HermesMemoryRecorderTest {
                 "围绕当前任务说明阻塞并寻求推进",
                 "当前事项遇到阻塞：提交周报",
                 "",
-                Map.of("task", "提交周报"),
+                Map.of("task", "提交周报", "blocker", "接口一直报错"),
                 List.of("卡住", "报错"),
                 "用户表示当前事项遇到阻塞",
                 0.81
@@ -159,7 +173,8 @@ class HermesMemoryRecorderTest {
         assertTrue(commandService.semanticWrites().stream().anyMatch(write ->
                 "task".equals(write.bucket())
                         && write.text().contains("[任务状态]")
-                        && write.text().contains("状态：受阻")));
+                        && write.text().contains("状态：受阻")
+                        && write.text().contains("阻塞点：接口一直报错")));
         assertTrue(commandService.semanticWrites().stream().anyMatch(write ->
                 "task".equals(write.bucket())
                         && write.text().contains("[学习信号]")

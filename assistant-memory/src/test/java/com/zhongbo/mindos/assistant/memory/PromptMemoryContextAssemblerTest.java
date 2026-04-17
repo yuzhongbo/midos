@@ -238,7 +238,10 @@ class PromptMemoryContextAssemblerTest {
         );
 
         semanticMemoryService.addEntry("u6-state",
-                new SemanticMemoryEntry("[任务状态] 当前事项：提交周报；状态：进行中；下一步：继续推进提交周报", List.of(0.1, 0.2), Instant.now()),
+                new SemanticMemoryEntry("[任务状态] 当前事项：提交周报；状态：进行中；下一步：继续推进提交周报；阻塞点：等待财务数据；完成标准：负责人确认可发", List.of(0.1, 0.2), Instant.now()),
+                "task");
+        semanticMemoryService.addEntry("u6-state",
+                new SemanticMemoryEntry("[任务事实] 当前事项：提交周报；交付物：风险说明版周报", List.of(0.1, 0.2), Instant.now()),
                 "task");
         semanticMemoryService.addEntry("u6-state",
                 new SemanticMemoryEntry("[学习信号] 当前事项：提交周报；偏好：上下文明确时直接推进，少澄清", List.of(0.1, 0.2), Instant.now()),
@@ -252,6 +255,9 @@ class PromptMemoryContextAssemblerTest {
                 "semantic-routing".equals(item.type()) && item.text().contains("上下文明确时直接推进")));
         assertEquals("提交周报", context.taskThreadSnapshot().focus());
         assertEquals("继续推进提交周报", context.taskThreadSnapshot().nextAction());
+        assertEquals("风险说明版周报", context.taskThreadSnapshot().deliverable());
+        assertEquals("等待财务数据", context.taskThreadSnapshot().blocker());
+        assertEquals("负责人确认可发", context.taskThreadSnapshot().doneDefinition());
         assertEquals("minimal", context.learnedPreferences().get("clarifyStyle"));
         assertEquals("direct-progress", context.learnedPreferences().get("executionStyle"));
     }

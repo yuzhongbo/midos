@@ -38,6 +38,8 @@ final class SemanticDecisionPromptBuilder {
         prompt.append("8. Distinguish execution, planning, blocker-report, progress-report, and decision-adjustment on ongoing tasks.\n");
         prompt.append("9. If the user only reports status, pressure, or blockers, prefer suggestedSkill empty unless a tool is clearly requested.\n");
         prompt.append("10. If interpretations are close, lower confidence and keep candidate_intents to at most 3.\n");
+        prompt.append("11. MindOS stays one assistant identity. Use WORKING_MODES and INDUSTRY_FOCUS as adaptive hints; do not require the user to switch roles.\n");
+        prompt.append("12. When useful, reuse shared payload slots such as goal, deliverable, audience, constraints, deadline, sourceRequirement, nextAction, blocker, and doneDefinition.\n");
         prompt.append("Example:\n");
         prompt.append("{\"intent\":\"task_create\",\"rewrittenInput\":\"创建一个待办：提交周报\",\"suggestedSkill\":\"todo.create\",\"summary\":\"用户要创建待办并记录截止时间\",\"confidence\":0.92,\"payload\":{\"task\":\"提交周报\",\"dueDate\":\"周五前\"},\"keywords\":[\"待办\",\"周报\",\"周五\"]}\n");
         prompt.append('\n');
@@ -45,6 +47,8 @@ final class SemanticDecisionPromptBuilder {
         appendSection(prompt, "USER_INPUT", capText(userInput, MAX_USER_INPUT_CHARS));
         appendSection(prompt, "CONFIRMED_MEMORY_AND_CONTEXT", capText(memoryContext, MAX_MEMORY_CONTEXT_CHARS));
         appendSection(prompt, "PROFILE_CONTEXT", summarizeProfileContext(profileContext));
+        appendSection(prompt, "WORKING_MODES", summarizeWorkingModes(profileContext));
+        appendSection(prompt, "INDUSTRY_FOCUS", summarizeIndustryFocus(profileContext));
         appendSection(prompt, "BASELINE_ROUTING_HINT", summarizeBaseline(baseline));
         appendSection(prompt, "SEARCH_PRIORITY_ORDER", summarizeSearchPriority(profileContext));
         appendSection(prompt, "AVAILABLE_TOOLS", summarizeAvailableTools(availableSkillSummaries, userInput));
@@ -107,11 +111,54 @@ final class SemanticDecisionPromptBuilder {
         List<String> lines = profileContext.entrySet().stream()
                 .filter(entry -> entry.getKey() != null && !entry.getKey().isBlank())
                 .filter(entry -> !"searchPriorityOrder".equals(entry.getKey()))
+                .filter(entry -> !"workingModes".equals(entry.getKey()))
+                .filter(entry -> !"workingModeConfidence".equals(entry.getKey()))
+                .filter(entry -> !"primaryWorkMode".equals(entry.getKey()))
+                .filter(entry -> !"industryFocus".equals(entry.getKey()))
+                .filter(entry -> !"industryFocusConfidence".equals(entry.getKey()))
+                .filter(entry -> !"assistantMode".equals(entry.getKey()))
+                .filter(entry -> !"roleStrategy".equals(entry.getKey()))
+                .filter(entry -> !"capabilityPack".equals(entry.getKey()))
+                .filter(entry -> !"capabilityPacks".equals(entry.getKey()))
+                .filter(entry -> !"developerMode".equals(entry.getKey()))
                 .sorted(Comparator.comparing(Map.Entry::getKey))
                 .limit(MAX_PROFILE_LINES)
                 .map(entry -> "- " + entry.getKey() + ": " + capText(summarizeValue(entry.getValue()), MAX_PROFILE_VALUE_CHARS))
                 .toList();
         return lines.isEmpty() ? "(empty)" : String.join("\n", lines);
+    }
+
+    private String summarizeWorkingModes(Map<String, Object> profileContext) {
+        if (profileContext == null || profileContext.isEmpty()) {
+            return "";
+        }
+        Object rawConfidence = profileContext.get("workingModeConfidence");
+        if (rawConfidence instanceof Map<?, ?> confidenceMap && !confidenceMap.isEmpty()) {
+            List<String> items = new ArrayList<>();
+            confidenceMap.forEach((key, value) -> {
+                String mode = text(key);
+                String confidence = text(value);
+                if (!mode.isBlank() && !confidence.isBlank()) {
+                    items.add(mode + "=" + confidence);
+                }
+            });
+            if (!items.isEmpty()) {
+                return String.join(", ", items);
+            }
+        }
+        return summarizeValue(profileContext.get("workingModes"));
+    }
+
+    private String summarizeIndustryFocus(Map<String, Object> profileContext) {
+        if (profileContext == null || profileContext.isEmpty()) {
+            return "";
+        }
+        String focus = text(profileContext.get("industryFocus"));
+        String confidence = text(profileContext.get("industryFocusConfidence"));
+        if (focus.isBlank()) {
+            return "";
+        }
+        return confidence.isBlank() ? focus : focus + " (" + confidence + ")";
     }
 
     private String summarizeSearchPriority(Map<String, Object> profileContext) {

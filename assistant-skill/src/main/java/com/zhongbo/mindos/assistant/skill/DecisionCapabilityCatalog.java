@@ -18,49 +18,64 @@ public final class DecisionCapabilityCatalog {
                     "task.manage",
                     "todo.create",
                     "Manage tasks, reminders, deadlines, and follow-up actions when the user explicitly asks to create or update a task.",
-                    List.of("创建待办", "设置提醒", "新增任务", "安排任务", "截止提醒", "任务管理")
+                    List.of("创建待办", "设置提醒", "新增任务", "安排任务", "截止提醒", "任务管理"),
+                    CapabilityAudience.CORE
             ),
             new CapabilityDefinition(
                     "code.assist",
                     "code.generate",
                     "Fix, generate, or refactor code when the user explicitly asks for implementation help.",
-                    List.of("修复代码", "生成代码", "写代码", "接口 bug", "代码实现", "重构代码")
+                    List.of("修复代码", "生成代码", "写代码", "接口 bug", "代码实现", "重构代码"),
+                    CapabilityAudience.DEVELOPER
             ),
             new CapabilityDefinition(
                     "conversation.coach",
                     "eq.coach",
                     "Coach difficult communication such as apology, refusal, reassurance, and conflict handling.",
-                    List.of("沟通建议", "怎么回复", "怎么说", "道歉话术", "安慰话术", "冲突处理")
+                    List.of("沟通建议", "怎么回复", "怎么说", "道歉话术", "安慰话术", "冲突处理"),
+                    CapabilityAudience.CORE
             ),
             new CapabilityDefinition(
                     "learning.plan",
                     "teaching.plan",
                     "Plan study, teaching, review, and learning schedules around an explicit learning goal.",
-                    List.of("学习计划", "教学规划", "复习计划", "学习路线", "课程安排", "备考规划")
+                    List.of("学习计划", "教学规划", "复习计划", "学习路线", "课程安排", "备考规划"),
+                    CapabilityAudience.CORE
             ),
             new CapabilityDefinition(
                     "workspace.search",
                     "file.search",
                     "Search files, folders, paths, and keywords inside the current workspace.",
-                    List.of("找文件", "查文件", "搜索目录", "搜索路径", "workspace search", "grep 文件")
+                    List.of("找文件", "查文件", "搜索目录", "搜索路径", "workspace search", "grep 文件"),
+                    CapabilityAudience.DEVELOPER
+            ),
+            new CapabilityDefinition(
+                    "skill.studio",
+                    "skill.factory",
+                    "Create, import, adapt, and stage new skills from natural-language requests without auto-publishing them live.",
+                    List.of("开发技能", "创建技能", "做个skill", "skill studio", "skill factory", "导入技能", "学习开源技能", "扩展能力"),
+                    CapabilityAudience.CORE
             ),
             new CapabilityDefinition(
                     "news.lookup",
                     "news_search",
                     "Look up the latest news, headlines, and hot topics when the user explicitly asks for current news.",
-                    List.of("今天新闻", "今日新闻", "最新新闻", "国际新闻", "最新消息", "最新动态", "查看新闻", "看新闻", "新闻搜索", "news")
+                    List.of("今天新闻", "今日新闻", "最新新闻", "国际新闻", "最新消息", "最新动态", "查看新闻", "看新闻", "新闻搜索", "news"),
+                    CapabilityAudience.CORE
             ),
             new CapabilityDefinition(
                     "docs.lookup",
                     "mcp.docs.searchDocs",
                     "Search official documentation, guides, SDK manuals, and product docs.",
-                    List.of("search docs", "docs", "documentation", "official docs", "查文档", "搜索文档", "官方文档", "文档查询")
+                    List.of("search docs", "docs", "documentation", "official docs", "查文档", "搜索文档", "官方文档", "文档查询"),
+                    CapabilityAudience.CORE
             ),
             new CapabilityDefinition(
                     "time.lookup",
                     "time",
                     "Look up the current time when the user explicitly asks for the time.",
-                    List.of("time", "现在几点", "当前时间", "几点了", "现在时间", "what time", "current time")
+                    List.of("time", "现在几点", "当前时间", "几点了", "现在时间", "what time", "current time"),
+                    CapabilityAudience.CORE
             )
     );
 
@@ -77,7 +92,8 @@ public final class DecisionCapabilityCatalog {
                     "web search", "search web",
                     "今天新闻", "最新新闻", "新闻", "news", "头条", "热点",
                     "bravesearch", "qwensearch", "serper", "serpapi"
-            )
+            ),
+            CapabilityAudience.CORE
     );
 
     private static final Map<String, CapabilityDefinition> BY_DECISION_TARGET = DEFINITIONS.stream()
@@ -152,19 +168,51 @@ public final class DecisionCapabilityCatalog {
     }
 
     public static List<CapabilityDefinition> availableCapabilities(Collection<String> availableSkillNames) {
+        return availableCapabilities(availableSkillNames, Map.of());
+    }
+
+    public static List<CapabilityDefinition> availableCapabilities(Collection<String> availableSkillNames,
+                                                                   Map<String, Object> profileContext) {
         Set<String> available = availableSkillNames == null ? Set.of() : availableSkillNames.stream()
                 .map(DecisionCapabilityCatalog::normalize)
                 .filter(value -> !value.isBlank())
                 .collect(Collectors.toUnmodifiableSet());
         List<CapabilityDefinition> definitions = DEFINITIONS.stream()
+                .filter(definition -> definition.enabledFor(profileContext))
                 .filter(definition -> available.contains(normalize(definition.executionSkill())))
                 .toList();
-        if (!containsGenericWebSearchSkill(available)) {
+        if (!containsGenericWebSearchSkill(available) || !WEB_LOOKUP_CAPABILITY.enabledFor(profileContext)) {
             return definitions;
         }
         List<CapabilityDefinition> all = new java.util.ArrayList<>(definitions);
         all.add(WEB_LOOKUP_CAPABILITY);
         return List.copyOf(all);
+    }
+
+    public static boolean developerAudienceEnabled(Map<String, Object> profileContext) {
+        if (profileContext == null || profileContext.isEmpty()) {
+            return false;
+        }
+        String normalizedRole = normalize(stringValue(profileContext.get("role")));
+        if (containsAny(normalizedRole,
+                "developer", "engineer", "programmer", "coder", "architect", "devops", "sre", "qa")) {
+            return true;
+        }
+        if (containsAny(normalizedRole, "开发", "程序员", "工程师", "架构师", "研发", "运维", "测试")) {
+            return true;
+        }
+        if (isDeveloperPackValue(profileContext.get("capabilityPack"))
+                || isDeveloperPackValue(profileContext.get("capabilityPacks"))
+                || Boolean.TRUE.equals(profileContext.get("developerMode"))) {
+            return true;
+        }
+        Object learnedPreferences = profileContext.get("learnedPreferences");
+        if (learnedPreferences instanceof Map<?, ?> learnedMap) {
+            return isDeveloperPackValue(learnedMap.get("capabilityPack"))
+                    || isDeveloperPackValue(learnedMap.get("capabilityPacks"))
+                    || Boolean.TRUE.equals(learnedMap.get("developerMode"));
+        }
+        return false;
     }
 
     public static boolean isGenericWebSearchExecutionSkill(String skillName) {
@@ -184,6 +232,51 @@ public final class DecisionCapabilityCatalog {
         return false;
     }
 
+    private static boolean isDeveloperPackValue(Object rawValue) {
+        if (rawValue == null) {
+            return false;
+        }
+        if (rawValue instanceof Collection<?> values) {
+            for (Object value : values) {
+                if (isDeveloperPackValue(value)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        String normalized = normalize(String.valueOf(rawValue));
+        if (normalized.isBlank()) {
+            return false;
+        }
+        for (String token : normalized.split("[,\\s]+")) {
+            if (containsAny(token, "developer", "dev", "engineering", "engineer", "programmer", "coder")) {
+                return true;
+            }
+            if (containsAny(token, "开发", "工程", "程序")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean containsAny(String value, String... needles) {
+        String normalized = normalize(value);
+        if (normalized.isBlank() || needles == null || needles.length == 0) {
+            return false;
+        }
+        for (String needle : needles) {
+            String normalizedNeedle = normalize(needle);
+            if (!normalizedNeedle.isBlank() && normalized.contains(normalizedNeedle)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static String stringValue(Object value) {
+        return value == null ? "" : String.valueOf(value).trim();
+    }
+
     private static String normalize(String value) {
         return value == null ? "" : value.trim().toLowerCase(Locale.ROOT);
     }
@@ -191,7 +284,15 @@ public final class DecisionCapabilityCatalog {
     public record CapabilityDefinition(String decisionTarget,
                                        String executionSkill,
                                        String description,
-                                       List<String> routingKeywords) {
+                                       List<String> routingKeywords,
+                                       CapabilityAudience audience) {
+        public CapabilityDefinition(String decisionTarget,
+                                    String executionSkill,
+                                    String description,
+                                    List<String> routingKeywords) {
+            this(decisionTarget, executionSkill, description, routingKeywords, CapabilityAudience.CORE);
+        }
+
         public CapabilityDefinition {
             decisionTarget = normalizedText(decisionTarget);
             executionSkill = normalizedText(executionSkill);
@@ -201,6 +302,7 @@ public final class DecisionCapabilityCatalog {
                     .filter(value -> !value.isBlank())
                     .distinct()
                     .toList();
+            audience = audience == null ? CapabilityAudience.CORE : audience;
         }
 
         public SkillDescriptor asDescriptor(String fallbackDescription) {
@@ -210,8 +312,17 @@ public final class DecisionCapabilityCatalog {
             return new SkillDescriptor(decisionTarget, effectiveDescription, routingKeywords);
         }
 
+        public boolean enabledFor(Map<String, Object> profileContext) {
+            return audience != CapabilityAudience.DEVELOPER || developerAudienceEnabled(profileContext);
+        }
+
         private static String normalizedText(String value) {
             return value == null ? "" : value.trim();
         }
+    }
+
+    public enum CapabilityAudience {
+        CORE,
+        DEVELOPER
     }
 }

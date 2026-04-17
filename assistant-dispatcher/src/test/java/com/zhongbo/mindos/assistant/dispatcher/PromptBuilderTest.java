@@ -80,7 +80,7 @@ class PromptBuilderTest {
                 "",
                 Map.of(),
                 List.of(item("semantic", "当前事项：提交周报")),
-                new TaskThreadSnapshotDto("提交周报", "", "", "", "", "", "", "当前事项 提交周报"),
+                new TaskThreadSnapshotDto("提交周报", "", "", "", "", "", "", "", "", "", "当前事项 提交周报"),
                 Map.of("clarifyStyle", "minimal", "planningStyle", "plan-first")
         );
 
@@ -89,5 +89,25 @@ class PromptBuilderTest {
         assertTrue(prompt.contains("ask fewer clarifying questions"));
         assertTrue(prompt.contains("offer a short structured plan"));
         assertTrue(prompt.contains("Current Task"));
+    }
+
+    @Test
+    void shouldAddAdaptiveWorkModeGuidanceWithoutRoleSwitching() {
+        PromptBuilder builder = new PromptBuilder();
+        PromptMemoryContextDto context = new PromptMemoryContextDto(
+                "",
+                "",
+                "",
+                Map.of(),
+                List.of(item("semantic", "当前事项：制定医疗行业增长复盘方案"))
+        );
+
+        String prompt = builder.build(context, "给我一个医疗行业增长分析方案");
+
+        assertTrue(prompt.contains("instead of asking the user to switch roles"));
+        assertTrue(prompt.contains("Detected working modes:"));
+        assertTrue(prompt.contains("planner="));
+        assertTrue(prompt.contains("analyst="));
+        assertTrue(prompt.contains("Detected industry focus: healthcare"));
     }
 }

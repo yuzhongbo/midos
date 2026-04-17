@@ -64,8 +64,14 @@ public class PromptBuilder {
                             List<String> relevantMemory,
                             String userQuery,
                             PromptMemoryContextDto promptMemoryContext) {
+        Map<String, Object> adaptiveContext = AdaptiveWorkModeSupport.enrichProfileContext(
+                userProfile,
+                userQuery,
+                currentTask,
+                relevantMemory == null ? List.of() : relevantMemory.stream().limit(3).toList()
+        );
         StringBuilder builder = new StringBuilder();
-        appendSection(builder, "Assistant Role", assistantRoleInstructions(userQuery, currentTask, relevantMemory, promptMemoryContext));
+        appendSection(builder, "Assistant Role", assistantRoleInstructions(userQuery, currentTask, relevantMemory, promptMemoryContext, adaptiveContext));
         appendSection(builder, "User Profile", formatUserProfile(userProfile));
         appendSection(builder, "Current Task", currentTask);
         appendSection(builder, "Relevant Memory", formatMemoryItems(relevantMemory));
@@ -189,7 +195,8 @@ public class PromptBuilder {
     private String assistantRoleInstructions(String userQuery,
                                              String currentTask,
                                              List<String> relevantMemory,
-                                             PromptMemoryContextDto promptMemoryContext) {
+                                             PromptMemoryContextDto promptMemoryContext,
+                                             Map<String, Object> adaptiveContext) {
         String normalizedQuery = normalize(userQuery);
         boolean conversational = isConversational(normalizedQuery);
         boolean continuation = isShortContinuation(normalizedQuery);
@@ -206,7 +213,8 @@ public class PromptBuilder {
                 .append("3. Prefer doing useful work directly: summarize, decide, draft, organize, or suggest the next concrete step before asking broad follow-up questions.\n")
                 .append("4. Ask at most one clarifying question only when the missing detail truly blocks useful progress.\n")
                 .append("5. Keep the tone human and warm, not客服-like, robotic, or tool-centric.\n")
-                .append("6. Do not output labels like [User Profile], [Current Task], [Relevant Memory], or [User Query].\n");
+                .append("6. Do not output labels like [User Profile], [Current Task], [Relevant Memory], or [User Query].\n")
+                .append("7. Stay one continuous assistant identity across industries; infer the best-fit professional lens from the current task instead of asking the user to switch roles.\n");
         if (continuation) {
             builder.append("Current reply mode: short follow-up. Infer the likely referent from the active task and continue smoothly.\n");
         } else if (conversational) {
@@ -217,11 +225,28 @@ public class PromptBuilder {
         if (hasMemory) {
             builder.append("Memory guidance: use relevant facts quietly to improve continuity, but keep the final reply natural and self-contained.\n");
         }
+        appendAdaptiveRoleGuidance(builder, adaptiveContext);
         appendLearnedPreferenceGuidance(builder, learnedPreferences);
         if (currentTask != null && !currentTask.isBlank() && !"(none)".equals(currentTask)) {
             builder.append("Active task hint: ").append(currentTask).append('\n');
         }
         return builder.toString().trim();
+    }
+
+    private void appendAdaptiveRoleGuidance(StringBuilder builder, Map<String, Object> adaptiveContext) {
+        if (builder == null || adaptiveContext == null || adaptiveContext.isEmpty()) {
+            return;
+        }
+        String workingModes = summarizeWorkingModes(adaptiveContext);
+        if (!workingModes.isBlank()) {
+            builder.append("Detected working modes: ").append(workingModes)
+                    .append(". Use them as internal thinking lenses while keeping one stable assistant voice.\n");
+        }
+        String industryFocus = summarizeIndustryFocus(adaptiveContext);
+        if (!industryFocus.isBlank()) {
+            builder.append("Detected industry focus: ").append(industryFocus)
+                    .append(". Prefer domain-fit terminology, examples, and tradeoffs when helpful.\n");
+        }
     }
 
     private void appendLearnedPreferenceGuidance(StringBuilder builder, Map<String, Object> learnedPreferences) {
@@ -243,6 +268,49 @@ public class PromptBuilder {
         if ("direct-progress".equals(normalize(Objects.toString(learnedPreferences.get("executionStyle"), "")))) {
             builder.append("Preference hint: prefer direct progress and concrete next steps when the context is already clear.\n");
         }
+    }
+
+    private String summarizeAdaptiveValue(Object value) {
+        if (value == null) {
+            return "";
+        }
+        if (value instanceof List<?> list) {
+            return list.stream()
+                    .map(item -> normalize(Objects.toString(item, "")))
+                    .filter(item -> !item.isBlank())
+                    .limit(4)
+                    .reduce((left, right) -> left + ", " + right)
+                    .orElse("");
+        }
+        return normalize(Objects.toString(value, ""));
+    }
+
+    private String summarizeWorkingModes(Map<String, Object> adaptiveContext) {
+        if (adaptiveContext == null || adaptiveContext.isEmpty()) {
+            return "";
+        }
+        Object confidence = adaptiveContext.get("workingModeConfidence");
+        if (confidence instanceof Map<?, ?> map && !map.isEmpty()) {
+            return map.entrySet().stream()
+                    .map(entry -> normalize(Objects.toString(entry.getKey(), "")) + "="
+                            + normalize(Objects.toString(entry.getValue(), "")))
+                    .filter(item -> !item.startsWith("="))
+                    .reduce((left, right) -> left + ", " + right)
+                    .orElse("");
+        }
+        return summarizeAdaptiveValue(adaptiveContext.get("workingModes"));
+    }
+
+    private String summarizeIndustryFocus(Map<String, Object> adaptiveContext) {
+        if (adaptiveContext == null || adaptiveContext.isEmpty()) {
+            return "";
+        }
+        String focus = summarizeAdaptiveValue(adaptiveContext.get("industryFocus"));
+        String confidence = summarizeAdaptiveValue(adaptiveContext.get("industryFocusConfidence"));
+        if (focus.isBlank()) {
+            return "";
+        }
+        return confidence.isBlank() ? focus : focus + " (" + confidence + ")";
     }
 
     private String humanizeMemoryText(String text) {

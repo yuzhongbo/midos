@@ -17,6 +17,7 @@ import java.util.Map;
 
 import static org.hamcrest.Matchers.hasItem;
 import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.startsWith;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -36,7 +37,7 @@ class SkillControllerTest {
     void shouldListRegisteredSkills() throws Exception {
         mockMvc.perform(get("/api/skills"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$[*].name", hasItem("echo")))
+                .andExpect(jsonPath("$[*].name", not(hasItem("echo"))))
                 .andExpect(jsonPath("$[*].name", hasItem("time")));
     }
 

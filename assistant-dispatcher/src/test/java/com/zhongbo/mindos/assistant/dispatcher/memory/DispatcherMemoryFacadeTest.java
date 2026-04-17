@@ -175,6 +175,9 @@ class DispatcherMemoryFacadeTest {
                         "",
                         "",
                         "",
+                        "",
+                        "",
+                        "",
                         "当前事项 继续看接口文档；下一步 确认认证流程"
                 ),
                 Map.of("clarifyStyle", "minimal")

@@ -51,12 +51,12 @@ public class SkillsHelpSkill implements Skill, SkillDescriptorProvider {
         if ("learnable".equalsIgnoreCase(mode)) {
             return SkillResult.success(name(), buildLearnableSkillsReply());
         }
-        return SkillResult.success(name(), buildAvailableSkillsReply());
+        return SkillResult.success(name(), buildAvailableSkillsReply(context == null ? Map.of() : context.attributes()));
     }
 
-    private String buildAvailableSkillsReply() {
+    private String buildAvailableSkillsReply(Map<String, Object> contextAttributes) {
         SkillCatalogFacade skillCatalog = skillCatalogProvider.getIfAvailable();
-        List<VisibleSkill> visibleSkills = visibleSkills(skillCatalog);
+        List<VisibleSkill> visibleSkills = visibleSkills(skillCatalog, contextAttributes);
         if (visibleSkills.isEmpty()) {
             return "我现在还没有注册任何技能。你可以稍后让我重载自定义技能，或者接入 MCP / 外部 JAR 来扩展能力。";
         }
@@ -72,6 +72,9 @@ public class SkillsHelpSkill implements Skill, SkillDescriptorProvider {
             hasLearningPlanCapability = hasLearningPlanCapability || "learning.plan".equals(skill.name());
         }
         reply.append("\n\n默认展示的是能力面，不展开底层 MCP / 诊断工具名；如果你要指定具体工具或继续扩展能力，也可以直接告诉我。");
+        if (!DecisionCapabilityCatalog.developerAudienceEnabled(contextAttributes)) {
+            reply.append("\n开发相关能力不需要你先切换角色；当你明确提出代码或工作区请求时，我会自动打开对应能力。若你长期以开发为主，也可以显式固定 developer / programmer 模式。");
+        }
         if (hasTimeCapability || hasLearningPlanCapability) {
             reply.append("\n\n你也可以直接这样用：");
             if (hasTimeCapability) {
@@ -85,11 +88,12 @@ public class SkillsHelpSkill implements Skill, SkillDescriptorProvider {
     }
 
     private String buildLearnableSkillsReply() {
-        return "我目前可以通过 3 种方式扩展/学习新技能：\n"
-                + "1. 自定义 JSON 技能：把 .json 技能定义放到 mindos.skills.custom-dir，然后重载。\n"
-                + "2. MCP 工具技能：配置 mindos.skills.mcp-servers，或运行时接入一个 MCP server。\n"
-                + "3. 外部 JAR 技能：加载实现 Skill SPI 的外部 JAR。\n"
-                + "如果你愿意，也可以先告诉我你想新增什么能力，我可以帮你判断更适合用哪一种方式。";
+        return "我目前可以通过 4 种方式扩展/学习新技能：\n"
+                + "1. 对话式 skill.studio：你直接说“帮我开发一个抓取官网公告的 skill”，我会先给出 draft 方案，不自动 live。\n"
+                + "2. 自定义 JSON 技能：把 .json 技能定义放到 mindos.skills.custom-dir，然后重载。\n"
+                + "3. MCP 工具技能：配置 mindos.skills.mcp-servers，或运行时接入一个 MCP server。\n"
+                + "4. 外部 JAR 技能：加载实现 Skill SPI 的外部 JAR。\n"
+                + "如果你愿意，也可以先告诉我你想新增什么能力，我会先判断更适合用哪一种方式。";
     }
 
     private String summaryName(String summary) {
@@ -100,7 +104,7 @@ public class SkillsHelpSkill implements Skill, SkillDescriptorProvider {
         return separator >= 0 ? summary.substring(0, separator).trim() : summary.trim();
     }
 
-    private List<VisibleSkill> visibleSkills(SkillCatalogFacade skillCatalog) {
+    private List<VisibleSkill> visibleSkills(SkillCatalogFacade skillCatalog, Map<String, Object> contextAttributes) {
         if (skillCatalog == null) {
             return List.of();
         }
@@ -120,7 +124,7 @@ public class SkillsHelpSkill implements Skill, SkillDescriptorProvider {
         }
 
         Map<String, VisibleSkill> visible = new LinkedHashMap<>();
-        for (DecisionCapabilityCatalog.CapabilityDefinition capability : DecisionCapabilityCatalog.availableCapabilities(availableNames)) {
+        for (DecisionCapabilityCatalog.CapabilityDefinition capability : DecisionCapabilityCatalog.availableCapabilities(availableNames, contextAttributes)) {
             SkillDescriptor rawDescriptor = descriptorsByName.get(normalize(capability.executionSkill()));
             visible.put(capability.decisionTarget(), new VisibleSkill(
                     capability.decisionTarget(),
@@ -170,6 +174,7 @@ public class SkillsHelpSkill implements Skill, SkillDescriptorProvider {
             case "conversation.coach" -> "给沟通回复、安慰、道歉和冲突处理建议";
             case "learning.plan" -> "生成学习、教学和复习计划";
             case "workspace.search" -> "在当前工作区搜索文件、目录和内容";
+            case "skill.studio" -> "通过自然语言创建、导入和规划新技能草案";
             case "news.lookup" -> "查看最新新闻、热点和头条";
             case "web.lookup" -> "联网查询天气、路况、航班、行情等实时信息";
             case "docs.lookup" -> "搜索官方文档、指南和开发手册";

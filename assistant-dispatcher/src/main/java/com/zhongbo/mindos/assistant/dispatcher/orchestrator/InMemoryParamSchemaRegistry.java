@@ -47,6 +47,15 @@ public class InMemoryParamSchemaRegistry implements ParamSchemaRegistry {
                 .withAliases(Map.of("query", java.util.List.of("task"))));
         register("code.generate", ParamSchema.atLeastOne("task")
                 .withAliases(Map.of("task", java.util.List.of("query"))));
+        register("skill.factory", ParamSchema.atLeastOne("request", "goal")
+                .withAliases(Map.of(
+                        "request", java.util.List.of("input", "query"),
+                        "goal", java.util.List.of("task", "topic")
+                ))
+                .withDefaults(Map.of(
+                        "action", "create",
+                        "publishMode", "draft"
+                )));
         register("file.search", ParamSchema.atLeastOne("keyword", "path")
                 .withAliases(Map.of(
                         "keyword", java.util.List.of("query"),

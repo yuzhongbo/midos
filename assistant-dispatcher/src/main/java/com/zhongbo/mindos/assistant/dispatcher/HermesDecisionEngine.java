@@ -112,7 +112,7 @@ final class HermesDecisionEngine {
             addHabitCandidates(candidates, safeContext);
         }
         if (!safeContext.answerMode().llmFirst()) {
-            boostCandidatesFromMemory(candidates, safeContext.skillSuccessRates());
+            boostCandidatesFromMemory(candidates, safeContext, safeContext.skillSuccessRates());
         }
         applySearchPriorityOverrides(candidates, safeContext);
         applyBuiltinSkillPreference(candidates, safeContext);
@@ -416,6 +416,7 @@ final class HermesDecisionEngine {
                         plan
                 );
                 addCandidate(
+                        context,
                         candidates,
                         plan.skillName(),
                         plan.confidence(),
@@ -429,6 +430,7 @@ final class HermesDecisionEngine {
             }
         }
         addCandidate(
+                context,
                 candidates,
                 semanticAnalysis.suggestedSkill(),
                 semanticAnalysis.effectiveConfidence(),
@@ -440,6 +442,7 @@ final class HermesDecisionEngine {
                 false
         );
         addCandidate(
+                context,
                 candidates,
                 semanticAnalysis.intent(),
                 semanticAnalysis.effectiveConfidence() - 0.03d,
@@ -455,6 +458,7 @@ final class HermesDecisionEngine {
                 continue;
             }
             addCandidate(
+                    context,
                     candidates,
                     candidateIntent.intent(),
                     candidateIntent.confidence() - 0.02d,
@@ -475,13 +479,14 @@ final class HermesDecisionEngine {
         }
         List<SkillCandidate> detected = toolSchemaCatalog == null
                 ? skillCatalog.detectSkillCandidates(routingInput, 5)
-                : toolSchemaCatalog.detectDecisionCandidates(routingInput, 5);
+                : toolSchemaCatalog.detectDecisionCandidates(routingInput, 5, context == null ? Map.of() : context.profileContext());
         String route = detected.size() > 1 ? "detected-skill-parallel" : "detected-skill";
         for (SkillCandidate candidate : detected) {
             if (candidate == null) {
                 continue;
             }
             addCandidate(
+                    context,
                     candidates,
                     candidate.skillName(),
                     detectedCandidateScore(context, candidate),
@@ -522,6 +527,7 @@ final class HermesDecisionEngine {
                 continue;
             }
             addCandidate(
+                    context,
                     candidates,
                     recommendation.target(),
                     recommendation.score(),
@@ -535,14 +541,19 @@ final class HermesDecisionEngine {
         }
     }
 
-    private void boostCandidatesFromMemory(Map<String, Candidate> candidates, Map<String, Double> successRates) {
+    private void boostCandidatesFromMemory(Map<String, Candidate> candidates,
+                                           HermesDecisionContext context,
+                                           Map<String, Double> successRates) {
         if (candidates.isEmpty() || successRates == null || successRates.isEmpty()) {
             return;
         }
         for (Map.Entry<String, Candidate> entry : new ArrayList<>(candidates.entrySet())) {
             Double successRate = successRates.get(entry.getKey());
             if (successRate == null && toolSchemaCatalog != null) {
-                String executionTarget = toolSchemaCatalog.executionTargetForDecision(entry.getKey());
+                String executionTarget = toolSchemaCatalog.executionTargetForDecision(
+                        entry.getKey(),
+                        context == null ? Map.of() : context.profileContext()
+                );
                 if (!executionTarget.equals(entry.getKey())) {
                     successRate = successRates.get(executionTarget);
                 }
@@ -680,7 +691,8 @@ final class HermesDecisionEngine {
                 "最新消息", "最近消息", "最新动态", "最近动态");
     }
 
-    private void addCandidate(Map<String, Candidate> candidates,
+    private void addCandidate(HermesDecisionContext context,
+                              Map<String, Candidate> candidates,
                               String skillName,
                               double score,
                               String route,
@@ -689,12 +701,13 @@ final class HermesDecisionEngine {
                               boolean needClarify,
                               String clarifyReply,
                               boolean allowReservedTarget) {
+        Map<String, Object> profileContext = context == null ? Map.of() : context.profileContext();
         String normalizedSkill = toolSchemaCatalog == null
                 ? normalize(skillName)
-                : toolSchemaCatalog.decisionTargetForSkill(skillName);
+                : toolSchemaCatalog.decisionTargetForSkill(skillName, profileContext);
         if (normalizedSkill.isBlank()
-                || (!allowReservedTarget && !toolSchemaCatalog.isDecisionEligible(normalizedSkill))
-                || !isKnownSkill(normalizedSkill)) {
+                || (toolSchemaCatalog != null && !allowReservedTarget && !toolSchemaCatalog.isDecisionEligible(normalizedSkill, profileContext))
+                || !isKnownSkill(normalizedSkill, profileContext)) {
             return;
         }
         Candidate incoming = new Candidate(
@@ -780,7 +793,7 @@ final class HermesDecisionEngine {
         String normalizedInput = context == null ? "" : normalize(context.userInput()).toLowerCase(Locale.ROOT);
         String executionTarget = toolSchemaCatalog == null
                 ? normalize(candidate.skillName())
-                : toolSchemaCatalog.executionTargetForDecision(candidate.skillName());
+                : toolSchemaCatalog.executionTargetForDecision(candidate.skillName(), context == null ? Map.of() : context.profileContext());
         if ("mcp.docs.searchDocs".equals(executionTarget)
                 && (normalizedInput.contains("searchdocs") || normalizedInput.contains("docs"))) {
             score += 0.08d;
@@ -805,7 +818,7 @@ final class HermesDecisionEngine {
         if (candidateSkill.isBlank()) {
             return score;
         }
-        if (semanticAlignsWithDetectedCandidate(semanticAnalysis, candidateSkill)) {
+        if (semanticAlignsWithDetectedCandidate(context, semanticAnalysis, candidateSkill)) {
             return Math.max(score, semanticAnalysis.confidenceForSkill(candidateSkill));
         }
         if (rawScore >= 900) {
@@ -820,17 +833,20 @@ final class HermesDecisionEngine {
         return score;
     }
 
-    private boolean semanticAlignsWithDetectedCandidate(SemanticAnalysisResult semanticAnalysis, String candidateSkill) {
+    private boolean semanticAlignsWithDetectedCandidate(HermesDecisionContext context,
+                                                        SemanticAnalysisResult semanticAnalysis,
+                                                        String candidateSkill) {
         if (semanticAnalysis == null || candidateSkill == null || candidateSkill.isBlank()) {
             return false;
         }
         String normalizedCandidate = normalize(candidateSkill);
+        Map<String, Object> profileContext = context == null ? Map.of() : context.profileContext();
         String decisionTarget = toolSchemaCatalog == null
                 ? normalizedCandidate
-                : toolSchemaCatalog.decisionTargetForSkill(normalizedCandidate);
+                : toolSchemaCatalog.decisionTargetForSkill(normalizedCandidate, profileContext);
         String executionTarget = toolSchemaCatalog == null
                 ? normalizedCandidate
-                : toolSchemaCatalog.executionTargetForDecision(normalizedCandidate);
+                : toolSchemaCatalog.executionTargetForDecision(normalizedCandidate, profileContext);
         return semanticMatchesSkillVariant(semanticAnalysis, normalizedCandidate)
                 || semanticMatchesSkillVariant(semanticAnalysis, decisionTarget)
                 || semanticMatchesSkillVariant(semanticAnalysis, executionTarget);
@@ -881,7 +897,7 @@ final class HermesDecisionEngine {
         }
         String executionTarget = toolSchemaCatalog == null
                 ? skillName
-                : toolSchemaCatalog.executionTargetForDecision(skillName);
+                : toolSchemaCatalog.executionTargetForDecision(skillName, context == null ? Map.of() : context.profileContext());
         if (context == null) {
             return safeMap(semanticAnalysis == null ? Map.of() : semanticAnalysis.payload());
         }
@@ -912,7 +928,7 @@ final class HermesDecisionEngine {
         }
         String executionTarget = toolSchemaCatalog == null
                 ? normalize(skillName)
-                : toolSchemaCatalog.executionTargetForDecision(skillName);
+                : toolSchemaCatalog.executionTargetForDecision(skillName, context.profileContext());
         return decisionParamAssembler.assembleParams(executionTarget, "detected", context.userInput(), context.skillContext());
     }
 
@@ -1017,12 +1033,12 @@ final class HermesDecisionEngine {
                 "websearch");
     }
 
-    private boolean isKnownSkill(String skillName) {
+    private boolean isKnownSkill(String skillName, Map<String, Object> contextAttributes) {
         if (skillName == null || skillName.isBlank() || skillCatalog == null) {
             return false;
         }
         String normalized = normalize(skillName);
-        if (toolSchemaCatalog != null && toolSchemaCatalog.isKnownDecisionTarget(normalized)) {
+        if (toolSchemaCatalog != null && toolSchemaCatalog.isKnownDecisionTarget(normalized, contextAttributes)) {
             return true;
         }
         return skillCatalog.listSkillDescriptors().stream()

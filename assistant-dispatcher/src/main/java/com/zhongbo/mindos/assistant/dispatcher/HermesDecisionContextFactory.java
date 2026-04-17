@@ -63,7 +63,6 @@ final class HermesDecisionContextFactory {
         Map<String, Object> resolvedProfileContext = !memoryEnabled || personaCoreService == null
                 ? safeMap(profileContext)
                 : personaCoreService.resolveProfileContext(userId, profileContext);
-        List<HermesToolSchema> toolSchemas = toolSchemaCatalog == null ? List.of() : toolSchemaCatalog.listSchemas();
         PromptMemoryContextDto promptMemoryContext = memoryEnabled
                 ? dispatcherMemoryFacade.buildPromptMemoryContext(
                 userId,
@@ -79,6 +78,13 @@ final class HermesDecisionContextFactory {
                 resolvedProfileContext,
                 promptMemoryContext.learnedPreferences()
         );
+        Map<String, Object> adaptiveProfileContext = AdaptiveWorkModeSupport.enrichProfileContext(
+                decisionProfileContext,
+                userInput,
+                activeTaskThread == null ? "" : activeTaskThread.summary(),
+                topMemoryHints(promptMemoryContext)
+        );
+        List<HermesToolSchema> toolSchemas = toolSchemaCatalog == null ? List.of() : toolSchemaCatalog.listSchemas(adaptiveProfileContext);
         boolean realtimeIntentInput = memoryEnabled
                 && dispatchHeuristicsSupport != null
                 && dispatchHeuristicsSupport.isRealtimeLikeInput(userInput);
@@ -101,7 +107,7 @@ final class HermesDecisionContextFactory {
                 .toList();
         SemanticAnalysisResult semanticAnalysis = semanticAnalyzer == null
                 ? SemanticAnalysisResult.empty()
-                : semanticAnalyzer.analyze(userId, userInput, decisionMemoryContext, decisionProfileContext, toolSummaries);
+                : semanticAnalyzer.analyze(userId, userInput, decisionMemoryContext, adaptiveProfileContext, toolSummaries);
         String rawMemoryContext = memoryEnabled
                 ? dispatcherMemoryFacade.buildMemoryContext(
                 userId,
@@ -116,7 +122,7 @@ final class HermesDecisionContextFactory {
                 userId,
                 routingInput,
                 userInput,
-                decisionProfileContext,
+                adaptiveProfileContext,
                 memoryContext,
                 chatHistory,
                 semanticAnalysis
@@ -126,7 +132,7 @@ final class HermesDecisionContextFactory {
             attributes.putAll(activeTaskThread.asAttributes());
             skillContext = new SkillContext(skillContext.userId(), skillContext.input(), attributes);
         }
-        Map<String, Object> llmContext = new LinkedHashMap<>(decisionProfileContext);
+        Map<String, Object> llmContext = new LinkedHashMap<>(adaptiveProfileContext);
         llmContext.put("userId", userId == null ? "" : userId);
         llmContext.put("input", userInput == null ? "" : userInput);
         llmContext.put("memoryContext", memoryContext);
@@ -147,7 +153,7 @@ final class HermesDecisionContextFactory {
                 userId == null ? "" : userId,
                 userInput == null ? "" : userInput,
                 routingInput == null ? "" : routingInput,
-                decisionProfileContext,
+                adaptiveProfileContext,
                 memoryEnabled,
                 answerMode,
                 promptMemoryContext,
@@ -159,6 +165,17 @@ final class HermesDecisionContextFactory {
                 llmContext,
                 skillContext
         );
+    }
+
+    private List<String> topMemoryHints(PromptMemoryContextDto promptMemoryContext) {
+        if (promptMemoryContext == null || promptMemoryContext.debugTopItems() == null) {
+            return List.of();
+        }
+        return promptMemoryContext.debugTopItems().stream()
+                .map(item -> item == null ? "" : item.text())
+                .filter(text -> text != null && !text.isBlank())
+                .limit(3)
+                .toList();
     }
 
     private Map<String, Double> buildSkillSuccessRates(String userId) {

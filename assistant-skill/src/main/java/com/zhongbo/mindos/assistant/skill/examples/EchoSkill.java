@@ -6,8 +6,6 @@ import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.skill.Skill;
 import com.zhongbo.mindos.assistant.skill.SkillDescriptor;
 import com.zhongbo.mindos.assistant.skill.SkillDescriptorProvider;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.stereotype.Component;
 
 import java.util.List;
 import java.util.LinkedHashMap;
@@ -15,12 +13,10 @@ import java.util.Map;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-@Component
 public class EchoSkill implements Skill, SkillDescriptorProvider {
     private static final Logger LOGGER = Logger.getLogger(EchoSkill.class.getName());
     private final LlmClient llmClient;
 
-    @Autowired
     public EchoSkill(LlmClient llmClient) {
         this.llmClient = llmClient;
     }

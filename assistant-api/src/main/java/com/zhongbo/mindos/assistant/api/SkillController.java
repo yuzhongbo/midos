@@ -64,7 +64,7 @@ public class SkillController {
      * Lists all currently registered skills sorted by name.
      * <p>Example response:</p>
      * <pre>
-     * [{"name":"echo","description":"Echoes back the text after the 'echo' command.","type":"builtin"}]
+     * [{"name":"time","description":"Current time lookup"}]
      * </pre>
      */
     @GetMapping

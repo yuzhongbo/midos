@@ -38,7 +38,7 @@ public class ChatController {
 
     /**
      * Example response:
-     * {"reply":"hello","channel":"echo"}
+     * {"reply":"你好","channel":"llm"}
      */
     @PostMapping(produces = MediaType.APPLICATION_JSON_VALUE)
     public ChatResponseDto chat(@RequestBody ChatRequestDto request) {

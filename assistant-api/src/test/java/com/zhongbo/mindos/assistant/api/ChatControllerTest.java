@@ -36,23 +36,23 @@ class ChatControllerTest {
     private MockMvc mockMvc;
 
     @Test
-    void shouldRouteEchoMessageToEchoSkill() throws Exception {
+    void shouldRouteNaturalLanguageHelpMessageToSkillsHelp() throws Exception {
         mockMvc.perform(post("/chat")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"userId\":\"test-user\",\"message\":\"echo hello\"}"))
+                        .content("{\"userId\":\"test-user\",\"message\":\"你有哪些技能？\"}"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.reply").value("hello"))
-                .andExpect(jsonPath("$.channel").value("echo"));
+                .andExpect(jsonPath("$.channel").value("skills.help"))
+                .andExpect(jsonPath("$.reply").value(org.hamcrest.Matchers.containsString("learning.plan")));
     }
 
     @Test
     void shouldKeepApiChatPathCompatible() throws Exception {
         mockMvc.perform(post("/api/chat")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"userId\":\"test-user\",\"message\":\"echo compatibility\"}"))
+                        .content("{\"userId\":\"api-help-user\",\"message\":\"你有哪些技能？\"}"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.reply").value("compatibility"))
-                .andExpect(jsonPath("$.channel").value("echo"));
+                .andExpect(jsonPath("$.channel").value("skills.help"))
+                .andExpect(jsonPath("$.reply").value(org.hamcrest.Matchers.containsString("learning.plan")));
     }
 
     @Test
@@ -81,7 +81,7 @@ class ChatControllerTest {
         MvcResult mvcResult = mockMvc.perform(post("/chat")
                         .accept(MediaType.TEXT_EVENT_STREAM)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"userId\":\"stream-user\",\"message\":\"echo hello\"}"))
+                        .content("{\"userId\":\"stream-user\",\"message\":\"你有哪些技能？\"}"))
                 .andExpect(status().isOk())
                 .andExpect(content().contentTypeCompatibleWith(MediaType.TEXT_EVENT_STREAM))
                 .andExpect(request().asyncStarted())
@@ -143,12 +143,27 @@ class ChatControllerTest {
                         .content("{\"userId\":\"test-user\",\"message\":\"你有哪些技能？\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.channel").value("skills.help"))
-                .andExpect(jsonPath("$.reply").value(org.hamcrest.Matchers.containsString("time.lookup")))
                 .andExpect(jsonPath("$.reply").value(org.hamcrest.Matchers.containsString("learning.plan")))
-                .andExpect(jsonPath("$.reply").value(org.hamcrest.Matchers.containsString("现在几点了")))
+                .andExpect(jsonPath("$.reply").value(org.hamcrest.Matchers.containsString("skill.studio")))
                 .andExpect(jsonPath("$.reply").value(org.hamcrest.Matchers.containsString("六周数学学习计划")))
+                .andExpect(jsonPath("$.reply").value(org.hamcrest.Matchers.containsString("开发相关能力不需要你先切换角色")))
+                .andExpect(jsonPath("$.reply").value(org.hamcrest.Matchers.containsString("time.lookup")))
+                .andExpect(jsonPath("$.reply").value(org.hamcrest.Matchers.containsString("docs.lookup")))
+                .andExpect(jsonPath("$.reply").value(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("code.assist"))))
                 .andExpect(jsonPath("$.reply").value(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("semantic.analyze"))))
                 .andExpect(jsonPath("$.reply").value(org.hamcrest.Matchers.not(org.hamcrest.Matchers.containsString("llm.orchestrate"))));
+    }
+
+    @Test
+    void shouldRevealDeveloperCapabilitiesWhenRoleIsProgrammer() throws Exception {
+        mockMvc.perform(post("/chat")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"userId\":\"dev-user\",\"message\":\"你有哪些技能？\",\"profile\":{\"role\":\"programmer\"}}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.channel").value("skills.help"))
+                .andExpect(jsonPath("$.reply").value(org.hamcrest.Matchers.containsString("time.lookup")))
+                .andExpect(jsonPath("$.reply").value(org.hamcrest.Matchers.containsString("docs.lookup")))
+                .andExpect(jsonPath("$.reply").value(org.hamcrest.Matchers.containsString("code.assist")));
     }
 
     @Test
@@ -350,19 +365,19 @@ class ChatControllerTest {
     void shouldNotReuseCodeGenerateHabitAfterFailedExecutions() throws Exception {
         mockMvc.perform(post("/chat")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"userId\":\"code-habit-user\",\"message\":\"generate code for order entity\"}"))
+                        .content("{\"userId\":\"code-habit-user\",\"message\":\"generate code for order entity\",\"profile\":{\"role\":\"programmer\"}}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.channel").value("code.generate"));
 
         mockMvc.perform(post("/chat")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"userId\":\"code-habit-user\",\"message\":\"generate code for order service\"}"))
+                        .content("{\"userId\":\"code-habit-user\",\"message\":\"generate code for order service\",\"profile\":{\"role\":\"programmer\"}}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.channel").value("code.generate"));
 
         mockMvc.perform(post("/chat")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"userId\":\"code-habit-user\",\"message\":\"继续按之前方式\"}"))
+                        .content("{\"userId\":\"code-habit-user\",\"message\":\"继续按之前方式\",\"profile\":{\"role\":\"programmer\"}}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.channel").value(org.hamcrest.Matchers.anyOf(
                         org.hamcrest.Matchers.is("code.generate"),
@@ -397,13 +412,13 @@ class ChatControllerTest {
     void shouldUseFallbackChannelWhenHabitHistoryIsInsufficient() throws Exception {
         mockMvc.perform(post("/chat")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"userId\":\"habit-threshold-user\",\"message\":\"generate code for member aggregate\"}"))
+                        .content("{\"userId\":\"habit-threshold-user\",\"message\":\"generate code for member aggregate\",\"profile\":{\"role\":\"programmer\"}}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.channel").value("code.generate"));
 
         mockMvc.perform(post("/chat")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"userId\":\"habit-threshold-user\",\"message\":\"继续按之前方式\"}"))
+                        .content("{\"userId\":\"habit-threshold-user\",\"message\":\"继续按之前方式\",\"profile\":{\"role\":\"programmer\"}}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.channel").value(org.hamcrest.Matchers.anyOf(
                         org.hamcrest.Matchers.is("code.generate"),

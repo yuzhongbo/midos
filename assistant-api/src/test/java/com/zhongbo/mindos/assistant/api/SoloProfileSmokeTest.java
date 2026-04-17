@@ -38,9 +38,8 @@ class SoloProfileSmokeTest {
         String userId = "solo-smoke-user-" + UUID.randomUUID();
         mockMvc.perform(post("/chat")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"userId\":\"" + userId + "\",\"message\":\"echo hello\"}"))
+                        .content("{\"userId\":\"" + userId + "\",\"message\":\"你有哪些技能？\"}"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.channel").value("echo"));
+                .andExpect(jsonPath("$.channel").value("skills.help"));
     }
 }
-

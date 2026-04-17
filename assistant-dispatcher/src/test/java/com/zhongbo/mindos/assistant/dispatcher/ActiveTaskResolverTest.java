@@ -19,14 +19,14 @@ class ActiveTaskResolverTest {
         PromptMemoryContextDto context = new PromptMemoryContextDto(
                 "",
                 """
-                - [fact] [任务事实] 当前事项：提交周报；项目：运营周报；主题：数学；截止时间：周五前
-                - [working] [任务状态] 当前事项：提交周报；状态：进行中；下一步：同步项目风险
+                - [fact] [任务事实] 当前事项：提交周报；项目：运营周报；主题：数学；截止时间：周五前；交付物：风险说明版周报
+                - [working] [任务状态] 当前事项：提交周报；状态：进行中；下一步：同步项目风险；阻塞点：等待财务数据；完成标准：负责人确认可发
                 - [assistant-context] [学习信号] 当前事项：提交周报；偏好：上下文明确时直接推进，少澄清
                 """,
                 "",
                 Map.of(),
                 List.of(
-                        new RetrievedMemoryItemDto("semantic", "[任务事实] 当前事项：提交周报；项目：运营周报；主题：数学；截止时间：周五前", 0.9, 0.9, 0.9, 0.9, 1L)
+                        new RetrievedMemoryItemDto("semantic", "[任务事实] 当前事项：提交周报；项目：运营周报；主题：数学；截止时间：周五前；交付物：风险说明版周报", 0.9, 0.9, 0.9, 0.9, 1L)
                 )
         );
 
@@ -38,6 +38,9 @@ class ActiveTaskResolverTest {
         assertEquals("运营周报", resolved.project());
         assertEquals("数学", resolved.topic());
         assertEquals("周五前", resolved.dueDate());
+        assertEquals("风险说明版周报", resolved.deliverable());
+        assertEquals("等待财务数据", resolved.blocker());
+        assertEquals("负责人确认可发", resolved.doneDefinition());
         assertEquals("上下文明确时直接推进，少澄清", resolved.preferenceHint());
     }
 
@@ -51,8 +54,11 @@ class ActiveTaskResolverTest {
                 "运营周报",
                 "数学",
                 "周五前",
+                "风险说明版周报",
+                "等待财务数据",
+                "负责人确认可发",
                 "上下文明确时直接推进，少澄清",
-                "当前事项 提交周报；状态 进行中；下一步 同步项目风险"
+                "当前事项 提交周报；状态 进行中；下一步 同步项目风险；交付物 风险说明版周报；阻塞点 等待财务数据；完成标准 负责人确认可发"
         );
 
         String memoryContext = resolver.enrichMemoryContext("Recent conversation:\n- user: 继续", resolved, 800);
@@ -60,6 +66,8 @@ class ActiveTaskResolverTest {
         assertTrue(memoryContext.contains("Active task thread:"));
         assertTrue(memoryContext.contains("当前事项：提交周报"));
         assertTrue(memoryContext.contains("主题：数学"));
+        assertTrue(memoryContext.contains("交付物：风险说明版周报"));
+        assertTrue(memoryContext.contains("阻塞点：等待财务数据"));
         assertTrue(memoryContext.contains("偏好：上下文明确时直接推进，少澄清"));
     }
 
@@ -79,8 +87,11 @@ class ActiveTaskResolverTest {
                         "运营周报",
                         "数学",
                         "周五前",
+                        "风险说明版周报",
+                        "等待财务数据",
+                        "负责人确认可发",
                         "上下文明确时直接推进，少澄清",
-                        "当前事项 提交周报；状态 进行中；下一步 同步项目风险"
+                        "当前事项 提交周报；状态 进行中；下一步 同步项目风险；交付物 风险说明版周报；阻塞点 等待财务数据；完成标准 负责人确认可发"
                 ),
                 Map.of("clarifyStyle", "minimal")
         );
@@ -89,6 +100,8 @@ class ActiveTaskResolverTest {
 
         assertEquals("提交周报", resolved.focus());
         assertEquals("同步项目风险", resolved.nextAction());
+        assertEquals("风险说明版周报", resolved.deliverable());
+        assertEquals("等待财务数据", resolved.blocker());
         assertEquals("上下文明确时直接推进，少澄清", resolved.preferenceHint());
     }
 }

@@ -1,5 +1,6 @@
 package com.zhongbo.mindos.assistant.dispatcher;
 
+import com.zhongbo.mindos.assistant.common.CanonicalTaskFields;
 import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryCommandService;
 import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryFacade;
@@ -105,7 +106,7 @@ final class HermesMemoryRecorder {
             batch = batch.merge(semanticRoutingSupport.maybeStoreSemanticSummary(userId, userInput, semanticAnalysis));
         }
         batch = batch.merge(buildTaskFactBatch(semanticAnalysis, finalResult, effectivePayload, effectiveTaskFocus));
-        batch = batch.merge(buildTaskStateBatch(semanticAnalysis, finalResult, effectiveTaskFocus));
+        batch = batch.merge(buildTaskStateBatch(semanticAnalysis, finalResult, effectivePayload, effectiveTaskFocus));
         batch = batch.merge(buildLearningSignalBatch(userInput, semanticAnalysis, finalResult, effectiveTaskFocus));
 
         String rollup = buildConversationRollup(userInput, semanticAnalysis, finalResult);
@@ -235,23 +236,25 @@ final class HermesMemoryRecorder {
         String task = firstNonBlank(
                 stringValue(payload.get("task")),
                 stringValue(payload.get("title")),
-                stringValue(payload.get("goal")),
+                CanonicalTaskFields.text(payload, CanonicalTaskFields.GOAL),
                 effectiveTaskFocus,
                 semanticAnalysis.taskFocus()
         );
-        String goal = stringValue(payload.get("goal"));
-        String dueDate = firstNonBlank(
-                stringValue(payload.get("dueDate")),
-                stringValue(payload.get("deadline")),
-                stringValue(payload.get("date")),
-                stringValue(payload.get("time")),
-                stringValue(payload.get("scheduleTime"))
-        );
-        String project = stringValue(payload.get("project"));
-        String owner = firstNonBlank(stringValue(payload.get("owner")), stringValue(payload.get("assignee")));
-        String location = firstNonBlank(stringValue(payload.get("location")), stringValue(payload.get("place")));
-        String topic = stringValue(payload.get("topic"));
-        if (task.isBlank() && dueDate.isBlank() && project.isBlank() && owner.isBlank() && location.isBlank() && topic.isBlank()) {
+        String goal = CanonicalTaskFields.text(payload, CanonicalTaskFields.GOAL);
+        String dueDate = CanonicalTaskFields.text(payload, CanonicalTaskFields.DEADLINE);
+        String project = CanonicalTaskFields.text(payload, CanonicalTaskFields.PROJECT);
+        String owner = CanonicalTaskFields.text(payload, CanonicalTaskFields.OWNER);
+        String location = CanonicalTaskFields.text(payload, CanonicalTaskFields.LOCATION);
+        String topic = CanonicalTaskFields.text(payload, CanonicalTaskFields.TOPIC);
+        String deliverable = CanonicalTaskFields.text(payload, CanonicalTaskFields.DELIVERABLE);
+        String audience = CanonicalTaskFields.text(payload, CanonicalTaskFields.AUDIENCE);
+        String constraints = CanonicalTaskFields.text(payload, CanonicalTaskFields.CONSTRAINTS);
+        String sourceRequirement = CanonicalTaskFields.text(payload, CanonicalTaskFields.SOURCE_REQUIREMENT);
+        String doneDefinition = CanonicalTaskFields.text(payload, CanonicalTaskFields.DONE_DEFINITION);
+        if (task.isBlank() && dueDate.isBlank() && project.isBlank() && owner.isBlank()
+                && location.isBlank() && topic.isBlank() && deliverable.isBlank()
+                && audience.isBlank() && constraints.isBlank() && sourceRequirement.isBlank()
+                && doneDefinition.isBlank()) {
             return "";
         }
         StringBuilder entry = new StringBuilder(TASK_FACT_MARKER).append(' ');
@@ -260,6 +263,11 @@ final class HermesMemoryRecorder {
         appendFactSegment(entry, "目标", goal.equals(task) ? "" : goal);
         appendFactSegment(entry, "主题", topic.equals(task) ? "" : topic);
         appendFactSegment(entry, "截止时间", dueDate);
+        appendFactSegment(entry, "交付物", deliverable);
+        appendFactSegment(entry, "受众", audience);
+        appendFactSegment(entry, "约束", constraints);
+        appendFactSegment(entry, "来源要求", sourceRequirement);
+        appendFactSegment(entry, "完成标准", doneDefinition);
         appendFactSegment(entry, "负责人", owner);
         appendFactSegment(entry, "地点", location);
         return cap(entry.toString(), 220);
@@ -267,6 +275,7 @@ final class HermesMemoryRecorder {
 
     private MemoryWriteBatch buildTaskStateBatch(SemanticAnalysisResult semanticAnalysis,
                                                  SkillResult finalResult,
+                                                 Map<String, Object> effectivePayload,
                                                  String effectiveTaskFocus) {
         if (semanticAnalysis == null || finalResult == null || !finalResult.success()) {
             return MemoryWriteBatch.empty();
@@ -274,7 +283,7 @@ final class HermesMemoryRecorder {
         if ("realtime".equals(semanticAnalysis.contextScope()) || "recall".equals(semanticAnalysis.memoryOperation())) {
             return MemoryWriteBatch.empty();
         }
-        String entry = buildTaskStateEntry(semanticAnalysis, finalResult, effectiveTaskFocus);
+        String entry = buildTaskStateEntry(semanticAnalysis, finalResult, effectivePayload, effectiveTaskFocus);
         if (entry.isBlank()) {
             return MemoryWriteBatch.empty();
         }
@@ -283,6 +292,7 @@ final class HermesMemoryRecorder {
 
     private String buildTaskStateEntry(SemanticAnalysisResult semanticAnalysis,
                                        SkillResult finalResult,
+                                       Map<String, Object> effectivePayload,
                                        String effectiveTaskFocus) {
         String task = firstNonBlank(effectiveTaskFocus, semanticAnalysis == null ? "" : semanticAnalysis.taskFocus());
         if (task.isBlank()) {
@@ -292,10 +302,13 @@ final class HermesMemoryRecorder {
         if (state.isBlank()) {
             return "";
         }
+        Map<String, Object> payload = effectivePayload == null ? Map.of() : effectivePayload;
         StringBuilder entry = new StringBuilder(TASK_STATE_MARKER).append(' ');
         appendFactSegment(entry, "当前事项", task);
         appendFactSegment(entry, "状态", state);
-        appendFactSegment(entry, "下一步", resolveNextAction(semanticAnalysis, finalResult, task, state));
+        appendFactSegment(entry, "下一步", resolveNextAction(semanticAnalysis, finalResult, payload, task, state));
+        appendFactSegment(entry, "阻塞点", CanonicalTaskFields.text(payload, CanonicalTaskFields.BLOCKER));
+        appendFactSegment(entry, "完成标准", CanonicalTaskFields.text(payload, CanonicalTaskFields.DONE_DEFINITION));
         appendFactSegment(entry, "执行方式", finalResult.skillName());
         return cap(entry.toString(), 240);
     }
@@ -373,7 +386,7 @@ final class HermesMemoryRecorder {
         if (semanticAnalysis != null && semanticAnalysis.payload() != null && !semanticAnalysis.payload().isEmpty()) {
             semanticAnalysis.payload().forEach(merged::putIfAbsent);
         }
-        return merged.isEmpty() ? Map.of() : Map.copyOf(merged);
+        return CanonicalTaskFields.normalize(merged);
     }
 
     private String resolveTaskFocus(SemanticAnalysisResult semanticAnalysis, Map<String, Object> effectivePayload) {
@@ -381,8 +394,8 @@ final class HermesMemoryRecorder {
         return firstNonBlank(
                 stringValue(payload.get("task")),
                 stringValue(payload.get("title")),
-                stringValue(payload.get("goal")),
-                stringValue(payload.get("topic")),
+                CanonicalTaskFields.text(payload, CanonicalTaskFields.GOAL),
+                CanonicalTaskFields.text(payload, CanonicalTaskFields.TOPIC),
                 semanticAnalysis == null ? "" : semanticAnalysis.taskFocus()
         );
     }
@@ -417,15 +430,13 @@ final class HermesMemoryRecorder {
 
     private String resolveNextAction(SemanticAnalysisResult semanticAnalysis,
                                      SkillResult finalResult,
+                                     Map<String, Object> payload,
                                      String task,
                                      String state) {
         if (semanticAnalysis == null || task == null || task.isBlank()) {
             return "";
         }
-        String payloadNext = firstNonBlank(
-                stringValue(semanticAnalysis.payload().get("nextAction")),
-                stringValue(semanticAnalysis.payload().get("next_step"))
-        );
+        String payloadNext = CanonicalTaskFields.text(payload, CanonicalTaskFields.NEXT_ACTION);
         if (!payloadNext.isBlank()) {
             return payloadNext;
         }
@@ -433,6 +444,10 @@ final class HermesMemoryRecorder {
             return "";
         }
         if ("受阻".equals(state)) {
+            String blocker = CanonicalTaskFields.text(payload, CanonicalTaskFields.BLOCKER);
+            if (!blocker.isBlank()) {
+                return "先处理阻塞点：" + blocker;
+            }
             return "先处理阻塞点后继续推进";
         }
         if ("待提醒".equals(state)) {
