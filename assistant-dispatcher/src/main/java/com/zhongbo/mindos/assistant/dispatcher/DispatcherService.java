@@ -18,6 +18,7 @@ import com.zhongbo.mindos.assistant.common.dto.RoutingReplayItemDto;
 import com.zhongbo.mindos.assistant.common.dto.RoutingDecisionDto;
 import com.zhongbo.mindos.assistant.common.dto.CritiqueReportDto;
 import com.zhongbo.mindos.assistant.common.dto.SkillPreAnalyzeMetricsDto;
+import com.zhongbo.mindos.assistant.memory.MemoryStateStore;
 import com.zhongbo.mindos.assistant.memory.model.ProceduralMemoryEntry;
 import com.zhongbo.mindos.assistant.memory.model.SemanticMemoryEntry;
 import com.zhongbo.mindos.assistant.memory.model.SkillUsageStats;
@@ -203,6 +204,7 @@ public class DispatcherService implements ContextCompressionMetricsReader,
     private WebLookupDetailHelper webLookupDetailHelper;
     private SkillRecipeRegistry skillRecipeRegistry;
     private ToolLearningService toolLearningService;
+    private MemoryStateStore memoryStateStore = MemoryStateStore.noOp();
     private List<DispatchSkillDslResolver> dispatchSkillDslResolvers = List.of();
 
     public DispatcherService(SkillCatalogFacade skillEngine,
@@ -626,6 +628,15 @@ public class DispatcherService implements ContextCompressionMetricsReader,
         this.toolLearningService = toolLearningService;
     }
 
+    @Autowired(required = false)
+    void setMemoryStateStore(MemoryStateStore memoryStateStore) {
+        this.memoryStateStore = memoryStateStore == null ? MemoryStateStore.noOp() : memoryStateStore;
+        this.hermesDecisionPolicy.configureRuntimePolicyPersistence(this.memoryStateStore);
+        if (this.skillRecipeRegistry != null) {
+            this.skillRecipeRegistry.configurePersistence(this.memoryStateStore);
+        }
+    }
+
     private DispatcherMemoryFacade activeDispatcherMemoryFacade() {
         return dispatcherMemoryFacade;
     }
@@ -680,7 +691,7 @@ public class DispatcherService implements ContextCompressionMetricsReader,
                     effectiveSchemaRegistry = fallbackRegistry;
                 }
                 SkillRecipeRegistry effectiveRecipeRegistry = this.skillRecipeRegistry == null
-                        ? new SkillRecipeRegistry()
+                        ? new SkillRecipeRegistry(this.memoryStateStore)
                         : this.skillRecipeRegistry;
                 this.skillRecipeRegistry = effectiveRecipeRegistry;
                 HermesToolSchemaCatalog toolSchemaCatalog = new HermesToolSchemaCatalog(this.skillEngine, effectiveSchemaRegistry);

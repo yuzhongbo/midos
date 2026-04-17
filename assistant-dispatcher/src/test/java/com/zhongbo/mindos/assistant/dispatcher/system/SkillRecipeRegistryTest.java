@@ -1,7 +1,10 @@
 package com.zhongbo.mindos.assistant.dispatcher.system;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.zhongbo.mindos.assistant.memory.MemoryStateStore;
 import org.junit.jupiter.api.Test;
 
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -71,5 +74,49 @@ class SkillRecipeRegistryTest {
                 registry.resolve("u1", "docs.lookup", "mcp.docs.searchDocs").orElseThrow().workflowReason());
         assertEquals("systemWorkflow=skill-graph:docs.lookup.detail",
                 registry.resolve("u2", "docs.lookup", "mcp.docs.searchDocs").orElseThrow().workflowReason());
+    }
+
+    @Test
+    void shouldRestorePersistedUserScopedOverride() {
+        MapBackedMemoryStateStore stateStore = new MapBackedMemoryStateStore();
+        SkillRecipe replacement = new SkillRecipe(
+                "docs.lookup.detail",
+                new SkillRecipeSelector("docs.lookup", "mcp.docs.searchdocs"),
+                "skill-graph",
+                "systemWorkflow=skill-graph:docs.lookup.detail:persisted",
+                List.of(new SkillRecipeStep(
+                        "execute",
+                        SkillRecipeSelector.EXECUTION_TARGET_TOKEN,
+                        SkillRecipeFailurePolicy.STOP,
+                        Map.of()
+                )),
+                true,
+                1
+        );
+        SkillRecipeRegistry first = new SkillRecipeRegistry(stateStore);
+        first.registerOrReplace("u1", replacement);
+
+        SkillRecipeRegistry restored = new SkillRecipeRegistry(stateStore);
+
+        assertEquals("systemWorkflow=skill-graph:docs.lookup.detail:persisted",
+                restored.resolve("u1", "docs.lookup", "mcp.docs.searchDocs").orElseThrow().workflowReason());
+        assertEquals("systemWorkflow=skill-graph:docs.lookup.detail",
+                restored.resolve("u2", "docs.lookup", "mcp.docs.searchDocs").orElseThrow().workflowReason());
+    }
+
+    private static final class MapBackedMemoryStateStore implements MemoryStateStore {
+        private final Map<String, Object> values = new LinkedHashMap<>();
+
+        @Override
+        @SuppressWarnings("unchecked")
+        public <T> T readState(String fileName, TypeReference<T> typeReference, java.util.function.Supplier<T> fallbackSupplier) {
+            Object value = values.get(fileName);
+            return value == null ? fallbackSupplier.get() : (T) value;
+        }
+
+        @Override
+        public void writeState(String fileName, Object value) {
+            values.put(fileName, value);
+        }
     }
 }

@@ -1,14 +1,17 @@
 package com.zhongbo.mindos.assistant.skill.learning;
 
 import com.sun.net.httpserver.HttpServer;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.common.SkillResult;
+import com.zhongbo.mindos.assistant.memory.MemoryStateStore;
 import com.zhongbo.mindos.assistant.skill.Skill;
 import com.zhongbo.mindos.assistant.skill.SkillRegistry;
 import org.junit.jupiter.api.Test;
 
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -134,5 +137,45 @@ class ToolLearningServiceTest {
                 initial.artifact().skillName(),
                 evolved.artifact().skillName()
         )));
+    }
+
+    @Test
+    void shouldRestorePersistedGeneratedArtifacts() {
+        MapBackedMemoryStateStore stateStore = new MapBackedMemoryStateStore();
+        GeneratedSkillArtifactStore first = new GeneratedSkillArtifactStore(stateStore);
+        ToolLearningService service = new ToolLearningService(
+                new DefaultToolGenerator("com.zhongbo.mindos.assistant.skill.generated"),
+                new GeneratedSkillCompiler(),
+                new SkillRegistry(List.of()),
+                new com.zhongbo.mindos.assistant.skill.SkillGovernanceValidator(),
+                first
+        );
+        GeneratedSkillReview review = service.reviewDraft(new ToolGenerationRequest(
+                "u1",
+                "抓取某网站数据",
+                "web.scrape",
+                Map.of()
+        ));
+
+        GeneratedSkillArtifactStore restored = new GeneratedSkillArtifactStore(stateStore);
+
+        assertTrue(restored.find(review.artifact().skillName()).isPresent());
+        assertTrue(restored.knownSkillNames().contains(review.artifact().skillName()));
+    }
+
+    private static final class MapBackedMemoryStateStore implements MemoryStateStore {
+        private final Map<String, Object> values = new LinkedHashMap<>();
+
+        @Override
+        @SuppressWarnings("unchecked")
+        public <T> T readState(String fileName, TypeReference<T> typeReference, java.util.function.Supplier<T> fallbackSupplier) {
+            Object value = values.get(fileName);
+            return value == null ? fallbackSupplier.get() : (T) value;
+        }
+
+        @Override
+        public void writeState(String fileName, Object value) {
+            values.put(fileName, value);
+        }
     }
 }

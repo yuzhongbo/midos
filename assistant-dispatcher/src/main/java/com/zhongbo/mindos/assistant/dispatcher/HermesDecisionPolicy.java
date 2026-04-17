@@ -3,6 +3,7 @@ package com.zhongbo.mindos.assistant.dispatcher;
 import com.zhongbo.mindos.assistant.common.SkillDsl;
 import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.memory.MemoryWriteBatch;
+import com.zhongbo.mindos.assistant.memory.MemoryStateStore;
 import com.zhongbo.mindos.assistant.memory.model.ProceduralMemoryEntry;
 import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalysisResult;
 
@@ -147,5 +148,9 @@ final class HermesDecisionPolicy {
 
     HermesRuntimePolicyStore runtimePolicyStore() {
         return runtimePolicyStore;
+    }
+
+    void configureRuntimePolicyPersistence(MemoryStateStore memoryStateStore) {
+        runtimePolicyStore.configurePersistence(memoryStateStore);
     }
 }
