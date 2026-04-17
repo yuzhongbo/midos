@@ -286,6 +286,7 @@ class MindosCliApplicationTest {
             assertEquals(0, exitCode);
             assertTrue(requestBody.contains("\"userId\":\"cli-user\""));
             assertTrue(requestBody.contains("\"message\":\"echo hello\""));
+            assertFalse(requestBody.contains("\"role\":\"personal-assistant\""));
         } finally {
             server.stop(0);
         }
@@ -2345,4 +2346,3 @@ class MindosCliApplicationTest {
     }
 
 }
-

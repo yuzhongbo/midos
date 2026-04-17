@@ -1,5 +1,6 @@
 package com.zhongbo.mindos.assistant.cli;
 
+import com.zhongbo.mindos.assistant.common.LegacyRoleSupport;
 import com.zhongbo.mindos.assistant.common.dto.ChatResponseDto;
 import com.zhongbo.mindos.assistant.common.dto.ConversationTurnDto;
 import com.zhongbo.mindos.assistant.common.dto.MemoryCompressionPlanRequestDto;
@@ -1866,7 +1867,10 @@ class InteractiveChatRunner {
             return;
         }
         out.println("assistant=" + safe(profile.assistantName()));
-        out.println("role=" + safe(profile.role()));
+        String legacyRole = LegacyRoleSupport.explicitRole(profile.role());
+        if (legacyRole != null) {
+            out.println("legacy.role=" + safe(legacyRole));
+        }
         out.println("style=" + safe(profile.style()));
         out.println("language=" + safe(profile.language()));
         out.println("timezone=" + safe(profile.timezone()));
@@ -1886,7 +1890,7 @@ class InteractiveChatRunner {
                 "name [当前=" + safe(current == null ? null : current.assistantName()) + "]",
                 safe(current == null ? null : current.assistantName()), true));
         putIfBlank(result, "role", promptForMemoryValue(out, reader,
-                "role [当前=" + safe(current == null ? null : current.role()) + "]",
+                "legacy-role [当前=" + safe(LegacyRoleSupport.explicitRole(current == null ? null : current.role())) + "]",
                 safe(current == null ? null : current.role()), true));
         putIfBlank(result, "style", promptForMemoryValue(out, reader,
                 "style [当前=" + safe(current == null ? null : current.style()) + "]",
@@ -2238,4 +2242,3 @@ class InteractiveChatRunner {
     ) {
     }
 }
-

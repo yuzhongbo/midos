@@ -19,7 +19,6 @@ public class ProfileResetCommand implements Runnable {
         AssistantProfile profile = profileStore.defaultProfile();
         profileStore.save(configPath, profile);
         System.out.println("Profile reset at: " + configPath);
-        System.out.println("assistant=" + profile.assistantName() + ", role=" + profile.role());
+        System.out.println("assistant=" + profile.assistantName());
     }
 }
-

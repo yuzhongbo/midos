@@ -1,5 +1,6 @@
 package com.zhongbo.mindos.assistant.dispatcher;
 
+import com.zhongbo.mindos.assistant.common.LegacyRoleSupport;
 import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryFacade;
 import com.zhongbo.mindos.assistant.dispatcher.orchestrator.memory.MemoryWriteBatch;
@@ -56,7 +57,7 @@ public class PersonaCoreService {
 
         PreferenceProfile saved = dispatcherMemoryFacade.getPreferenceProfile(userId);
         putIfAbsent(merged, "assistantName", saved.assistantName());
-        putIfAbsent(merged, "role", saved.role());
+        putIfAbsent(merged, "role", LegacyRoleSupport.explicitRole(saved.role()));
         putIfAbsent(merged, "style", saved.style());
         putIfAbsent(merged, "language", saved.language());
         putIfAbsent(merged, "timezone", saved.timezone());
@@ -72,7 +73,7 @@ public class PersonaCoreService {
         Map<String, Object> safeProfileContext = profileContext == null ? Map.of() : profileContext;
         PreferenceProfile incoming = new PreferenceProfile(
                 sanitizeLearnedValue(asText(safeProfileContext.get("assistantName"))),
-                sanitizeLearnedValue(asText(safeProfileContext.get("role"))),
+                sanitizeLearnedValue(LegacyRoleSupport.explicitRole(safeProfileContext.get("role"))),
                 sanitizeLearnedValue(asText(safeProfileContext.get("style"))),
                 sanitizeLearnedValue(asText(safeProfileContext.get("language"))),
                 sanitizeLearnedValue(asText(safeProfileContext.get("timezone"))),

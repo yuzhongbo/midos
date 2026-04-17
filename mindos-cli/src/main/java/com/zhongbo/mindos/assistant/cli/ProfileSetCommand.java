@@ -1,5 +1,6 @@
 package com.zhongbo.mindos.assistant.cli;
 
+import com.zhongbo.mindos.assistant.common.LegacyRoleSupport;
 import picocli.CommandLine;
 
 import java.nio.file.Path;
@@ -10,7 +11,7 @@ public class ProfileSetCommand implements Runnable {
     @CommandLine.Option(names = {"--name"}, description = "Assistant display name")
     private String name;
 
-    @CommandLine.Option(names = {"--role"}, description = "Assistant role")
+    @CommandLine.Option(names = {"--role"}, description = "Legacy compatibility role (deprecated)")
     private String role;
 
     @CommandLine.Option(names = {"--style"}, description = "Preferred response style")
@@ -63,7 +64,11 @@ public class ProfileSetCommand implements Runnable {
         AssistantProfile updated = new AssistantProfile(nextName, nextRole, nextStyle, nextLanguage, nextTimezone, nextLlmProvider, nextLlmPreset);
         profileStore.save(configPath, updated);
         System.out.println("Profile updated at: " + configPath);
-        System.out.println("assistant=" + updated.assistantName() + ", role=" + updated.role());
+        System.out.println("assistant=" + updated.assistantName());
+        String legacyRole = LegacyRoleSupport.explicitRole(updated.role());
+        if (legacyRole != null) {
+            System.out.println("legacy.role=" + legacyRole);
+        }
     }
 
     private String choose(String candidate, String fallback) {
@@ -73,4 +78,3 @@ public class ProfileSetCommand implements Runnable {
         return candidate.trim();
     }
 }
-

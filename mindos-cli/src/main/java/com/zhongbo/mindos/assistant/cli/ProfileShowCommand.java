@@ -1,5 +1,6 @@
 package com.zhongbo.mindos.assistant.cli;
 
+import com.zhongbo.mindos.assistant.common.LegacyRoleSupport;
 import picocli.CommandLine;
 
 import java.nio.file.Path;
@@ -18,7 +19,10 @@ public class ProfileShowCommand implements Runnable {
     public void run() {
         AssistantProfile profile = profileStore.load(configPath);
         System.out.println("assistant=" + profile.assistantName());
-        System.out.println("role=" + profile.role());
+        String legacyRole = LegacyRoleSupport.explicitRole(profile.role());
+        if (legacyRole != null) {
+            System.out.println("legacy.role=" + legacyRole);
+        }
         System.out.println("style=" + profile.style());
         System.out.println("language=" + profile.language());
         System.out.println("timezone=" + profile.timezone());
@@ -26,4 +30,3 @@ public class ProfileShowCommand implements Runnable {
         System.out.println("llm.preset=" + profile.llmPreset());
     }
 }
-

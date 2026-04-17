@@ -14,14 +14,14 @@
       "language" : "zh-CN",
       "timezone" : "Asia/Shanghai"
     },
-    "budget-user-f5d7b4bf-e83e-4adc-a52e-fe89db87e98d" : {
+    "solo-smoke-user-461ecc38-74db-4eb4-9d03-a837475cfd10" : {
       "assistantName" : "MindOS",
       "role" : "personal-assistant",
       "style" : "warm",
       "language" : "zh-CN",
       "timezone" : "Asia/Shanghai"
     },
-    "solo-smoke-user-461ecc38-74db-4eb4-9d03-a837475cfd10" : {
+    "budget-user-f5d7b4bf-e83e-4adc-a52e-fe89db87e98d" : {
       "assistantName" : "MindOS",
       "role" : "personal-assistant",
       "style" : "warm",
@@ -134,6 +134,13 @@
       "language" : "zh-CN",
       "timezone" : "Asia/Shanghai"
     },
+    "llm-dsl-guard-user-2-d10f73ab-22f4-4788-9ef7-63000b257daf" : {
+      "assistantName" : "MindOS",
+      "role" : "personal-assistant",
+      "style" : "warm",
+      "language" : "zh-CN",
+      "timezone" : "Asia/Shanghai"
+    },
     "llm-dsl-guard-user-8517841a-4025-46a1-9392-af2b827fef95" : {
       "assistantName" : "MindOS",
       "role" : "personal-assistant",
@@ -141,13 +148,6 @@
       "language" : "zh-CN",
       "timezone" : "Asia/Shanghai",
       "preferredChannel" : "echo"
-    },
-    "llm-dsl-guard-user-2-d10f73ab-22f4-4788-9ef7-63000b257daf" : {
-      "assistantName" : "MindOS",
-      "role" : "personal-assistant",
-      "style" : "warm",
-      "language" : "zh-CN",
-      "timezone" : "Asia/Shanghai"
     },
     "im:dingtalk:ding-style-user" : {
       "assistantName" : "MindOS",
@@ -262,16 +262,16 @@
       "language" : "zh-CN",
       "timezone" : "Asia/Shanghai"
     },
-    "dev-user" : {
+    "llm-dsl-guard-user-2-c235cd53-4495-4685-8dde-39f62ede007f" : {
       "assistantName" : "MindOS",
-      "role" : "programmer",
+      "role" : "personal-assistant",
       "style" : "warm",
       "language" : "zh-CN",
       "timezone" : "Asia/Shanghai"
     },
-    "llm-dsl-guard-user-2-c235cd53-4495-4685-8dde-39f62ede007f" : {
+    "dev-user" : {
       "assistantName" : "MindOS",
-      "role" : "personal-assistant",
+      "role" : "programmer",
       "style" : "warm",
       "language" : "zh-CN",
       "timezone" : "Asia/Shanghai"
@@ -421,14 +421,14 @@
       "timezone" : "Asia/Shanghai",
       "preferredChannel" : "echo"
     },
-    "im:dingtalk:ding-llm-user" : {
+    "llm-dsl-guard-user-2-6df06459-e039-4545-8f4e-8d0684692736" : {
       "assistantName" : "MindOS",
       "role" : "personal-assistant",
       "style" : "warm",
       "language" : "zh-CN",
       "timezone" : "Asia/Shanghai"
     },
-    "llm-dsl-guard-user-2-6df06459-e039-4545-8f4e-8d0684692736" : {
+    "im:dingtalk:ding-llm-user" : {
       "assistantName" : "MindOS",
       "role" : "personal-assistant",
       "style" : "warm",
@@ -678,14 +678,14 @@
       "language" : "zh-CN",
       "timezone" : "Asia/Shanghai"
     },
-    "llm-dsl-guard-user-e322d0d0-d483-4b8d-a8f3-73f8991bb359" : {
+    "llm-dsl-guard-user-2-891530e6-7a41-4186-8b2c-c8451e510722" : {
       "assistantName" : "MindOS",
       "role" : "personal-assistant",
       "style" : "warm",
       "language" : "zh-CN",
       "timezone" : "Asia/Shanghai"
     },
-    "llm-dsl-guard-user-2-891530e6-7a41-4186-8b2c-c8451e510722" : {
+    "llm-dsl-guard-user-e322d0d0-d483-4b8d-a8f3-73f8991bb359" : {
       "assistantName" : "MindOS",
       "role" : "personal-assistant",
       "style" : "warm",
@@ -706,14 +706,14 @@
       "language" : "zh-CN",
       "timezone" : "Asia/Shanghai"
     },
-    "llm-dsl-guard-user-2-c7ee9944-b93a-43ed-8ebf-b3a0c957528a" : {
+    "budget-user-20addb82-eccc-4576-aa9c-4b505132ea13" : {
       "assistantName" : "MindOS",
       "role" : "personal-assistant",
       "style" : "warm",
       "language" : "zh-CN",
       "timezone" : "Asia/Shanghai"
     },
-    "budget-user-20addb82-eccc-4576-aa9c-4b505132ea13" : {
+    "llm-dsl-guard-user-2-c7ee9944-b93a-43ed-8ebf-b3a0c957528a" : {
       "assistantName" : "MindOS",
       "role" : "personal-assistant",
       "style" : "warm",
@@ -728,6 +728,13 @@
       "timezone" : "Asia/Shanghai"
     },
     "solo-smoke-user-179f653e-64c5-42ed-9dec-9915c035ed92" : {
+      "assistantName" : "MindOS",
+      "role" : "personal-assistant",
+      "style" : "warm",
+      "language" : "zh-CN",
+      "timezone" : "Asia/Shanghai"
+    },
+    "llm-dsl-guard-user-2-64e4497c-8f9d-4d3c-9280-b049ee65599e" : {
       "assistantName" : "MindOS",
       "role" : "personal-assistant",
       "style" : "warm",
@@ -1081,6 +1088,13 @@
       "timezone" : "Asia/Shanghai"
     },
     "solo-smoke-user-040b9ab0-c99a-4d0a-a1f2-5d1ef6cb91b6" : {
+      "assistantName" : "MindOS",
+      "role" : "personal-assistant",
+      "style" : "warm",
+      "language" : "zh-CN",
+      "timezone" : "Asia/Shanghai"
+    },
+    "llm-dsl-guard-user-f9cca6cb-0387-4248-9048-8121791eb988" : {
       "assistantName" : "MindOS",
       "role" : "personal-assistant",
       "style" : "warm",
@@ -1553,6 +1567,13 @@
       "timezone" : "Asia/Shanghai"
     },
     "llm-dsl-guard-user-2-f8479f41-7c1a-4376-aac4-0c28c2bfd3d2" : {
+      "assistantName" : "MindOS",
+      "role" : "personal-assistant",
+      "style" : "warm",
+      "language" : "zh-CN",
+      "timezone" : "Asia/Shanghai"
+    },
+    "budget-user-d342df9e-37e3-4085-9440-ce6daa28cc87" : {
       "assistantName" : "MindOS",
       "role" : "personal-assistant",
       "style" : "warm",
@@ -2248,6 +2269,13 @@
       "timezone" : "Asia/Shanghai"
     },
     "llm-dsl-guard-user-2-42721696-1b10-4cab-a840-0f18acab5391" : {
+      "assistantName" : "MindOS",
+      "role" : "personal-assistant",
+      "style" : "warm",
+      "language" : "zh-CN",
+      "timezone" : "Asia/Shanghai"
+    },
+    "solo-smoke-user-1e04c598-a2ed-444c-b2cc-f21587b5d725" : {
       "assistantName" : "MindOS",
       "role" : "personal-assistant",
       "style" : "warm",

@@ -1,5 +1,7 @@
 package com.zhongbo.mindos.assistant.skill;
 
+import com.zhongbo.mindos.assistant.common.LegacyRoleSupport;
+
 import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -193,7 +195,7 @@ public final class DecisionCapabilityCatalog {
         if (profileContext == null || profileContext.isEmpty()) {
             return false;
         }
-        String normalizedRole = normalize(stringValue(profileContext.get("role")));
+        String normalizedRole = normalize(LegacyRoleSupport.explicitRole(profileContext.get("role")));
         if (containsAny(normalizedRole,
                 "developer", "engineer", "programmer", "coder", "architect", "devops", "sre", "qa")) {
             return true;

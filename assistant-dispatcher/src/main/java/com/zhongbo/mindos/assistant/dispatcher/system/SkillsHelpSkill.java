@@ -73,7 +73,7 @@ public class SkillsHelpSkill implements Skill, SkillDescriptorProvider {
         }
         reply.append("\n\n默认展示的是能力面，不展开底层 MCP / 诊断工具名；如果你要指定具体工具或继续扩展能力，也可以直接告诉我。");
         if (!DecisionCapabilityCatalog.developerAudienceEnabled(contextAttributes)) {
-            reply.append("\n开发相关能力不需要你先切换角色；当你明确提出代码或工作区请求时，我会自动打开对应能力。若你长期以开发为主，也可以显式固定 developer / programmer 模式。");
+            reply.append("\n开发相关能力不需要你先切换角色；当你明确提出代码或工作区请求时，我会自动打开对应能力。旧的 developer / programmer role 仍兼容，但已不再推荐作为主配置。");
         }
         if (hasTimeCapability || hasLearningPlanCapability) {
             reply.append("\n\n你也可以直接这样用：");

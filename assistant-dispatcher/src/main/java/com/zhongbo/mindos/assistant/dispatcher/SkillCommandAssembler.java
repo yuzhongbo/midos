@@ -1,5 +1,6 @@
 package com.zhongbo.mindos.assistant.dispatcher;
 
+import com.zhongbo.mindos.assistant.common.LegacyRoleSupport;
 import com.zhongbo.mindos.assistant.common.SkillDsl;
 import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.common.command.CodeGenerateCommandSupport;
@@ -253,9 +254,16 @@ final class SkillCommandAssembler {
         if (!preferenceReuseEnabled || profileContext == null || profileContext.isEmpty()) {
             return;
         }
-        String role = asString(profileContext.get("role"));
-        if (isBlankValue(payload.get("gradeOrLevel")) && role != null && !role.isBlank()) {
-            payload.put("gradeOrLevel", role);
+        String gradeOrLevel = firstNonBlank(
+                asString(profileContext.get("gradeOrLevel")),
+                asString(profileContext.get("audience"))
+        );
+        if (isBlankValue(payload.get("gradeOrLevel")) && gradeOrLevel != null && !gradeOrLevel.isBlank()) {
+            payload.put("gradeOrLevel", gradeOrLevel);
+        }
+        String legacyRole = LegacyRoleSupport.explicitRole(profileContext.get("role"));
+        if (isBlankValue(payload.get("gradeOrLevel")) && looksLikeLearningLevel(legacyRole)) {
+            payload.put("gradeOrLevel", legacyRole);
         }
         String style = asString(profileContext.get("style"));
         if (!payload.containsKey("learningStyle") && style != null && !style.isBlank()) {
@@ -380,6 +388,25 @@ final class SkillCommandAssembler {
             }
         }
         return false;
+    }
+
+    private boolean looksLikeLearningLevel(String value) {
+        String normalized = asString(value);
+        if (normalized == null || normalized.isBlank()) {
+            return false;
+        }
+        return normalized.contains("年级")
+                || normalized.contains("小学")
+                || normalized.contains("初中")
+                || normalized.contains("高中")
+                || normalized.contains("高一")
+                || normalized.contains("高二")
+                || normalized.contains("高三")
+                || normalized.contains("初一")
+                || normalized.contains("初二")
+                || normalized.contains("初三")
+                || normalized.contains("六年级")
+                || normalized.toLowerCase().contains("level");
     }
 
     private boolean isBlankValue(Object value) {

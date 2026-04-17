@@ -1,6 +1,7 @@
 package com.zhongbo.mindos.assistant.cli;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.zhongbo.mindos.assistant.common.LegacyRoleSupport;
 import com.zhongbo.mindos.assistant.common.dto.AssistantProfileDto;
 import com.zhongbo.mindos.assistant.common.dto.ChatRequestDto;
 import com.zhongbo.mindos.assistant.common.dto.ChatResponseDto;
@@ -129,7 +130,7 @@ class CliChatService {
         String resolvedProvider = resolvedLlmProvider();
         return new AssistantProfileDto(
                 profile.assistantName(),
-                profile.role(),
+                LegacyRoleSupport.explicitRole(profile.role()),
                 profile.style(),
                 profile.language(),
                 profile.timezone(),
@@ -224,4 +225,3 @@ class CliChatService {
         return updated;
     }
 }
-

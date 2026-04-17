@@ -1,6 +1,7 @@
 package com.zhongbo.mindos.assistant.dispatcher;
 
 import com.zhongbo.mindos.assistant.common.CanonicalTaskFields;
+import com.zhongbo.mindos.assistant.common.LegacyRoleSupport;
 import com.zhongbo.mindos.assistant.common.SkillResult;
 import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryCommandService;
 import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryFacade;
@@ -161,7 +162,7 @@ final class HermesMemoryRecorder {
         Map<String, Object> safeContext = profileContext == null ? Map.of() : profileContext;
         return new PreferenceProfile(
                 sanitizeProfileValue(safeContext.get("assistantName")),
-                sanitizeProfileValue(safeContext.get("role")),
+                sanitizeProfileValue(LegacyRoleSupport.explicitRole(safeContext.get("role"))),
                 sanitizeProfileValue(safeContext.get("style")),
                 sanitizeProfileValue(safeContext.get("language")),
                 sanitizeProfileValue(safeContext.get("timezone")),

@@ -1,5 +1,6 @@
 package com.zhongbo.mindos.assistant.cli;
 
+import com.zhongbo.mindos.assistant.common.LegacyRoleSupport;
 import picocli.CommandLine;
 
 import java.nio.file.Path;
@@ -10,7 +11,7 @@ public class InitCommand implements Runnable {
     @CommandLine.Option(names = {"--name"}, required = true, description = "Assistant display name")
     private String name;
 
-    @CommandLine.Option(names = {"--role"}, defaultValue = "personal-assistant", description = "Assistant role")
+    @CommandLine.Option(names = {"--role"}, defaultValue = "personal-assistant", description = "Legacy compatibility role (deprecated)")
     private String role;
 
     @CommandLine.Option(names = {"--style"}, defaultValue = "concise", description = "Preferred response style")
@@ -60,7 +61,11 @@ public class InitCommand implements Runnable {
         );
         profileStore.save(configPath, profile);
         System.out.println("Profile initialized at: " + configPath);
-        System.out.println("assistant=" + profile.assistantName() + ", role=" + profile.role());
+        System.out.println("assistant=" + profile.assistantName());
+        String legacyRole = LegacyRoleSupport.explicitRole(profile.role());
+        if (legacyRole != null) {
+            System.out.println("legacy.role=" + legacyRole);
+        }
     }
 
     private void validateInput() {
@@ -78,4 +83,3 @@ public class InitCommand implements Runnable {
         return value;
     }
 }
-

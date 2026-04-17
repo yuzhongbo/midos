@@ -50,7 +50,7 @@ class SkillsHelpSkillTest {
         assertTrue(output.contains("time.lookup"));
         assertTrue(output.contains("docs.lookup"));
         assertTrue(output.contains("默认展示的是能力面"));
-        assertTrue(output.contains("开发相关能力不需要你先切换角色"));
+        assertTrue(output.contains("旧的 developer / programmer role 仍兼容"));
         assertFalse(output.contains("code.assist"));
         assertFalse(output.contains("workspace.search"));
         assertFalse(output.contains("semantic.analyze"));

@@ -97,6 +97,28 @@ class PromptMemoryContextAssemblerTest {
         assertFalse(context.proceduralHints().isBlank());
         assertTrue(context.proceduralHints().contains("teaching.plan"));
         assertEquals("zh-CN", context.personaSnapshot().get("language"));
+        assertFalse(context.personaSnapshot().containsKey("role"));
+    }
+
+    @Test
+    void shouldKeepExplicitLegacyRoleInPersonaSnapshotForCompatibility() {
+        EpisodicMemoryService episodicMemoryService = new EpisodicMemoryService();
+        SemanticMemoryService semanticMemoryService = new SemanticMemoryService(new MemoryConsolidationService());
+        ProceduralMemoryService proceduralMemoryService = new ProceduralMemoryService();
+        PreferenceProfileService preferenceProfileService = new PreferenceProfileService(2, true);
+        preferenceProfileService.updateProfile("u3-role", new com.zhongbo.mindos.assistant.memory.model.PreferenceProfile(
+                null, "高一", null, null, null, null
+        ));
+        DefaultPromptMemoryContextAssembler assembler = new DefaultPromptMemoryContextAssembler(
+                episodicMemoryService,
+                semanticMemoryService,
+                proceduralMemoryService,
+                preferenceProfileService
+        );
+
+        PromptMemoryContextDto context = assembler.assemble("u3-role", "帮我做数学学习计划", 800, Map.of());
+
+        assertEquals("高一", context.personaSnapshot().get("role"));
     }
 
     @Test

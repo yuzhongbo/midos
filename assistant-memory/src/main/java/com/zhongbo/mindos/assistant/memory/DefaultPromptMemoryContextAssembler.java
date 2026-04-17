@@ -1,5 +1,6 @@
 package com.zhongbo.mindos.assistant.memory;
 
+import com.zhongbo.mindos.assistant.common.LegacyRoleSupport;
 import com.zhongbo.mindos.assistant.common.dto.PromptMemoryContextDto;
 import com.zhongbo.mindos.assistant.common.dto.RetrievedMemoryItemDto;
 import com.zhongbo.mindos.assistant.common.dto.TaskThreadSnapshotDto;
@@ -226,14 +227,14 @@ public class DefaultPromptMemoryContextAssembler implements PromptMemoryContextA
         PreferenceProfile profile = preferenceProfileService.getProfile(userId);
         Map<String, Object> snapshot = new LinkedHashMap<>();
         putIfHasText(snapshot, "assistantName", profile.assistantName());
-        putIfHasText(snapshot, "role", profile.role());
+        putIfHasText(snapshot, "role", LegacyRoleSupport.explicitRole(profile.role()));
         putIfHasText(snapshot, "style", profile.style());
         putIfHasText(snapshot, "language", profile.language());
         putIfHasText(snapshot, "timezone", profile.timezone());
         putIfHasText(snapshot, "preferredChannel", profile.preferredChannel());
         if (profileContext != null && !profileContext.isEmpty()) {
             putIfHasText(snapshot, "assistantName", asText(profileContext.get("assistantName")));
-            putIfHasText(snapshot, "role", asText(profileContext.get("role")));
+            putIfHasText(snapshot, "role", LegacyRoleSupport.explicitRole(profileContext.get("role")));
             putIfHasText(snapshot, "style", asText(profileContext.get("style")));
             putIfHasText(snapshot, "language", asText(profileContext.get("language")));
             putIfHasText(snapshot, "timezone", asText(profileContext.get("timezone")));

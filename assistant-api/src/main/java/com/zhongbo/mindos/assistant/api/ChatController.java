@@ -1,5 +1,6 @@
 package com.zhongbo.mindos.assistant.api;
 
+import com.zhongbo.mindos.assistant.common.LegacyRoleSupport;
 import com.zhongbo.mindos.assistant.common.dto.ChatRequestDto;
 import com.zhongbo.mindos.assistant.common.dto.ChatResponseDto;
 import com.zhongbo.mindos.assistant.dispatcher.DispatcherFacade;
@@ -95,7 +96,7 @@ public class ChatController {
         Map<String, Object> profileContext = new LinkedHashMap<>();
         if (request.profile() != null) {
             putIfNotNull(profileContext, "assistantName", request.profile().assistantName());
-            putIfNotNull(profileContext, "role", request.profile().role());
+            putIfNotNull(profileContext, "role", LegacyRoleSupport.explicitRole(request.profile().role()));
             putIfNotNull(profileContext, "style", request.profile().style());
             putIfNotNull(profileContext, "language", request.profile().language());
             putIfNotNull(profileContext, "timezone", request.profile().timezone());
