@@ -3,6 +3,7 @@ package com.zhongbo.mindos.assistant.dispatcher;
 import com.zhongbo.mindos.assistant.common.ContextCompressionMetricsReader;
 import com.zhongbo.mindos.assistant.common.DispatcherRoutingMetricsReader;
 import com.zhongbo.mindos.assistant.common.LlmClient;
+import com.zhongbo.mindos.assistant.common.SkillCostTelemetry;
 import com.zhongbo.mindos.assistant.common.SkillContext;
 import com.zhongbo.mindos.assistant.common.SkillDsl;
 import com.zhongbo.mindos.assistant.common.SkillResult;
@@ -29,11 +30,13 @@ import com.zhongbo.mindos.assistant.dispatcher.orchestrator.ParamSchemaRegistry;
 import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryCommandService;
 import com.zhongbo.mindos.assistant.dispatcher.memory.DispatcherMemoryFacade;
 import com.zhongbo.mindos.assistant.dispatcher.routing.DispatchPlan;
+import com.zhongbo.mindos.assistant.dispatcher.system.SkillRecipeRegistry;
 import com.zhongbo.mindos.assistant.dispatcher.system.SkillCompositionService;
 import com.zhongbo.mindos.assistant.dispatcher.system.WebLookupDetailHelper;
 import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalysisResult;
 import com.zhongbo.mindos.assistant.skill.semantic.SemanticAnalyzer;
 import com.zhongbo.mindos.assistant.skill.SkillExecutionGateway;
+import com.zhongbo.mindos.assistant.skill.learning.ToolLearningService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -193,9 +196,13 @@ public class DispatcherService implements ContextCompressionMetricsReader,
     private final DispatcherAnswerMode answerMode;
     private final ConversationMemoryModeService conversationMemoryModeService;
     private volatile HermesAssistantRuntime hermesAssistantRuntime;
+    private volatile HermesEvolutionLoopService hermesEvolutionLoopService;
     private ParamSchemaRegistry paramSchemaRegistry;
     private SkillExecutionGateway skillExecutionGateway;
+    private SkillCostTelemetry skillCostTelemetry;
     private WebLookupDetailHelper webLookupDetailHelper;
+    private SkillRecipeRegistry skillRecipeRegistry;
+    private ToolLearningService toolLearningService;
     private List<DispatchSkillDslResolver> dispatchSkillDslResolvers = List.of();
 
     public DispatcherService(SkillCatalogFacade skillEngine,
@@ -600,6 +607,11 @@ public class DispatcherService implements ContextCompressionMetricsReader,
     }
 
     @Autowired(required = false)
+    void setSkillCostTelemetry(SkillCostTelemetry skillCostTelemetry) {
+        this.skillCostTelemetry = skillCostTelemetry;
+    }
+
+    @Autowired(required = false)
     void setWebLookupDetailHelper(WebLookupDetailHelper webLookupDetailHelper) {
         this.webLookupDetailHelper = webLookupDetailHelper;
     }
@@ -607,6 +619,11 @@ public class DispatcherService implements ContextCompressionMetricsReader,
     @Autowired(required = false)
     void setDispatchSkillDslResolvers(List<DispatchSkillDslResolver> dispatchSkillDslResolvers) {
         this.dispatchSkillDslResolvers = dispatchSkillDslResolvers == null ? List.of() : List.copyOf(dispatchSkillDslResolvers);
+    }
+
+    @Autowired(required = false)
+    void setToolLearningService(ToolLearningService toolLearningService) {
+        this.toolLearningService = toolLearningService;
     }
 
     private DispatcherMemoryFacade activeDispatcherMemoryFacade() {
@@ -662,6 +679,10 @@ public class DispatcherService implements ContextCompressionMetricsReader,
                     fallbackRegistry.registerDefaults();
                     effectiveSchemaRegistry = fallbackRegistry;
                 }
+                SkillRecipeRegistry effectiveRecipeRegistry = this.skillRecipeRegistry == null
+                        ? new SkillRecipeRegistry()
+                        : this.skillRecipeRegistry;
+                this.skillRecipeRegistry = effectiveRecipeRegistry;
                 HermesToolSchemaCatalog toolSchemaCatalog = new HermesToolSchemaCatalog(this.skillEngine, effectiveSchemaRegistry);
                 this.hermesAssistantRuntime = new HermesAssistantRuntime(
                         this.dispatchHeuristicsSupport,
@@ -702,6 +723,7 @@ public class DispatcherService implements ContextCompressionMetricsReader,
                                 toolSchemaCatalog,
                                 new SkillCompositionService(
                                         this.skillExecutionGateway,
+                                        effectiveRecipeRegistry,
                                         this.webLookupDetailHelper == null ? new WebLookupDetailHelper() : this.webLookupDetailHelper
                                 )
                         ),
@@ -732,6 +754,38 @@ public class DispatcherService implements ContextCompressionMetricsReader,
         }
     }
 
+    private HermesEvolutionLoopService hermesEvolutionLoopService() {
+        HermesEvolutionLoopService evolutionLoop = this.hermesEvolutionLoopService;
+        if (evolutionLoop != null) {
+            return evolutionLoop;
+        }
+        synchronized (this) {
+            if (this.hermesEvolutionLoopService == null) {
+                hermesAssistantRuntime();
+                this.hermesEvolutionLoopService = new HermesEvolutionLoopService(
+                        this.dispatcherMemoryFacade,
+                        this.memoryCommandService,
+                        this.skillCostTelemetry,
+                        this.hermesDecisionPolicy,
+                        this.skillRecipeRegistry,
+                        this.toolLearningService
+                );
+            }
+            return this.hermesEvolutionLoopService;
+        }
+    }
+
+    private void maybeEvolveHermesRuntime(String userId, DispatchResult result) {
+        if (result == null || userId == null || userId.isBlank()) {
+            return;
+        }
+        try {
+            hermesEvolutionLoopService().observeAndEvolveAsync(userId);
+        } catch (RuntimeException ex) {
+            LOGGER.log(Level.FINE, "Hermes evolution loop skipped for userId=" + userId, ex);
+        }
+    }
+
     public DispatchResult dispatch(String userId, String userInput) {
         return dispatch(userId, userInput, Map.of());
     }
@@ -742,6 +796,7 @@ public class DispatcherService implements ContextCompressionMetricsReader,
         try {
             DispatchResult result = hermesAssistantRuntime().dispatch(userId, userInput, effectiveProfileContext);
             logHermesDispatchCompletion(userId, result, false, startedAt, null);
+            maybeEvolveHermesRuntime(userId, result);
             return result;
         } catch (RuntimeException ex) {
             logHermesDispatchCompletion(userId, null, false, startedAt, ex);
@@ -757,7 +812,12 @@ public class DispatcherService implements ContextCompressionMetricsReader,
         Instant startedAt = Instant.now();
         Map<String, Object> effectiveProfileContext = enrichHermesProfileContext(profileContext);
         return hermesAssistantRuntime().dispatchAsync(userId, userInput, effectiveProfileContext)
-                .whenComplete((result, error) -> logHermesDispatchCompletion(userId, result, false, startedAt, error));
+                .whenComplete((result, error) -> {
+                    logHermesDispatchCompletion(userId, result, false, startedAt, error);
+                    if (error == null) {
+                        maybeEvolveHermesRuntime(userId, result);
+                    }
+                });
     }
 
     public CompletableFuture<DispatchResult> dispatchStream(String userId,
@@ -767,7 +827,12 @@ public class DispatcherService implements ContextCompressionMetricsReader,
         Instant startedAt = Instant.now();
         Map<String, Object> effectiveProfileContext = enrichHermesProfileContext(profileContext);
         return hermesAssistantRuntime().dispatchStream(userId, userInput, effectiveProfileContext, deltaConsumer)
-                .whenComplete((result, error) -> logHermesDispatchCompletion(userId, result, true, startedAt, error));
+                .whenComplete((result, error) -> {
+                    logHermesDispatchCompletion(userId, result, true, startedAt, error);
+                    if (error == null) {
+                        maybeEvolveHermesRuntime(userId, result);
+                    }
+                });
     }
 
     private void logDispatchCompletion(String userId,

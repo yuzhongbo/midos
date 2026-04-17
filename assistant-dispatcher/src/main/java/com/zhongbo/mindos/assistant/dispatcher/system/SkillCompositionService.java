@@ -18,27 +18,33 @@ public final class SkillCompositionService {
     public static final String WEB_LOOKUP_DETAIL_WORKFLOW_REASON = "systemWorkflow=skill-graph:web.lookup.detail";
     public static final String DOCS_LOOKUP_DETAIL_WORKFLOW_REASON = "systemWorkflow=skill-graph:docs.lookup.detail";
 
-    private static final String EXECUTION_TARGET_TOKEN = "$executionTarget";
-
     private final SkillExecutionGateway skillExecutionGateway;
+    private final SkillRecipeRegistry skillRecipeRegistry;
     private final WebLookupDetailHelper webLookupDetailHelper;
 
     public SkillCompositionService(SkillExecutionGateway skillExecutionGateway) {
-        this(skillExecutionGateway, new WebLookupDetailHelper());
+        this(skillExecutionGateway, new SkillRecipeRegistry(), new WebLookupDetailHelper());
     }
 
     public SkillCompositionService(SkillExecutionGateway skillExecutionGateway,
                                    WebLookupDetailHelper webLookupDetailHelper) {
+        this(skillExecutionGateway, new SkillRecipeRegistry(), webLookupDetailHelper);
+    }
+
+    public SkillCompositionService(SkillExecutionGateway skillExecutionGateway,
+                                   SkillRecipeRegistry skillRecipeRegistry,
+                                   WebLookupDetailHelper webLookupDetailHelper) {
         this.skillExecutionGateway = skillExecutionGateway;
+        this.skillRecipeRegistry = skillRecipeRegistry == null ? new SkillRecipeRegistry() : skillRecipeRegistry;
         this.webLookupDetailHelper = webLookupDetailHelper == null ? new WebLookupDetailHelper() : webLookupDetailHelper;
     }
 
     public boolean supports(String decisionTarget, String executionTarget) {
-        return resolveRecipe(decisionTarget, executionTarget).isPresent();
+        return skillRecipeRegistry.resolve(decisionTarget, executionTarget).isPresent();
     }
 
     public String workflowReasonFor(String decisionTarget, String executionTarget) {
-        return resolveRecipe(decisionTarget, executionTarget)
+        return skillRecipeRegistry.resolve(decisionTarget, executionTarget)
                 .map(SkillRecipe::workflowReason)
                 .orElse("");
     }
@@ -47,7 +53,11 @@ public final class SkillCompositionService {
                                String executionTarget,
                                Map<String, Object> params,
                                SkillContext context) {
-        Optional<SkillRecipe> resolved = resolveRecipe(decisionTarget, executionTarget);
+        Optional<SkillRecipe> resolved = skillRecipeRegistry.resolve(
+                context == null ? "" : context.userId(),
+                decisionTarget,
+                executionTarget
+        );
         if (resolved.isEmpty()) {
             return SkillResult.failure(executionTarget == null || executionTarget.isBlank() ? decisionTarget : executionTarget,
                     "unsupported skill composition target");
@@ -230,110 +240,11 @@ public final class SkillCompositionService {
         };
     }
 
-    private Optional<SkillRecipe> resolveRecipe(String decisionTarget, String executionTarget) {
-        if (matchesCodeAssist(decisionTarget, executionTarget)) {
-            return Optional.of(codeAssistRecipe());
-        }
-        if (matchesWebLookup(decisionTarget, executionTarget)) {
-            return Optional.of(webLookupDetailRecipe());
-        }
-        if (matchesDocsLookup(decisionTarget, executionTarget)) {
-            return Optional.of(docsLookupDetailRecipe());
-        }
-        return Optional.empty();
-    }
-
-    private boolean matchesCodeAssist(String decisionTarget, String executionTarget) {
-        String normalizedDecisionTarget = normalize(decisionTarget);
-        String normalizedExecutionTarget = normalize(executionTarget);
-        return "code.assist".equals(normalizedDecisionTarget) || "code.generate".equals(normalizedExecutionTarget);
-    }
-
-    private boolean matchesWebLookup(String decisionTarget, String executionTarget) {
-        String normalizedDecisionTarget = normalize(decisionTarget);
-        String normalizedExecutionTarget = normalize(executionTarget);
-        return DecisionCapabilityCatalog.WEB_LOOKUP_DECISION_TARGET.equals(normalizedDecisionTarget)
-                && DecisionCapabilityCatalog.isGenericWebSearchExecutionSkill(normalizedExecutionTarget);
-    }
-
-    private boolean matchesDocsLookup(String decisionTarget, String executionTarget) {
-        String normalizedDecisionTarget = normalize(decisionTarget);
-        String normalizedExecutionTarget = normalize(executionTarget);
-        return "docs.lookup".equals(normalizedDecisionTarget)
-                && "mcp.docs.searchdocs".equals(normalizedExecutionTarget);
-    }
-
     private String resolveStepTarget(String target, String executionTarget) {
-        if (EXECUTION_TARGET_TOKEN.equals(target)) {
+        if (SkillRecipeSelector.EXECUTION_TARGET_TOKEN.equals(target)) {
             return executionTarget == null ? "" : executionTarget.trim();
         }
         return target == null ? "" : target.trim();
-    }
-
-    private SkillRecipe codeAssistRecipe() {
-        return new SkillRecipe(
-                "code.assist.direct",
-                "code.assist",
-                "development",
-                DEVELOPMENT_WORKFLOW_REASON,
-                List.of(new SkillRecipeStep(
-                        "execute",
-                        EXECUTION_TARGET_TOKEN,
-                        SkillRecipeFailurePolicy.STOP,
-                        Map.of()
-                )),
-                true,
-                1
-        );
-    }
-
-    private SkillRecipe webLookupDetailRecipe() {
-        return searchDetailRecipe(
-                "web.lookup.detail",
-                DecisionCapabilityCatalog.WEB_LOOKUP_DECISION_TARGET,
-                WEB_LOOKUP_DETAIL_WORKFLOW_REASON
-        );
-    }
-
-    private SkillRecipe docsLookupDetailRecipe() {
-        return searchDetailRecipe(
-                "docs.lookup.detail",
-                "docs.lookup",
-                DOCS_LOOKUP_DETAIL_WORKFLOW_REASON
-        );
-    }
-
-    private SkillRecipe searchDetailRecipe(String recipeId,
-                                           String decisionTarget,
-                                           String workflowReason) {
-        return new SkillRecipe(
-                recipeId,
-                decisionTarget,
-                "skill-graph",
-                workflowReason,
-                List.of(
-                        new SkillRecipeStep(
-                                "search",
-                                EXECUTION_TARGET_TOKEN,
-                                SkillRecipeFailurePolicy.STOP,
-                                Map.of(
-                                        "internalSkipDetailAugment",
-                                        SkillRecipeValueRef.literal(Boolean.TRUE)
-                                )
-                        ),
-                        new SkillRecipeStep(
-                                "detail",
-                                WebLookupDetailHelper.HELPER_TARGET,
-                                SkillRecipeFailurePolicy.RETURN_PREVIOUS_SUCCESS,
-                                Map.of(
-                                        "query", SkillRecipeValueRef.requestParam("query"),
-                                        "searchOutput", SkillRecipeValueRef.stepOutput("search")
-                                )
-                        )
-                ),
-                true,
-                2
-        );
     }
 
     private String normalize(String value) {
@@ -352,48 +263,5 @@ public final class SkillCompositionService {
             return;
         }
         target.put(key, value);
-    }
-
-    private enum SkillRecipeFailurePolicy {
-        STOP,
-        RETURN_PREVIOUS_SUCCESS
-    }
-
-    private enum SkillRecipeValueSource {
-        LITERAL,
-        REQUEST_PARAM,
-        STEP_OUTPUT
-    }
-
-    private record SkillRecipe(String id,
-                               String rootDecisionTarget,
-                               String workflowName,
-                               String workflowReason,
-                               List<SkillRecipeStep> steps,
-                               boolean safeAutoRun,
-                               int maxDepth) {
-    }
-
-    private record SkillRecipeStep(String id,
-                                   String target,
-                                   SkillRecipeFailurePolicy failurePolicy,
-                                   Map<String, SkillRecipeValueRef> bindings) {
-    }
-
-    private record SkillRecipeValueRef(SkillRecipeValueSource source,
-                                       String key,
-                                       Object literal) {
-
-        static SkillRecipeValueRef literal(Object literal) {
-            return new SkillRecipeValueRef(SkillRecipeValueSource.LITERAL, "", literal);
-        }
-
-        static SkillRecipeValueRef requestParam(String key) {
-            return new SkillRecipeValueRef(SkillRecipeValueSource.REQUEST_PARAM, key == null ? "" : key.trim(), null);
-        }
-
-        static SkillRecipeValueRef stepOutput(String stepId) {
-            return new SkillRecipeValueRef(SkillRecipeValueSource.STEP_OUTPUT, stepId == null ? "" : stepId.trim(), null);
-        }
     }
 }

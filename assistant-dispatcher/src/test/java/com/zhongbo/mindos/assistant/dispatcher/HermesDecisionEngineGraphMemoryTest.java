@@ -136,6 +136,81 @@ class HermesDecisionEngineGraphMemoryTest {
         assertTrue(plan.reasons().stream().anyMatch(reason -> reason.contains("continuation-like input matched recent execution memory")));
     }
 
+    @Test
+    void shouldApplyDeployedRuntimePolicyAdjustment() {
+        InMemoryParamSchemaRegistry schemaRegistry = new InMemoryParamSchemaRegistry();
+        schemaRegistry.registerDefaults();
+        SkillCatalogFacade skillCatalog = new TestSkillCatalog(List.of(
+                new SkillDescriptor("todo.create", "Create todo item", List.of("待办", "任务")),
+                new SkillDescriptor("file.search", "Search local files", List.of("找文件", "搜索文件"))
+        ));
+        HermesToolSchemaCatalog toolSchemaCatalog = new HermesToolSchemaCatalog(skillCatalog, schemaRegistry);
+        HermesRuntimePolicyStore runtimePolicyStore = new HermesRuntimePolicyStore();
+        String preferredDecisionTarget = toolSchemaCatalog.decisionTargetForSkill("todo.create", Map.of());
+        runtimePolicyStore.deploy("u1", new HermesRuntimePolicySnapshot(
+                "policy-prefer-task",
+                "test",
+                java.time.Instant.parse("2026-01-01T00:00:00Z"),
+                0.20d,
+                0.25d,
+                0.74d,
+                0.02d,
+                0.03d,
+                Map.of(preferredDecisionTarget, 0.08d),
+                Map.of(preferredDecisionTarget, "policy favors the lower-cost higher-success task route")
+        ));
+        HermesDecisionEngine engine = new HermesDecisionEngine(
+                null,
+                skillCatalog,
+                toolSchemaCatalog,
+                new HermesDecisionPolicy(null, null, runtimePolicyStore),
+                null,
+                new LLMDecisionEngine(),
+                new DispatchHeuristicsSupport(null, false, List.of(), false, true, Set.of("新闻", "天气")),
+                DispatcherAnswerMode.BALANCED,
+                null,
+                List.of(),
+                List.of()
+        );
+        SemanticAnalysisResult semanticAnalysis = new SemanticAnalysisResult(
+                "semantic",
+                "",
+                "",
+                "",
+                Map.of(),
+                List.of(),
+                "",
+                0.0d,
+                List.of(
+                        new SemanticAnalysisResult.CandidateIntent("todo.create", 0.70d),
+                        new SemanticAnalysisResult.CandidateIntent("file.search", 0.70d)
+                )
+        );
+        HermesDecisionContext context = new HermesDecisionContext(
+                "u1",
+                "帮我继续处理这个任务",
+                "帮我继续处理这个任务",
+                Map.of(),
+                true,
+                DispatcherAnswerMode.BALANCED,
+                new PromptMemoryContextDto("", "", "", Map.of(), List.of()),
+                "",
+                List.of(),
+                toolSchemaCatalog.listSchemas(Map.of()),
+                semanticAnalysis,
+                Map.of(),
+                Map.of(),
+                Map.of(),
+                Map.of(),
+                new SkillContext("u1", "帮我继续处理这个任务", Map.of())
+        );
+
+        HermesDecisionEngine.DecisionPlan plan = engine.decide(context);
+
+        assertEquals(preferredDecisionTarget, plan.decision().target());
+        assertTrue(plan.reasons().stream().anyMatch(reason -> reason.contains("policy favors the lower-cost higher-success task route")));
+    }
+
     private static final class TestSkillCatalog implements SkillCatalogFacade {
         private final List<SkillDescriptor> descriptors;
 

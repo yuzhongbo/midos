@@ -15,11 +15,19 @@ final class HermesDecisionPolicy {
 
     private final SemanticRoutingSupport semanticRoutingSupport;
     private final BehaviorRoutingSupport behaviorRoutingSupport;
+    private final HermesRuntimePolicyStore runtimePolicyStore;
 
     HermesDecisionPolicy(SemanticRoutingSupport semanticRoutingSupport,
                          BehaviorRoutingSupport behaviorRoutingSupport) {
+        this(semanticRoutingSupport, behaviorRoutingSupport, new HermesRuntimePolicyStore());
+    }
+
+    HermesDecisionPolicy(SemanticRoutingSupport semanticRoutingSupport,
+                         BehaviorRoutingSupport behaviorRoutingSupport,
+                         HermesRuntimePolicyStore runtimePolicyStore) {
         this.semanticRoutingSupport = semanticRoutingSupport;
         this.behaviorRoutingSupport = behaviorRoutingSupport;
+        this.runtimePolicyStore = runtimePolicyStore == null ? new HermesRuntimePolicyStore() : runtimePolicyStore;
     }
 
     List<SemanticRoutingSupport.SemanticRoutingPlan> recommendSemanticRoutingPlans(String userId,
@@ -116,5 +124,28 @@ final class HermesDecisionPolicy {
             return Optional.empty();
         }
         return behaviorRoutingSupport.preferredSkillFromStats(userId);
+    }
+
+    HermesRuntimePolicySnapshot runtimePolicySnapshot(HermesDecisionContext context) {
+        if (context == null) {
+            return runtimePolicyStore.effectiveSnapshot("");
+        }
+        return runtimePolicyStore.effectiveSnapshot(context.userId());
+    }
+
+    void deployRuntimePolicy(String userId, HermesRuntimePolicySnapshot snapshot) {
+        runtimePolicyStore.deploy(userId, snapshot);
+    }
+
+    void clearRuntimePolicy(String userId) {
+        runtimePolicyStore.clear(userId);
+    }
+
+    Optional<HermesRuntimePolicySnapshot> deployedRuntimePolicy(String userId) {
+        return runtimePolicyStore.snapshotFor(userId);
+    }
+
+    HermesRuntimePolicyStore runtimePolicyStore() {
+        return runtimePolicyStore;
     }
 }

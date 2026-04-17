@@ -6,6 +6,7 @@ import com.zhongbo.mindos.assistant.skill.loader.CustomSkillLoader;
 import com.zhongbo.mindos.assistant.skill.loader.ExternalSkillLoader;
 import com.zhongbo.mindos.assistant.skill.mcp.McpSkillLoader;
 import com.zhongbo.mindos.assistant.skill.learning.GeneratedSkillDeployment;
+import com.zhongbo.mindos.assistant.skill.learning.GeneratedSkillReview;
 import com.zhongbo.mindos.assistant.skill.learning.ToolGenerationResult;
 import com.zhongbo.mindos.assistant.skill.learning.ToolGenerationRequest;
 import com.zhongbo.mindos.assistant.skill.learning.ToolLearningService;
@@ -233,6 +234,7 @@ public class SkillController {
         ToolGenerationRequest generationRequest =
                 new ToolGenerationRequest(validated.userId(), validated.prompt(), validated.skillName(), validated.hints());
         ToolGenerationResult artifact;
+        List<String> checks;
         String registeredSkillName;
         boolean replaced;
         boolean registered;
@@ -242,16 +244,27 @@ public class SkillController {
             registeredSkillName = deployment.registeredSkillName();
             replaced = deployment.replaced();
             registered = true;
+            checks = List.of(
+                    "generated-artifact-validated",
+                    "compiled",
+                    "runtime-skill-validated",
+                    "registered"
+            );
         } else {
-            artifact = toolLearningService.generateDraft(generationRequest);
-            registeredSkillName = artifact.skillName();
+            GeneratedSkillReview review = toolLearningService.reviewDraft(generationRequest);
+            artifact = review.artifact();
+            registeredSkillName = review.runtimeSkillName();
             replaced = false;
             registered = false;
+            checks = review.checks();
         }
 
         Map<String, Object> response = new LinkedHashMap<>();
         response.put("status", registered ? "ok" : "draft");
         response.put("registered", registered);
+        response.put("reviewed", true);
+        response.put("valid", true);
+        response.put("checks", checks);
         response.put("skillName", registeredSkillName);
         response.put("kind", artifact.kind().name());
         response.put("replaced", replaced);

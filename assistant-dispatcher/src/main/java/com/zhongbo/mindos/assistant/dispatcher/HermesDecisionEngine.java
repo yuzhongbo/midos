@@ -65,6 +65,9 @@ final class HermesDecisionEngine {
         HermesDecisionContext safeContext = context == null
                 ? new HermesDecisionContext("", "", "", Map.of(), true, answerMode, null, "", List.of(), List.of(), SemanticAnalysisResult.empty(), Map.of(), Map.of(), Map.of(), Map.of(), null)
                 : context;
+        HermesRuntimePolicySnapshot runtimePolicy = decisionPolicy == null
+                ? HermesRuntimePolicySnapshot.defaults()
+                : decisionPolicy.runtimePolicySnapshot(safeContext);
         SemanticAnalysisResult semanticAnalysis = safeContext.semanticAnalysis();
 
         Optional<SkillDsl> explicitDsl = skillDslParser == null
@@ -107,14 +110,15 @@ final class HermesDecisionEngine {
         addDetectedCandidates(candidates, safeContext);
         if (safeContext.memoryEnabled() && !safeContext.answerMode().llmFirst()) {
             addHabitCandidates(candidates, safeContext);
-            addGraphContinuationCandidates(candidates, safeContext);
+            addGraphContinuationCandidates(candidates, safeContext, runtimePolicy);
         }
         if (!safeContext.answerMode().llmFirst()) {
-            boostCandidatesFromMemory(candidates, safeContext, safeContext.skillSuccessRates());
-            boostCandidatesFromGraphMemory(candidates, safeContext);
+            boostCandidatesFromMemory(candidates, safeContext, safeContext.skillSuccessRates(), runtimePolicy);
+            boostCandidatesFromGraphMemory(candidates, safeContext, runtimePolicy);
         }
-        applySearchPriorityOverrides(candidates, safeContext);
-        applyBuiltinSkillPreference(candidates, safeContext);
+        applySearchPriorityOverrides(candidates, safeContext, runtimePolicy);
+        applyBuiltinSkillPreference(candidates, safeContext, runtimePolicy);
+        applyPolicySkillAdjustments(candidates, safeContext, runtimePolicy);
 
         Candidate best = candidates.values().stream()
                 .max(Comparator
@@ -540,7 +544,9 @@ final class HermesDecisionEngine {
         }
     }
 
-    private void addGraphContinuationCandidates(Map<String, Candidate> candidates, HermesDecisionContext context) {
+    private void addGraphContinuationCandidates(Map<String, Candidate> candidates,
+                                                HermesDecisionContext context,
+                                                HermesRuntimePolicySnapshot runtimePolicy) {
         if (context == null
                 || context.graphContinuationHint().isEmpty()
                 || isRealtimeIntent(context.userInput(), context.semanticAnalysis())) {
@@ -562,7 +568,7 @@ final class HermesDecisionEngine {
             reasons.add("graph-task=" + task);
         }
         Double graphScore = graphScoreForCandidate(target, context);
-        double score = 0.74d;
+        double score = runtimePolicy == null ? 0.74d : runtimePolicy.graphContinuationBaseScore();
         if (graphScore != null && graphScore > 0.0d) {
             score = Math.max(score, 0.70d + Math.max(0.0d, graphScore - 0.60d) * 0.20d);
         }
@@ -582,10 +588,12 @@ final class HermesDecisionEngine {
 
     private void boostCandidatesFromMemory(Map<String, Candidate> candidates,
                                            HermesDecisionContext context,
-                                           Map<String, Double> successRates) {
+                                           Map<String, Double> successRates,
+                                           HermesRuntimePolicySnapshot runtimePolicy) {
         if (candidates.isEmpty() || successRates == null || successRates.isEmpty()) {
             return;
         }
+        double memoryBoostWeight = runtimePolicy == null ? 0.20d : runtimePolicy.memorySuccessBoostWeight();
         for (Map.Entry<String, Candidate> entry : new ArrayList<>(candidates.entrySet())) {
             Double successRate = successRates.get(entry.getKey());
             if (successRate == null && toolSchemaCatalog != null) {
@@ -600,7 +608,7 @@ final class HermesDecisionEngine {
             if (successRate == null) {
                 continue;
             }
-            double memoryBoost = Math.max(0.0d, successRate - 0.50d) * 0.20d;
+            double memoryBoost = Math.max(0.0d, successRate - 0.50d) * memoryBoostWeight;
             Candidate current = entry.getValue();
             List<String> reasons = new ArrayList<>(current.reasons());
             reasons.add("memory-success=" + String.format(Locale.ROOT, "%.2f", successRate));
@@ -616,16 +624,19 @@ final class HermesDecisionEngine {
         }
     }
 
-    private void boostCandidatesFromGraphMemory(Map<String, Candidate> candidates, HermesDecisionContext context) {
+    private void boostCandidatesFromGraphMemory(Map<String, Candidate> candidates,
+                                                HermesDecisionContext context,
+                                                HermesRuntimePolicySnapshot runtimePolicy) {
         if (candidates.isEmpty() || context == null || context.graphSkillScores().isEmpty()) {
             return;
         }
+        double graphBoostWeight = runtimePolicy == null ? 0.25d : runtimePolicy.graphBoostWeight();
         for (Map.Entry<String, Candidate> entry : new ArrayList<>(candidates.entrySet())) {
             Double graphScore = graphScoreForCandidate(entry.getKey(), context);
             if (graphScore == null || graphScore <= 0.0d) {
                 continue;
             }
-            double graphBoost = Math.max(0.0d, graphScore - 0.60d) * 0.25d;
+            double graphBoost = Math.max(0.0d, graphScore - 0.60d) * graphBoostWeight;
             if (graphBoost <= 0.0d) {
                 continue;
             }
@@ -664,7 +675,9 @@ final class HermesDecisionEngine {
         return context.graphSkillScores().get(skillIdentity.canonicalSkill());
     }
 
-    private void applySearchPriorityOverrides(Map<String, Candidate> candidates, HermesDecisionContext context) {
+    private void applySearchPriorityOverrides(Map<String, Candidate> candidates,
+                                              HermesDecisionContext context,
+                                              HermesRuntimePolicySnapshot runtimePolicy) {
         if (candidates.isEmpty()
                 || context == null
                 || parallelSearchPriorityOrder.isEmpty()
@@ -691,11 +704,12 @@ final class HermesDecisionEngine {
         if (preferred == null || preferredKey == null) {
             return;
         }
+        double leadBoost = runtimePolicy == null ? 0.02d : runtimePolicy.searchPriorityLeadBoost();
         List<String> reasons = new ArrayList<>(preferred.reasons());
         reasons.add("search-priority=" + normalize(preferred.skillName()).toLowerCase(Locale.ROOT));
         candidates.put(preferredKey, new Candidate(
                 preferred.skillName(),
-                clamp(Math.max(preferred.score(), topSearchScore + 0.02d)),
+                clamp(Math.max(preferred.score(), topSearchScore + leadBoost)),
                 preferred.route(),
                 preferred.params(),
                 List.copyOf(reasons),
@@ -704,15 +718,18 @@ final class HermesDecisionEngine {
         ));
     }
 
-    private void applyBuiltinSkillPreference(Map<String, Candidate> candidates, HermesDecisionContext context) {
+    private void applyBuiltinSkillPreference(Map<String, Candidate> candidates,
+                                             HermesDecisionContext context,
+                                             HermesRuntimePolicySnapshot runtimePolicy) {
         if (candidates.isEmpty() || context == null || isExplicitMcpToolRequest(context.userInput())) {
             return;
         }
-        boostBuiltinNewsSearchOverGenericMcp(candidates, context);
+        boostBuiltinNewsSearchOverGenericMcp(candidates, context, runtimePolicy);
     }
 
     private void boostBuiltinNewsSearchOverGenericMcp(Map<String, Candidate> candidates,
-                                                      HermesDecisionContext context) {
+                                                      HermesDecisionContext context,
+                                                      HermesRuntimePolicySnapshot runtimePolicy) {
         String builtinNewsTarget = toolSchemaCatalog == null
                 ? "news_search"
                 : toolSchemaCatalog.decisionTargetForSkill("news_search");
@@ -735,20 +752,60 @@ final class HermesDecisionEngine {
         if (Double.isNaN(preferredFloor)) {
             preferredFloor = webLookup == null ? builtinNewsSearch.score() : webLookup.score();
         }
-        if (builtinNewsSearch.score() >= preferredFloor + 0.02d) {
+        double leadBoost = runtimePolicy == null ? 0.03d : runtimePolicy.builtinNewsLeadBoost();
+        if (builtinNewsSearch.score() >= preferredFloor + leadBoost) {
             return;
         }
         List<String> reasons = new ArrayList<>(builtinNewsSearch.reasons());
         reasons.add("builtin-news-search-preferred-over-generic-mcp-search");
         candidates.put(builtinNewsTarget, new Candidate(
                 builtinNewsSearch.skillName(),
-                clamp(Math.max(builtinNewsSearch.score(), preferredFloor + 0.03d)),
+                clamp(Math.max(builtinNewsSearch.score(), preferredFloor + leadBoost)),
                 builtinNewsSearch.route(),
                 builtinNewsSearch.params(),
                 List.copyOf(reasons),
                 builtinNewsSearch.needClarify(),
                 builtinNewsSearch.clarifyReply()
         ));
+    }
+
+    private void applyPolicySkillAdjustments(Map<String, Candidate> candidates,
+                                             HermesDecisionContext context,
+                                             HermesRuntimePolicySnapshot runtimePolicy) {
+        if (candidates.isEmpty() || runtimePolicy == null || runtimePolicy.skillScoreAdjustments().isEmpty()) {
+            return;
+        }
+        for (Map.Entry<String, Candidate> entry : new ArrayList<>(candidates.entrySet())) {
+            Candidate current = entry.getValue();
+            if (current == null) {
+                continue;
+            }
+            HermesSkillIdentity skillIdentity = HermesSkillIdentity.resolve(
+                    current.skillName(),
+                    toolSchemaCatalog,
+                    context == null ? Map.of() : context.profileContext()
+            );
+            double adjustment = runtimePolicy.skillScoreAdjustment(skillIdentity);
+            if (adjustment == 0.0d) {
+                continue;
+            }
+            List<String> reasons = new ArrayList<>(current.reasons());
+            String reason = runtimePolicy.adjustmentReason(skillIdentity);
+            if (reason.isBlank()) {
+                reasons.add("policy-adjustment=" + String.format(Locale.ROOT, "%.2f", adjustment));
+            } else {
+                reasons.add(reason + " (" + String.format(Locale.ROOT, "%.2f", adjustment) + ")");
+            }
+            candidates.put(entry.getKey(), new Candidate(
+                    current.skillName(),
+                    clamp(current.score() + adjustment),
+                    current.route(),
+                    current.params(),
+                    List.copyOf(reasons),
+                    current.needClarify(),
+                    current.clarifyReply()
+            ));
+        }
     }
 
     private boolean newsSearchShouldLead(HermesDecisionContext context) {

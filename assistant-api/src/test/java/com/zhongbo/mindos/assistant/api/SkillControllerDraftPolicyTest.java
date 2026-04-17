@@ -38,6 +38,8 @@ class SkillControllerDraftPolicyTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("draft"))
                 .andExpect(jsonPath("$.registered").value(false))
+                .andExpect(jsonPath("$.reviewed").value(true))
+                .andExpect(jsonPath("$.valid").value(true))
                 .andExpect(jsonPath("$.skillName").isString())
                 .andReturn()
                 .getResponse()
@@ -46,6 +48,7 @@ class SkillControllerDraftPolicyTest {
         Map<String, Object> response = objectMapper.readValue(body, new TypeReference<>() {});
         String skillName = String.valueOf(response.get("skillName"));
         assertTrue(skillName.startsWith("generated.web.scrape."));
+        assertTrue(String.valueOf(response.get("checks")).contains("compiled"));
         assertFalse(skillRegistry.containsSkill(skillName));
     }
 }

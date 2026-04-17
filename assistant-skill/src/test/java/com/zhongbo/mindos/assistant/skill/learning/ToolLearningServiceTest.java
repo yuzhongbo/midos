@@ -11,8 +11,10 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ToolLearningServiceTest {
@@ -69,5 +71,68 @@ class ToolLearningServiceTest {
         } finally {
             server.stop(0);
         }
+    }
+
+    @Test
+    void shouldReviewDraftWithoutRegisteringIt() {
+        SkillRegistry skillRegistry = new SkillRegistry(List.of());
+        GeneratedSkillArtifactStore artifactStore = new GeneratedSkillArtifactStore();
+        ToolLearningService service = new ToolLearningService(
+                new DefaultToolGenerator("com.zhongbo.mindos.assistant.skill.generated"),
+                new GeneratedSkillCompiler(),
+                skillRegistry,
+                new com.zhongbo.mindos.assistant.skill.SkillGovernanceValidator(),
+                artifactStore
+        );
+
+        GeneratedSkillReview review = service.reviewDraft(new ToolGenerationRequest(
+                "u1",
+                "抓取某网站数据",
+                "web.scrape",
+                Map.of()
+        ));
+
+        assertTrue(review.valid());
+        assertTrue(review.runtimeSkillName().startsWith("generated.web.scrape."));
+        assertEquals(List.of("generated-artifact-validated", "compiled", "runtime-skill-validated"), review.checks());
+        assertFalse(skillRegistry.containsSkill(review.runtimeSkillName()));
+        assertTrue(artifactStore.find(review.artifact().skillName()).isPresent());
+    }
+
+    @Test
+    void shouldCreateReviewedEvolutionDraftFromStoredArtifact() {
+        SkillRegistry skillRegistry = new SkillRegistry(List.of());
+        GeneratedSkillArtifactStore artifactStore = new GeneratedSkillArtifactStore();
+        ToolLearningService service = new ToolLearningService(
+                new DefaultToolGenerator("com.zhongbo.mindos.assistant.skill.generated"),
+                new GeneratedSkillCompiler(),
+                skillRegistry,
+                new com.zhongbo.mindos.assistant.skill.SkillGovernanceValidator(),
+                artifactStore
+        );
+
+        GeneratedSkillReview initial = service.reviewDraft(new ToolGenerationRequest(
+                "u1",
+                "抓取某网站数据",
+                "web.scrape",
+                Map.of()
+        ));
+
+        GeneratedSkillReview evolved = service.evolveReviewedDraft(
+                "u1",
+                initial.artifact().skillName(),
+                "提升稳定性和错误提示"
+        );
+
+        assertTrue(evolved.valid());
+        assertTrue(evolved.runtimeSkillName().startsWith("generated.web.scrape."));
+        assertTrue(evolved.runtimeSkillName().contains("."));
+        assertTrue(evolved.artifact().metadata().containsKey("parentSkill"));
+        assertEquals(initial.artifact().skillName(), evolved.artifact().metadata().get("parentSkill"));
+        assertTrue(artifactStore.find(evolved.artifact().skillName()).isPresent());
+        assertTrue(artifactStore.knownSkillNames().containsAll(Set.of(
+                initial.artifact().skillName(),
+                evolved.artifact().skillName()
+        )));
     }
 }
