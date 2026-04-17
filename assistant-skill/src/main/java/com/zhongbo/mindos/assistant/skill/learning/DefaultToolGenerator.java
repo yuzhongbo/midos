@@ -7,6 +7,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Base64;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -44,6 +45,17 @@ public class DefaultToolGenerator implements ToolGenerator {
         String sourceCode = kind == ToolGenerationKind.WEB_SCRAPER
                 ? buildWebScraperSource(skillName, className, description, keywords, safeRequest, requestFingerprint)
                 : buildTemplateSource(skillName, className, description, keywords, safeRequest, requestFingerprint);
+        Map<String, Object> metadata = new LinkedHashMap<>();
+        metadata.put("request", safeRequest.request());
+        metadata.put("userId", safeRequest.userId());
+        metadata.put("fingerprint", requestFingerprint);
+        metadata.put("kind", kind.name());
+        metadata.put("baseName", baseName);
+        safeRequest.hints().forEach((key, value) -> {
+            if (key != null && !key.isBlank() && value != null) {
+                metadata.put(key, value);
+            }
+        });
 
         return new ToolGenerationResult(
                 skillName,
@@ -54,13 +66,7 @@ public class DefaultToolGenerator implements ToolGenerator {
                 keywords,
                 sourceCode,
                 rationale,
-                Map.of(
-                        "request", safeRequest.request(),
-                        "userId", safeRequest.userId(),
-                        "fingerprint", requestFingerprint,
-                        "kind", kind.name(),
-                        "baseName", baseName
-                )
+                metadata
         );
     }
 
